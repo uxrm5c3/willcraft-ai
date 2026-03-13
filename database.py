@@ -30,7 +30,8 @@ class Will(db.Model):
     client_id = db.Column(db.String(36), db.ForeignKey('clients.id'), nullable=False)
     title = db.Column(db.String(200), default='Untitled Will')
     status = db.Column(db.String(20), default='draft')  # draft, generated, finalized
-    # Store each wizard step as JSON
+    # Store each wizard step as JSON (step1=testator, step2=executors, etc.)
+    identities_data = db.Column(db.Text, default='[]')  # identity snapshot
     step1_data = db.Column(db.Text, default='{}')
     step2_data = db.Column(db.Text, default='[]')
     step3_data = db.Column(db.Text, default='{}')
@@ -48,17 +49,23 @@ class Will(db.Model):
 
 
 class Person(db.Model):
-    """Central registry of persons referenced in wills."""
+    """Central registry of person identities."""
     __tablename__ = 'persons'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     client_id = db.Column(db.String(36), db.ForeignKey('clients.id'), nullable=False)
+    # Core identity fields
     full_name = db.Column(db.String(200), nullable=False)
     nric_passport = db.Column(db.String(50), nullable=False)
-    date_of_birth = db.Column(db.String(20), nullable=True)
     address = db.Column(db.Text, nullable=True)
-    relationship = db.Column(db.String(100), nullable=True)
+    nationality = db.Column(db.String(100), default='Malaysian')
+    passport_expiry = db.Column(db.String(20), nullable=True)
+    # Optional fields (may be captured by OCR)
+    date_of_birth = db.Column(db.String(20), nullable=True)
+    gender = db.Column(db.String(10), nullable=True)
     email = db.Column(db.String(200), nullable=True)
     phone = db.Column(db.String(50), nullable=True)
+    # Deprecated (kept for SQLite compat)
+    relationship = db.Column(db.String(100), nullable=True)
     source_step = db.Column(db.String(20), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

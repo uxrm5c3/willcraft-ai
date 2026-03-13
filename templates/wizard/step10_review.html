@@ -1,10 +1,10 @@
 {% extends "wizard/layout.html" %}
 
-{% block title %}Step 9: Review & Generate - WillCraft AI{% endblock %}
+{% block title %}Step 10: Review & Generate - WillCraft AI{% endblock %}
 
 {% block wizard_content %}
 <div class="mb-6">
-    <h2 class="text-2xl font-bold text-gray-900">Step 9: Review & Generate</h2>
+    <h2 class="text-2xl font-bold text-gray-900">Step 10: Review & Generate</h2>
     <p class="text-gray-600 mt-1">Review all your will information before generating the final document.</p>
 </div>
 
@@ -71,11 +71,34 @@
 <!-- Summary Cards -->
 <div class="space-y-6 mb-8">
 
-    <!-- Step 1: Testator Information -->
+    <!-- Step 1: Identities -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 1: Testator's Personal Data</h3>
+            <h3 class="font-semibold text-gray-800">Step 1: Identities</h3>
             <a href="/wizard/step/1" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set identities = will_data.get('identities', []) %}
+            {% if identities %}
+            <div class="space-y-2">
+                {% for person in identities %}
+                <div class="text-sm">
+                    <p class="font-medium text-gray-900">{{ person.get('full_name', '-') }}</p>
+                    <p class="text-gray-500">{{ person.get('nric_passport', '-') }} &middot; {{ person.get('nationality', 'Malaysian') }}</p>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No identities created yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 2: Testator Information -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 2: Testator's Personal Data</h3>
+            <a href="/wizard/step/2" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set testator = will_data.get('testator', {}) %}
@@ -95,11 +118,11 @@
         </div>
     </div>
 
-    <!-- Step 2: Executors & Trustees -->
+    <!-- Step 3: Executors & Trustees -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 2: Executors & Trustees</h3>
-            <a href="/wizard/step/2" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+            <h3 class="font-semibold text-gray-800">Step 3: Executors & Trustees</h3>
+            <a href="/wizard/step/3" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set executors = will_data.get('executors', []) %}
@@ -121,11 +144,11 @@
         </div>
     </div>
 
-    <!-- Step 3: Guardians -->
+    <!-- Step 4: Guardians -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 3: Guardians <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
-            <a href="/wizard/step/3" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+            <h3 class="font-semibold text-gray-800">Step 4: Guardians <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
+            <a href="/wizard/step/4" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set guardians = will_data.get('guardians', []) %}
@@ -144,11 +167,11 @@
         </div>
     </div>
 
-    <!-- Step 4: Beneficiaries -->
+    <!-- Step 5: Beneficiaries -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 4: Beneficiaries</h3>
-            <a href="/wizard/step/4" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+            <h3 class="font-semibold text-gray-800">Step 5: Beneficiaries</h3>
+            <a href="/wizard/step/5" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set beneficiaries = will_data.get('beneficiaries', []) %}
@@ -169,11 +192,11 @@
         </div>
     </div>
 
-    <!-- Step 5: Specific Gifts -->
+    <!-- Step 6: Specific Gifts -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 5: Specific Gifts <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
-            <a href="/wizard/step/5" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+            <h3 class="font-semibold text-gray-800">Step 6: Specific Gifts <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
+            <a href="/wizard/step/6" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set gifts = will_data.get('gifts', []) %}
@@ -192,11 +215,11 @@
         </div>
     </div>
 
-    <!-- Step 6: Residuary Estate -->
+    <!-- Step 7: Residuary Estate -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 6: Residuary Estate</h3>
-            <a href="/wizard/step/6" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+            <h3 class="font-semibold text-gray-800">Step 7: Residuary Estate</h3>
+            <a href="/wizard/step/7" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set residuary = will_data.get('residuary', {}) %}
@@ -235,11 +258,11 @@
         </div>
     </div>
 
-    <!-- Step 7: Testamentary Trust -->
+    <!-- Step 8: Testamentary Trust -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 7: Testamentary Trust <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
-            <a href="/wizard/step/7" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+            <h3 class="font-semibold text-gray-800">Step 8: Testamentary Trust <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
+            <a href="/wizard/step/8" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set trust = will_data.get('trust', {}) %}
@@ -273,11 +296,11 @@
         </div>
     </div>
 
-    <!-- Step 8: Other Matters -->
+    <!-- Step 9: Other Matters -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 8: Other Matters <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
-            <a href="/wizard/step/8" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+            <h3 class="font-semibold text-gray-800">Step 9: Other Matters <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
+            <a href="/wizard/step/9" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set other = will_data.get('other_matters', {}) %}
@@ -350,7 +373,7 @@
 
 <!-- Navigation -->
 <div class="flex justify-between pt-6 mt-6 border-t border-gray-200">
-    <a href="/wizard/step/8" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+    <a href="/wizard/step/9" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
         <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
         Back
     </a>

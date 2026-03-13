@@ -1,65 +1,63 @@
 {% extends "wizard/layout.html" %}
 
-{% block title %}Step 1: Testator Information - WillCraft AI{% endblock %}
+{% block title %}Step 2: Testator Information - WillCraft AI{% endblock %}
 
 {% block wizard_content %}
 <div class="mb-6">
-    <h2 class="text-2xl font-bold text-gray-900">Step 1: Testator's Personal Data</h2>
-    <p class="text-gray-600 mt-1">Enter the testator's (will maker's) personal information. All names must match NRIC/Passport.</p>
+    <h2 class="text-2xl font-bold text-gray-900">Step 2: Testator's Personal Data</h2>
+    <p class="text-gray-600 mt-1">Select the testator's identity and complete additional details required for the will.</p>
 </div>
 
-<form method="POST" action="/wizard/step/1" class="space-y-6">
-    <!-- NRIC / Passport Upload for OCR -->
-    <div class="border border-dashed border-primary-300 rounded-lg p-4 bg-primary-50/30">
-        <h3 class="text-sm font-semibold text-primary-700 mb-2">Quick Fill: Upload NRIC / Passport</h3>
-        <p class="text-xs text-gray-500 mb-3">Upload an image of your NRIC or passport to auto-fill the fields below.</p>
-        <div class="flex items-center gap-3">
-            <input type="file" id="nric-upload-testator" accept="image/*,.pdf"
-                   class="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-100 file:text-primary-700 hover:file:bg-primary-200"
-                   onchange="uploadAndExtractNRIC(this, 'nric-status-testator', {name:'full_name', nric:'nric_passport', address:'residential_address', dob:'date_of_birth', gender:'gender', nationality:'nationality'})">
-            <span id="nric-status-testator" class="text-sm"></span>
+<form method="POST" action="/wizard/step/2" class="space-y-6">
+    <!-- Identity Selector -->
+    <div class="border border-primary-200 rounded-lg p-4 bg-primary-50/30">
+        <label class="block text-sm font-semibold text-primary-700 mb-2">Select Testator Identity <span class="text-red-500">*</span></label>
+        <select name="testator_person_id" id="testator-identity" required
+                onchange="showTestatorIdentity(this)"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            <option value="">-- Select an identity --</option>
+            {% for person in persons %}
+            <option value="{{ person.id }}"
+                    data-name="{{ person.full_name }}"
+                    data-nric="{{ person.nric_passport }}"
+                    data-address="{{ person.address or '' }}"
+                    data-nationality="{{ person.nationality or 'Malaysian' }}"
+                    data-dob="{{ person.date_of_birth or '' }}"
+                    data-gender="{{ person.gender or '' }}"
+                    data-email="{{ person.email or '' }}"
+                    data-phone="{{ person.phone or '' }}"
+                    {% if data.get('person_id') == person.id %}selected{% endif %}>
+                {{ person.full_name }} ({{ person.nric_passport }})
+            </option>
+            {% endfor %}
+        </select>
+        <div id="identity-display" class="mt-3 bg-white rounded-lg p-3 text-sm hidden">
+            <div class="grid md:grid-cols-2 gap-2">
+                <div><span class="text-gray-500">Name:</span> <strong id="id-name"></strong></div>
+                <div><span class="text-gray-500">NRIC/Passport:</span> <strong id="id-nric"></strong></div>
+                <div class="md:col-span-2"><span class="text-gray-500">Address:</span> <span id="id-address"></span></div>
+                <div><span class="text-gray-500">Nationality:</span> <span id="id-nationality"></span></div>
+            </div>
         </div>
     </div>
 
-    <!-- Full Name & NRIC -->
-    <div class="grid md:grid-cols-2 gap-6">
-        <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Full Name (as per NRIC) <span class="text-red-500">*</span></label>
-            <input type="text" name="full_name" value="{{ data.get('full_name', '') }}" required
-                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                   placeholder="e.g., TAN AH KOW">
-        </div>
-        <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No. <span class="text-red-500">*</span></label>
-            <input type="text" name="nric_passport" value="{{ data.get('nric_passport', '') }}" required
-                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                   placeholder="e.g., 800101-14-1234">
-        </div>
-    </div>
-
-    <!-- Address -->
-    <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">Residential Address <span class="text-red-500">*</span></label>
-        <textarea name="residential_address" rows="2" required
-                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                  placeholder="Full residential address">{{ data.get('residential_address', '') }}</textarea>
-    </div>
-
-    <!-- Nationality, Country, DOB -->
+    <!-- Date of Birth & Gender -->
     <div class="grid md:grid-cols-3 gap-6">
         <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Nationality</label>
-            <input type="text" name="nationality" value="{{ data.get('nationality', 'Malaysian') }}"
+            <label class="block text-sm font-medium text-gray-700 mb-1">Date of Birth <span class="text-red-500">*</span></label>
+            <input type="date" name="date_of_birth" id="field-dob" value="{{ data.get('date_of_birth', '') }}" required
                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Gender <span class="text-red-500">*</span></label>
+            <select name="gender" id="field-gender" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                <option value="Male" {% if data.get('gender') == 'Male' %}selected{% endif %}>Male</option>
+                <option value="Female" {% if data.get('gender') == 'Female' %}selected{% endif %}>Female</option>
+            </select>
         </div>
         <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Country of Residence</label>
             <input type="text" name="country_of_residence" value="{{ data.get('country_of_residence', 'Malaysia') }}"
-                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-        </div>
-        <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Date of Birth <span class="text-red-500">*</span></label>
-            <input type="date" name="date_of_birth" value="{{ data.get('date_of_birth', '') }}" required
                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
         </div>
     </div>
@@ -82,25 +80,18 @@
     <div class="grid md:grid-cols-2 gap-6">
         <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
-            <input type="email" name="email" value="{{ data.get('email', '') }}"
+            <input type="email" name="email" id="field-email" value="{{ data.get('email', '') }}"
                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
         </div>
         <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-            <input type="text" name="phone" value="{{ data.get('phone', '') }}"
+            <input type="text" name="phone" id="field-phone" value="{{ data.get('phone', '') }}"
                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
         </div>
     </div>
 
-    <!-- Gender & Marital Status -->
+    <!-- Marital Status & Property Coverage -->
     <div class="grid md:grid-cols-3 gap-6">
-        <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Gender <span class="text-red-500">*</span></label>
-            <select name="gender" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                <option value="Male" {% if data.get('gender') == 'Male' %}selected{% endif %}>Male</option>
-                <option value="Female" {% if data.get('gender') == 'Female' %}selected{% endif %}>Female</option>
-            </select>
-        </div>
         <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Marital Status <span class="text-red-500">*</span></label>
             <select name="marital_status" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
@@ -117,6 +108,14 @@
                 <option value="Overseas" {% if data.get('property_coverage') == 'Overseas' %}selected{% endif %}>Overseas</option>
                 <option value="Both" {% if data.get('property_coverage') == 'Both' %}selected{% endif %}>Both</option>
             </select>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">&nbsp;</label>
+            <label class="flex items-center h-[42px]">
+                <input type="checkbox" name="has_prior_will" value="1" {% if data.get('has_prior_will') %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-2">
+                <span class="text-sm text-gray-700">Has prior will</span>
+            </label>
         </div>
     </div>
 
@@ -167,8 +166,6 @@
                 </div>
             </div>
         </div>
-
-        <!-- Translator (shown if special circumstances) -->
         <div id="translator-section" class="mt-4 border-t border-gray-200 pt-4 {% if not data.get('special_circumstances') %}hidden{% endif %}">
             <h4 class="text-sm font-semibold text-gray-700 mb-3">Translator / Interpreter Details</h4>
             <div class="grid md:grid-cols-2 gap-4">
@@ -198,7 +195,10 @@
 
     <!-- Navigation -->
     <div class="flex justify-between pt-6 border-t border-gray-200">
-        <a href="/" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">Cancel</a>
+        <a href="/wizard/step/1" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+            <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            Back
+        </a>
         <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
             Next: Executors & Trustees
             <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
@@ -214,5 +214,29 @@ function toggleTranslator() {
     const checked = document.querySelectorAll('input[name="special_circumstances"]:checked').length > 0;
     document.getElementById('translator-section').classList.toggle('hidden', !checked);
 }
+function showTestatorIdentity(selectEl) {
+    const opt = selectEl.options[selectEl.selectedIndex];
+    const display = document.getElementById('identity-display');
+    if (!opt.value) { display.classList.add('hidden'); return; }
+    document.getElementById('id-name').textContent = opt.dataset.name;
+    document.getElementById('id-nric').textContent = opt.dataset.nric;
+    document.getElementById('id-address').textContent = opt.dataset.address || 'N/A';
+    document.getElementById('id-nationality').textContent = opt.dataset.nationality || 'Malaysian';
+    display.classList.remove('hidden');
+    // Pre-fill optional fields from identity if empty
+    const dobField = document.getElementById('field-dob');
+    if (!dobField.value && opt.dataset.dob) dobField.value = convertDateForInput(opt.dataset.dob);
+    const genderField = document.getElementById('field-gender');
+    if (opt.dataset.gender) genderField.value = opt.dataset.gender;
+    const emailField = document.getElementById('field-email');
+    if (!emailField.value && opt.dataset.email) emailField.value = opt.dataset.email;
+    const phoneField = document.getElementById('field-phone');
+    if (!phoneField.value && opt.dataset.phone) phoneField.value = opt.dataset.phone;
+}
+// Trigger display on page load if a testator is already selected
+document.addEventListener('DOMContentLoaded', function() {
+    const sel = document.getElementById('testator-identity');
+    if (sel.value) showTestatorIdentity(sel);
+});
 </script>
 {% endblock %}

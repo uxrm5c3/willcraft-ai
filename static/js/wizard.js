@@ -16,51 +16,13 @@ async function saveDraft() {
     }
 }
 
-// Person Registry - Auto-fill from dropdown
-function fillFromPerson(selectEl) {
-    const option = selectEl.options[selectEl.selectedIndex];
-    if (!option.value) return;
-    const prefix = selectEl.dataset.prefix;
-    const idx = selectEl.dataset.index;
-
-    const mappings = {
-        'exec': { name: `exec_name_${idx}`, nric: `exec_nric_${idx}`, address: `exec_address_${idx}`, relationship: `exec_relationship_${idx}` },
-        'guardian': { name: `guardian_name_${idx}`, nric: `guardian_nric_${idx}`, address: `guardian_address_${idx}`, relationship: `guardian_relationship_${idx}` },
-        'ben': { name: `ben_name_${idx}`, nric: `ben_nric_${idx}`, relationship: `ben_relationship_${idx}` },
-        'trustee': { name: 'trustee_name', nric: 'trustee_nric', address: 'trustee_address', relationship: 'trustee_relationship' },
-    };
-
-    const fields = mappings[prefix];
-    if (!fields) return;
-
-    if (fields.name) setFieldValue(fields.name, option.dataset.name);
-    if (fields.nric) setFieldValue(fields.nric, option.dataset.nric);
-    if (fields.address) setFieldValue(fields.address, option.dataset.address);
-    if (fields.relationship) setFieldValue(fields.relationship, option.dataset.relationship);
-}
-
+// Helper to set form field value
 function setFieldValue(fieldName, value) {
     const field = document.querySelector(`[name="${fieldName}"]`);
     if (field && value) {
         field.value = value;
         field.classList.add('bg-yellow-50');
     }
-}
-
-// Build person selector HTML for dynamically added entries
-function buildPersonSelectorHtml(prefix, index) {
-    if (typeof window._personRegistry === 'undefined' || window._personRegistry.length === 0) return '';
-    let options = '<option value="">-- Select a person or type manually --</option>';
-    for (const p of window._personRegistry) {
-        options += `<option value="${p.id}" data-name="${p.full_name}" data-nric="${p.nric_passport}" data-address="${p.address || ''}" data-relationship="${p.relationship || ''}">${p.full_name} (${p.nric_passport})</option>`;
-    }
-    return `<div class="person-selector mb-2">
-        <label class="block text-xs font-medium text-gray-500 mb-1">Quick Fill from Registry</label>
-        <select class="person-select w-full px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-gray-50"
-                data-prefix="${prefix}" data-index="${index}" onchange="fillFromPerson(this)">
-            ${options}
-        </select>
-    </div>`;
 }
 
 // File Upload Handlers

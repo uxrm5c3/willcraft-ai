@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Optional
 
 
 class Executor(BaseModel):
@@ -8,3 +8,4 @@ class Executor(BaseModel):
     nric_passport: str
     relationship: str
     role: Literal["Primary", "Joint", "Substitute"] = "Primary"
+    person_id: Optional[str] = None

@@ -1,17 +1,17 @@
 {% extends "wizard/layout.html" %}
 
-{% block title %}Step 3: Guardians - WillCraft AI{% endblock %}
+{% block title %}Step 4: Guardians - WillCraft AI{% endblock %}
 
 {% block wizard_content %}
 <div class="mb-6">
-    <h2 class="text-2xl font-bold text-gray-900">Step 3: Guardians of Minor Children</h2>
+    <h2 class="text-2xl font-bold text-gray-900">Step 4: Guardians of Minor Children</h2>
     <p class="text-gray-600 mt-1">Appoint guardian(s) for your children who are under 21 years of age. This step is optional if you have no minor children.</p>
     <div class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
         <strong>Legal Note:</strong> Under Malaysian law, a child is considered a minor until the age of 21. If both parents pass away, the appointed guardian will have custody of the minor children.
     </div>
 </div>
 
-<form method="POST" action="/wizard/step/3" class="space-y-6">
+<form method="POST" action="/wizard/step/4" class="space-y-6">
     <!-- Exclude Spouse/Ex-Spouse as Guardian -->
     <div class="border border-gray-200 rounded-lg p-4">
         <label class="flex items-center">
@@ -50,38 +50,30 @@
                         {% endif %}
                     </div>
                 </div>
-                {% if persons %}
-                {% with field_prefix='guardian', index=loop.index0 %}
-                {% include 'partials/person_selector.html' %}
-                {% endwith %}
-                {% endif %}
-                <div class="mb-3 flex items-center gap-3">
-                    <input type="file" id="nric-upload-guardian-{{ loop.index0 }}" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-primary-100 file:text-primary-700"
-                           onchange="uploadAndExtractNRIC(this, 'nric-status-guardian-{{ loop.index0 }}', {name:'guardian_name_{{ loop.index0 }}', nric:'guardian_nric_{{ loop.index0 }}', address:'guardian_address_{{ loop.index0 }}'})">
-                    <span id="nric-status-guardian-{{ loop.index0 }}" class="text-xs"></span>
-                </div>
                 <div class="grid md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                        <input type="text" name="guardian_name_{{ loop.index0 }}" value="{{ guardian.get('full_name', '') }}"
-                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                               placeholder="Full name as per NRIC">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No.</label>
-                        <input type="text" name="guardian_nric_{{ loop.index0 }}" value="{{ guardian.get('nric_passport', '') }}"
-                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                               placeholder="e.g., 800101-14-1234">
-                    </div>
                     <div class="md:col-span-2">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
-                        <input type="text" name="guardian_address_{{ loop.index0 }}" value="{{ guardian.get('address', '') }}"
-                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                               placeholder="Full residential address">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
+                        <select name="guardian_person_id_{{ loop.index0 }}" required
+                                onchange="showIdentityInfo(this, 'guardian-info-{{ loop.index0 }}')"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                            <option value="">-- Select an identity --</option>
+                            {% for person in persons %}
+                            <option value="{{ person.id }}"
+                                    data-name="{{ person.full_name }}"
+                                    data-nric="{{ person.nric_passport }}"
+                                    data-address="{{ person.address or '' }}"
+                                    {% if guardian.get('person_id') == person.id %}selected{% endif %}>
+                                {{ person.full_name }} ({{ person.nric_passport }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div id="guardian-info-{{ loop.index0 }}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not guardian.get('person_id') %}hidden{% endif %}">
+                            {% if guardian.get('person_id') %}{{ guardian.full_name }} &middot; {{ guardian.nric_passport }} &middot; {{ guardian.address }}{% endif %}
+                        </div>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
-                        <input type="text" name="guardian_relationship_{{ loop.index0 }}" value="{{ guardian.get('relationship', '') }}"
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator <span class="text-red-500">*</span></label>
+                        <input type="text" name="guardian_relationship_{{ loop.index0 }}" value="{{ guardian.get('relationship', '') }}" required
                                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                                placeholder="e.g., Brother, Sister, Friend">
                     </div>
@@ -139,12 +131,12 @@
 
     <!-- Navigation -->
     <div class="flex justify-between items-center pt-6 border-t border-gray-200">
-        <a href="/wizard/step/2" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+        <a href="/wizard/step/3" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
             <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
             Back
         </a>
         <div class="flex items-center gap-4">
-            <a href="/wizard/step/4" class="text-sm text-gray-400 hover:text-gray-600 underline">Skip this step</a>
+            <a href="/wizard/step/5" class="text-sm text-gray-400 hover:text-gray-600 underline">Skip this step</a>
             <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
                 Next: Beneficiaries
                 <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
@@ -162,10 +154,22 @@ function toggleSection(id, show) {
     document.getElementById(id).classList.toggle('hidden', !show);
 }
 
+function showIdentityInfo(selectEl, infoId) {
+    const opt = selectEl.options[selectEl.selectedIndex];
+    const info = document.getElementById(infoId);
+    if (!opt.value) { info.classList.add('hidden'); info.innerHTML = ''; return; }
+    info.innerHTML = `${opt.dataset.name} &middot; ${opt.dataset.nric} &middot; ${opt.dataset.address || 'N/A'}`;
+    info.classList.remove('hidden');
+}
+
 function addGuardian() {
     if (guardianCount >= 3) { alert('Maximum 3 guardians allowed.'); return; }
     const container = document.getElementById('guardians-container');
     const idx = guardianCount;
+    let personOptions = '<option value="">-- Select an identity --</option>';
+    for (const p of window._personRegistry) {
+        personOptions += `<option value="${p.id}" data-name="${p.full_name}" data-nric="${p.nric_passport}" data-address="${p.address || ''}">${p.full_name} (${p.nric_passport})</option>`;
+    }
     const html = `
     <div class="guardian-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="${idx}">
         <div class="flex justify-between items-center mb-4">
@@ -179,27 +183,20 @@ function addGuardian() {
                 <button type="button" onclick="removeGuardian(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
             </div>
         </div>
-        <div class="mb-3 flex items-center gap-3">
-            <input type="file" id="nric-upload-guardian-${idx}" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-primary-100 file:text-primary-700"
-                   onchange="uploadAndExtractNRIC(this, 'nric-status-guardian-${idx}', {name:'guardian_name_${idx}', nric:'guardian_nric_${idx}', address:'guardian_address_${idx}'})">
-            <span id="nric-status-guardian-${idx}" class="text-xs"></span>
-        </div>
         <div class="grid md:grid-cols-2 gap-4">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                <input type="text" name="guardian_name_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="Full name as per NRIC">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No.</label>
-                <input type="text" name="guardian_nric_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., 800101-14-1234">
-            </div>
             <div class="md:col-span-2">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
-                <input type="text" name="guardian_address_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="Full residential address">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
+                <select name="guardian_person_id_${idx}" required onchange="showIdentityInfo(this, 'guardian-info-${idx}')"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    ${personOptions}
+                </select>
+                <div id="guardian-info-${idx}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
-                <input type="text" name="guardian_relationship_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., Brother, Sister, Friend">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator <span class="text-red-500">*</span></label>
+                <input type="text" name="guardian_relationship_${idx}" required
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="e.g., Brother, Sister, Friend">
             </div>
         </div>
     </div>`;
@@ -215,5 +212,15 @@ function removeGuardian(btn) {
     document.getElementById('guardian-count').value = guardianCount;
     document.getElementById('add-guardian-btn').classList.remove('hidden');
 }
+
+// Show identity info for pre-selected entries on page load
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('[name^="guardian_person_id_"]').forEach(sel => {
+        if (sel.value) {
+            const idx = sel.name.replace('guardian_person_id_', '');
+            showIdentityInfo(sel, `guardian-info-${idx}`);
+        }
+    });
+});
 </script>
 {% endblock %}

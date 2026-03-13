@@ -1,12 +1,12 @@
 {% extends "wizard/layout.html" %}
 
-{% block title %}Step 7: Testamentary Trust - WillCraft AI{% endblock %}
+{% block title %}Step 8: Testamentary Trust - WillCraft AI{% endblock %}
 
 {% block wizard_content %}
 <div class="mb-6">
     <div class="flex items-center justify-between">
         <div>
-            <h2 class="text-2xl font-bold text-gray-900">Step 7: Testamentary Trust</h2>
+            <h2 class="text-2xl font-bold text-gray-900">Step 8: Testamentary Trust</h2>
             <p class="text-gray-600 mt-1">Recommended if you have minor (under 18) or handicapped beneficiaries.</p>
         </div>
         <span class="px-3 py-1 bg-gray-100 text-gray-500 text-xs font-semibold rounded-full uppercase">Optional</span>
@@ -16,7 +16,7 @@
     </div>
 </div>
 
-<form method="POST" action="/wizard/step/7" class="space-y-8">
+<form method="POST" action="/wizard/step/8" class="space-y-8">
     {% set trust = data %}
 
     <!-- Trust Beneficiaries -->
@@ -137,11 +137,11 @@
     <!-- Assets from Gifts -->
     <div>
         <h3 class="text-lg font-semibold text-gray-800 mb-1">Assets from Specific Gifts</h3>
-        <p class="text-sm text-gray-500 mb-3">Reference gift numbers from Step 5 that should be held in trust.</p>
+        <p class="text-sm text-gray-500 mb-3">Reference gift numbers from Step 6 that should be held in trust.</p>
 
         <input type="text" name="gift_references" value="{{ trust.get('gift_references', '') }}"
                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-               placeholder="e.g., Gift 1, Gift 3 (reference numbers from Step 5: Specific Gifts)">
+               placeholder="e.g., Gift 1, Gift 3 (reference numbers from Step 6: Specific Gifts)">
     </div>
 
     <!-- Payment Mode -->
@@ -190,7 +190,7 @@
     <!-- Separate Trustee -->
     <div>
         <h3 class="text-lg font-semibold text-gray-800 mb-1">Trustee for This Trust</h3>
-        <p class="text-sm text-gray-500 mb-4">If different from the executors/trustees appointed in Step 2.</p>
+        <p class="text-sm text-gray-500 mb-4">If different from the executors/trustees appointed in Step 3.</p>
 
         <label class="flex items-center mb-4">
             <input type="checkbox" name="separate_trustee" value="1" {% if trust.get('separate_trustee') %}checked{% endif %}
@@ -201,23 +201,25 @@
 
         <div id="separate-trustee-section" class="border border-gray-200 rounded-lg p-4 {% if not trust.get('separate_trustee') %}hidden{% endif %}">
             <div class="grid md:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Trustee Full Name</label>
-                    <input type="text" name="trustee_name" value="{{ trust.get('trustee_name', '') }}"
-                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="Full name as per NRIC">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No.</label>
-                    <input type="text" name="trustee_nric" value="{{ trust.get('trustee_nric', '') }}"
-                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="e.g., 800101-14-1234">
-                </div>
                 <div class="md:col-span-2">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
-                    <input type="text" name="trustee_address" value="{{ trust.get('trustee_address', '') }}"
-                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="Full residential address">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity</label>
+                    <select name="trustee_person_id"
+                            onchange="showTrusteeIdentityInfo(this)"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        <option value="">-- Select an identity --</option>
+                        {% for person in persons %}
+                        <option value="{{ person.id }}"
+                                data-name="{{ person.full_name }}"
+                                data-nric="{{ person.nric_passport }}"
+                                data-address="{{ person.address or '' }}"
+                                {% if trust.get('trustee_person_id') == person.id %}selected{% endif %}>
+                            {{ person.full_name }} ({{ person.nric_passport }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div id="trustee-info" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not trust.get('trustee_person_id') %}hidden{% endif %}">
+                        {% if trust.get('trustee_person_id') %}{{ trust.get('trustee_name', '') }} &middot; {{ trust.get('trustee_nric', '') }} &middot; {{ trust.get('trustee_address', '') }}{% endif %}
+                    </div>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
@@ -231,12 +233,12 @@
 
     <!-- Navigation -->
     <div class="flex justify-between items-center pt-6 border-t border-gray-200">
-        <a href="/wizard/step/6" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+        <a href="/wizard/step/7" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
             <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
             Back
         </a>
         <div class="flex items-center gap-4">
-            <a href="/wizard/step/8" class="text-sm text-gray-500 hover:text-gray-700 underline">Skip this step</a>
+            <a href="/wizard/step/9" class="text-sm text-gray-500 hover:text-gray-700 underline">Skip this step</a>
             <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
                 Next: Other Matters
                 <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
@@ -252,6 +254,14 @@ let trustBenCount = {{ data.get('trust_beneficiaries', [{}])|length }};
 
 function toggleSection(id, show) {
     document.getElementById(id).classList.toggle('hidden', !show);
+}
+
+function showTrusteeIdentityInfo(selectEl) {
+    const opt = selectEl.options[selectEl.selectedIndex];
+    const info = document.getElementById('trustee-info');
+    if (!opt.value) { info.classList.add('hidden'); info.innerHTML = ''; return; }
+    info.innerHTML = `${opt.dataset.name} &middot; ${opt.dataset.nric} &middot; ${opt.dataset.address || 'N/A'}`;
+    info.classList.remove('hidden');
 }
 
 function addTrustBeneficiary() {
@@ -295,5 +305,11 @@ function removeTrustBeneficiary(btn) {
     trustBenCount--;
     document.getElementById('trust-beneficiary-count').value = trustBenCount;
 }
+
+// Show trustee identity info on page load if pre-selected
+document.addEventListener('DOMContentLoaded', function() {
+    const sel = document.querySelector('[name="trustee_person_id"]');
+    if (sel && sel.value) showTrusteeIdentityInfo(sel);
+});
 </script>
 {% endblock %}

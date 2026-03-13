@@ -9,15 +9,16 @@
                 <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Progress</h3>
                 <nav class="space-y-1">
                     {% set steps = [
-                        (1, "Testator Info", "compulsory"),
-                        (2, "Executors & Trustees", "compulsory"),
-                        (3, "Guardians", "optional"),
-                        (4, "Beneficiaries", "compulsory"),
-                        (5, "Specific Gifts", "optional"),
-                        (6, "Residuary Estate", "compulsory"),
-                        (7, "Testamentary Trust", "optional"),
-                        (8, "Other Matters", "optional"),
-                        (9, "Review & Generate", "final")
+                        (1, "Identities", "compulsory"),
+                        (2, "Testator Info", "compulsory"),
+                        (3, "Executors & Trustees", "compulsory"),
+                        (4, "Guardians", "optional"),
+                        (5, "Beneficiaries", "compulsory"),
+                        (6, "Specific Gifts", "optional"),
+                        (7, "Residuary Estate", "compulsory"),
+                        (8, "Testamentary Trust", "optional"),
+                        (9, "Other Matters", "optional"),
+                        (10, "Review & Generate", "final")
                     ] %}
                     {% for num, name, type in steps %}
                     <a href="/wizard/step/{{ num }}"

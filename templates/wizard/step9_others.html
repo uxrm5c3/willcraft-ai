@@ -1,19 +1,19 @@
 {% extends "wizard/layout.html" %}
 
-{% block title %}Step 8: Other Matters - WillCraft AI{% endblock %}
+{% block title %}Step 9: Other Matters - WillCraft AI{% endblock %}
 
 {% block wizard_content %}
 <div class="mb-6">
     <div class="flex items-center justify-between">
         <div>
-            <h2 class="text-2xl font-bold text-gray-900">Step 8: Other Matters</h2>
+            <h2 class="text-2xl font-bold text-gray-900">Step 9: Other Matters</h2>
             <p class="text-gray-600 mt-1">Additional provisions and personal messages for your will.</p>
         </div>
         <span class="px-3 py-1 bg-gray-100 text-gray-500 text-xs font-semibold rounded-full uppercase">Optional</span>
     </div>
 </div>
 
-<form method="POST" action="/wizard/step/8" class="space-y-8">
+<form method="POST" action="/wizard/step/9" class="space-y-8">
     {% set other = data.get('other_matters', {}) %}
 
     <!-- Section H: Terms of Endearment -->
@@ -139,12 +139,12 @@
 
     <!-- Navigation -->
     <div class="flex justify-between items-center pt-6 border-t border-gray-200">
-        <a href="/wizard/step/7" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+        <a href="/wizard/step/8" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
             <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
             Back
         </a>
         <div class="flex items-center gap-4">
-            <a href="/wizard/step/9" class="text-sm text-gray-500 hover:text-gray-700 underline">Skip this step</a>
+            <a href="/wizard/step/10" class="text-sm text-gray-500 hover:text-gray-700 underline">Skip this step</a>
             <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
                 Next: Review & Generate
                 <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>

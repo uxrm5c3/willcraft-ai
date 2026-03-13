@@ -8,6 +8,7 @@ class Guardian(BaseModel):
     nric_passport: str
     relationship: str
     role: Literal["Primary", "Joint", "Substitute"] = "Primary"
+    person_id: Optional[str] = None
 
 
 class GuardianAllowance(BaseModel):

@@ -1,17 +1,17 @@
 {% extends "wizard/layout.html" %}
 
-{% block title %}Step 4: Beneficiaries - WillCraft AI{% endblock %}
+{% block title %}Step 5: Beneficiaries - WillCraft AI{% endblock %}
 
 {% block wizard_content %}
 <div class="mb-6">
-    <h2 class="text-2xl font-bold text-gray-900">Step 4: List of Beneficiaries</h2>
+    <h2 class="text-2xl font-bold text-gray-900">Step 5: List of Beneficiaries</h2>
     <p class="text-gray-600 mt-1">List all persons who will receive from your will. Every person named as a beneficiary in later steps must appear here first.</p>
     <div class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
         <strong>Legal Note:</strong> Beneficiaries and their spouses cannot be witnesses for the signing of the Will. This is a compulsory section.
     </div>
 </div>
 
-<form method="POST" action="/wizard/step/4" class="space-y-6">
+<form method="POST" action="/wizard/step/5" class="space-y-6">
     <!-- Beneficiaries List -->
     <div id="beneficiaries-container">
         {% set beneficiaries = data.get('beneficiaries', [{}]) %}
@@ -23,28 +23,26 @@
                 <button type="button" onclick="removeBeneficiary(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
                 {% endif %}
             </div>
-            {% if persons %}
-            {% with field_prefix='ben', index=loop.index0 %}
-            {% include 'partials/person_selector.html' %}
-            {% endwith %}
-            {% endif %}
-            <div class="mb-3 flex items-center gap-3">
-                <input type="file" id="nric-upload-ben-{{ loop.index0 }}" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-primary-100 file:text-primary-700"
-                       onchange="uploadAndExtractNRIC(this, 'nric-status-ben-{{ loop.index0 }}', {name:'ben_name_{{ loop.index0 }}', nric:'ben_nric_{{ loop.index0 }}'})">
-                <span id="nric-status-ben-{{ loop.index0 }}" class="text-xs"></span>
-            </div>
-            <div class="grid md:grid-cols-3 gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
-                    <input type="text" name="ben_name_{{ loop.index0 }}" value="{{ ben.get('full_name', '') }}" required
-                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="Full name as per NRIC / Birth Cert">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport / Birth Cert No. <span class="text-red-500">*</span></label>
-                    <input type="text" name="ben_nric_{{ loop.index0 }}" value="{{ ben.get('nric_passport_birthcert', '') }}" required
-                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="e.g., 800101-14-1234">
+            <div class="grid md:grid-cols-2 gap-4">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
+                    <select name="ben_person_id_{{ loop.index0 }}" required
+                            onchange="showIdentityInfo(this, 'ben-info-{{ loop.index0 }}')"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        <option value="">-- Select an identity --</option>
+                        {% for person in persons %}
+                        <option value="{{ person.id }}"
+                                data-name="{{ person.full_name }}"
+                                data-nric="{{ person.nric_passport }}"
+                                data-address="{{ person.address or '' }}"
+                                {% if ben.get('person_id') == person.id %}selected{% endif %}>
+                            {{ person.full_name }} ({{ person.nric_passport }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <div id="ben-info-{{ loop.index0 }}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not ben.get('person_id') %}hidden{% endif %}">
+                        {% if ben.get('person_id') %}{{ ben.full_name }} &middot; {{ ben.nric_passport }}{% endif %}
+                    </div>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Relationship <span class="text-red-500">*</span></label>
@@ -66,12 +64,12 @@
 
     <!-- Exclusion Note -->
     <div class="p-3 bg-amber-50 rounded-lg text-sm text-amber-700 border border-amber-200">
-        <strong>Note:</strong> If you wish to exclude any family member from your will, you may do so in Step 8 (Other Matters) with a reason for the exclusion.
+        <strong>Note:</strong> If you wish to exclude any family member from your will, you may do so in Step 9 (Other Matters) with a reason for the exclusion.
     </div>
 
     <!-- Navigation -->
     <div class="flex justify-between pt-6 border-t border-gray-200">
-        <a href="/wizard/step/3" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+        <a href="/wizard/step/4" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
             <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
             Back
         </a>
@@ -87,35 +85,42 @@
 <script>
 let beneficiaryCount = {{ data.get('beneficiaries', [{}])|length }};
 
+function showIdentityInfo(selectEl, infoId) {
+    const opt = selectEl.options[selectEl.selectedIndex];
+    const info = document.getElementById(infoId);
+    if (!opt.value) { info.classList.add('hidden'); info.innerHTML = ''; return; }
+    info.innerHTML = `${opt.dataset.name} &middot; ${opt.dataset.nric} &middot; ${opt.dataset.address || 'N/A'}`;
+    info.classList.remove('hidden');
+}
+
 function addBeneficiary() {
     if (beneficiaryCount >= 20) { alert('Maximum 20 beneficiaries allowed.'); return; }
     const container = document.getElementById('beneficiaries-container');
     const idx = beneficiaryCount;
-    const personsHtml = buildPersonSelectorHtml('ben', idx);
+    let personOptions = '<option value="">-- Select an identity --</option>';
+    for (const p of window._personRegistry) {
+        personOptions += `<option value="${p.id}" data-name="${p.full_name}" data-nric="${p.nric_passport}" data-address="${p.address || ''}">${p.full_name} (${p.nric_passport})</option>`;
+    }
     const html = `
     <div class="beneficiary-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="${idx}">
         <div class="flex justify-between items-center mb-4">
             <h3 class="font-semibold text-gray-700">Beneficiary No. ${idx + 1}</h3>
             <button type="button" onclick="removeBeneficiary(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
         </div>
-        ${personsHtml}
-        <div class="mb-3 flex items-center gap-3">
-            <input type="file" id="nric-upload-ben-${idx}" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-primary-100 file:text-primary-700"
-                   onchange="uploadAndExtractNRIC(this, 'nric-status-ben-${idx}', {name:'ben_name_${idx}', nric:'ben_nric_${idx}'})">
-            <span id="nric-status-ben-${idx}" class="text-xs"></span>
-        </div>
-        <div class="grid md:grid-cols-3 gap-4">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
-                <input type="text" name="ben_name_${idx}" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="Full name as per NRIC / Birth Cert">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport / Birth Cert No. <span class="text-red-500">*</span></label>
-                <input type="text" name="ben_nric_${idx}" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., 800101-14-1234">
+        <div class="grid md:grid-cols-2 gap-4">
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
+                <select name="ben_person_id_${idx}" required onchange="showIdentityInfo(this, 'ben-info-${idx}')"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    ${personOptions}
+                </select>
+                <div id="ben-info-${idx}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Relationship <span class="text-red-500">*</span></label>
-                <input type="text" name="ben_relationship_${idx}" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., Spouse, Son, Daughter, Brother">
+                <input type="text" name="ben_relationship_${idx}" required
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="e.g., Spouse, Son, Daughter, Brother">
             </div>
         </div>
     </div>`;
@@ -131,5 +136,15 @@ function removeBeneficiary(btn) {
     document.getElementById('beneficiary-count').value = beneficiaryCount;
     document.getElementById('add-beneficiary-btn').classList.remove('hidden');
 }
+
+// Show identity info for pre-selected entries on page load
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('[name^="ben_person_id_"]').forEach(sel => {
+        if (sel.value) {
+            const idx = sel.name.replace('ben_person_id_', '');
+            showIdentityInfo(sel, `ben-info-${idx}`);
+        }
+    });
+});
 </script>
 {% endblock %}

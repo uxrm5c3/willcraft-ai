@@ -81,6 +81,7 @@ def save_will_to_db():
         db.session.flush()
         session['will_id'] = will_record.id
 
+    will_record.identities_data = json.dumps(session.get('person_registry', []))
     will_record.step1_data = json.dumps(session.get('step1', {}))
     will_record.step2_data = json.dumps(session.get('step2_executors', []))
     will_record.step3_data = json.dumps({
@@ -126,36 +127,56 @@ def load_will_to_session(will_record):
     session['step8_others'] = json.loads(will_record.step8_data or '{}')
     session['completed_steps'] = json.loads(will_record.completed_steps or '[]')
     session['generated_will_text'] = will_record.generated_will_text
+    # Refresh identity registry from DB (preferred) or from saved snapshot
     _refresh_session_person_registry(will_record.client_id)
+    if not session.get('person_registry'):
+        session['person_registry'] = json.loads(will_record.identities_data or '[]')
     session.modified = True
 
 
-def upsert_person(client_id, full_name, nric_passport, address=None, relationship=None, date_of_birth=None, source_step=None):
-    """Add or update a person in the registry."""
+def upsert_person(client_id, full_name, nric_passport, address=None,
+                  date_of_birth=None, nationality=None, gender=None,
+                  passport_expiry=None, email=None, phone=None):
+    """Add or update a person identity in the registry."""
     if not full_name or not nric_passport:
-        return
+        return None
     existing = Person.query.filter_by(client_id=client_id, nric_passport=nric_passport).first()
     if existing:
         existing.full_name = full_name.upper()
         if address:
             existing.address = address
-        if relationship:
-            existing.relationship = relationship
         if date_of_birth:
             existing.date_of_birth = date_of_birth
+        if nationality:
+            existing.nationality = nationality
+        if gender:
+            existing.gender = gender
+        if passport_expiry:
+            existing.passport_expiry = passport_expiry
+        if email:
+            existing.email = email
+        if phone:
+            existing.phone = phone
+        db.session.commit()
+        _refresh_session_person_registry(client_id)
+        return existing
     else:
         person = Person(
             client_id=client_id,
             full_name=full_name.upper(),
             nric_passport=nric_passport,
             address=address or '',
-            relationship=relationship or '',
             date_of_birth=date_of_birth,
-            source_step=source_step,
+            nationality=nationality or 'Malaysian',
+            gender=gender,
+            passport_expiry=passport_expiry,
+            email=email,
+            phone=phone,
         )
         db.session.add(person)
-    db.session.commit()
-    _refresh_session_person_registry(client_id)
+        db.session.commit()
+        _refresh_session_person_registry(client_id)
+        return person
 
 
 def _refresh_session_person_registry(client_id):
@@ -163,11 +184,21 @@ def _refresh_session_person_registry(client_id):
     persons = Person.query.filter_by(client_id=client_id).order_by(Person.full_name).all()
     session['person_registry'] = [
         {'id': p.id, 'full_name': p.full_name, 'nric_passport': p.nric_passport,
-         'address': p.address or '', 'relationship': p.relationship or '',
-         'date_of_birth': p.date_of_birth or ''}
+         'address': p.address or '', 'date_of_birth': p.date_of_birth or '',
+         'nationality': p.nationality or 'Malaysian', 'gender': p.gender or '',
+         'passport_expiry': p.passport_expiry or '',
+         'email': p.email or '', 'phone': p.phone or ''}
         for p in persons
     ]
     session.modified = True
+
+
+def _get_person_from_registry(person_id):
+    """Look up a person from session['person_registry'] by ID."""
+    for p in session.get('person_registry', []):
+        if p['id'] == person_id:
+            return p
+    return None
 
 
 def build_will_data():
@@ -324,7 +355,7 @@ def will_load(will_id):
         return redirect(url_for('index'))
     load_will_to_session(will_record)
     flash(f'Loaded: {will_record.title}', 'info')
-    return redirect(url_for('wizard_step_1'))
+    return redirect(url_for('wizard_step_identities'))
 
 
 @app.route('/wills/<will_id>/delete', methods=['POST'])
@@ -352,10 +383,83 @@ def api_persons_list():
     persons = Person.query.filter_by(client_id=client_id).order_by(Person.full_name).all()
     return jsonify([
         {'id': p.id, 'full_name': p.full_name, 'nric_passport': p.nric_passport,
-         'address': p.address or '', 'relationship': p.relationship or '',
-         'date_of_birth': p.date_of_birth or ''}
+         'address': p.address or '', 'date_of_birth': p.date_of_birth or '',
+         'nationality': p.nationality or 'Malaysian', 'gender': p.gender or '',
+         'passport_expiry': p.passport_expiry or '',
+         'email': p.email or '', 'phone': p.phone or ''}
         for p in persons
     ])
+
+
+@app.route('/api/persons', methods=['POST'])
+def api_persons_create():
+    """Create a new person identity."""
+    client_id = session.get('client_id')
+    if not client_id:
+        client_id = ensure_client()
+    data = request.get_json() or {}
+    full_name = (data.get('full_name') or '').strip()
+    nric_passport = (data.get('nric_passport') or '').strip()
+    if not full_name or not nric_passport:
+        return jsonify({'ok': False, 'error': 'Name and NRIC/Passport are required'}), 400
+    person = upsert_person(
+        client_id, full_name, nric_passport,
+        address=(data.get('address') or '').strip(),
+        date_of_birth=(data.get('date_of_birth') or '').strip() or None,
+        nationality=(data.get('nationality') or 'Malaysian').strip(),
+        gender=(data.get('gender') or '').strip() or None,
+        passport_expiry=(data.get('passport_expiry') or '').strip() or None,
+        email=(data.get('email') or '').strip() or None,
+        phone=(data.get('phone') or '').strip() or None,
+    )
+    return jsonify({'ok': True, 'person': {
+        'id': person.id, 'full_name': person.full_name,
+        'nric_passport': person.nric_passport, 'address': person.address or '',
+        'nationality': person.nationality or 'Malaysian',
+    }})
+
+
+@app.route('/api/persons/<person_id>', methods=['PUT'])
+def api_persons_update(person_id):
+    """Update an existing person identity."""
+    person = db.session.get(Person, person_id)
+    if not person:
+        return jsonify({'ok': False, 'error': 'Person not found'}), 404
+    data = request.get_json() or {}
+    if data.get('full_name'):
+        person.full_name = data['full_name'].strip().upper()
+    if data.get('nric_passport'):
+        person.nric_passport = data['nric_passport'].strip()
+    if 'address' in data:
+        person.address = (data['address'] or '').strip()
+    if 'nationality' in data:
+        person.nationality = (data['nationality'] or 'Malaysian').strip()
+    if 'passport_expiry' in data:
+        person.passport_expiry = (data['passport_expiry'] or '').strip() or None
+    if 'date_of_birth' in data:
+        person.date_of_birth = (data['date_of_birth'] or '').strip() or None
+    if 'gender' in data:
+        person.gender = (data['gender'] or '').strip() or None
+    if 'email' in data:
+        person.email = (data['email'] or '').strip() or None
+    if 'phone' in data:
+        person.phone = (data['phone'] or '').strip() or None
+    db.session.commit()
+    _refresh_session_person_registry(person.client_id)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/persons/<person_id>', methods=['DELETE'])
+def api_persons_delete(person_id):
+    """Delete a person identity."""
+    person = db.session.get(Person, person_id)
+    if not person:
+        return jsonify({'ok': False, 'error': 'Person not found'}), 404
+    client_id = person.client_id
+    db.session.delete(person)
+    db.session.commit()
+    _refresh_session_person_registry(client_id)
+    return jsonify({'ok': True})
 
 
 # -- Upload & Document API ----------------------------------------------------
@@ -452,7 +556,9 @@ def api_ocr_nric():
         upsert_person(client_id, extracted['full_name'], extracted['nric_number'],
                       address=extracted.get('address', ''),
                       date_of_birth=extracted.get('date_of_birth', ''),
-                      source_step='ocr')
+                      nationality=extracted.get('nationality', 'Malaysian'),
+                      gender=extracted.get('gender', ''),
+                      passport_expiry=extracted.get('passport_expiry', ''))
     return jsonify({'ok': True, 'extracted': extracted, 'document_id': doc.id})
 
 
@@ -605,21 +711,49 @@ def api_parse_will():
     return jsonify({'ok': True})
 
 
-# -- Step 1: Testator Info ---------------------------------------------------
+# -- Step 1: Identity Management ---------------------------------------------
 
 @app.route('/wizard/step/1', methods=['GET', 'POST'])
-def wizard_step_1():
+def wizard_step_identities():
     if request.method == 'GET':
+        client_id = session.get('client_id')
+        if client_id:
+            _refresh_session_person_registry(client_id)
         return render_template(
-            'wizard/step1_testator.html',
+            'wizard/step1_identities.html',
             current_step=1,
             completed_steps=get_completed_steps(),
-            data=session.get('step1', {}),
+            persons=session.get('person_registry', []),
         )
 
-    # POST -- save form data
+    # POST -- validate at least 1 identity exists, then proceed
+    persons = session.get('person_registry', [])
+    if not persons:
+        flash('Please add at least one identity before proceeding.', 'error')
+        return redirect(url_for('wizard_step_identities'))
+    mark_step_complete(1)
+    save_will_to_db()
+    return redirect(url_for('wizard_step_testator'))
+
+
+# -- Step 2: Testator Info (simplified - select identity) --------------------
+
+@app.route('/wizard/step/2', methods=['GET', 'POST'])
+def wizard_step_testator():
+    if request.method == 'GET':
+        return render_template(
+            'wizard/step2_testator.html',
+            current_step=2,
+            completed_steps=get_completed_steps(),
+            data=session.get('step1', {}),
+            persons=session.get('person_registry', []),
+        )
+
+    # POST -- merge selected identity with testator-specific fields
+    person_id = request.form.get('testator_person_id', '')
+    person = _get_person_from_registry(person_id)
+
     dob_raw = request.form.get('date_of_birth', '')
-    # HTML date input gives YYYY-MM-DD; convert to DD-MM-YYYY for the model
     if dob_raw and '-' in dob_raw and len(dob_raw) == 10:
         parts = dob_raw.split('-')
         if len(parts) == 3 and len(parts[0]) == 4:
@@ -628,16 +762,17 @@ def wizard_step_1():
     special = request.form.getlist('special_circumstances')
 
     session['step1'] = {
-        'full_name': request.form.get('full_name', '').strip(),
-        'nric_passport': request.form.get('nric_passport', '').strip(),
-        'residential_address': request.form.get('residential_address', '').strip(),
-        'nationality': request.form.get('nationality', 'Malaysian').strip(),
+        'person_id': person_id,
+        'full_name': person['full_name'] if person else request.form.get('full_name', '').strip(),
+        'nric_passport': person['nric_passport'] if person else request.form.get('nric_passport', '').strip(),
+        'residential_address': person['address'] if person else request.form.get('residential_address', '').strip(),
+        'nationality': person.get('nationality', 'Malaysian') if person else request.form.get('nationality', 'Malaysian').strip(),
         'country_of_residence': request.form.get('country_of_residence', 'Malaysia').strip(),
-        'date_of_birth': dob_raw,
+        'date_of_birth': dob_raw or (person.get('date_of_birth', '') if person else ''),
         'occupation': request.form.get('occupation', '').strip(),
         'religion': request.form.get('religion', '').strip() or None,
-        'email': request.form.get('email', '').strip() or None,
-        'phone': request.form.get('phone', '').strip() or None,
+        'email': request.form.get('email', '').strip() or (person.get('email') if person else None),
+        'phone': request.form.get('phone', '').strip() or (person.get('phone') if person else None),
         'gender': request.form.get('gender', 'Male'),
         'marital_status': request.form.get('marital_status', 'Single'),
         'has_prior_will': bool(request.form.get('has_prior_will')),
@@ -653,82 +788,79 @@ def wizard_step_1():
         'translator_language': request.form.get('translator_language', '').strip() or None,
     }
     session.modified = True
-    mark_step_complete(1)
+    mark_step_complete(2)
     save_will_to_db()
-    # Upsert testator to person registry
-    s1 = session['step1']
-    upsert_person(session.get('client_id'), s1.get('full_name', ''), s1.get('nric_passport', ''),
-                  address=s1.get('residential_address', ''), date_of_birth=s1.get('date_of_birth', ''), source_step='step1')
-    if s1.get('fiance_name'):
-        upsert_person(session.get('client_id'), s1['fiance_name'], s1.get('fiance_nric', ''), source_step='step1')
-    return redirect(url_for('wizard_step_2'))
+    return redirect(url_for('wizard_step_executors'))
 
 
-# -- Step 2: Executors -------------------------------------------------------
+# -- Step 3: Executors (select from identities) -----------------------------
 
-@app.route('/wizard/step/2', methods=['GET', 'POST'])
-def wizard_step_2():
+@app.route('/wizard/step/3', methods=['GET', 'POST'])
+def wizard_step_executors():
     if request.method == 'GET':
         return render_template(
-            'wizard/step2_executors.html',
-            current_step=2,
+            'wizard/step3_executors.html',
+            current_step=3,
             completed_steps=get_completed_steps(),
             data={'executors': session.get('step2_executors', [{}])},
             persons=session.get('person_registry', []),
         )
 
-    # POST -- parse dynamic executor fields
+    # POST -- parse executor selections from identities
     count = int(request.form.get('executor_count', 1))
     executors = []
     for i in range(count):
-        name = request.form.get(f'exec_name_{i}', '').strip()
-        if not name:
+        person_id = request.form.get(f'exec_person_id_{i}', '').strip()
+        person = _get_person_from_registry(person_id)
+        if not person:
             continue
         executors.append({
-            'full_name': name,
-            'nric_passport': request.form.get(f'exec_nric_{i}', '').strip(),
-            'address': request.form.get(f'exec_address_{i}', '').strip(),
+            'person_id': person_id,
+            'full_name': person['full_name'],
+            'nric_passport': person['nric_passport'],
+            'address': person['address'],
             'relationship': request.form.get(f'exec_relationship_{i}', '').strip(),
             'role': request.form.get(f'exec_role_{i}', 'Primary'),
         })
 
     session['step2_executors'] = executors
     session.modified = True
-    mark_step_complete(2)
+    mark_step_complete(3)
     save_will_to_db()
-    for e in executors:
-        upsert_person(session.get('client_id'), e['full_name'], e['nric_passport'],
-                      address=e.get('address', ''), relationship=e.get('relationship', ''), source_step='step2')
-    return redirect(url_for('wizard_step_3'))
+    return redirect(url_for('wizard_step_guardians'))
 
 
-# -- Step 3: Guardians (optional) --------------------------------------------
+# -- Step 4: Guardians (select from identities, optional) -------------------
 
-@app.route('/wizard/step/3', methods=['GET', 'POST'])
-def wizard_step_3():
+@app.route('/wizard/step/4', methods=['GET', 'POST'])
+def wizard_step_guardians():
     if request.method == 'GET':
         return render_template(
-            'wizard/step3_guardians.html',
-            current_step=3,
+            'wizard/step4_guardians.html',
+            current_step=4,
             completed_steps=get_completed_steps(),
             data={
                 'guardians': session.get('step3_guardians', []),
                 'guardian_allowance': session.get('step3_guardian_allowance', {}),
+                'exclude_spouse_guardian': session.get('step3_exclude_spouse', False),
+                'exclude_spouse_guardian_reason': session.get('step3_exclude_spouse_reason', ''),
             },
             persons=session.get('person_registry', []),
         )
 
-    # POST -- parse dynamic guardian fields
+    # POST -- parse guardian selections from identities
     count = int(request.form.get('guardian_count', 0))
     guardians = []
     for i in range(count):
-        name = request.form.get(f'guardian_name_{i}', '').strip()
-        if not name:
+        person_id = request.form.get(f'guardian_person_id_{i}', '').strip()
+        person = _get_person_from_registry(person_id)
+        if not person:
             continue
         guardians.append({
-            'full_name': name,
-            'nric_passport': request.form.get(f'guardian_nric_{i}', '').strip(),
-            'address': request.form.get(f'guardian_address_{i}', '').strip(),
+            'person_id': person_id,
+            'full_name': person['full_name'],
+            'nric_passport': person['nric_passport'],
+            'address': person['address'],
             'relationship': request.form.get(f'guardian_relationship_{i}', '').strip(),
             'role': request.form.get(f'guardian_role_{i}', 'Primary'),
         })
@@ -747,59 +879,57 @@ def wizard_step_3():
 
     session['step3_guardians'] = guardians
     session['step3_guardian_allowance'] = ga
+    session['step3_exclude_spouse'] = bool(request.form.get('exclude_spouse_guardian'))
+    session['step3_exclude_spouse_reason'] = request.form.get('exclude_spouse_guardian_reason', '').strip() or None
     session.modified = True
-    mark_step_complete(3)
+    mark_step_complete(4)
     save_will_to_db()
-    for g in guardians:
-        upsert_person(session.get('client_id'), g['full_name'], g['nric_passport'],
-                      address=g.get('address', ''), relationship=g.get('relationship', ''), source_step='step3')
-    return redirect(url_for('wizard_step_4'))
+    return redirect(url_for('wizard_step_beneficiaries'))
 
 
-# -- Step 4: Beneficiaries ---------------------------------------------------
+# -- Step 5: Beneficiaries (select from identities) -------------------------
 
-@app.route('/wizard/step/4', methods=['GET', 'POST'])
-def wizard_step_4():
+@app.route('/wizard/step/5', methods=['GET', 'POST'])
+def wizard_step_beneficiaries():
     if request.method == 'GET':
         return render_template(
-            'wizard/step4_beneficiaries.html',
-            current_step=4,
+            'wizard/step5_beneficiaries.html',
+            current_step=5,
             completed_steps=get_completed_steps(),
             data={'beneficiaries': session.get('step4_beneficiaries', [{}])},
             persons=session.get('person_registry', []),
         )
 
-    # POST -- parse dynamic beneficiary fields
+    # POST -- parse beneficiary selections from identities
     count = int(request.form.get('beneficiary_count', 1))
     beneficiaries = []
     for i in range(count):
-        name = request.form.get(f'ben_name_{i}', '').strip()
-        if not name:
+        person_id = request.form.get(f'ben_person_id_{i}', '').strip()
+        person = _get_person_from_registry(person_id)
+        if not person:
             continue
         beneficiaries.append({
-            'full_name': name,
-            'nric_passport_birthcert': request.form.get(f'ben_nric_{i}', '').strip(),
+            'person_id': person_id,
+            'full_name': person['full_name'],
+            'nric_passport_birthcert': person['nric_passport'],
             'relationship': request.form.get(f'ben_relationship_{i}', '').strip(),
         })
 
     session['step4_beneficiaries'] = beneficiaries
     session.modified = True
-    mark_step_complete(4)
+    mark_step_complete(5)
     save_will_to_db()
-    for b in beneficiaries:
-        upsert_person(session.get('client_id'), b['full_name'], b['nric_passport_birthcert'],
-                      relationship=b.get('relationship', ''), source_step='step4')
-    return redirect(url_for('wizard_step_5'))
+    return redirect(url_for('wizard_step_gifts'))
 
 
-# -- Step 5: Gifts (optional) ------------------------------------------------
+# -- Step 6: Gifts (optional) ------------------------------------------------
 
-@app.route('/wizard/step/5', methods=['GET', 'POST'])
-def wizard_step_5():
+@app.route('/wizard/step/6', methods=['GET', 'POST'])
+def wizard_step_gifts():
     if request.method == 'GET':
         return render_template(
-            'wizard/step5_gifts.html',
-            current_step=5,
+            'wizard/step6_gifts.html',
+            current_step=6,
             completed_steps=get_completed_steps(),
             data={'gifts': session.get('step5_gifts', [])},
             beneficiaries=session.get('step4_beneficiaries', []),
@@ -837,19 +967,19 @@ def wizard_step_5():
 
     session['step5_gifts'] = gifts
     session.modified = True
-    mark_step_complete(5)
+    mark_step_complete(6)
     save_will_to_db()
-    return redirect(url_for('wizard_step_6'))
+    return redirect(url_for('wizard_step_residuary'))
 
 
-# -- Step 6: Residuary Estate ------------------------------------------------
+# -- Step 7: Residuary Estate ------------------------------------------------
 
-@app.route('/wizard/step/6', methods=['GET', 'POST'])
-def wizard_step_6():
+@app.route('/wizard/step/7', methods=['GET', 'POST'])
+def wizard_step_residuary():
     if request.method == 'GET':
         return render_template(
-            'wizard/step6_residuary.html',
-            current_step=6,
+            'wizard/step7_residuary.html',
+            current_step=7,
             completed_steps=get_completed_steps(),
             data=session.get('step6_residuary', {}),
             beneficiaries=session.get('step4_beneficiaries', []),
@@ -894,19 +1024,19 @@ def wizard_step_6():
         'additional_notes': additional_notes,
     }
     session.modified = True
-    mark_step_complete(6)
+    mark_step_complete(7)
     save_will_to_db()
-    return redirect(url_for('wizard_step_7'))
+    return redirect(url_for('wizard_step_trust'))
 
 
-# -- Step 7: Testamentary Trust (optional) ------------------------------------
+# -- Step 8: Testamentary Trust (optional) ------------------------------------
 
-@app.route('/wizard/step/7', methods=['GET', 'POST'])
-def wizard_step_7():
+@app.route('/wizard/step/8', methods=['GET', 'POST'])
+def wizard_step_trust():
     if request.method == 'GET':
         return render_template(
-            'wizard/step7_trust.html',
-            current_step=7,
+            'wizard/step8_trust.html',
+            current_step=8,
             completed_steps=get_completed_steps(),
             data=session.get('step7_trust', {}),
             beneficiaries=session.get('step4_beneficiaries', []),
@@ -944,27 +1074,33 @@ def wizard_step_7():
             'other_payment_mode': request.form.get('payment_mode_other', '').strip() or None,
             'balance_of_trust': request.form.get('balance_of_trust', '').strip() or None,
             'separate_trustee': bool(request.form.get('separate_trustee')),
-            'trustee_name': request.form.get('trustee_name', '').strip() or None,
-            'trustee_address': request.form.get('trustee_address', '').strip() or None,
-            'trustee_nric': request.form.get('trustee_nric', '').strip() or None,
+            'trustee_person_id': request.form.get('trustee_person_id', '').strip() or None,
             'trustee_relationship': request.form.get('trustee_relationship', '').strip() or None,
         }
+        # Look up trustee identity
+        trustee_pid = trust_data.get('trustee_person_id')
+        if trustee_pid:
+            trustee_person = _get_person_from_registry(trustee_pid)
+            if trustee_person:
+                trust_data['trustee_name'] = trustee_person['full_name']
+                trust_data['trustee_nric'] = trustee_person['nric_passport']
+                trust_data['trustee_address'] = trustee_person['address']
 
     session['step7_trust'] = trust_data
     session.modified = True
-    mark_step_complete(7)
+    mark_step_complete(8)
     save_will_to_db()
-    return redirect(url_for('wizard_step_8'))
+    return redirect(url_for('wizard_step_others'))
 
 
-# -- Step 8: Other Matters (optional) ----------------------------------------
+# -- Step 9: Other Matters (optional) ----------------------------------------
 
-@app.route('/wizard/step/8', methods=['GET', 'POST'])
-def wizard_step_8():
+@app.route('/wizard/step/9', methods=['GET', 'POST'])
+def wizard_step_others():
     if request.method == 'GET':
         return render_template(
-            'wizard/step8_others.html',
-            current_step=8,
+            'wizard/step9_others.html',
+            current_step=9,
             completed_steps=get_completed_steps(),
             data=session.get('step8_others', {}),
         )
@@ -1001,21 +1137,21 @@ def wizard_step_8():
 
     session['step8_others'] = om_data
     session.modified = True
-    mark_step_complete(8)
+    mark_step_complete(9)
     save_will_to_db()
-    return redirect(url_for('wizard_step_9'))
+    return redirect(url_for('wizard_step_review'))
 
 
-# -- Step 9: Review ----------------------------------------------------------
+# -- Step 10: Review ---------------------------------------------------------
 
-@app.route('/wizard/step/9', methods=['GET'])
-def wizard_step_9():
+@app.route('/wizard/step/10', methods=['GET'])
+def wizard_step_review():
     # Build the will data model from session
     try:
         will_data = build_will_data()
     except Exception as e:
         flash(f'Error building will data: {e}', 'error')
-        return redirect(url_for('wizard_step_1'))
+        return redirect(url_for('wizard_step_identities'))
 
     # Run validation
     from validation.legal_rules import validate_will_data, get_errors, get_warnings
@@ -1026,6 +1162,7 @@ def wizard_step_9():
 
     # Build summary data dict for template
     summary = {
+        'identities': session.get('person_registry', []),
         'testator': session.get('step1', {}),
         'executors': session.get('step2_executors', []),
         'guardians': session.get('step3_guardians', []),
@@ -1039,8 +1176,8 @@ def wizard_step_9():
     }
 
     return render_template(
-        'wizard/step9_review.html',
-        current_step=9,
+        'wizard/step10_review.html',
+        current_step=10,
         completed_steps=get_completed_steps(),
         summary=summary,
         will_data=summary,
@@ -1060,7 +1197,7 @@ def wizard_generate():
         will_data = build_will_data()
     except Exception as e:
         flash(f'Error building will data: {e}', 'error')
-        return redirect(url_for('wizard_step_9'))
+        return redirect(url_for('wizard_step_review'))
 
     # Run validation -- block on errors
     from validation.legal_rules import validate_will_data, get_errors
@@ -1069,7 +1206,7 @@ def wizard_generate():
     if errors:
         for err in errors:
             flash(f'Validation Error: {err.message}', 'error')
-        return redirect(url_for('wizard_step_9'))
+        return redirect(url_for('wizard_step_review'))
 
     # Draft will using AI (or mock)
     try:
@@ -1082,7 +1219,7 @@ def wizard_generate():
     except Exception as e:
         flash(f'Error generating will: {e}', 'error')
         traceback.print_exc()
-        return redirect(url_for('wizard_step_9'))
+        return redirect(url_for('wizard_step_review'))
 
     session['generated_will_text'] = will_text
     session.modified = True
@@ -1097,7 +1234,7 @@ def preview():
     will_text = session.get('generated_will_text', '')
     if not will_text:
         flash('No will has been generated yet. Please complete the wizard first.', 'warning')
-        return redirect(url_for('wizard_step_9'))
+        return redirect(url_for('wizard_step_review'))
 
     testator_name = session.get('step1', {}).get('full_name', 'Unknown')
     return render_template(

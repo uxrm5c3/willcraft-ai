@@ -1,17 +1,17 @@
 {% extends "wizard/layout.html" %}
 
-{% block title %}Step 5: Specific Gifts - WillCraft AI{% endblock %}
+{% block title %}Step 6: Specific Gifts - WillCraft AI{% endblock %}
 
 {% block wizard_content %}
 <div class="mb-6">
-    <h2 class="text-2xl font-bold text-gray-900">Step 5: Non-Residuary Gifts / Specific Bequests</h2>
+    <h2 class="text-2xl font-bold text-gray-900">Step 6: Non-Residuary Gifts / Specific Bequests</h2>
     <p class="text-gray-600 mt-1">Specify particular assets to be given to particular beneficiaries. These are distributed before the residuary estate.</p>
     <div class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
         <strong>Legal Note:</strong> MB = Main Beneficiary (receives the gift). SB = Substitute Beneficiary (receives the gift if MB predeceases the testator). Shares for each gift should total 100% across all MB allocations.
     </div>
 </div>
 
-<form method="POST" action="/wizard/step/5" class="space-y-6">
+<form method="POST" action="/wizard/step/6" class="space-y-6">
     <!-- Gifts List -->
     <div id="gifts-container">
         {% set gifts = data.get('gifts', [{'description': '', 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}]) %}
@@ -122,12 +122,12 @@
 
     <!-- Navigation -->
     <div class="flex justify-between items-center pt-6 border-t border-gray-200">
-        <a href="/wizard/step/4" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+        <a href="/wizard/step/5" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
             <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
             Back
         </a>
         <div class="flex items-center gap-4">
-            <a href="/wizard/step/6" class="text-sm text-gray-400 hover:text-gray-600 underline">Skip this step</a>
+            <a href="/wizard/step/7" class="text-sm text-gray-400 hover:text-gray-600 underline">Skip this step</a>
             <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
                 Next: Residuary Estate
                 <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
@@ -251,7 +251,6 @@ function addAllocation(giftIdx) {
     </div>`;
     container.insertAdjacentHTML('beforeend', html);
     allocCounts[giftIdx] = idx + 1;
-    // Update the hidden count field for this gift
     const giftEntry = container.closest('.gift-entry');
     const countField = giftEntry.querySelector(`input[name="gift_${giftIdx}_alloc_count"]`);
     if (countField) countField.value = allocCounts[giftIdx];

@@ -46,7 +46,8 @@ Return ONLY a JSON object with these fields (use empty string if not visible/rea
     "date_of_birth": "DD-MM-YYYY format",
     "address": "Full address if visible",
     "gender": "Male or Female",
-    "nationality": "Malaysian or the nationality shown"
+    "nationality": "Malaysian or the nationality shown",
+    "passport_expiry": "DD-MM-YYYY format (empty string for NRIC)"
 }
 
 For Malaysian NRIC:
@@ -54,9 +55,11 @@ For Malaysian NRIC:
 - Extract the name exactly as printed
 - The address is on the back of the NRIC
 - Gender: last digit odd = Male, even = Female
+- passport_expiry should be empty string
 
 For passport:
 - Extract as shown on the data page
+- Include the passport expiry date if visible
 
 Return ONLY the JSON, no explanation."""
                 }
