@@ -1,0 +1,151 @@
+{% extends "wizard/layout.html" %}
+
+{% block title %}Step 2: Executors & Trustees - WillCraft AI{% endblock %}
+
+{% block wizard_content %}
+<div class="mb-6">
+    <h2 class="text-2xl font-bold text-gray-900">Step 2: Executor(s) & Trustee(s)</h2>
+    <p class="text-gray-600 mt-1">Appoint the person(s) who will carry out the instructions in your will. Executors must be 21 years or older.</p>
+    <div class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
+        <strong>Legal Note:</strong> Maximum 4 executors allowed (PAA s.4(1)). If any beneficiary is a minor, at least 2 joint executors are required (PAA s.4(2)).
+    </div>
+</div>
+
+<form method="POST" action="/wizard/step/2">
+    <div id="executors-container">
+        {% set executors = data.get('executors', [{}]) %}
+        {% for exec in executors %}
+        <div class="executor-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="{{ loop.index0 }}">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-semibold text-gray-700">Executor & Trustee No. {{ loop.index }}</h3>
+                <div class="flex items-center gap-4">
+                    {% if loop.index > 1 %}
+                    <select name="exec_role_{{ loop.index0 }}" class="text-sm px-3 py-1 border border-gray-300 rounded-lg">
+                        <option value="Joint" {% if exec.get('role') == 'Joint' %}selected{% endif %}>Joint</option>
+                        <option value="Substitute" {% if exec.get('role') == 'Substitute' %}selected{% endif %}>Substitute</option>
+                    </select>
+                    <button type="button" onclick="removeExecutor(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+                    {% else %}
+                    <span class="text-sm text-gray-400">Primary</span>
+                    <input type="hidden" name="exec_role_0" value="Primary">
+                    {% endif %}
+                </div>
+            </div>
+            {% if persons %}
+            {% with field_prefix='exec', index=loop.index0 %}
+            {% include 'partials/person_selector.html' %}
+            {% endwith %}
+            {% endif %}
+            <div class="mb-3 flex items-center gap-3">
+                <input type="file" id="nric-upload-exec-{{ loop.index0 }}" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-primary-100 file:text-primary-700"
+                       onchange="uploadAndExtractNRIC(this, 'nric-status-exec-{{ loop.index0 }}', {name:'exec_name_{{ loop.index0 }}', nric:'exec_nric_{{ loop.index0 }}', address:'exec_address_{{ loop.index0 }}'})">
+                <span id="nric-status-exec-{{ loop.index0 }}" class="text-xs"></span>
+            </div>
+            <div class="grid md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
+                    <input type="text" name="exec_name_{{ loop.index0 }}" value="{{ exec.get('full_name', '') }}" required
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No. <span class="text-red-500">*</span></label>
+                    <input type="text" name="exec_nric_{{ loop.index0 }}" value="{{ exec.get('nric_passport', '') }}" required
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Address <span class="text-red-500">*</span></label>
+                    <input type="text" name="exec_address_{{ loop.index0 }}" value="{{ exec.get('address', '') }}" required
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship <span class="text-red-500">*</span></label>
+                    <input type="text" name="exec_relationship_{{ loop.index0 }}" value="{{ exec.get('relationship', '') }}" required
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="e.g., Spouse, Brother, Friend">
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <input type="hidden" name="executor_count" id="executor-count" value="{{ executors|length }}">
+
+    <button type="button" onclick="addExecutor()" id="add-executor-btn"
+            class="mb-6 px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors">
+        + Add Another Executor (max 4)
+    </button>
+
+    <!-- Navigation -->
+    <div class="flex justify-between pt-6 border-t border-gray-200">
+        <a href="/wizard/step/1" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+            <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            Back
+        </a>
+        <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
+            Next: Guardians
+            <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block wizard_scripts %}
+<script>
+let executorCount = {{ data.get('executors', [{}])|length }};
+
+function addExecutor() {
+    if (executorCount >= 4) { alert('Maximum 4 executors allowed.'); return; }
+    const container = document.getElementById('executors-container');
+    const idx = executorCount;
+    const personsHtml = buildPersonSelectorHtml('exec', idx);
+    const html = `
+    <div class="executor-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="${idx}">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-semibold text-gray-700">Executor & Trustee No. ${idx + 1}</h3>
+            <div class="flex items-center gap-4">
+                <select name="exec_role_${idx}" class="text-sm px-3 py-1 border border-gray-300 rounded-lg">
+                    <option value="Joint">Joint</option>
+                    <option value="Substitute">Substitute</option>
+                </select>
+                <button type="button" onclick="removeExecutor(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+            </div>
+        </div>
+        ${personsHtml}
+        <div class="mb-3 flex items-center gap-3">
+            <input type="file" id="nric-upload-exec-${idx}" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-primary-100 file:text-primary-700"
+                   onchange="uploadAndExtractNRIC(this, 'nric-status-exec-${idx}', {name:'exec_name_${idx}', nric:'exec_nric_${idx}', address:'exec_address_${idx}'})">
+            <span id="nric-status-exec-${idx}" class="text-xs"></span>
+        </div>
+        <div class="grid md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
+                <input type="text" name="exec_name_${idx}" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No. <span class="text-red-500">*</span></label>
+                <input type="text" name="exec_nric_${idx}" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Address <span class="text-red-500">*</span></label>
+                <input type="text" name="exec_address_${idx}" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Relationship <span class="text-red-500">*</span></label>
+                <input type="text" name="exec_relationship_${idx}" required class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+        </div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
+    executorCount++;
+    document.getElementById('executor-count').value = executorCount;
+    if (executorCount >= 4) document.getElementById('add-executor-btn').classList.add('hidden');
+}
+
+function removeExecutor(btn) {
+    btn.closest('.executor-entry').remove();
+    executorCount--;
+    document.getElementById('executor-count').value = executorCount;
+    document.getElementById('add-executor-btn').classList.remove('hidden');
+}
+</script>
+{% endblock %}

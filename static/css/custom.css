@@ -1,0 +1,40 @@
+/* WillCraft AI - Custom Styles */
+
+/* Will text preview formatting */
+.will-text-content {
+    font-family: 'Georgia', 'Times New Roman', Times, serif;
+    line-height: 1.8;
+    color: #1a1a1a;
+}
+
+/* Print styles for will preview */
+@media print {
+    nav, footer, .no-print {
+        display: none !important;
+    }
+    .will-text-content {
+        font-size: 12pt;
+        line-height: 2;
+        color: #000;
+    }
+    body {
+        background: white;
+    }
+}
+
+/* Smooth transitions for wizard sidebar */
+.wizard-sidebar a {
+    transition: all 0.15s ease-in-out;
+}
+
+/* Focus ring consistency */
+input:focus,
+select:focus,
+textarea:focus {
+    outline: none;
+}
+
+/* Scroll behaviour */
+html {
+    scroll-behavior: smooth;
+}

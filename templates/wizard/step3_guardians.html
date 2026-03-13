@@ -1,0 +1,219 @@
+{% extends "wizard/layout.html" %}
+
+{% block title %}Step 3: Guardians - WillCraft AI{% endblock %}
+
+{% block wizard_content %}
+<div class="mb-6">
+    <h2 class="text-2xl font-bold text-gray-900">Step 3: Guardians of Minor Children</h2>
+    <p class="text-gray-600 mt-1">Appoint guardian(s) for your children who are under 21 years of age. This step is optional if you have no minor children.</p>
+    <div class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
+        <strong>Legal Note:</strong> Under Malaysian law, a child is considered a minor until the age of 21. If both parents pass away, the appointed guardian will have custody of the minor children.
+    </div>
+</div>
+
+<form method="POST" action="/wizard/step/3" class="space-y-6">
+    <!-- Exclude Spouse/Ex-Spouse as Guardian -->
+    <div class="border border-gray-200 rounded-lg p-4">
+        <label class="flex items-center">
+            <input type="checkbox" name="exclude_spouse_guardian" value="1"
+                   {% if data.get('exclude_spouse_guardian') %}checked{% endif %}
+                   class="rounded border-gray-300 text-primary-600 mr-2"
+                   onchange="toggleSection('exclude-spouse-reason', this.checked)">
+            <span class="text-sm font-medium text-gray-700">Exclude spouse / ex-spouse as guardian</span>
+        </label>
+        <div id="exclude-spouse-reason" class="mt-4 {% if not data.get('exclude_spouse_guardian') %}hidden{% endif %}">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Reason for Exclusion</label>
+            <textarea name="exclude_spouse_guardian_reason" rows="2"
+                      class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                      placeholder="Please provide the reason for excluding your spouse/ex-spouse as guardian">{{ data.get('exclude_spouse_guardian_reason', '') }}</textarea>
+        </div>
+    </div>
+
+    <!-- Guardians List -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-3">Appointed Guardians</h3>
+        <div id="guardians-container">
+            {% set guardians = data.get('guardians', [{}]) %}
+            {% for guardian in guardians %}
+            <div class="guardian-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="{{ loop.index0 }}">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-semibold text-gray-700">Guardian No. {{ loop.index }}</h3>
+                    <div class="flex items-center gap-4">
+                        <select name="guardian_role_{{ loop.index0 }}"
+                                class="text-sm px-3 py-1 border border-gray-300 rounded-lg">
+                            <option value="Primary" {% if guardian.get('role') == 'Primary' %}selected{% endif %}>Primary</option>
+                            <option value="Joint" {% if guardian.get('role') == 'Joint' %}selected{% endif %}>Joint</option>
+                            <option value="Substitute" {% if guardian.get('role') == 'Substitute' %}selected{% endif %}>Substitute</option>
+                        </select>
+                        {% if loop.index > 1 %}
+                        <button type="button" onclick="removeGuardian(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+                        {% endif %}
+                    </div>
+                </div>
+                {% if persons %}
+                {% with field_prefix='guardian', index=loop.index0 %}
+                {% include 'partials/person_selector.html' %}
+                {% endwith %}
+                {% endif %}
+                <div class="mb-3 flex items-center gap-3">
+                    <input type="file" id="nric-upload-guardian-{{ loop.index0 }}" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-primary-100 file:text-primary-700"
+                           onchange="uploadAndExtractNRIC(this, 'nric-status-guardian-{{ loop.index0 }}', {name:'guardian_name_{{ loop.index0 }}', nric:'guardian_nric_{{ loop.index0 }}', address:'guardian_address_{{ loop.index0 }}'})">
+                    <span id="nric-status-guardian-{{ loop.index0 }}" class="text-xs"></span>
+                </div>
+                <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                        <input type="text" name="guardian_name_{{ loop.index0 }}" value="{{ guardian.get('full_name', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="Full name as per NRIC">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No.</label>
+                        <input type="text" name="guardian_nric_{{ loop.index0 }}" value="{{ guardian.get('nric_passport', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="e.g., 800101-14-1234">
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                        <input type="text" name="guardian_address_{{ loop.index0 }}" value="{{ guardian.get('address', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="Full residential address">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
+                        <input type="text" name="guardian_relationship_{{ loop.index0 }}" value="{{ guardian.get('relationship', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="e.g., Brother, Sister, Friend">
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <input type="hidden" name="guardian_count" id="guardian-count" value="{{ guardians|length }}">
+
+        <button type="button" onclick="addGuardian()" id="add-guardian-btn"
+                class="mb-6 px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors">
+            + Add Another Guardian (max 3)
+        </button>
+    </div>
+
+    <!-- Guardian Allowance -->
+    <div class="border border-gray-200 rounded-lg p-5">
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Guardian Allowance</h3>
+        <p class="text-gray-500 text-sm mb-4">Specify the allowance to be paid to the guardian for the maintenance of the minor children.</p>
+
+        {% set allowance = data.get('guardian_allowance', {}) %}
+        <div class="grid md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Payment Mode</label>
+                <select name="allowance_payment_mode"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <option value="">-- Select --</option>
+                    <option value="One-Off" {% if allowance.get('payment_mode') == 'One-Off' %}selected{% endif %}>One-Off</option>
+                    <option value="Monthly" {% if allowance.get('payment_mode') == 'Monthly' %}selected{% endif %}>Monthly</option>
+                    <option value="Quarterly" {% if allowance.get('payment_mode') == 'Quarterly' %}selected{% endif %}>Quarterly</option>
+                    <option value="Yearly" {% if allowance.get('payment_mode') == 'Yearly' %}selected{% endif %}>Yearly</option>
+                    <option value="Discretion" {% if allowance.get('payment_mode') == 'Discretion' %}selected{% endif %}>At Executor's Discretion</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Amount (RM)</label>
+                <input type="text" name="allowance_amount" value="{{ allowance.get('amount', '') }}"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="e.g., 2000.00">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Until Age</label>
+                <input type="number" name="allowance_until_age" value="{{ allowance.get('until_age', '21') }}" min="1" max="25"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Source of Payment</label>
+                <input type="text" name="allowance_source_of_payment" value="{{ allowance.get('source_of_payment', '') }}"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="e.g., From rental income of property at...">
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <div class="flex justify-between items-center pt-6 border-t border-gray-200">
+        <a href="/wizard/step/2" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+            <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            Back
+        </a>
+        <div class="flex items-center gap-4">
+            <a href="/wizard/step/4" class="text-sm text-gray-400 hover:text-gray-600 underline">Skip this step</a>
+            <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
+                Next: Beneficiaries
+                <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </button>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block wizard_scripts %}
+<script>
+let guardianCount = {{ data.get('guardians', [{}])|length }};
+
+function toggleSection(id, show) {
+    document.getElementById(id).classList.toggle('hidden', !show);
+}
+
+function addGuardian() {
+    if (guardianCount >= 3) { alert('Maximum 3 guardians allowed.'); return; }
+    const container = document.getElementById('guardians-container');
+    const idx = guardianCount;
+    const html = `
+    <div class="guardian-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="${idx}">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-semibold text-gray-700">Guardian No. ${idx + 1}</h3>
+            <div class="flex items-center gap-4">
+                <select name="guardian_role_${idx}" class="text-sm px-3 py-1 border border-gray-300 rounded-lg">
+                    <option value="Primary">Primary</option>
+                    <option value="Joint">Joint</option>
+                    <option value="Substitute">Substitute</option>
+                </select>
+                <button type="button" onclick="removeGuardian(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+            </div>
+        </div>
+        <div class="mb-3 flex items-center gap-3">
+            <input type="file" id="nric-upload-guardian-${idx}" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-primary-100 file:text-primary-700"
+                   onchange="uploadAndExtractNRIC(this, 'nric-status-guardian-${idx}', {name:'guardian_name_${idx}', nric:'guardian_nric_${idx}', address:'guardian_address_${idx}'})">
+            <span id="nric-status-guardian-${idx}" class="text-xs"></span>
+        </div>
+        <div class="grid md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                <input type="text" name="guardian_name_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="Full name as per NRIC">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No.</label>
+                <input type="text" name="guardian_nric_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., 800101-14-1234">
+            </div>
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                <input type="text" name="guardian_address_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="Full residential address">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
+                <input type="text" name="guardian_relationship_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., Brother, Sister, Friend">
+            </div>
+        </div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
+    guardianCount++;
+    document.getElementById('guardian-count').value = guardianCount;
+    if (guardianCount >= 3) document.getElementById('add-guardian-btn').classList.add('hidden');
+}
+
+function removeGuardian(btn) {
+    btn.closest('.guardian-entry').remove();
+    guardianCount--;
+    document.getElementById('guardian-count').value = guardianCount;
+    document.getElementById('add-guardian-btn').classList.remove('hidden');
+}
+</script>
+{% endblock %}

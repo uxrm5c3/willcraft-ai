@@ -1,0 +1,264 @@
+{% extends "wizard/layout.html" %}
+
+{% block title %}Step 6: Residuary Estate - WillCraft AI{% endblock %}
+
+{% block wizard_content %}
+<div class="mb-6">
+    <h2 class="text-2xl font-bold text-gray-900">Step 6: Residuary Estate</h2>
+    <p class="text-gray-600 mt-1">Everything not specifically gifted goes here. This section is compulsory.</p>
+    <div class="mt-2 p-3 bg-amber-50 rounded-lg text-sm text-amber-700">
+        <strong>Important:</strong> There must be more than one residuary estate beneficiary to avoid partial intestacy.
+    </div>
+</div>
+
+<form method="POST" action="/wizard/step/6" class="space-y-8">
+
+    <!-- Main Beneficiaries -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Main Beneficiaries</h3>
+        <p class="text-sm text-gray-500 mb-4">Allocate shares (percentages) of your residuary estate. Shares must total 100%.</p>
+
+        <div id="main-beneficiaries-container">
+            {% set main_beneficiaries = data.get('main_beneficiaries', [{}]) %}
+            {% for ben in main_beneficiaries %}
+            <div class="main-beneficiary-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="{{ loop.index0 }}">
+                <div class="flex justify-between items-center mb-3">
+                    <h4 class="font-medium text-gray-700">Main Beneficiary No. {{ loop.index }}</h4>
+                    {% if loop.index > 1 %}
+                    <button type="button" onclick="removeMainBeneficiary(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+                    {% endif %}
+                </div>
+                <div class="grid md:grid-cols-3 gap-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
+                        <input type="text" name="main_ben_name_{{ loop.index0 }}" value="{{ ben.get('beneficiary_name', '') }}" required
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="Full name as per NRIC">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Share (%) <span class="text-red-500">*</span></label>
+                        <input type="number" name="main_ben_share_{{ loop.index0 }}" value="{{ ben.get('share', '') }}" required
+                               min="1" max="100" step="0.01"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="e.g., 50" onchange="updateShareTotal()">
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <input type="hidden" name="main_beneficiary_count" id="main-beneficiary-count" value="{{ main_beneficiaries|length }}">
+
+        <div class="flex items-center justify-between">
+            <button type="button" onclick="addMainBeneficiary()"
+                    class="px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+                + Add Main Beneficiary
+            </button>
+            <div id="share-total" class="text-sm font-medium text-gray-600">
+                Total: <span id="share-total-value">0</span>%
+            </div>
+        </div>
+    </div>
+
+    <!-- Substitute Beneficiaries -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Substitute Beneficiaries</h3>
+        <p class="text-sm text-gray-500 mb-4">If a main beneficiary predeceases you, their share goes to their substitute(s). You can define up to 3 substitute groups.</p>
+
+        <div id="substitute-groups-container">
+            {% set substitute_groups = data.get('substitute_groups', []) %}
+            {% for group in substitute_groups %}
+            <div class="substitute-group border border-gray-200 rounded-lg p-4 mb-4" data-group-index="{{ loop.index0 }}">
+                <div class="flex justify-between items-center mb-3">
+                    <h4 class="font-medium text-gray-700">Substitute Group {{ loop.index }}</h4>
+                    <button type="button" onclick="removeSubstituteGroup(this)" class="text-red-500 hover:text-red-700 text-sm">Remove Group</button>
+                </div>
+
+                <div class="substitute-entries space-y-3">
+                    {% for sub in group %}
+                    <div class="substitute-entry grid md:grid-cols-3 gap-4" data-sub-index="{{ loop.index0 }}">
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Name</label>
+                            <input type="text" name="sub_group_{{ loop.parent.loop.index0 }}_name_{{ loop.index0 }}" value="{{ sub.get('beneficiary_name', '') }}"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                   placeholder="Full name as per NRIC">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
+                            <input type="number" name="sub_group_{{ loop.parent.loop.index0 }}_share_{{ loop.index0 }}" value="{{ sub.get('share', '') }}"
+                                   min="1" max="100" step="0.01"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                   placeholder="e.g., 50">
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <input type="hidden" name="sub_group_{{ loop.index0 }}_count" class="sub-group-count" value="{{ group|length }}">
+
+                <button type="button" onclick="addSubstituteToGroup(this, {{ loop.index0 }})"
+                        class="mt-3 px-3 py-1.5 text-sm border border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+                    + Add Substitute to Group
+                </button>
+            </div>
+            {% endfor %}
+        </div>
+
+        <input type="hidden" name="substitute_group_count" id="substitute-group-count" value="{{ substitute_groups|length }}">
+
+        <button type="button" onclick="addSubstituteGroup()" id="add-sub-group-btn"
+                class="px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors">
+            + Add Substitute Group (max 3)
+        </button>
+    </div>
+
+    <!-- Additional Notes -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Additional Notes</h3>
+        <p class="text-sm text-gray-500 mb-3">Any special instructions regarding the distribution of your residuary estate.</p>
+        <textarea name="additional_notes" rows="4"
+                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="e.g., If all main and substitute beneficiaries predecease me, my residuary estate shall go to...">{{ data.get('residuary', {}).get('additional_notes', '') }}</textarea>
+    </div>
+
+    <!-- Navigation -->
+    <div class="flex justify-between pt-6 border-t border-gray-200">
+        <a href="/wizard/step/5" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+            <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            Back
+        </a>
+        <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
+            Next: Testamentary Trust
+            <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </button>
+    </div>
+</form>
+{% endblock %}
+
+{% block wizard_scripts %}
+<script>
+let mainBenCount = {{ data.get('main_beneficiaries', [{}])|length }};
+let subGroupCount = {{ data.get('substitute_groups', [])|length }};
+let subCountsPerGroup = {};
+{% for group in data.get('substitute_groups', []) %}
+subCountsPerGroup[{{ loop.index0 }}] = {{ group|length }};
+{% endfor %}
+
+function updateShareTotal() {
+    let total = 0;
+    document.querySelectorAll('input[name^="main_ben_share_"]').forEach(input => {
+        total += parseFloat(input.value) || 0;
+    });
+    const el = document.getElementById('share-total-value');
+    el.textContent = total.toFixed(2);
+    el.classList.toggle('text-red-600', Math.abs(total - 100) > 0.01);
+    el.classList.toggle('text-green-600', Math.abs(total - 100) <= 0.01);
+}
+
+function addMainBeneficiary() {
+    const idx = mainBenCount;
+    const html = `
+    <div class="main-beneficiary-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="${idx}">
+        <div class="flex justify-between items-center mb-3">
+            <h4 class="font-medium text-gray-700">Main Beneficiary No. ${idx + 1}</h4>
+            <button type="button" onclick="removeMainBeneficiary(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+        </div>
+        <div class="grid md:grid-cols-3 gap-4">
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
+                <input type="text" name="main_ben_name_${idx}" required
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="Full name as per NRIC">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Share (%) <span class="text-red-500">*</span></label>
+                <input type="number" name="main_ben_share_${idx}" required min="1" max="100" step="0.01"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="e.g., 50" onchange="updateShareTotal()">
+            </div>
+        </div>
+    </div>`;
+    document.getElementById('main-beneficiaries-container').insertAdjacentHTML('beforeend', html);
+    mainBenCount++;
+    document.getElementById('main-beneficiary-count').value = mainBenCount;
+}
+
+function removeMainBeneficiary(btn) {
+    btn.closest('.main-beneficiary-entry').remove();
+    mainBenCount--;
+    document.getElementById('main-beneficiary-count').value = mainBenCount;
+    updateShareTotal();
+}
+
+function addSubstituteGroup() {
+    if (subGroupCount >= 3) { alert('Maximum 3 substitute groups allowed.'); return; }
+    const gIdx = subGroupCount;
+    subCountsPerGroup[gIdx] = 1;
+    const html = `
+    <div class="substitute-group border border-gray-200 rounded-lg p-4 mb-4" data-group-index="${gIdx}">
+        <div class="flex justify-between items-center mb-3">
+            <h4 class="font-medium text-gray-700">Substitute Group ${gIdx + 1}</h4>
+            <button type="button" onclick="removeSubstituteGroup(this)" class="text-red-500 hover:text-red-700 text-sm">Remove Group</button>
+        </div>
+        <div class="substitute-entries space-y-3">
+            <div class="substitute-entry grid md:grid-cols-3 gap-4" data-sub-index="0">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Name</label>
+                    <input type="text" name="sub_group_${gIdx}_name_0"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="Full name as per NRIC">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
+                    <input type="number" name="sub_group_${gIdx}_share_0" min="1" max="100" step="0.01"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="e.g., 50">
+                </div>
+            </div>
+        </div>
+        <input type="hidden" name="sub_group_${gIdx}_count" class="sub-group-count" value="1">
+        <button type="button" onclick="addSubstituteToGroup(this, ${gIdx})"
+                class="mt-3 px-3 py-1.5 text-sm border border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+            + Add Substitute to Group
+        </button>
+    </div>`;
+    document.getElementById('substitute-groups-container').insertAdjacentHTML('beforeend', html);
+    subGroupCount++;
+    document.getElementById('substitute-group-count').value = subGroupCount;
+    if (subGroupCount >= 3) document.getElementById('add-sub-group-btn').classList.add('hidden');
+}
+
+function removeSubstituteGroup(btn) {
+    btn.closest('.substitute-group').remove();
+    subGroupCount--;
+    document.getElementById('substitute-group-count').value = subGroupCount;
+    document.getElementById('add-sub-group-btn').classList.remove('hidden');
+}
+
+function addSubstituteToGroup(btn, groupIdx) {
+    const subIdx = subCountsPerGroup[groupIdx] || 0;
+    const html = `
+    <div class="substitute-entry grid md:grid-cols-3 gap-4" data-sub-index="${subIdx}">
+        <div class="md:col-span-2">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Name</label>
+            <input type="text" name="sub_group_${groupIdx}_name_${subIdx}"
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                   placeholder="Full name as per NRIC">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
+            <input type="number" name="sub_group_${groupIdx}_share_${subIdx}" min="1" max="100" step="0.01"
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                   placeholder="e.g., 50">
+        </div>
+    </div>`;
+    btn.closest('.substitute-group').querySelector('.substitute-entries').insertAdjacentHTML('beforeend', html);
+    subCountsPerGroup[groupIdx] = subIdx + 1;
+    const countInput = btn.closest('.substitute-group').querySelector('.sub-group-count');
+    countInput.value = subIdx + 1;
+}
+
+// Initialize share total on page load
+document.addEventListener('DOMContentLoaded', updateShareTotal);
+</script>
+{% endblock %}

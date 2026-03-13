@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Client Documents - WillCraft AI{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold text-gray-900">Uploaded Documents</h1>
+        <a href="/" class="text-sm text-gray-500 hover:text-gray-700">&larr; Back to Home</a>
+    </div>
+
+    {% if documents %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-100">
+        {% for doc in documents %}
+        <div class="flex justify-between items-center p-4 hover:bg-gray-50">
+            <div>
+                <p class="font-medium text-gray-900">{{ doc.original_filename }}</p>
+                <p class="text-sm text-gray-500">
+                    Category: <span class="text-primary-600">{{ doc.category }}</span>
+                    &middot; Size: {{ "%.1f"|format(doc.file_size / 1024) }} KB
+                    &middot; Uploaded: {{ doc.created_at.strftime('%d %b %Y, %I:%M %p') }}
+                </p>
+            </div>
+            <div class="flex gap-2">
+                <a href="/api/documents/{{ doc.id }}" class="px-3 py-1.5 text-primary-600 text-sm hover:bg-primary-50 rounded-lg border border-primary-200">View</a>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+        <p class="text-gray-500">No documents uploaded yet.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

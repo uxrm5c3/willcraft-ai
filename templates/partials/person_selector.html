@@ -1,0 +1,20 @@
+{# Person selector dropdown for auto-filling form fields from the registry.
+   Pass: field_prefix (e.g., 'exec'), index (e.g., 0), persons (list of dicts) #}
+<div class="person-selector mb-2">
+    <label class="block text-xs font-medium text-gray-500 mb-1">Quick Fill from Registry</label>
+    <select class="person-select w-full px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-gray-50"
+            data-prefix="{{ field_prefix }}" data-index="{{ index }}"
+            onchange="fillFromPerson(this)">
+        <option value="">-- Select a person or type manually --</option>
+        {% for person in persons %}
+        <option value="{{ person.id if person.id else '' }}"
+                data-name="{{ person.full_name }}"
+                data-nric="{{ person.nric_passport }}"
+                data-address="{{ person.address or '' }}"
+                data-relationship="{{ person.relationship or '' }}"
+                data-dob="{{ person.date_of_birth or '' }}">
+            {{ person.full_name }} ({{ person.nric_passport }})
+        </option>
+        {% endfor %}
+    </select>
+</div>

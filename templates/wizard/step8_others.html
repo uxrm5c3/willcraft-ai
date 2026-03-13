@@ -1,0 +1,163 @@
+{% extends "wizard/layout.html" %}
+
+{% block title %}Step 8: Other Matters - WillCraft AI{% endblock %}
+
+{% block wizard_content %}
+<div class="mb-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-900">Step 8: Other Matters</h2>
+            <p class="text-gray-600 mt-1">Additional provisions and personal messages for your will.</p>
+        </div>
+        <span class="px-3 py-1 bg-gray-100 text-gray-500 text-xs font-semibold rounded-full uppercase">Optional</span>
+    </div>
+</div>
+
+<form method="POST" action="/wizard/step/8" class="space-y-8">
+    {% set other = data.get('other_matters', {}) %}
+
+    <!-- Section H: Terms of Endearment -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">
+            <span class="text-primary-600">Section H:</span> Terms of Endearment
+        </h3>
+        <p class="text-sm text-gray-500 mb-3">Personal messages to your loved ones. This section will be included in your will as a personal note and is not legally binding.</p>
+
+        <textarea name="terms_of_endearment" rows="6"
+                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="Write your personal messages here. For example:&#10;&#10;To my beloved wife, thank you for all the years of love and companionship...&#10;To my children, always remember to take care of one another...">{{ other.get('terms_of_endearment', '') }}</textarea>
+    </div>
+
+    <!-- Section I: Other Matters -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">
+            <span class="text-primary-600">Section I:</span> Other Matters
+        </h3>
+        <p class="text-sm text-gray-500 mb-4">Additional legal provisions for your will.</p>
+
+        <!-- Commorientes -->
+        <div class="border border-gray-200 rounded-lg p-5 mb-4">
+            <label class="flex items-start">
+                <input type="checkbox" name="commorientes_enabled" value="1" {% if other.get('commorientes_enabled') %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-3 mt-0.5"
+                       onchange="toggleSection('commorientes-section', this.checked)">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Commorientes / Survivorship Clause</span>
+                    <p class="text-xs text-gray-500 mt-1">A beneficiary must survive you by a specified number of days to inherit. This avoids complications if you and a beneficiary die in the same event.</p>
+                </div>
+            </label>
+            <div id="commorientes-section" class="mt-4 ml-7 {% if not other.get('commorientes_enabled') %}hidden{% endif %}">
+                <div class="flex items-center gap-3">
+                    <label class="text-sm text-gray-700">Beneficiary must survive the testator by</label>
+                    <input type="number" name="commorientes_days" value="{{ other.get('commorientes_days', '30') }}"
+                           min="1" max="365"
+                           class="w-20 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <span class="text-sm text-gray-700">days</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Exclusion -->
+        <div class="border border-gray-200 rounded-lg p-5 mb-4">
+            <label class="flex items-start">
+                <input type="checkbox" name="exclusion_enabled" value="1" {% if other.get('exclusion_enabled') %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-3 mt-0.5"
+                       onchange="toggleSection('exclusion-section', this.checked)">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Exclusion Clause</span>
+                    <p class="text-xs text-gray-500 mt-1">Explicitly exclude a person from inheriting under this will.</p>
+                </div>
+            </label>
+            <div id="exclusion-section" class="mt-4 ml-7 space-y-4 {% if not other.get('exclusion_enabled') %}hidden{% endif %}">
+                <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Full Name of Excluded Person</label>
+                        <input type="text" name="exclusion_name" value="{{ other.get('exclusion_name', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="Full name as per NRIC">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No.</label>
+                        <input type="text" name="exclusion_nric" value="{{ other.get('exclusion_nric', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="e.g., 800101-14-1234">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
+                        <input type="text" name="exclusion_relationship" value="{{ other.get('exclusion_relationship', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="e.g., Son, Daughter, Sibling">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Reason for Exclusion</label>
+                        <input type="text" name="exclusion_reason" value="{{ other.get('exclusion_reason', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="Optional: reason for exclusion">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Unnamed Children Inclusion -->
+        <div class="border border-gray-200 rounded-lg p-5 mb-4">
+            <label class="flex items-start">
+                <input type="checkbox" name="unnamed_children_enabled" value="1" {% if other.get('unnamed_children_enabled') %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-3 mt-0.5"
+                       onchange="toggleSection('unnamed-children-section', this.checked)">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Include Unnamed / Future Children</span>
+                    <p class="text-xs text-gray-500 mt-1">Include children born after the execution of this will, including children of a specific spouse.</p>
+                </div>
+            </label>
+            <div id="unnamed-children-section" class="mt-4 ml-7 {% if not other.get('unnamed_children_enabled') %}hidden{% endif %}">
+                <div class="grid md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Spouse Name</label>
+                        <input type="text" name="unnamed_children_spouse_name" value="{{ other.get('unnamed_children_spouse_name', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="Full name of spouse">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Spouse NRIC / Passport No.</label>
+                        <input type="text" name="unnamed_children_spouse_nric" value="{{ other.get('unnamed_children_spouse_nric', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="e.g., 810202-14-5678">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Additional Instructions -->
+        <div>
+            <h4 class="text-sm font-semibold text-gray-700 mb-2">Additional Instructions</h4>
+            <p class="text-sm text-gray-500 mb-3">Any other instructions or provisions not covered above.</p>
+            <textarea name="additional_instructions" rows="4"
+                      class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                      placeholder="e.g., Funeral arrangements, organ donation wishes, digital assets instructions, etc.">{{ other.get('additional_instructions', '') }}</textarea>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <div class="flex justify-between items-center pt-6 border-t border-gray-200">
+        <a href="/wizard/step/7" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+            <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            Back
+        </a>
+        <div class="flex items-center gap-4">
+            <a href="/wizard/step/9" class="text-sm text-gray-500 hover:text-gray-700 underline">Skip this step</a>
+            <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
+                Next: Review & Generate
+                <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </button>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block wizard_scripts %}
+<script>
+function toggleSection(id, show) {
+    document.getElementById(id).classList.toggle('hidden', !show);
+}
+</script>
+{% endblock %}

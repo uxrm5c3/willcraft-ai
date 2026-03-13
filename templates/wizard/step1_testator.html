@@ -1,0 +1,218 @@
+{% extends "wizard/layout.html" %}
+
+{% block title %}Step 1: Testator Information - WillCraft AI{% endblock %}
+
+{% block wizard_content %}
+<div class="mb-6">
+    <h2 class="text-2xl font-bold text-gray-900">Step 1: Testator's Personal Data</h2>
+    <p class="text-gray-600 mt-1">Enter the testator's (will maker's) personal information. All names must match NRIC/Passport.</p>
+</div>
+
+<form method="POST" action="/wizard/step/1" class="space-y-6">
+    <!-- NRIC / Passport Upload for OCR -->
+    <div class="border border-dashed border-primary-300 rounded-lg p-4 bg-primary-50/30">
+        <h3 class="text-sm font-semibold text-primary-700 mb-2">Quick Fill: Upload NRIC / Passport</h3>
+        <p class="text-xs text-gray-500 mb-3">Upload an image of your NRIC or passport to auto-fill the fields below.</p>
+        <div class="flex items-center gap-3">
+            <input type="file" id="nric-upload-testator" accept="image/*,.pdf"
+                   class="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-100 file:text-primary-700 hover:file:bg-primary-200"
+                   onchange="uploadAndExtractNRIC(this, 'nric-status-testator', {name:'full_name', nric:'nric_passport', address:'residential_address', dob:'date_of_birth', gender:'gender', nationality:'nationality'})">
+            <span id="nric-status-testator" class="text-sm"></span>
+        </div>
+    </div>
+
+    <!-- Full Name & NRIC -->
+    <div class="grid md:grid-cols-2 gap-6">
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Full Name (as per NRIC) <span class="text-red-500">*</span></label>
+            <input type="text" name="full_name" value="{{ data.get('full_name', '') }}" required
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                   placeholder="e.g., TAN AH KOW">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No. <span class="text-red-500">*</span></label>
+            <input type="text" name="nric_passport" value="{{ data.get('nric_passport', '') }}" required
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                   placeholder="e.g., 800101-14-1234">
+        </div>
+    </div>
+
+    <!-- Address -->
+    <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Residential Address <span class="text-red-500">*</span></label>
+        <textarea name="residential_address" rows="2" required
+                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="Full residential address">{{ data.get('residential_address', '') }}</textarea>
+    </div>
+
+    <!-- Nationality, Country, DOB -->
+    <div class="grid md:grid-cols-3 gap-6">
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Nationality</label>
+            <input type="text" name="nationality" value="{{ data.get('nationality', 'Malaysian') }}"
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Country of Residence</label>
+            <input type="text" name="country_of_residence" value="{{ data.get('country_of_residence', 'Malaysia') }}"
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Date of Birth <span class="text-red-500">*</span></label>
+            <input type="date" name="date_of_birth" value="{{ data.get('date_of_birth', '') }}" required
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+        </div>
+    </div>
+
+    <!-- Occupation & Religion -->
+    <div class="grid md:grid-cols-2 gap-6">
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Occupation / Business <span class="text-red-500">*</span></label>
+            <input type="text" name="occupation" value="{{ data.get('occupation', '') }}" required
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Religion</label>
+            <input type="text" name="religion" value="{{ data.get('religion', '') }}"
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+        </div>
+    </div>
+
+    <!-- Email & Phone -->
+    <div class="grid md:grid-cols-2 gap-6">
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input type="email" name="email" value="{{ data.get('email', '') }}"
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+            <input type="text" name="phone" value="{{ data.get('phone', '') }}"
+                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+        </div>
+    </div>
+
+    <!-- Gender & Marital Status -->
+    <div class="grid md:grid-cols-3 gap-6">
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Gender <span class="text-red-500">*</span></label>
+            <select name="gender" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                <option value="Male" {% if data.get('gender') == 'Male' %}selected{% endif %}>Male</option>
+                <option value="Female" {% if data.get('gender') == 'Female' %}selected{% endif %}>Female</option>
+            </select>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Marital Status <span class="text-red-500">*</span></label>
+            <select name="marital_status" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                <option value="Single" {% if data.get('marital_status') == 'Single' %}selected{% endif %}>Single</option>
+                <option value="Married" {% if data.get('marital_status') == 'Married' %}selected{% endif %}>Married</option>
+                <option value="Divorced" {% if data.get('marital_status') == 'Divorced' %}selected{% endif %}>Divorced</option>
+                <option value="Widow/Widower" {% if data.get('marital_status') == 'Widow/Widower' %}selected{% endif %}>Widow/Widower</option>
+            </select>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Property Coverage</label>
+            <select name="property_coverage" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                <option value="Malaysia" {% if data.get('property_coverage') == 'Malaysia' %}selected{% endif %}>Malaysia</option>
+                <option value="Overseas" {% if data.get('property_coverage') == 'Overseas' %}selected{% endif %}>Overseas</option>
+                <option value="Both" {% if data.get('property_coverage') == 'Both' %}selected{% endif %}>Both</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Contemplation of Marriage -->
+    <div class="border border-gray-200 rounded-lg p-4">
+        <label class="flex items-center">
+            <input type="checkbox" name="contemplation_of_marriage" value="1" {% if data.get('contemplation_of_marriage') %}checked{% endif %}
+                   class="rounded border-gray-300 text-primary-600 mr-2" onchange="toggleSection('marriage-section', this.checked)">
+            <span class="text-sm font-medium text-gray-700">Will made in contemplation of marriage</span>
+        </label>
+        <div id="marriage-section" class="mt-4 grid md:grid-cols-2 gap-4 {% if not data.get('contemplation_of_marriage') %}hidden{% endif %}">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Fiance/Fiancee Name</label>
+                <input type="text" name="fiance_name" value="{{ data.get('fiance_name', '') }}"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No.</label>
+                <input type="text" name="fiance_nric" value="{{ data.get('fiance_nric', '') }}"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+        </div>
+    </div>
+
+    <!-- Signing Method & Special Circumstances -->
+    <div class="border border-gray-200 rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Execution of Will</h3>
+        <div class="grid md:grid-cols-2 gap-6">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Signing Method</label>
+                <select name="signing_method" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <option value="Signature" {% if data.get('signing_method') == 'Signature' %}selected{% endif %}>Signature</option>
+                    <option value="Thumbprint" {% if data.get('signing_method') == 'Thumbprint' %}selected{% endif %}>Thumbprint</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">Special Circumstances</label>
+                <div class="space-y-1">
+                    {% for circ in ['Permanent Disability', 'Illiterate', 'Blind', 'Less Proficient in English'] %}
+                    <label class="flex items-center">
+                        <input type="checkbox" name="special_circumstances" value="{{ circ }}"
+                               {% if circ in data.get('special_circumstances', []) %}checked{% endif %}
+                               class="rounded border-gray-300 text-primary-600 mr-2"
+                               onchange="toggleTranslator()">
+                        <span class="text-sm text-gray-600">{{ circ }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Translator (shown if special circumstances) -->
+        <div id="translator-section" class="mt-4 border-t border-gray-200 pt-4 {% if not data.get('special_circumstances') %}hidden{% endif %}">
+            <h4 class="text-sm font-semibold text-gray-700 mb-3">Translator / Interpreter Details</h4>
+            <div class="grid md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                    <input type="text" name="translator_name" value="{{ data.get('translator_name', '') }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No.</label>
+                    <input type="text" name="translator_nric" value="{{ data.get('translator_nric', '') }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
+                    <input type="text" name="translator_relationship" value="{{ data.get('translator_relationship', '') }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Language / Dialect</label>
+                    <input type="text" name="translator_language" value="{{ data.get('translator_language', '') }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <div class="flex justify-between pt-6 border-t border-gray-200">
+        <a href="/" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">Cancel</a>
+        <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
+            Next: Executors & Trustees
+            <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+        </button>
+    </div>
+</form>
+
+<script>
+function toggleSection(id, show) {
+    document.getElementById(id).classList.toggle('hidden', !show);
+}
+function toggleTranslator() {
+    const checked = document.querySelectorAll('input[name="special_circumstances"]:checked').length > 0;
+    document.getElementById('translator-section').classList.toggle('hidden', !checked);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,358 @@
+{% extends "wizard/layout.html" %}
+
+{% block title %}Step 9: Review & Generate - WillCraft AI{% endblock %}
+
+{% block wizard_content %}
+<div class="mb-6">
+    <h2 class="text-2xl font-bold text-gray-900">Step 9: Review & Generate</h2>
+    <p class="text-gray-600 mt-1">Review all your will information before generating the final document.</p>
+</div>
+
+<!-- Validation Results -->
+{% if validation_results %}
+<div class="space-y-3 mb-8">
+    {% set errors = validation_results|selectattr('severity', 'equalto', 'error')|list %}
+    {% set warnings = validation_results|selectattr('severity', 'equalto', 'warning')|list %}
+    {% set infos = validation_results|selectattr('severity', 'equalto', 'info')|list %}
+
+    {% if errors %}
+    <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+        <h4 class="font-semibold text-red-800 mb-2 flex items-center">
+            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+            Errors ({{ errors|length }}) - Must be fixed before generating
+        </h4>
+        <ul class="space-y-1">
+            {% for result in errors %}
+            <li class="text-sm text-red-700 flex items-start">
+                <span class="mr-2">&bull;</span>
+                <span>{{ result.message }}{% if result.field %} <span class="text-red-500 font-mono text-xs">({{ result.field }})</span>{% endif %}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if warnings %}
+    <div class="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+        <h4 class="font-semibold text-amber-800 mb-2 flex items-center">
+            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+            Warnings ({{ warnings|length }})
+        </h4>
+        <ul class="space-y-1">
+            {% for result in warnings %}
+            <li class="text-sm text-amber-700 flex items-start">
+                <span class="mr-2">&bull;</span>
+                <span>{{ result.message }}{% if result.field %} <span class="text-amber-600 font-mono text-xs">({{ result.field }})</span>{% endif %}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if infos %}
+    <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <h4 class="font-semibold text-blue-800 mb-2 flex items-center">
+            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/></svg>
+            Information ({{ infos|length }})
+        </h4>
+        <ul class="space-y-1">
+            {% for result in infos %}
+            <li class="text-sm text-blue-700 flex items-start">
+                <span class="mr-2">&bull;</span>
+                <span>{{ result.message }}{% if result.field %} <span class="text-blue-600 font-mono text-xs">({{ result.field }})</span>{% endif %}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Summary Cards -->
+<div class="space-y-6 mb-8">
+
+    <!-- Step 1: Testator Information -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 1: Testator's Personal Data</h3>
+            <a href="/wizard/step/1" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set testator = will_data.get('testator', {}) %}
+            {% if testator %}
+            <dl class="grid md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                <div><dt class="text-gray-500">Full Name</dt><dd class="font-medium text-gray-900">{{ testator.get('full_name', '-') }}</dd></div>
+                <div><dt class="text-gray-500">NRIC / Passport</dt><dd class="font-medium text-gray-900">{{ testator.get('nric_passport', '-') }}</dd></div>
+                <div class="md:col-span-2"><dt class="text-gray-500">Address</dt><dd class="font-medium text-gray-900">{{ testator.get('residential_address', '-') }}</dd></div>
+                <div><dt class="text-gray-500">Date of Birth</dt><dd class="font-medium text-gray-900">{{ testator.get('date_of_birth', '-') }}</dd></div>
+                <div><dt class="text-gray-500">Occupation</dt><dd class="font-medium text-gray-900">{{ testator.get('occupation', '-') }}</dd></div>
+                <div><dt class="text-gray-500">Marital Status</dt><dd class="font-medium text-gray-900">{{ testator.get('marital_status', '-') }}</dd></div>
+                <div><dt class="text-gray-500">Religion</dt><dd class="font-medium text-gray-900">{{ testator.get('religion', '-') }}</dd></div>
+            </dl>
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No data entered yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 2: Executors & Trustees -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 2: Executors & Trustees</h3>
+            <a href="/wizard/step/2" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set executors = will_data.get('executors', []) %}
+            {% if executors %}
+            <div class="space-y-3">
+                {% for exec in executors %}
+                <div class="flex items-start gap-3 text-sm">
+                    <span class="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs font-medium rounded">{{ exec.get('role', 'Primary') }}</span>
+                    <div>
+                        <p class="font-medium text-gray-900">{{ exec.get('full_name', '-') }}</p>
+                        <p class="text-gray-500">{{ exec.get('nric_passport', '-') }} &middot; {{ exec.get('relationship', '-') }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No data entered yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 3: Guardians -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 3: Guardians <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
+            <a href="/wizard/step/3" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set guardians = will_data.get('guardians', []) %}
+            {% if guardians %}
+            <div class="space-y-2">
+                {% for g in guardians %}
+                <div class="text-sm">
+                    <p class="font-medium text-gray-900">{{ g.get('full_name', '-') }}</p>
+                    <p class="text-gray-500">{{ g.get('nric_passport', '-') }} &middot; {{ g.get('relationship', '-') }}</p>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No guardians appointed (optional).</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 4: Beneficiaries -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 4: Beneficiaries</h3>
+            <a href="/wizard/step/4" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set beneficiaries = will_data.get('beneficiaries', []) %}
+            {% if beneficiaries %}
+            <div class="space-y-2">
+                {% for ben in beneficiaries %}
+                <div class="text-sm flex items-center justify-between">
+                    <div>
+                        <p class="font-medium text-gray-900">{{ ben.get('full_name', '-') }}</p>
+                        <p class="text-gray-500">{{ ben.get('nric_passport', '-') }} &middot; {{ ben.get('relationship', '-') }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No data entered yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 5: Specific Gifts -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 5: Specific Gifts <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
+            <a href="/wizard/step/5" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set gifts = will_data.get('gifts', []) %}
+            {% if gifts %}
+            <div class="space-y-3">
+                {% for gift in gifts %}
+                <div class="text-sm border-b border-gray-100 pb-2 last:border-0 last:pb-0">
+                    <p class="font-medium text-gray-900">Gift {{ loop.index }}: {{ gift.get('asset_description', '-') }}</p>
+                    <p class="text-gray-500">To: {{ gift.get('beneficiary_name', '-') }}</p>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No specific gifts (optional).</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 6: Residuary Estate -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 6: Residuary Estate</h3>
+            <a href="/wizard/step/6" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set residuary = will_data.get('residuary', {}) %}
+            {% set main_bens = residuary.get('main_beneficiaries', []) %}
+            {% if main_bens %}
+            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Main Beneficiaries</h4>
+            <div class="space-y-1 mb-4">
+                {% for ben in main_bens %}
+                <div class="text-sm flex justify-between">
+                    <span class="font-medium text-gray-900">{{ ben.get('beneficiary_name', '-') }}</span>
+                    <span class="text-gray-600">{{ ben.get('share', '-') }}%</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% set sub_groups = residuary.get('substitute_groups', []) %}
+            {% if sub_groups %}
+            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Substitute Groups</h4>
+            {% for group in sub_groups %}
+            <div class="mb-2">
+                <p class="text-xs text-gray-400 mb-1">Group {{ loop.index }}</p>
+                {% for sub in group %}
+                <div class="text-sm flex justify-between ml-3">
+                    <span class="text-gray-900">{{ sub.get('beneficiary_name', '-') }}</span>
+                    <span class="text-gray-600">{{ sub.get('share', '-') }}%</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endfor %}
+            {% endif %}
+            {% if residuary.get('additional_notes') %}
+            <p class="text-sm text-gray-500 mt-3"><strong>Notes:</strong> {{ residuary.get('additional_notes') }}</p>
+            {% endif %}
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No data entered yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 7: Testamentary Trust -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 7: Testamentary Trust <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
+            <a href="/wizard/step/7" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set trust = will_data.get('trust', {}) %}
+            {% set trust_bens = trust.get('trust_beneficiaries', []) %}
+            {% if trust_bens %}
+            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Trust Beneficiaries</h4>
+            <div class="space-y-1 mb-3">
+                {% for ben in trust_bens %}
+                <div class="text-sm flex items-center gap-3">
+                    <span class="px-1.5 py-0.5 bg-gray-100 text-gray-600 text-xs font-mono rounded">{{ ben.get('role', 'MB') }}</span>
+                    <span class="font-medium text-gray-900">{{ ben.get('beneficiary_name', '-') }}</span>
+                    <span class="text-gray-500">{{ ben.get('share', '-') }}%</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% if trust.get('purposes') %}
+            <p class="text-sm text-gray-600"><strong>Purposes:</strong> {{ trust.get('purposes', [])|join(', ') }}</p>
+            {% endif %}
+            {% if trust.get('payment_mode') %}
+            <p class="text-sm text-gray-600"><strong>Payment:</strong> {{ trust.get('payment_mode') }}{% if trust.get('payment_amount') %} - {{ trust.get('payment_amount') }}{% endif %}</p>
+            {% endif %}
+            {% if trust.get('trust_duration') %}
+            <p class="text-sm text-gray-600"><strong>Duration:</strong> {{ trust.get('trust_duration') }}</p>
+            {% endif %}
+            {% if trust.get('separate_trustee') %}
+            <p class="text-sm text-gray-600 mt-2"><strong>Separate Trustee:</strong> {{ trust.get('trustee_name', '-') }} ({{ trust.get('trustee_nric', '-') }})</p>
+            {% endif %}
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No testamentary trust (optional).</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 8: Other Matters -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 8: Other Matters <span class="text-xs text-gray-400 font-normal">(Optional)</span></h3>
+            <a href="/wizard/step/8" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set other = will_data.get('other_matters', {}) %}
+            {% if other.get('terms_of_endearment') or other.get('commorientes_enabled') or other.get('exclusion_enabled') or other.get('unnamed_children_enabled') or other.get('additional_instructions') %}
+            <div class="space-y-3 text-sm">
+                {% if other.get('terms_of_endearment') %}
+                <div>
+                    <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Terms of Endearment</h4>
+                    <p class="text-gray-700 whitespace-pre-line">{{ other.get('terms_of_endearment')[:200] }}{% if other.get('terms_of_endearment')|length > 200 %}...{% endif %}</p>
+                </div>
+                {% endif %}
+                {% if other.get('commorientes_enabled') %}
+                <div>
+                    <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Survivorship Clause</h4>
+                    <p class="text-gray-700">Beneficiary must survive by {{ other.get('commorientes_days', '30') }} days</p>
+                </div>
+                {% endif %}
+                {% if other.get('exclusion_enabled') %}
+                <div>
+                    <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Exclusion</h4>
+                    <p class="text-gray-700">{{ other.get('exclusion_name', '-') }} ({{ other.get('exclusion_relationship', '-') }})</p>
+                </div>
+                {% endif %}
+                {% if other.get('unnamed_children_enabled') %}
+                <div>
+                    <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Unnamed Children Inclusion</h4>
+                    <p class="text-gray-700">Children with {{ other.get('unnamed_children_spouse_name', '-') }} included</p>
+                </div>
+                {% endif %}
+                {% if other.get('additional_instructions') %}
+                <div>
+                    <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Additional Instructions</h4>
+                    <p class="text-gray-700 whitespace-pre-line">{{ other.get('additional_instructions')[:200] }}{% if other.get('additional_instructions')|length > 200 %}...{% endif %}</p>
+                </div>
+                {% endif %}
+            </div>
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No additional matters (optional).</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Generate Section -->
+<div class="border-t border-gray-200 pt-8">
+    {% set has_errors = validation_results|selectattr('severity', 'equalto', 'error')|list|length > 0 if validation_results else false %}
+
+    {% if has_errors %}
+    <div class="text-center mb-6">
+        <div class="inline-flex items-center px-4 py-2 bg-red-50 text-red-700 rounded-lg text-sm font-medium">
+            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
+            Please fix the errors above before generating your will.
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="text-center">
+        <p class="text-sm text-gray-500 mb-4">This will use Claude AI to draft your will. The process may take 30-60 seconds.</p>
+
+        <form method="POST" action="/wizard/generate" class="inline-block">
+            <button type="submit" {% if has_errors %}disabled{% endif %}
+                    class="px-10 py-4 text-lg font-bold rounded-xl transition-colors shadow-lg
+                           {% if has_errors %}bg-gray-300 text-gray-500 cursor-not-allowed{% else %}bg-primary-600 text-white hover:bg-primary-700 hover:shadow-xl{% endif %}">
+                <svg class="inline mr-2 w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                Generate My Will with AI
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- Navigation -->
+<div class="flex justify-between pt-6 mt-6 border-t border-gray-200">
+    <a href="/wizard/step/8" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+        <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        Back
+    </a>
+</div>
+{% endblock %}

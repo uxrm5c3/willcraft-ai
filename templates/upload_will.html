@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Existing Will - WillCraft AI{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 py-16">
+    <div class="text-center mb-8">
+        <h1 class="text-3xl font-bold text-gray-900 mb-3">Upload an Existing Will</h1>
+        <p class="text-gray-600">Upload a PDF or Word document of an existing will. Our AI will extract all the information and pre-fill the wizard for revision.</p>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-8">
+        <form id="will-upload-form" class="space-y-6">
+            <!-- Upload Area -->
+            <div id="upload-area"
+                 class="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center hover:border-primary-400 transition-colors cursor-pointer"
+                 ondragover="event.preventDefault(); this.classList.add('border-primary-500', 'bg-primary-50')"
+                 ondragleave="this.classList.remove('border-primary-500', 'bg-primary-50')"
+                 ondrop="handleWillDrop(event)"
+                 onclick="document.getElementById('will-file-input').click()">
+                <svg class="mx-auto w-12 h-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                </svg>
+                <p class="text-gray-600 font-medium mb-1">Drag & drop your will document here</p>
+                <p class="text-sm text-gray-400">or click to browse. Supports PDF and DOCX files.</p>
+                <input type="file" id="will-file-input" accept=".pdf,.docx" class="hidden" onchange="handleWillFileSelect(this)">
+            </div>
+
+            <!-- Selected File Info -->
+            <div id="file-info" class="hidden bg-gray-50 rounded-lg p-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <svg class="w-8 h-8 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <div>
+                            <p id="file-name" class="font-medium text-gray-900"></p>
+                            <p id="file-size" class="text-sm text-gray-500"></p>
+                        </div>
+                    </div>
+                    <button type="button" onclick="clearFile()" class="text-gray-400 hover:text-red-500">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Parse Button -->
+            <button type="button" id="parse-btn" onclick="parseWill()" disabled
+                    class="w-full py-3 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed">
+                <svg class="inline mr-2 w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+                Parse & Import Will
+            </button>
+
+            <!-- Status -->
+            <div id="parse-status" class="hidden text-center py-6">
+                <div class="inline-flex items-center gap-3 px-6 py-3 bg-primary-50 text-primary-700 rounded-lg">
+                    <svg class="animate-spin w-5 h-5" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                    <span>AI is analyzing your will document... This may take 30-60 seconds.</span>
+                </div>
+            </div>
+
+            <div id="parse-error" class="hidden p-4 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm"></div>
+        </form>
+    </div>
+
+    <div class="text-center mt-6">
+        <a href="/" class="text-sm text-gray-500 hover:text-gray-700">&larr; Back to Home</a>
+    </div>
+</div>
+
+<script>
+let selectedFile = null;
+
+function handleWillFileSelect(input) {
+    if (input.files.length > 0) setFile(input.files[0]);
+}
+
+function handleWillDrop(event) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('border-primary-500', 'bg-primary-50');
+    if (event.dataTransfer.files.length > 0) setFile(event.dataTransfer.files[0]);
+}
+
+function setFile(file) {
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!['pdf', 'docx'].includes(ext)) {
+        alert('Please upload a PDF or DOCX file.');
+        return;
+    }
+    selectedFile = file;
+    document.getElementById('file-name').textContent = file.name;
+    document.getElementById('file-size').textContent = (file.size / 1024).toFixed(1) + ' KB';
+    document.getElementById('file-info').classList.remove('hidden');
+    document.getElementById('upload-area').classList.add('hidden');
+    document.getElementById('parse-btn').disabled = false;
+}
+
+function clearFile() {
+    selectedFile = null;
+    document.getElementById('file-info').classList.add('hidden');
+    document.getElementById('upload-area').classList.remove('hidden');
+    document.getElementById('parse-btn').disabled = true;
+    document.getElementById('will-file-input').value = '';
+}
+
+async function parseWill() {
+    if (!selectedFile) return;
+    const btn = document.getElementById('parse-btn');
+    const status = document.getElementById('parse-status');
+    const errorEl = document.getElementById('parse-error');
+
+    btn.disabled = true;
+    btn.textContent = 'Parsing...';
+    status.classList.remove('hidden');
+    errorEl.classList.add('hidden');
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    try {
+        const resp = await fetch('/api/parse-will', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (data.ok) {
+            window.location.href = '/wizard/step/1';
+        } else {
+            errorEl.textContent = data.error || 'Failed to parse the will document.';
+            errorEl.classList.remove('hidden');
+            btn.disabled = false;
+            btn.textContent = 'Parse & Import Will';
+        }
+    } catch (e) {
+        errorEl.textContent = 'Upload failed. Please try again.';
+        errorEl.classList.remove('hidden');
+        btn.disabled = false;
+        btn.textContent = 'Parse & Import Will';
+    }
+    status.classList.add('hidden');
+}
+</script>
+{% endblock %}

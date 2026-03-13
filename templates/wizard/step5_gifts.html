@@ -1,0 +1,270 @@
+{% extends "wizard/layout.html" %}
+
+{% block title %}Step 5: Specific Gifts - WillCraft AI{% endblock %}
+
+{% block wizard_content %}
+<div class="mb-6">
+    <h2 class="text-2xl font-bold text-gray-900">Step 5: Non-Residuary Gifts / Specific Bequests</h2>
+    <p class="text-gray-600 mt-1">Specify particular assets to be given to particular beneficiaries. These are distributed before the residuary estate.</p>
+    <div class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
+        <strong>Legal Note:</strong> MB = Main Beneficiary (receives the gift). SB = Substitute Beneficiary (receives the gift if MB predeceases the testator). Shares for each gift should total 100% across all MB allocations.
+    </div>
+</div>
+
+<form method="POST" action="/wizard/step/5" class="space-y-6">
+    <!-- Gifts List -->
+    <div id="gifts-container">
+        {% set gifts = data.get('gifts', [{'description': '', 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}]) %}
+        {% for gift in gifts %}
+        <div class="gift-entry border border-gray-200 rounded-lg p-5 mb-4" data-gift-index="{{ loop.index0 }}">
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="font-semibold text-gray-700">Gift No. {{ loop.index }}</h3>
+                {% if loop.index > 1 %}
+                <button type="button" onclick="removeGift(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+                {% endif %}
+            </div>
+
+            <!-- Document Upload for Auto-fill -->
+            <div class="mb-4 flex flex-wrap gap-3 items-start">
+                <div class="flex items-center gap-2">
+                    <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Upload Property Doc:</label>
+                    <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-1 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-100 file:text-blue-700"
+                           onchange="uploadAndExtractProperty(this, 'property-status-{{ loop.index0 }}', {{ loop.index0 }})">
+                    <span id="property-status-{{ loop.index0 }}" class="text-xs"></span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Upload Financial Doc:</label>
+                    <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-1 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-100 file:text-green-700"
+                           onchange="uploadAndExtractAsset(this, 'asset-status-{{ loop.index0 }}', {{ loop.index0 }})">
+                    <span id="asset-status-{{ loop.index0 }}" class="text-xs"></span>
+                </div>
+            </div>
+
+            <!-- Gift Description -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Asset Description</label>
+                <textarea name="gift_desc_{{ loop.index0 }}" rows="3"
+                          class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                          placeholder="e.g., My property at No. 10, Jalan Bukit Tunku, 50480 Kuala Lumpur (Title No. GRN 12345, Lot 678)">{{ gift.get('description', '') }}</textarea>
+            </div>
+
+            <!-- Trust & Guardian Allowance Checkboxes -->
+            <div class="flex flex-wrap gap-6 mb-4">
+                <label class="flex items-center">
+                    <input type="checkbox" name="gift_trust_{{ loop.index0 }}" value="1"
+                           {% if gift.get('subject_to_trust') %}checked{% endif %}
+                           class="rounded border-gray-300 text-primary-600 mr-2">
+                    <span class="text-sm text-gray-700">Subject to Testamentary Trust</span>
+                </label>
+                <label class="flex items-center">
+                    <input type="checkbox" name="gift_guardian_allowance_{{ loop.index0 }}" value="1"
+                           {% if gift.get('subject_to_guardian_allowance') %}checked{% endif %}
+                           class="rounded border-gray-300 text-primary-600 mr-2">
+                    <span class="text-sm text-gray-700">Subject to Guardian Allowance</span>
+                </label>
+            </div>
+
+            <!-- Allocations -->
+            <div class="border-t border-gray-100 pt-4">
+                <h4 class="text-sm font-semibold text-gray-600 mb-3">Beneficiary Allocations</h4>
+                <div class="allocations-container" id="allocations-{{ loop.index0 }}">
+                    {% set allocations = gift.get('allocations', [{}]) %}
+                    {% for alloc in allocations %}
+                    <div class="allocation-entry grid md:grid-cols-4 gap-3 mb-3 items-end" data-alloc-index="{{ loop.index0 }}">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Beneficiary Name</label>
+                            <input type="text" name="gift_{{ loop.parent.loop.index0 }}_alloc_name_{{ loop.index0 }}"
+                                   value="{{ alloc.get('beneficiary_name', '') }}"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                   placeholder="Name from beneficiary list">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Share</label>
+                            <input type="text" name="gift_{{ loop.parent.loop.index0 }}_alloc_share_{{ loop.index0 }}"
+                                   value="{{ alloc.get('share', '') }}"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                   placeholder="e.g., 100% or 50%">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Role</label>
+                            <select name="gift_{{ loop.parent.loop.index0 }}_alloc_role_{{ loop.index0 }}"
+                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                                <option value="MB" {% if alloc.get('role') == 'MB' %}selected{% endif %}>MB (Main Beneficiary)</option>
+                                <option value="SB" {% if alloc.get('role') == 'SB' %}selected{% endif %}>SB (Substitute Beneficiary)</option>
+                            </select>
+                        </div>
+                        <div>
+                            {% if loop.index > 1 %}
+                            <button type="button" onclick="removeAllocation(this)" class="text-red-500 hover:text-red-700 text-sm py-2">Remove</button>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <input type="hidden" name="gift_{{ loop.index0 }}_alloc_count" class="alloc-count" value="{{ allocations|length }}">
+
+                <button type="button" onclick="addAllocation({{ loop.index0 }})"
+                        class="mt-2 px-3 py-1.5 text-sm border border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+                    + Add Beneficiary to Gift
+                </button>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <input type="hidden" name="gift_count" id="gift-count" value="{{ gifts|length }}">
+
+    <button type="button" onclick="addGift()" id="add-gift-btn"
+            class="mb-6 px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors">
+        + Add Another Gift
+    </button>
+
+    <!-- Navigation -->
+    <div class="flex justify-between items-center pt-6 border-t border-gray-200">
+        <a href="/wizard/step/4" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+            <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            Back
+        </a>
+        <div class="flex items-center gap-4">
+            <a href="/wizard/step/6" class="text-sm text-gray-400 hover:text-gray-600 underline">Skip this step</a>
+            <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
+                Next: Residuary Estate
+                <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </button>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block wizard_scripts %}
+<script>
+let giftCount = {{ data.get('gifts', [{'description': '', 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}])|length }};
+let allocCounts = {};
+{% for gift in data.get('gifts', [{'description': '', 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}]) %}
+allocCounts[{{ loop.index0 }}] = {{ gift.get('allocations', [{}])|length }};
+{% endfor %}
+
+function addGift() {
+    const container = document.getElementById('gifts-container');
+    const idx = giftCount;
+    allocCounts[idx] = 1;
+    const html = `
+    <div class="gift-entry border border-gray-200 rounded-lg p-5 mb-4" data-gift-index="${idx}">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-semibold text-gray-700">Gift No. ${idx + 1}</h3>
+            <button type="button" onclick="removeGift(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+        </div>
+        <div class="mb-4 flex flex-wrap gap-3 items-start">
+            <div class="flex items-center gap-2">
+                <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Upload Property Doc:</label>
+                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-1 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-100 file:text-blue-700"
+                       onchange="uploadAndExtractProperty(this, 'property-status-${idx}', ${idx})">
+                <span id="property-status-${idx}" class="text-xs"></span>
+            </div>
+            <div class="flex items-center gap-2">
+                <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Upload Financial Doc:</label>
+                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-1 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-100 file:text-green-700"
+                       onchange="uploadAndExtractAsset(this, 'asset-status-${idx}', ${idx})">
+                <span id="asset-status-${idx}" class="text-xs"></span>
+            </div>
+        </div>
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Asset Description</label>
+            <textarea name="gift_desc_${idx}" rows="3"
+                      class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                      placeholder="e.g., My property at No. 10, Jalan Bukit Tunku, 50480 Kuala Lumpur (Title No. GRN 12345, Lot 678)"></textarea>
+        </div>
+        <div class="flex flex-wrap gap-6 mb-4">
+            <label class="flex items-center">
+                <input type="checkbox" name="gift_trust_${idx}" value="1" class="rounded border-gray-300 text-primary-600 mr-2">
+                <span class="text-sm text-gray-700">Subject to Testamentary Trust</span>
+            </label>
+            <label class="flex items-center">
+                <input type="checkbox" name="gift_guardian_allowance_${idx}" value="1" class="rounded border-gray-300 text-primary-600 mr-2">
+                <span class="text-sm text-gray-700">Subject to Guardian Allowance</span>
+            </label>
+        </div>
+        <div class="border-t border-gray-100 pt-4">
+            <h4 class="text-sm font-semibold text-gray-600 mb-3">Beneficiary Allocations</h4>
+            <div class="allocations-container" id="allocations-${idx}">
+                <div class="allocation-entry grid md:grid-cols-4 gap-3 mb-3 items-end" data-alloc-index="0">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Beneficiary Name</label>
+                        <input type="text" name="gift_${idx}_alloc_name_0" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="Name from beneficiary list">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Share</label>
+                        <input type="text" name="gift_${idx}_alloc_share_0" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., 100% or 50%">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Role</label>
+                        <select name="gift_${idx}_alloc_role_0" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                            <option value="MB">MB (Main Beneficiary)</option>
+                            <option value="SB">SB (Substitute Beneficiary)</option>
+                        </select>
+                    </div>
+                    <div></div>
+                </div>
+            </div>
+            <input type="hidden" name="gift_${idx}_alloc_count" class="alloc-count" value="1">
+            <button type="button" onclick="addAllocation(${idx})"
+                    class="mt-2 px-3 py-1.5 text-sm border border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+                + Add Beneficiary to Gift
+            </button>
+        </div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
+    giftCount++;
+    document.getElementById('gift-count').value = giftCount;
+}
+
+function removeGift(btn) {
+    btn.closest('.gift-entry').remove();
+    giftCount--;
+    document.getElementById('gift-count').value = giftCount;
+}
+
+function addAllocation(giftIdx) {
+    const container = document.getElementById('allocations-' + giftIdx);
+    const idx = allocCounts[giftIdx] || 0;
+    const html = `
+    <div class="allocation-entry grid md:grid-cols-4 gap-3 mb-3 items-end" data-alloc-index="${idx}">
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Beneficiary Name</label>
+            <input type="text" name="gift_${giftIdx}_alloc_name_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="Name from beneficiary list">
+        </div>
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Share</label>
+            <input type="text" name="gift_${giftIdx}_alloc_share_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., 100% or 50%">
+        </div>
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Role</label>
+            <select name="gift_${giftIdx}_alloc_role_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                <option value="MB">MB (Main Beneficiary)</option>
+                <option value="SB">SB (Substitute Beneficiary)</option>
+            </select>
+        </div>
+        <div>
+            <button type="button" onclick="removeAllocation(this)" class="text-red-500 hover:text-red-700 text-sm py-2">Remove</button>
+        </div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
+    allocCounts[giftIdx] = idx + 1;
+    // Update the hidden count field for this gift
+    const giftEntry = container.closest('.gift-entry');
+    const countField = giftEntry.querySelector(`input[name="gift_${giftIdx}_alloc_count"]`);
+    if (countField) countField.value = allocCounts[giftIdx];
+}
+
+function removeAllocation(btn) {
+    const entry = btn.closest('.allocation-entry');
+    const giftEntry = entry.closest('.gift-entry');
+    const giftIdx = giftEntry.dataset.giftIndex;
+    entry.remove();
+    allocCounts[giftIdx]--;
+    const countField = giftEntry.querySelector(`input[name="gift_${giftIdx}_alloc_count"]`);
+    if (countField) countField.value = allocCounts[giftIdx];
+}
+</script>
+{% endblock %}

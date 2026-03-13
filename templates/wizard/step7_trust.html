@@ -1,0 +1,299 @@
+{% extends "wizard/layout.html" %}
+
+{% block title %}Step 7: Testamentary Trust - WillCraft AI{% endblock %}
+
+{% block wizard_content %}
+<div class="mb-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h2 class="text-2xl font-bold text-gray-900">Step 7: Testamentary Trust</h2>
+            <p class="text-gray-600 mt-1">Recommended if you have minor (under 18) or handicapped beneficiaries.</p>
+        </div>
+        <span class="px-3 py-1 bg-gray-100 text-gray-500 text-xs font-semibold rounded-full uppercase">Optional</span>
+    </div>
+    <div class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
+        <strong>Note:</strong> Without a trust, beneficiaries receive their entitlement at age 18. A testamentary trust allows you to control when and how assets are distributed to vulnerable beneficiaries.
+    </div>
+</div>
+
+<form method="POST" action="/wizard/step/7" class="space-y-8">
+    {% set trust = data %}
+
+    <!-- Trust Beneficiaries -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Trust Beneficiaries</h3>
+        <p class="text-sm text-gray-500 mb-4">Identify which beneficiaries should have their entitlement held in trust.</p>
+
+        <div id="trust-beneficiaries-container">
+            {% set trust_beneficiaries = trust.get('trust_beneficiaries', [{}]) %}
+            {% for ben in trust_beneficiaries %}
+            <div class="trust-ben-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="{{ loop.index0 }}">
+                <div class="flex justify-between items-center mb-3">
+                    <h4 class="font-medium text-gray-700">Trust Beneficiary No. {{ loop.index }}</h4>
+                    {% if loop.index > 1 %}
+                    <button type="button" onclick="removeTrustBeneficiary(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+                    {% endif %}
+                </div>
+                <div class="grid md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                        <input type="text" name="trust_ben_name_{{ loop.index0 }}" value="{{ ben.get('beneficiary_name', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="Full name as per NRIC">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
+                        <input type="number" name="trust_ben_share_{{ loop.index0 }}" value="{{ ben.get('share', '') }}"
+                               min="1" max="100" step="0.01"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="e.g., 50">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                        <select name="trust_ben_role_{{ loop.index0 }}"
+                                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                            <option value="MB" {% if ben.get('role') == 'MB' %}selected{% endif %}>MB - Main Beneficiary</option>
+                            <option value="SB" {% if ben.get('role') == 'SB' %}selected{% endif %}>SB - Substitute Beneficiary</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <input type="hidden" name="trust_beneficiary_count" id="trust-beneficiary-count" value="{{ trust_beneficiaries|length }}">
+
+        <button type="button" onclick="addTrustBeneficiary()"
+                class="px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+            + Add Trust Beneficiary
+        </button>
+    </div>
+
+    <!-- Trust Purposes -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Purposes of Trust</h3>
+        <p class="text-sm text-gray-500 mb-4">What may the trust funds be used for?</p>
+
+        {% set purposes = trust.get('purposes', []) %}
+        <div class="space-y-3">
+            <label class="flex items-center">
+                <input type="checkbox" name="purposes" value="Education" {% if 'Education' in purposes %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-2">
+                <span class="text-sm text-gray-700">Education</span>
+            </label>
+            <label class="flex items-center">
+                <input type="checkbox" name="purposes" value="Health" {% if 'Health' in purposes %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-2">
+                <span class="text-sm text-gray-700">Health</span>
+            </label>
+            <label class="flex items-center">
+                <input type="checkbox" name="purposes" value="Maintenance" {% if 'Maintenance' in purposes %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-2">
+                <span class="text-sm text-gray-700">Maintenance</span>
+            </label>
+            <label class="flex items-center">
+                <input type="checkbox" name="purposes" value="Others" {% if 'Others' in purposes %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-2"
+                       onchange="toggleSection('purposes-other-section', this.checked)">
+                <span class="text-sm text-gray-700">Others</span>
+            </label>
+            <div id="purposes-other-section" class="ml-6 {% if 'Others' not in purposes %}hidden{% endif %}">
+                <input type="text" name="purposes_other_text" value="{{ trust.get('purposes_other_text', '') }}"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="Please specify other purposes">
+            </div>
+        </div>
+    </div>
+
+    <!-- Immovable Properties -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">For Immovable Properties</h3>
+        <p class="text-sm text-gray-500 mb-4">How should immovable properties (land, houses, etc.) held in trust be managed?</p>
+
+        <div class="space-y-3">
+            <label class="flex items-center">
+                <input type="radio" name="immovable_property_action" value="let_lease" {% if trust.get('immovable_property_action') == 'let_lease' %}checked{% endif %}
+                       class="border-gray-300 text-primary-600 mr-2">
+                <span class="text-sm text-gray-700">Let / Lease the property</span>
+            </label>
+            <label class="flex items-center">
+                <input type="radio" name="immovable_property_action" value="reside" {% if trust.get('immovable_property_action') == 'reside' %}checked{% endif %}
+                       class="border-gray-300 text-primary-600 mr-2">
+                <span class="text-sm text-gray-700">Allow beneficiary to reside in the property</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- Duration of Trust -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Duration of Trust</h3>
+        <p class="text-sm text-gray-500 mb-3">How long should the trust remain in effect?</p>
+
+        <input type="text" name="trust_duration" value="{{ trust.get('trust_duration', '') }}"
+               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+               placeholder="e.g., Until the beneficiary turns 25 years old, or Until the beneficiary completes tertiary education">
+    </div>
+
+    <!-- Assets from Gifts -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Assets from Specific Gifts</h3>
+        <p class="text-sm text-gray-500 mb-3">Reference gift numbers from Step 5 that should be held in trust.</p>
+
+        <input type="text" name="gift_references" value="{{ trust.get('gift_references', '') }}"
+               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+               placeholder="e.g., Gift 1, Gift 3 (reference numbers from Step 5: Specific Gifts)">
+    </div>
+
+    <!-- Payment Mode -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Payment Mode</h3>
+        <p class="text-sm text-gray-500 mb-4">How should trust distributions be paid out?</p>
+
+        <div class="grid md:grid-cols-2 gap-6">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Frequency</label>
+                <select name="payment_mode"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                        onchange="toggleSection('payment-mode-other-section', this.value === 'Other')">
+                    <option value="" disabled {% if not trust.get('payment_mode') %}selected{% endif %}>Select payment frequency</option>
+                    <option value="Monthly" {% if trust.get('payment_mode') == 'Monthly' %}selected{% endif %}>Monthly</option>
+                    <option value="Quarterly" {% if trust.get('payment_mode') == 'Quarterly' %}selected{% endif %}>Quarterly</option>
+                    <option value="Yearly" {% if trust.get('payment_mode') == 'Yearly' %}selected{% endif %}>Yearly</option>
+                    <option value="Discretion of Trustee" {% if trust.get('payment_mode') == 'Discretion of Trustee' %}selected{% endif %}>Discretion of Trustee</option>
+                    <option value="Other" {% if trust.get('payment_mode') == 'Other' %}selected{% endif %}>Other</option>
+                </select>
+                <div id="payment-mode-other-section" class="mt-3 {% if trust.get('payment_mode') != 'Other' %}hidden{% endif %}">
+                    <input type="text" name="payment_mode_other" value="{{ trust.get('payment_mode_other', '') }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="Specify payment mode">
+                </div>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Payment Amount</label>
+                <input type="text" name="payment_amount" value="{{ trust.get('payment_amount', '') }}"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="e.g., RM 2,000 per month or 5% of trust value">
+            </div>
+        </div>
+    </div>
+
+    <!-- Balance of Trust -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Balance of Trust</h3>
+        <p class="text-sm text-gray-500 mb-3">Who should receive the remaining trust assets once the trust terminates?</p>
+
+        <textarea name="balance_of_trust" rows="3"
+                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="e.g., The balance of the trust shall be distributed to the trust beneficiaries in equal shares">{{ trust.get('balance_of_trust', '') }}</textarea>
+    </div>
+
+    <!-- Separate Trustee -->
+    <div>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Trustee for This Trust</h3>
+        <p class="text-sm text-gray-500 mb-4">If different from the executors/trustees appointed in Step 2.</p>
+
+        <label class="flex items-center mb-4">
+            <input type="checkbox" name="separate_trustee" value="1" {% if trust.get('separate_trustee') %}checked{% endif %}
+                   class="rounded border-gray-300 text-primary-600 mr-2"
+                   onchange="toggleSection('separate-trustee-section', this.checked)">
+            <span class="text-sm font-medium text-gray-700">Appoint a separate trustee for this trust</span>
+        </label>
+
+        <div id="separate-trustee-section" class="border border-gray-200 rounded-lg p-4 {% if not trust.get('separate_trustee') %}hidden{% endif %}">
+            <div class="grid md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Trustee Full Name</label>
+                    <input type="text" name="trustee_name" value="{{ trust.get('trustee_name', '') }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="Full name as per NRIC">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No.</label>
+                    <input type="text" name="trustee_nric" value="{{ trust.get('trustee_nric', '') }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="e.g., 800101-14-1234">
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                    <input type="text" name="trustee_address" value="{{ trust.get('trustee_address', '') }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="Full residential address">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship</label>
+                    <input type="text" name="trustee_relationship" value="{{ trust.get('trustee_relationship', '') }}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="e.g., Spouse, Sibling, Friend">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation -->
+    <div class="flex justify-between items-center pt-6 border-t border-gray-200">
+        <a href="/wizard/step/6" class="px-6 py-2 text-gray-600 hover:text-gray-800 font-medium">
+            <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+            Back
+        </a>
+        <div class="flex items-center gap-4">
+            <a href="/wizard/step/8" class="text-sm text-gray-500 hover:text-gray-700 underline">Skip this step</a>
+            <button type="submit" class="px-8 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors">
+                Next: Other Matters
+                <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </button>
+        </div>
+    </div>
+</form>
+{% endblock %}
+
+{% block wizard_scripts %}
+<script>
+let trustBenCount = {{ data.get('trust_beneficiaries', [{}])|length }};
+
+function toggleSection(id, show) {
+    document.getElementById(id).classList.toggle('hidden', !show);
+}
+
+function addTrustBeneficiary() {
+    const idx = trustBenCount;
+    const html = `
+    <div class="trust-ben-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="${idx}">
+        <div class="flex justify-between items-center mb-3">
+            <h4 class="font-medium text-gray-700">Trust Beneficiary No. ${idx + 1}</h4>
+            <button type="button" onclick="removeTrustBeneficiary(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+        </div>
+        <div class="grid md:grid-cols-3 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                <input type="text" name="trust_ben_name_${idx}"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="Full name as per NRIC">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
+                <input type="number" name="trust_ben_share_${idx}" min="1" max="100" step="0.01"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="e.g., 50">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                <select name="trust_ben_role_${idx}"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <option value="MB">MB - Main Beneficiary</option>
+                    <option value="SB">SB - Substitute Beneficiary</option>
+                </select>
+            </div>
+        </div>
+    </div>`;
+    document.getElementById('trust-beneficiaries-container').insertAdjacentHTML('beforeend', html);
+    trustBenCount++;
+    document.getElementById('trust-beneficiary-count').value = trustBenCount;
+}
+
+function removeTrustBeneficiary(btn) {
+    btn.closest('.trust-ben-entry').remove();
+    trustBenCount--;
+    document.getElementById('trust-beneficiary-count').value = trustBenCount;
+}
+</script>
+{% endblock %}
