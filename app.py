@@ -148,7 +148,16 @@ def upsert_person(client_id, full_name, nric_passport, address=None,
     """Add or update a person identity in the registry."""
     if not full_name or not nric_passport:
         return None
+    # Try exact match first, then normalized match (strip dashes/spaces)
     existing = Person.query.filter_by(client_id=client_id, nric_passport=nric_passport).first()
+    if not existing:
+        normalized = nric_passport.replace('-', '').replace(' ', '').upper()
+        all_persons = Person.query.filter_by(client_id=client_id).all()
+        for p in all_persons:
+            p_norm = (p.nric_passport or '').replace('-', '').replace(' ', '').upper()
+            if p_norm == normalized:
+                existing = p
+                break
     if existing:
         existing.full_name = full_name.upper()
         if address:
@@ -646,7 +655,20 @@ def api_ocr_nric():
         from ai.ocr import extract_nric_data
         extracted = extract_nric_data(abs_path)
     except Exception as e:
-        return jsonify({'ok': False, 'error': f'OCR failed: {e}'}), 500
+        app.logger.error(f'OCR NRIC error: {e}')
+        return jsonify({'ok': False, 'error': 'Could not scan the document. Please try again with a clearer image.'}), 500
+    # Address fallback: if OCR couldn't read address clearly (empty),
+    # check if the same NRIC already has an address on file and use that.
+    if not extracted.get('address') and extracted.get('nric_number'):
+        nric_norm = extracted['nric_number'].replace('-', '').replace(' ', '').upper()
+        existing_persons = Person.query.filter_by(client_id=client_id).all()
+        for p in existing_persons:
+            p_norm = (p.nric_passport or '').replace('-', '').replace(' ', '').upper()
+            if p_norm == nric_norm and p.address:
+                extracted['address'] = p.address
+                extracted['_address_from_existing'] = True
+                break
+
     doc = Document(
         client_id=client_id, will_id=session.get('will_id'),
         filename=saved_name, original_filename=file.filename,
@@ -656,13 +678,8 @@ def api_ocr_nric():
     )
     db.session.add(doc)
     db.session.commit()
-    if extracted.get('full_name') and extracted.get('nric_number'):
-        upsert_person(client_id, extracted['full_name'], extracted['nric_number'],
-                      address=extracted.get('address', ''),
-                      date_of_birth=extracted.get('date_of_birth', ''),
-                      nationality=extracted.get('nationality', 'Malaysian'),
-                      gender=extracted.get('gender', ''),
-                      passport_expiry=extracted.get('passport_expiry', ''))
+    # NOTE: Do NOT auto-save person here. The user must review and
+    # explicitly click "Save Identity" to create/update the person record.
     return jsonify({'ok': True, 'extracted': extracted, 'document_id': doc.id})
 
 
@@ -687,7 +704,8 @@ def api_ocr_property():
         doc_type = request.form.get('doc_type', 'general')
         extracted = extract_property_data(abs_path, doc_type=doc_type)
     except Exception as e:
-        return jsonify({'ok': False, 'error': f'Extraction failed: {e}'}), 500
+        app.logger.error(f'OCR property error: {e}')
+        return jsonify({'ok': False, 'error': 'Could not read the property document. Please try again with a clearer image.'}), 500
     doc = Document(
         client_id=client_id, will_id=session.get('will_id'),
         filename=saved_name, original_filename=file.filename,
@@ -720,7 +738,8 @@ def api_ocr_asset():
         from ai.asset_extractor import extract_asset_data
         extracted = extract_asset_data(abs_path)
     except Exception as e:
-        return jsonify({'ok': False, 'error': f'Extraction failed: {e}'}), 500
+        app.logger.error(f'OCR asset error: {e}')
+        return jsonify({'ok': False, 'error': 'Could not read the financial document. Please try again with a clearer image.'}), 500
     doc = Document(
         client_id=client_id, will_id=session.get('will_id'),
         filename=saved_name, original_filename=file.filename,

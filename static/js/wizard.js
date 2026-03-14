@@ -468,9 +468,9 @@ async function uploadAndExtractNRIC(inputOrFile, statusElId, fieldMapping) {
     try {
         const resp = await fetch('/api/ocr/nric', { method: 'POST', body: formData });
         if (!resp.ok) {
-            let errMsg = 'Server error';
-            try { errMsg = (await resp.json()).error || errMsg; } catch(e) {}
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${errMsg}</span>`;
+            let errMsg = 'Could not scan the document. Please try again with a clearer image.';
+            try { const errData = await resp.json(); if (errData.error) errMsg = errData.error; } catch(e) {}
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">❌ ${errMsg}</span>`;
             return;
         }
         const data = await resp.json();
@@ -495,11 +495,11 @@ async function uploadAndExtractNRIC(inputOrFile, statusElId, fieldMapping) {
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadAndExtractNRIC(f, statusElId, fieldMapping), docType: 'nric' });
         } else {
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">${data.error || 'Could not read document. Try a clearer image.'}</span>`;
+            if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the document. Please try a clearer image.</span>';
         }
     } catch (e) {
         console.error('NRIC upload error:', e);
-        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Check connection and try again.</span>';
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Upload failed. Check your internet connection and try again.</span>';
     }
 }
 
@@ -528,9 +528,9 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
     try {
         const resp = await fetch('/api/ocr/property', { method: 'POST', body: formData });
         if (!resp.ok) {
-            let errMsg = 'Server error';
-            try { errMsg = (await resp.json()).error || errMsg; } catch(e) {}
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${errMsg}</span>`;
+            let errMsg = 'Could not read the property document. Please try again with a clearer image.';
+            try { const errData = await resp.json(); if (errData.error) errMsg = errData.error; } catch(e) {}
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">❌ ${errMsg}</span>`;
             return;
         }
         const data = await resp.json();
@@ -559,11 +559,11 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadAndExtractProperty(f, statusElId, giftIndex, docType), docType: 'property' });
         } else {
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">${data.error || 'Could not read document. Try a clearer image.'}</span>`;
+            if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the property document. Please try a clearer image.</span>';
         }
     } catch (e) {
         console.error('Property upload error:', e);
-        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Check connection and try again.</span>';
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Upload failed. Check your internet connection and try again.</span>';
     }
 }
 
@@ -965,10 +965,9 @@ async function uploadNRICForIdentity(inputOrFile) {
     try {
         const resp = await fetch('/api/ocr/nric', { method: 'POST', body: formData });
         if (!resp.ok) {
-            const errText = await resp.text();
-            let errMsg = 'Server error';
-            try { errMsg = JSON.parse(errText).error || errMsg; } catch(e) {}
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${errMsg}</span>`;
+            let errMsg = 'Could not scan the document. Please try again with a clearer image.';
+            try { const errData = await resp.json(); if (errData.error) errMsg = errData.error; } catch(e) {}
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">❌ ${errMsg}</span>`;
             return;
         }
         const data = await resp.json();
@@ -1008,11 +1007,11 @@ async function uploadNRICForIdentity(inputOrFile) {
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadNRICForIdentity(f), docType: 'nric' });
         } else {
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${data.error || 'Extraction failed. Try a clearer image.'}</span>`;
+            if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the document. Please try a clearer image.</span>';
         }
     } catch (e) {
         console.error('NRIC upload error:', e);
-        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Check your connection and try again.</span>';
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Upload failed. Check your internet connection and try again.</span>';
     }
 }
 
@@ -1040,9 +1039,9 @@ async function uploadAndExtractAsset(inputOrFile, statusElId, giftIndex) {
     try {
         const resp = await fetch('/api/ocr/asset', { method: 'POST', body: formData });
         if (!resp.ok) {
-            let errMsg = 'Server error';
-            try { errMsg = (await resp.json()).error || errMsg; } catch(e) {}
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${errMsg}</span>`;
+            let errMsg = 'Could not read the financial document. Please try again with a clearer image.';
+            try { const errData = await resp.json(); if (errData.error) errMsg = errData.error; } catch(e) {}
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">❌ ${errMsg}</span>`;
             return;
         }
         const data = await resp.json();
@@ -1067,10 +1066,10 @@ async function uploadAndExtractAsset(inputOrFile, statusElId, giftIndex) {
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadAndExtractAsset(f, statusElId, giftIndex), docType: 'financial' });
         } else {
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">${data.error || 'Could not read document. Try a clearer image.'}</span>`;
+            if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the financial document. Please try a clearer image.</span>';
         }
     } catch (e) {
         console.error('Asset upload error:', e);
-        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Check connection and try again.</span>';
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Upload failed. Check your internet connection and try again.</span>';
     }
 }
