@@ -143,7 +143,8 @@ def load_will_to_session(will_record):
 
 def upsert_person(client_id, full_name, nric_passport, address=None,
                   date_of_birth=None, nationality=None, gender=None,
-                  passport_expiry=None, email=None, phone=None):
+                  passport_expiry=None, email=None, phone=None,
+                  relationship=None):
     """Add or update a person identity in the registry."""
     if not full_name or not nric_passport:
         return None
@@ -164,6 +165,8 @@ def upsert_person(client_id, full_name, nric_passport, address=None,
             existing.email = email
         if phone:
             existing.phone = phone
+        if relationship is not None:
+            existing.relationship = relationship
         db.session.commit()
         _refresh_session_person_registry(client_id)
         return existing
@@ -179,6 +182,7 @@ def upsert_person(client_id, full_name, nric_passport, address=None,
             passport_expiry=passport_expiry,
             email=email,
             phone=phone,
+            relationship=relationship or '',
         )
         db.session.add(person)
         db.session.commit()
@@ -194,7 +198,8 @@ def _refresh_session_person_registry(client_id):
          'address': p.address or '', 'date_of_birth': p.date_of_birth or '',
          'nationality': p.nationality or 'Malaysian', 'gender': p.gender or '',
          'passport_expiry': p.passport_expiry or '',
-         'email': p.email or '', 'phone': p.phone or ''}
+         'email': p.email or '', 'phone': p.phone or '',
+         'relationship': p.relationship or ''}
         for p in persons
     ]
     session.modified = True
@@ -465,7 +470,8 @@ def api_persons_list():
          'address': p.address or '', 'date_of_birth': p.date_of_birth or '',
          'nationality': p.nationality or 'Malaysian', 'gender': p.gender or '',
          'passport_expiry': p.passport_expiry or '',
-         'email': p.email or '', 'phone': p.phone or ''}
+         'email': p.email or '', 'phone': p.phone or '',
+         'relationship': p.relationship or ''}
         for p in persons
     ])
 
@@ -490,11 +496,17 @@ def api_persons_create():
         passport_expiry=(data.get('passport_expiry') or '').strip() or None,
         email=(data.get('email') or '').strip() or None,
         phone=(data.get('phone') or '').strip() or None,
+        relationship=(data.get('relationship') or '').strip() or None,
     )
     return jsonify({'ok': True, 'person': {
         'id': person.id, 'full_name': person.full_name,
         'nric_passport': person.nric_passport, 'address': person.address or '',
         'nationality': person.nationality or 'Malaysian',
+        'date_of_birth': person.date_of_birth or '',
+        'gender': person.gender or '',
+        'email': person.email or '', 'phone': person.phone or '',
+        'passport_expiry': person.passport_expiry or '',
+        'relationship': person.relationship or '',
     }})
 
 
@@ -523,9 +535,20 @@ def api_persons_update(person_id):
         person.email = (data['email'] or '').strip() or None
     if 'phone' in data:
         person.phone = (data['phone'] or '').strip() or None
+    if 'relationship' in data:
+        person.relationship = (data['relationship'] or '').strip() or None
     db.session.commit()
     _refresh_session_person_registry(person.client_id)
-    return jsonify({'ok': True})
+    return jsonify({'ok': True, 'person': {
+        'id': person.id, 'full_name': person.full_name,
+        'nric_passport': person.nric_passport, 'address': person.address or '',
+        'nationality': person.nationality or 'Malaysian',
+        'date_of_birth': person.date_of_birth or '',
+        'gender': person.gender or '',
+        'email': person.email or '', 'phone': person.phone or '',
+        'passport_expiry': person.passport_expiry or '',
+        'relationship': person.relationship or '',
+    }})
 
 
 @app.route('/api/persons/<person_id>', methods=['DELETE'])

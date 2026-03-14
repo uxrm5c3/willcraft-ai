@@ -34,20 +34,27 @@
             <div class="grid md:grid-cols-2 gap-4">
                 <div class="md:col-span-2">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
-                    <select name="exec_person_id_{{ loop.index0 }}" required
-                            onchange="showIdentityInfo(this, 'exec-info-{{ loop.index0 }}')"
-                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                        <option value="">-- Select an identity --</option>
-                        {% for person in persons %}
-                        <option value="{{ person.id }}"
-                                data-name="{{ person.full_name }}"
-                                data-nric="{{ person.nric_passport }}"
-                                data-address="{{ person.address or '' }}"
-                                {% if exec.get('person_id') == person.id %}selected{% endif %}>
-                            {{ person.full_name }} ({{ person.nric_passport }})
-                        </option>
-                        {% endfor %}
-                    </select>
+                    <div class="flex gap-2">
+                        <select name="exec_person_id_{{ loop.index0 }}" required
+                                onchange="showIdentityInfo(this, 'exec-info-{{ loop.index0 }}')"
+                                class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                            <option value="">-- Select an identity --</option>
+                            {% for person in persons %}
+                            <option value="{{ person.id }}"
+                                    data-name="{{ person.full_name }}"
+                                    data-nric="{{ person.nric_passport }}"
+                                    data-address="{{ person.address or '' }}"
+                                    data-relationship="{{ person.relationship or '' }}"
+                                    {% if exec.get('person_id') == person.id %}selected{% endif %}>
+                                {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" onclick="openAddIdentityModal()"
+                                class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
+                            + New
+                        </button>
+                    </div>
                     <div id="exec-info-{{ loop.index0 }}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not exec.get('person_id') %}hidden{% endif %}">
                         {% if exec.get('person_id') %}{{ exec.full_name }} &middot; {{ exec.nric_passport }} &middot; {{ exec.address }}{% endif %}
                     </div>
@@ -88,21 +95,13 @@
 <script>
 let executorCount = {{ data.get('executors', [{}])|length }};
 
-function showIdentityInfo(selectEl, infoId) {
-    const opt = selectEl.options[selectEl.selectedIndex];
-    const info = document.getElementById(infoId);
-    if (!opt.value) { info.classList.add('hidden'); info.innerHTML = ''; return; }
-    info.innerHTML = `${opt.dataset.name} &middot; ${opt.dataset.nric} &middot; ${opt.dataset.address || 'N/A'}`;
-    info.classList.remove('hidden');
-}
-
 function addExecutor() {
     if (executorCount >= 4) { alert('Maximum 4 executors allowed.'); return; }
     const container = document.getElementById('executors-container');
     const idx = executorCount;
     let personOptions = '<option value="">-- Select an identity --</option>';
     for (const p of window._personRegistry) {
-        personOptions += `<option value="${p.id}" data-name="${p.full_name}" data-nric="${p.nric_passport}" data-address="${p.address || ''}">${p.full_name} (${p.nric_passport})</option>`;
+        personOptions += `<option value="${p.id}" data-name="${p.full_name}" data-nric="${p.nric_passport}" data-address="${p.address || ''}" data-relationship="${p.relationship || ''}">${p.full_name} (${p.nric_passport})${p.relationship ? ' [' + p.relationship + ']' : ''}</option>`;
     }
     const html = `
     <div class="executor-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="${idx}">
@@ -119,10 +118,16 @@ function addExecutor() {
         <div class="grid md:grid-cols-2 gap-4">
             <div class="md:col-span-2">
                 <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
-                <select name="exec_person_id_${idx}" required onchange="showIdentityInfo(this, 'exec-info-${idx}')"
-                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                    ${personOptions}
-                </select>
+                <div class="flex gap-2">
+                    <select name="exec_person_id_${idx}" required onchange="showIdentityInfo(this, 'exec-info-${idx}')"
+                            class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        ${personOptions}
+                    </select>
+                    <button type="button" onclick="openAddIdentityModal()"
+                            class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
+                        + New
+                    </button>
+                </div>
                 <div id="exec-info-${idx}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
             </div>
             <div>
@@ -154,6 +159,10 @@ document.addEventListener('DOMContentLoaded', function() {
             showIdentityInfo(sel, `exec-info-${idx}`);
         }
     });
+});
+// Refresh dropdowns after adding a new identity
+document.addEventListener('identitySaved', function() {
+    refreshPersonDropdowns();
 });
 </script>
 {% endblock %}

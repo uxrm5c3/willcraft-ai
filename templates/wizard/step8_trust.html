@@ -203,20 +203,27 @@
             <div class="grid md:grid-cols-2 gap-4">
                 <div class="md:col-span-2">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity</label>
-                    <select name="trustee_person_id"
-                            onchange="showTrusteeIdentityInfo(this)"
-                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                        <option value="">-- Select an identity --</option>
-                        {% for person in persons %}
-                        <option value="{{ person.id }}"
-                                data-name="{{ person.full_name }}"
-                                data-nric="{{ person.nric_passport }}"
-                                data-address="{{ person.address or '' }}"
-                                {% if trust.get('trustee_person_id') == person.id %}selected{% endif %}>
-                            {{ person.full_name }} ({{ person.nric_passport }})
-                        </option>
-                        {% endfor %}
-                    </select>
+                    <div class="flex gap-2">
+                        <select name="trustee_person_id"
+                                onchange="showTrusteeIdentityInfo(this)"
+                                class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                            <option value="">-- Select an identity --</option>
+                            {% for person in persons %}
+                            <option value="{{ person.id }}"
+                                    data-name="{{ person.full_name }}"
+                                    data-nric="{{ person.nric_passport }}"
+                                    data-address="{{ person.address or '' }}"
+                                    data-relationship="{{ person.relationship or '' }}"
+                                    {% if trust.get('trustee_person_id') == person.id %}selected{% endif %}>
+                                {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <button type="button" onclick="openAddIdentityModal()"
+                                class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
+                            + New
+                        </button>
+                    </div>
                     <div id="trustee-info" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not trust.get('trustee_person_id') %}hidden{% endif %}">
                         {% if trust.get('trustee_person_id') %}{{ trust.get('trustee_name', '') }} &middot; {{ trust.get('trustee_nric', '') }} &middot; {{ trust.get('trustee_address', '') }}{% endif %}
                     </div>
@@ -310,6 +317,10 @@ function removeTrustBeneficiary(btn) {
 document.addEventListener('DOMContentLoaded', function() {
     const sel = document.querySelector('[name="trustee_person_id"]');
     if (sel && sel.value) showTrusteeIdentityInfo(sel);
+});
+// Refresh dropdowns after adding a new identity
+document.addEventListener('identitySaved', function() {
+    refreshPersonDropdowns();
 });
 </script>
 {% endblock %}

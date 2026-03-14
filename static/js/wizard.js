@@ -566,6 +566,357 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
 // Asset Document OCR Upload
 // ===========================================================================
 
+// ===========================================================================
+// GLOBAL IDENTITY MODAL — available from all wizard steps
+// ===========================================================================
+
+const RELATIONSHIP_OPTIONS = [
+    'Testator', 'Spouse', 'Husband', 'Wife',
+    'Son', 'Daughter', 'Father', 'Mother',
+    'Brother', 'Sister', 'Grandson', 'Granddaughter',
+    'Grandfather', 'Grandmother',
+    'Father-in-law', 'Mother-in-law',
+    'Son-in-law', 'Daughter-in-law',
+    'Brother-in-law', 'Sister-in-law',
+    'Stepson', 'Stepdaughter',
+    'Adopted Son', 'Adopted Daughter',
+    'Uncle', 'Aunt', 'Nephew', 'Niece',
+    'Cousin', 'Friend', 'Business Partner', 'Other'
+];
+
+function openAddIdentityModal(presetRelationship) {
+    const modal = document.getElementById('identity-modal');
+    if (!modal) return;
+    document.getElementById('modal-title').textContent = 'Add Identity';
+    document.getElementById('modal-person-id').value = '';
+    document.getElementById('modal-full-name').value = '';
+    document.getElementById('modal-nric-passport').value = '';
+    document.getElementById('modal-nationality').value = 'Malaysian';
+    document.getElementById('modal-address').value = '';
+    document.getElementById('modal-passport-expiry').value = '';
+    document.getElementById('passport-expiry-field').classList.add('hidden');
+    document.getElementById('modal-dob').value = '';
+    document.getElementById('modal-gender').value = '';
+    document.getElementById('modal-email').value = '';
+    document.getElementById('modal-phone').value = '';
+    document.getElementById('modal-nric-upload').value = '';
+    document.getElementById('modal-nric-status').innerHTML = '';
+    // Set relationship
+    const relSelect = document.getElementById('modal-relationship');
+    const relOther = document.getElementById('modal-relationship-other');
+    if (relSelect) {
+        if (presetRelationship) {
+            relSelect.value = presetRelationship;
+        } else if (window._personRegistry && window._personRegistry.length === 0) {
+            relSelect.value = 'Testator';
+        } else {
+            relSelect.value = '';
+        }
+        toggleRelationshipOther();
+    }
+    if (relOther) relOther.value = '';
+    modal.classList.remove('hidden');
+}
+
+function openEditIdentityModal(personId) {
+    const person = (window._personRegistry || []).find(p => p.id === personId);
+    if (!person) return;
+    const modal = document.getElementById('identity-modal');
+    if (!modal) return;
+    document.getElementById('modal-title').textContent = 'Edit Identity';
+    document.getElementById('modal-person-id').value = personId;
+    document.getElementById('modal-full-name').value = person.full_name || '';
+    document.getElementById('modal-nric-passport').value = person.nric_passport || '';
+    document.getElementById('modal-nationality').value = person.nationality || 'Malaysian';
+    document.getElementById('modal-address').value = person.address || '';
+    document.getElementById('modal-dob').value = person.date_of_birth ? convertDateForInput(person.date_of_birth) : '';
+    document.getElementById('modal-gender').value = person.gender || '';
+    document.getElementById('modal-email').value = person.email || '';
+    document.getElementById('modal-phone').value = person.phone || '';
+    // Passport expiry
+    if (person.passport_expiry) {
+        document.getElementById('passport-expiry-field').classList.remove('hidden');
+        document.getElementById('modal-passport-expiry').value = convertDateForInput(person.passport_expiry);
+    } else {
+        document.getElementById('passport-expiry-field').classList.add('hidden');
+        document.getElementById('modal-passport-expiry').value = '';
+    }
+    // Relationship
+    const relSelect = document.getElementById('modal-relationship');
+    const relOther = document.getElementById('modal-relationship-other');
+    if (relSelect) {
+        const rel = person.relationship || '';
+        if (RELATIONSHIP_OPTIONS.includes(rel)) {
+            relSelect.value = rel;
+        } else if (rel) {
+            relSelect.value = 'Other';
+            if (relOther) relOther.value = rel;
+        } else {
+            relSelect.value = '';
+        }
+        toggleRelationshipOther();
+    }
+    document.getElementById('modal-nric-upload').value = '';
+    document.getElementById('modal-nric-status').innerHTML = '';
+    modal.classList.remove('hidden');
+}
+
+function closeIdentityModal() {
+    const modal = document.getElementById('identity-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function toggleRelationshipOther() {
+    const relSelect = document.getElementById('modal-relationship');
+    const otherWrap = document.getElementById('relationship-other-wrap');
+    if (relSelect && otherWrap) {
+        otherWrap.classList.toggle('hidden', relSelect.value !== 'Other');
+    }
+}
+
+async function saveIdentityGlobal() {
+    const personId = document.getElementById('modal-person-id').value;
+    const fullName = document.getElementById('modal-full-name').value.trim();
+    const nricPassport = document.getElementById('modal-nric-passport').value.trim();
+    if (!fullName || !nricPassport) {
+        alert('Name and NRIC/Passport are required.');
+        return;
+    }
+
+    const dobRaw = document.getElementById('modal-dob').value;
+    let dob = '';
+    if (dobRaw) {
+        const parts = dobRaw.split('-');
+        if (parts.length === 3 && parts[0].length === 4) dob = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        else dob = dobRaw;
+    }
+
+    const expiryRaw = document.getElementById('modal-passport-expiry').value;
+    let expiry = '';
+    if (expiryRaw) {
+        const parts = expiryRaw.split('-');
+        if (parts.length === 3 && parts[0].length === 4) expiry = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        else expiry = expiryRaw;
+    }
+
+    // Get relationship
+    const relSelect = document.getElementById('modal-relationship');
+    let relationship = relSelect ? relSelect.value : '';
+    if (relationship === 'Other') {
+        const otherInput = document.getElementById('modal-relationship-other');
+        relationship = otherInput ? otherInput.value.trim() : '';
+    }
+
+    const data = {
+        full_name: fullName,
+        nric_passport: nricPassport,
+        nationality: document.getElementById('modal-nationality').value.trim() || 'Malaysian',
+        address: document.getElementById('modal-address').value.trim(),
+        passport_expiry: expiry,
+        date_of_birth: dob,
+        gender: document.getElementById('modal-gender').value,
+        email: document.getElementById('modal-email').value.trim(),
+        phone: document.getElementById('modal-phone').value.trim(),
+        relationship: relationship,
+    };
+
+    const url = personId ? `/api/persons/${personId}` : '/api/persons';
+    const method = personId ? 'PUT' : 'POST';
+
+    try {
+        const resp = await fetch(url, {
+            method: method,
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        const result = await resp.json();
+        if (result.ok) {
+            // Update person registry
+            if (result.person) {
+                if (personId) {
+                    const idx = window._personRegistry.findIndex(p => p.id === personId);
+                    if (idx >= 0) window._personRegistry[idx] = result.person;
+                } else {
+                    window._personRegistry.push(result.person);
+                }
+            }
+            refreshPersonDropdowns();
+            // Dispatch event for step1 to refresh its card list
+            document.dispatchEvent(new CustomEvent('identitySaved', { detail: result.person }));
+
+            // Ask to add another
+            closeIdentityModal();
+            showAddAnotherPrompt();
+        } else {
+            alert(result.error || 'Failed to save identity.');
+        }
+    } catch (e) {
+        alert('Failed to save identity.');
+    }
+}
+
+function showAddAnotherPrompt() {
+    const prompt = document.getElementById('add-another-prompt');
+    if (prompt) {
+        // Update count summary
+        const countEl = document.getElementById('identity-count-summary');
+        if (countEl) {
+            const counts = {};
+            for (const p of window._personRegistry) {
+                const r = p.relationship || 'Unspecified';
+                counts[r] = (counts[r] || 0) + 1;
+            }
+            const parts = Object.entries(counts).map(([k, v]) => `${k}: ${v}`);
+            countEl.textContent = `${window._personRegistry.length} identities added (${parts.join(', ')})`;
+        }
+        prompt.classList.remove('hidden');
+    }
+}
+
+function closeAddAnotherPrompt() {
+    const prompt = document.getElementById('add-another-prompt');
+    if (prompt) prompt.classList.add('hidden');
+}
+
+function addAnotherIdentity() {
+    closeAddAnotherPrompt();
+    openAddIdentityModal();
+}
+
+/**
+ * Refresh all <select> elements with class "person-select" from window._personRegistry.
+ * Preserves currently selected value.
+ */
+function refreshPersonDropdowns() {
+    document.querySelectorAll('select.person-select').forEach(sel => {
+        const currentVal = sel.value;
+        // Keep the first placeholder option
+        const placeholder = sel.querySelector('option[value=""]');
+        sel.innerHTML = '';
+        if (placeholder) {
+            sel.appendChild(placeholder);
+        } else {
+            const opt = document.createElement('option');
+            opt.value = '';
+            opt.textContent = '-- Select an identity --';
+            sel.appendChild(opt);
+        }
+        for (const p of window._personRegistry) {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.full_name} (${p.nric_passport})${p.relationship ? ' [' + p.relationship + ']' : ''}`;
+            opt.dataset.name = p.full_name;
+            opt.dataset.nric = p.nric_passport;
+            opt.dataset.address = p.address || '';
+            opt.dataset.nationality = p.nationality || 'Malaysian';
+            opt.dataset.dob = p.date_of_birth || '';
+            opt.dataset.gender = p.gender || '';
+            opt.dataset.email = p.email || '';
+            opt.dataset.phone = p.phone || '';
+            opt.dataset.relationship = p.relationship || '';
+            if (p.id === currentVal) opt.selected = true;
+            sel.appendChild(opt);
+        }
+    });
+}
+
+/**
+ * Show identity info for any person-select dropdown.
+ * Used across steps 3, 4, 5, 8.
+ */
+function showIdentityInfo(selectEl, infoId) {
+    const opt = selectEl.options[selectEl.selectedIndex];
+    const info = document.getElementById(infoId);
+    if (!info) return;
+    if (!opt || !opt.value) { info.classList.add('hidden'); info.innerHTML = ''; return; }
+    info.innerHTML = `${opt.dataset.name || ''} &middot; ${opt.dataset.nric || ''} &middot; ${opt.dataset.address || 'N/A'}`;
+    info.classList.remove('hidden');
+}
+
+/**
+ * Camera + OCR for identity modal (global version).
+ */
+function openCameraForNRIC() {
+    openCameraViewfinder((file) => {
+        uploadNRICForIdentity(file);
+    }, 'nric');
+}
+
+async function uploadNRICForIdentity(inputOrFile) {
+    let file;
+    if (inputOrFile instanceof File) {
+        file = inputOrFile;
+    } else {
+        file = inputOrFile.files[0];
+    }
+    if (!file) return;
+
+    const validation = validateFile(file);
+    if (!validation.valid) {
+        const statusEl = document.getElementById('modal-nric-status');
+        if (statusEl) statusEl.innerHTML = `<span class="text-red-600">${validation.error}</span>`;
+        return;
+    }
+
+    const statusEl = document.getElementById('modal-nric-status');
+    if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Scanning document...</span>';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const resp = await fetch('/api/ocr/nric', { method: 'POST', body: formData });
+        if (!resp.ok) {
+            const errText = await resp.text();
+            let errMsg = 'Server error';
+            try { errMsg = JSON.parse(errText).error || errMsg; } catch(e) {}
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${errMsg}</span>`;
+            return;
+        }
+        const data = await resp.json();
+        if (data.ok && data.extracted) {
+            if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">📋 Review extracted data...</span>';
+
+            const extracted = data.extracted;
+            const isPassport = (extracted.doc_type || '').toLowerCase() === 'passport';
+            if (!isPassport) {
+                delete extracted.passport_expiry;
+            }
+            delete extracted.doc_type;
+
+            showOCRConfirmation(extracted, file, (confirmed) => {
+                if (confirmed.full_name) document.getElementById('modal-full-name').value = confirmed.full_name;
+                if (confirmed.nric_number) document.getElementById('modal-nric-passport').value = confirmed.nric_number;
+                if (confirmed.address) document.getElementById('modal-address').value = confirmed.address;
+                if (confirmed.nationality) document.getElementById('modal-nationality').value = confirmed.nationality;
+                if (confirmed.gender) document.getElementById('modal-gender').value = confirmed.gender;
+                if (confirmed.date_of_birth) {
+                    const dateVal = convertDateForInput(confirmed.date_of_birth);
+                    if (dateVal) document.getElementById('modal-dob').value = dateVal;
+                }
+                if (isPassport && confirmed.passport_expiry) {
+                    document.getElementById('passport-expiry-field').classList.remove('hidden');
+                    const expiryVal = convertDateForInput(confirmed.passport_expiry);
+                    if (expiryVal) document.getElementById('modal-passport-expiry').value = expiryVal;
+                }
+                if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Data applied!</span>';
+                setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
+            }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
+            { callback: (f) => uploadNRICForIdentity(f), docType: 'nric' });
+        } else {
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${data.error || 'Extraction failed. Try a clearer image.'}</span>`;
+        }
+    } catch (e) {
+        console.error('NRIC upload error:', e);
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Check your connection and try again.</span>';
+    }
+}
+
+
+// ===========================================================================
+// Asset Document OCR Upload
+// ===========================================================================
+
 async function uploadAndExtractAsset(inputOrFile, statusElId, giftIndex) {
     let file = (inputOrFile instanceof File) ? inputOrFile : inputOrFile.files[0];
     if (!file) return;
