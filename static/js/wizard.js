@@ -270,6 +270,7 @@ function retakeDocument() {
  * Remove the uploaded document from the identity modal.
  */
 async function removeDocument() {
+    if (!confirm('Are you sure you want to remove this document?')) return;
     const docId = document.getElementById('modal-document-id')?.value;
     if (docId) {
         try {

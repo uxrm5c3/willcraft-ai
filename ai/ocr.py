@@ -74,8 +74,14 @@ STEP 3 — READ THE IC/PASSPORT NUMBER:
 Spell out EACH DIGIT one by one:
 "IC digits: [d1] [d2] [d3] [d4] [d5] [d6] - [d7] [d8] - [d9] [d10] [d11] [d12]"
 Then write the complete number.
-Verify: first 6 digits = YYMMDD. Is this a valid date? If not, re-read.
-Watch for: 0 vs O, 1 vs 7, 3 vs 8, 5 vs 6, 6 vs 8.
+
+CRITICAL DATE VALIDATION for NRIC:
+- First 6 digits = YYMMDD (birth date)
+- Digits 3-4 = MONTH: must be 01 to 12. If you read 00, 13, 14, etc → you misread a digit. Re-read!
+- Digits 5-6 = DAY: must be 01 to 31. If you read 00, 32, 33, 40, 47, etc → you misread a digit. Re-read!
+- Example: 870229 = 29 Feb 1987 ✓ | 871347 = month 13 day 47 ✗ IMPOSSIBLE — re-read carefully!
+- Common misreads: 0↔8, 1↔7, 3↔8, 4↔1, 5↔6, 6↔8, 9↔0
+- If the date seems wrong, look again very carefully at each digit.
 
 STEP 4 — READ THE ADDRESS (back of MyKad only, skip for passport):
 Read each line of the address top to bottom. Write each line separately.
@@ -140,42 +146,65 @@ IMPORTANT: The character-by-character reading in Steps 2-3 is CRITICAL for accur
         result['doc_type'] = 'nric'
         result['passport_expiry'] = ''
 
-    # 2. Validate NRIC format — must be exactly NNNNNN-NN-NNNN
+    # 2. Validate NRIC format — must be exactly NNNNNN-NN-NNNN with valid date
     if result.get('doc_type') == 'nric' and nric_num:
         # Remove dashes for validation, then reformat
         digits_only = nric_num.replace('-', '')
         if len(digits_only) == 12 and digits_only.isdigit():
-            # Reformat to standard YYMMDD-SS-NNNN
-            result['nric_number'] = f"{digits_only[:6]}-{digits_only[6:8]}-{digits_only[8:]}"
+            # Validate YYMMDD — month must be 01-12, day must be 01-31
+            ic_yy = digits_only[:2]
+            ic_mm = int(digits_only[2:4])
+            ic_dd = int(digits_only[4:6])
+            if ic_mm < 1 or ic_mm > 12:
+                # Invalid month — IC number is misread, flag it
+                result['nric_number'] = ''
+                result['_nric_date_invalid'] = f"Month={ic_mm:02d} is invalid (must be 01-12)"
+            elif ic_dd < 1 or ic_dd > 31:
+                # Invalid day — IC number is misread, flag it
+                result['nric_number'] = ''
+                result['_nric_date_invalid'] = f"Day={ic_dd:02d} is invalid (must be 01-31)"
+            else:
+                # Additional check: months with 30 days max
+                if ic_mm in (4, 6, 9, 11) and ic_dd > 30:
+                    result['nric_number'] = ''
+                    result['_nric_date_invalid'] = f"Day={ic_dd:02d} invalid for month={ic_mm:02d}"
+                elif ic_mm == 2 and ic_dd > 29:
+                    result['nric_number'] = ''
+                    result['_nric_date_invalid'] = f"Day={ic_dd:02d} invalid for February"
+                else:
+                    # Valid date — reformat to standard YYMMDD-SS-NNNN
+                    result['nric_number'] = f"{digits_only[:6]}-{digits_only[6:8]}-{digits_only[8:]}"
         else:
             # Invalid NRIC format — clear it
             result['nric_number'] = ''
 
-    # 3. Cross-validate DOB against NRIC
+    # 3. Cross-validate DOB against NRIC (derive DOB from IC number)
     if result.get('doc_type') == 'nric' and result.get('nric_number'):
         ic_digits = result['nric_number'].replace('-', '')[:6]  # YYMMDD
-        dob = result.get('date_of_birth', '')
-        if dob and ic_digits:
-            # DOB should be DD-MM-YYYY; IC is YYMMDD
-            try:
-                dob_parts = dob.split('-')
-                if len(dob_parts) == 3:
-                    dd, mm, yyyy = dob_parts
-                    yy = yyyy[2:]  # last 2 digits
-                    ic_yy, ic_mm, ic_dd = ic_digits[:2], ic_digits[2:4], ic_digits[4:6]
-                    if yy != ic_yy or mm != ic_mm or dd != ic_dd:
-                        # DOB doesn't match IC — derive from IC instead
-                        year = int('20' + ic_yy) if int(ic_yy) <= 30 else int('19' + ic_yy)
-                        result['date_of_birth'] = f"{ic_dd}-{ic_mm}-{year}"
-            except (ValueError, IndexError):
-                pass
-        elif not dob and ic_digits:
-            # Derive DOB from IC
-            ic_yy, ic_mm, ic_dd = ic_digits[:2], ic_digits[2:4], ic_digits[4:6]
-            try:
-                year = int('20' + ic_yy) if int(ic_yy) <= 30 else int('19' + ic_yy)
+        ic_yy, ic_mm, ic_dd = ic_digits[:2], ic_digits[2:4], ic_digits[4:6]
+        # Always derive DOB from IC (it's the most reliable source)
+        try:
+            year = int('20' + ic_yy) if int(ic_yy) <= 30 else int('19' + ic_yy)
+            month = int(ic_mm)
+            day = int(ic_dd)
+            if 1 <= month <= 12 and 1 <= day <= 31:
                 result['date_of_birth'] = f"{ic_dd}-{ic_mm}-{year}"
-            except ValueError:
+            else:
+                result['date_of_birth'] = ''
+        except ValueError:
+            result['date_of_birth'] = ''
+    elif result.get('doc_type') == 'nric' and not result.get('nric_number'):
+        # NRIC was invalid — also clear DOB since we can't derive it reliably
+        dob = result.get('date_of_birth', '')
+        if dob:
+            # Validate the model-provided DOB independently
+            try:
+                parts = dob.split('-')
+                if len(parts) == 3:
+                    dd, mm = int(parts[0]), int(parts[1])
+                    if dd < 1 or dd > 31 or mm < 1 or mm > 12:
+                        result['date_of_birth'] = ''
+            except (ValueError, IndexError):
                 result['date_of_birth'] = ''
 
     # 4. Cross-validate gender against NRIC last digit
