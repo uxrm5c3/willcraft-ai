@@ -64,6 +64,12 @@ def ensure_client():
     return client.id
 
 
+def get_client_folder_name(client_id):
+    """Get the friendly folder name for a client, or fall back to client_id."""
+    client = db.session.get(Client, client_id)
+    return client.folder_name if client else client_id
+
+
 def save_will_to_db():
     """Persist current session data to the database."""
     client_id = ensure_client()
@@ -500,7 +506,8 @@ def api_upload():
         client_id = ensure_client()
     try:
         from uploads import save_uploaded_file
-        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, category)
+        folder_name = get_client_folder_name(client_id)
+        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, category, folder_name=folder_name)
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
     doc = Document(
@@ -558,7 +565,8 @@ def api_ocr_nric():
         client_id = ensure_client()
     try:
         from uploads import save_uploaded_file
-        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, 'nric')
+        folder_name = get_client_folder_name(client_id)
+        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, 'nric', folder_name=folder_name)
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
     abs_path = os.path.join(UPLOAD_DIR, rel_path)
@@ -597,7 +605,8 @@ def api_ocr_property():
         client_id = ensure_client()
     try:
         from uploads import save_uploaded_file
-        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, 'property')
+        folder_name = get_client_folder_name(client_id)
+        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, 'property', folder_name=folder_name)
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
     abs_path = os.path.join(UPLOAD_DIR, rel_path)
@@ -630,7 +639,8 @@ def api_ocr_asset():
         client_id = ensure_client()
     try:
         from uploads import save_uploaded_file
-        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, 'financial')
+        folder_name = get_client_folder_name(client_id)
+        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, 'financial', folder_name=folder_name)
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
     abs_path = os.path.join(UPLOAD_DIR, rel_path)
@@ -653,12 +663,126 @@ def api_ocr_asset():
 
 @app.route('/client/documents')
 def client_documents():
-    """Client document browser page."""
+    """Client document browser page (legacy — redirects to new client files page)."""
     client_id = session.get('client_id')
-    documents = []
     if client_id:
-        documents = Document.query.filter_by(client_id=client_id).order_by(Document.created_at.desc()).all()
+        return redirect(url_for('client_files', client_id=client_id))
+    documents = []
     return render_template('client_documents.html', documents=documents)
+
+
+@app.route('/clients')
+def clients_list():
+    """List all clients with links to their file folders."""
+    q = request.args.get('q', '').strip()
+    if q:
+        all_clients = Client.query.filter(
+            db.or_(
+                Client.full_name.ilike(f'%{q}%'),
+                Client.nric_passport.ilike(f'%{q}%'),
+            )
+        ).order_by(Client.updated_at.desc()).all()
+    else:
+        all_clients = Client.query.order_by(Client.updated_at.desc()).all()
+
+    # Gather stats for each client
+    client_data = []
+    for c in all_clients:
+        will_count = Will.query.filter_by(client_id=c.id).count()
+        doc_count = Document.query.filter_by(client_id=c.id).count()
+        latest_will = Will.query.filter_by(client_id=c.id).order_by(Will.updated_at.desc()).first()
+        # Count files in client folder on disk
+        draft_count = 0
+        generated_count = 0
+        folder_path = os.path.join(UPLOAD_DIR, c.folder_name)
+        drafts_dir = os.path.join(folder_path, 'drafts')
+        gen_dir = os.path.join(folder_path, 'generated')
+        if os.path.isdir(drafts_dir):
+            draft_count = len([f for f in os.listdir(drafts_dir) if os.path.isfile(os.path.join(drafts_dir, f))])
+        if os.path.isdir(gen_dir):
+            generated_count = len([f for f in os.listdir(gen_dir) if os.path.isfile(os.path.join(gen_dir, f))])
+        client_data.append({
+            'client': c,
+            'will_count': will_count,
+            'doc_count': doc_count,
+            'draft_count': draft_count,
+            'generated_count': generated_count,
+            'latest_will': latest_will,
+        })
+    return render_template('clients_list.html', client_data=client_data, search_query=q)
+
+
+@app.route('/clients/<client_id>/files')
+def client_files(client_id):
+    """Browse all files for a specific client: documents, drafts, generated wills."""
+    client = db.session.get(Client, client_id)
+    if not client:
+        flash('Client not found.', 'error')
+        return redirect(url_for('clients_list'))
+
+    # Uploaded documents from DB
+    documents = Document.query.filter_by(client_id=client_id).order_by(Document.created_at.desc()).all()
+
+    # Group docs by category
+    doc_groups = {}
+    for doc in documents:
+        cat = doc.category or 'general'
+        if cat not in doc_groups:
+            doc_groups[cat] = []
+        doc_groups[cat].append(doc)
+
+    # Scan client folder for drafts and generated wills
+    drafts = []
+    generated = []
+    folder_path = os.path.join(UPLOAD_DIR, client.folder_name)
+    drafts_dir = os.path.join(folder_path, 'drafts')
+    gen_dir = os.path.join(folder_path, 'generated')
+
+    if os.path.isdir(drafts_dir):
+        for fname in sorted(os.listdir(drafts_dir), reverse=True):
+            fpath = os.path.join(drafts_dir, fname)
+            if os.path.isfile(fpath):
+                drafts.append({
+                    'filename': fname,
+                    'size': os.path.getsize(fpath),
+                    'modified': os.path.getmtime(fpath),
+                    'rel_path': os.path.join(client.folder_name, 'drafts', fname),
+                })
+
+    if os.path.isdir(gen_dir):
+        for fname in sorted(os.listdir(gen_dir), reverse=True):
+            fpath = os.path.join(gen_dir, fname)
+            if os.path.isfile(fpath):
+                generated.append({
+                    'filename': fname,
+                    'size': os.path.getsize(fpath),
+                    'modified': os.path.getmtime(fpath),
+                    'rel_path': os.path.join(client.folder_name, 'generated', fname),
+                })
+
+    # Wills in DB for this client
+    wills = Will.query.filter_by(client_id=client_id).order_by(Will.updated_at.desc()).all()
+
+    total_docs = sum(len(docs) for docs in doc_groups.values())
+    return render_template('client_files.html',
+                           client=client, doc_groups=doc_groups,
+                           drafts=drafts, generated=generated, wills=wills,
+                           total_docs=total_docs)
+
+
+@app.route('/clients/<client_id>/files/download/<path:rel_path>')
+def client_file_download(client_id, rel_path):
+    """Download a file from the client's folder."""
+    client = db.session.get(Client, client_id)
+    if not client:
+        return jsonify({'error': 'Client not found'}), 404
+    # Security: ensure path starts with client's folder name
+    if not rel_path.startswith(client.folder_name):
+        return jsonify({'error': 'Access denied'}), 403
+    abs_path = os.path.join(UPLOAD_DIR, rel_path)
+    if not os.path.exists(abs_path):
+        return jsonify({'error': 'File not found'}), 404
+    return send_file(abs_path, download_name=os.path.basename(rel_path))
 
 
 # -- Upload Existing Will ----------------------------------------------------
@@ -684,7 +808,8 @@ def api_parse_will():
         client_id = ensure_client()
     try:
         from uploads import save_uploaded_file
-        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, 'wills')
+        folder_name = get_client_folder_name(client_id)
+        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, 'wills', folder_name=folder_name)
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
 

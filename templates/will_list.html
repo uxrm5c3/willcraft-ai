@@ -48,6 +48,12 @@
                 </p>
             </div>
             <div class="flex gap-2">
+                {% if will.client %}
+                <a href="/clients/{{ will.client_id }}/files" class="px-3 py-1.5 text-gray-600 text-sm hover:bg-gray-100 rounded-lg border border-gray-200" title="View client files">
+                    <svg class="inline w-4 h-4 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                    Files
+                </a>
+                {% endif %}
                 <a href="/wills/{{ will.id }}/load" class="px-4 py-1.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">Resume</a>
                 <form method="POST" action="/wills/{{ will.id }}/delete" class="inline" onsubmit="return confirm('Delete this will draft?')">
                     <button type="submit" class="px-3 py-1.5 text-red-600 text-sm hover:bg-red-50 rounded-lg border border-red-200">Delete</button>

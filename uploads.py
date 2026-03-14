@@ -14,8 +14,11 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-def save_uploaded_file(file, client_id, category='general'):
+def save_uploaded_file(file, client_id, category='general', folder_name=None):
     """Save an uploaded file to the client's document folder.
+
+    If folder_name is provided, files are stored under that friendly name
+    (e.g. 'TAN_AH_KOW_a1b2c3d4') instead of the raw client UUID.
     Returns (saved_filename, relative_path, file_size).
     """
     if not allowed_file(file.filename):
@@ -24,7 +27,8 @@ def save_uploaded_file(file, client_id, category='general'):
     ext = file.filename.rsplit('.', 1)[1].lower()
     safe_name = f"{uuid.uuid4().hex[:12]}.{ext}"
 
-    folder = os.path.join(UPLOAD_DIR, client_id, 'documents', category)
+    base_folder = folder_name or client_id
+    folder = os.path.join(UPLOAD_DIR, base_folder, 'documents', category)
     os.makedirs(folder, exist_ok=True)
 
     filepath = os.path.join(folder, safe_name)
@@ -35,7 +39,7 @@ def save_uploaded_file(file, client_id, category='general'):
         os.remove(filepath)
         raise ValueError(f"File too large: {file_size} bytes (max {MAX_FILE_SIZE})")
 
-    relative_path = os.path.join(client_id, 'documents', category, safe_name)
+    relative_path = os.path.join(base_folder, 'documents', category, safe_name)
     return safe_name, relative_path, file_size
 
 

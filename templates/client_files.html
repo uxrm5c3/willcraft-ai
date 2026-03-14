@@ -1,0 +1,188 @@
+{% extends "base.html" %}
+
+{% block title %}{{ client.full_name }} - Files - WillCraft AI{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="flex justify-between items-start mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">
+                <svg class="inline w-6 h-6 mr-2 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                {{ client.full_name }}
+            </h1>
+            <p class="text-sm text-gray-500 mt-1">
+                {% if client.nric_passport %}IC/Passport: <span class="font-medium text-gray-700">{{ client.nric_passport }}</span> &middot; {% endif %}
+                Folder: <code class="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{{ client.folder_name }}</code>
+                &middot; Created: {{ client.created_at.strftime('%d %b %Y') }}
+            </p>
+        </div>
+        <a href="/clients" class="px-4 py-2 text-gray-600 border border-gray-300 font-medium rounded-lg hover:bg-gray-50 text-sm">
+            &larr; All Clients
+        </a>
+    </div>
+
+    <!-- Tab Navigation -->
+    <div class="flex border-b border-gray-200 mb-6" id="fileTabs">
+        <button onclick="showTab('wills')" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-primary-600 text-primary-600" data-tab="wills">
+            Will Drafts ({{ wills|length }})
+        </button>
+        <button onclick="showTab('generated')" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-tab="generated">
+            Generated Wills ({{ generated|length }})
+        </button>
+        <button onclick="showTab('drafts')" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-tab="drafts">
+            Draft Files ({{ drafts|length }})
+        </button>
+        <button onclick="showTab('documents')" class="tab-btn px-4 py-2 text-sm font-medium border-b-2 border-transparent text-gray-500 hover:text-gray-700" data-tab="documents">
+            Uploaded Documents ({{ total_docs }})
+        </button>
+    </div>
+
+    <!-- Tab: Will Drafts -->
+    <div id="tab-wills" class="tab-content">
+        {% if wills %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-100">
+            {% for will in wills %}
+            <div class="flex justify-between items-center p-4 hover:bg-gray-50">
+                <div>
+                    <p class="font-medium text-gray-900">{{ will.title }}</p>
+                    <p class="text-sm text-gray-500">
+                        Status: <span class="{% if will.status == 'generated' %}text-green-600{% elif will.status == 'finalized' %}text-blue-600{% else %}text-amber-600{% endif %} font-medium">{{ will.status }}</span>
+                        &middot; Created: {{ will.created_at.strftime('%d %b %Y') }}
+                        &middot; Updated: {{ will.updated_at.strftime('%d %b %Y, %I:%M %p') }}
+                    </p>
+                </div>
+                <div class="flex gap-2">
+                    <a href="/wills/{{ will.id }}/load" class="px-4 py-1.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">Resume</a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+            <p class="text-gray-500">No will drafts saved yet.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Tab: Generated Wills -->
+    <div id="tab-generated" class="tab-content hidden">
+        {% if generated %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-100">
+            {% for file in generated %}
+            <div class="flex justify-between items-center p-4 hover:bg-gray-50">
+                <div class="flex items-center gap-3">
+                    {% if file.filename.endswith('.pdf') %}
+                    <svg class="w-8 h-8 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 2l5 5h-5V4zM6 20V4h5v7h7v9H6z"/></svg>
+                    {% else %}
+                    <svg class="w-8 h-8 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 2l5 5h-5V4zM6 20V4h5v7h7v9H6z"/></svg>
+                    {% endif %}
+                    <div>
+                        <p class="font-medium text-gray-900">{{ file.filename }}</p>
+                        <p class="text-sm text-gray-500">
+                            <span class="text-green-600 font-medium">Generated</span>
+                            &middot; {{ "%.1f"|format(file.size / 1024) }} KB
+                        </p>
+                    </div>
+                </div>
+                <a href="/clients/{{ client.id }}/files/download/{{ file.rel_path }}" class="px-3 py-1.5 text-primary-600 text-sm hover:bg-primary-50 rounded-lg border border-primary-200">Download</a>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+            <p class="text-gray-500">No generated wills yet. Complete the wizard and download to generate.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Tab: Draft Files -->
+    <div id="tab-drafts" class="tab-content hidden">
+        {% if drafts %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-100">
+            {% for file in drafts %}
+            <div class="flex justify-between items-center p-4 hover:bg-gray-50">
+                <div class="flex items-center gap-3">
+                    {% if file.filename.endswith('.pdf') %}
+                    <svg class="w-8 h-8 text-red-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 2l5 5h-5V4zM6 20V4h5v7h7v9H6z"/></svg>
+                    {% else %}
+                    <svg class="w-8 h-8 text-blue-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 2l5 5h-5V4zM6 20V4h5v7h7v9H6z"/></svg>
+                    {% endif %}
+                    <div>
+                        <p class="font-medium text-gray-900">{{ file.filename }}</p>
+                        <p class="text-sm text-gray-500">
+                            <span class="text-amber-600 font-medium">Draft</span>
+                            &middot; {{ "%.1f"|format(file.size / 1024) }} KB
+                        </p>
+                    </div>
+                </div>
+                <a href="/clients/{{ client.id }}/files/download/{{ file.rel_path }}" class="px-3 py-1.5 text-primary-600 text-sm hover:bg-primary-50 rounded-lg border border-primary-200">Download</a>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+            <p class="text-gray-500">No draft files saved yet.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Tab: Uploaded Documents -->
+    <div id="tab-documents" class="tab-content hidden">
+        {% if doc_groups %}
+            {% for category, docs in doc_groups.items() %}
+            <div class="mb-6">
+                <h3 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-2">
+                    {% if category == 'nric' %}NRIC / Passport
+                    {% elif category == 'property' %}Property Documents
+                    {% elif category == 'financial' %}Financial Documents
+                    {% elif category == 'general' %}General Documents
+                    {% else %}{{ category|title }}
+                    {% endif %}
+                </h3>
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-100">
+                    {% for doc in docs %}
+                    <div class="flex justify-between items-center p-4 hover:bg-gray-50">
+                        <div class="flex items-center gap-3">
+                            <svg class="w-6 h-6 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                            <div>
+                                <p class="font-medium text-gray-900">{{ doc.original_filename }}</p>
+                                <p class="text-sm text-gray-500">
+                                    {{ "%.1f"|format(doc.file_size / 1024) }} KB
+                                    &middot; Uploaded: {{ doc.created_at.strftime('%d %b %Y, %I:%M %p') }}
+                                    {% if doc.description %}&middot; {{ doc.description }}{% endif %}
+                                </p>
+                            </div>
+                        </div>
+                        <a href="/api/documents/{{ doc.id }}" class="px-3 py-1.5 text-primary-600 text-sm hover:bg-primary-50 rounded-lg border border-primary-200">View</a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
+            <p class="text-gray-500">No documents uploaded yet.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function showTab(tabName) {
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+    // Deactivate all tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('border-primary-600', 'text-primary-600');
+        btn.classList.add('border-transparent', 'text-gray-500');
+    });
+    // Show selected tab
+    document.getElementById('tab-' + tabName).classList.remove('hidden');
+    // Activate selected button
+    const activeBtn = document.querySelector('[data-tab="' + tabName + '"]');
+    activeBtn.classList.add('border-primary-600', 'text-primary-600');
+    activeBtn.classList.remove('border-transparent', 'text-gray-500');
+}
+</script>
+{% endblock %}
