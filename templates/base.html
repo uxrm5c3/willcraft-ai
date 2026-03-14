@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}AI Will Writing System{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}?v=20260314n">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}?v=20260314p">
     <script>
         tailwind.config = {
             theme: {
@@ -184,6 +184,20 @@
             <button onclick="usePhoto()" class="px-8 py-3 bg-green-500 text-white font-semibold rounded-xl active:bg-green-600 text-sm shadow-lg">
                 ✓ Use This Photo
             </button>
+        </div>
+    </div>
+
+    <!-- Document Viewer Lightbox (Global) -->
+    <div id="document-viewer" class="fixed inset-0 bg-black/95 z-[80] hidden flex flex-col items-center justify-center" onclick="if(event.target===this)closeDocumentViewer()">
+        <div class="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/80 to-transparent z-10">
+            <span id="doc-viewer-title" class="text-white text-sm font-medium truncate mr-4"></span>
+            <button onclick="closeDocumentViewer()" class="text-white hover:text-gray-300 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="flex-1 flex items-center justify-center p-4 w-full overflow-auto">
+            <img id="doc-viewer-img" src="" alt="Document" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl">
+            <iframe id="doc-viewer-pdf" src="" class="hidden w-full h-full rounded-lg" style="max-width:800px;"></iframe>
         </div>
     </div>
 

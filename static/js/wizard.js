@@ -1,4 +1,4 @@
-/* WillCraft AI - Wizard JavaScript (v20260314c) */
+/* WillCraft AI - Wizard JavaScript (v20260314p) */
 
 // Save Draft via AJAX
 async function saveDraft() {
@@ -112,6 +112,185 @@ function isMobileDevice() {
     return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
         || (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
 }
+
+// ===========================================================================
+// DOCUMENT PREVIEW & VIEWER
+// ===========================================================================
+
+/**
+ * Show the document preview section in the identity modal.
+ * @param {string} documentId - Document ID from API
+ * @param {string} filename - Original filename
+ * @param {File|null} localFile - Optional local file for immediate preview
+ */
+function showDocumentPreview(documentId, filename, localFile) {
+    const docIdField = document.getElementById('modal-document-id');
+    if (docIdField) docIdField.value = documentId || '';
+
+    const container = document.getElementById('modal-document-preview');
+    if (!container) return;
+
+    const imgEl = document.getElementById('doc-preview-img');
+    const pdfEl = document.getElementById('doc-preview-pdf');
+    const nameEl = document.getElementById('doc-preview-name');
+
+    if (nameEl) nameEl.textContent = filename || 'Document';
+
+    const ext = (filename || '').split('.').pop().toLowerCase();
+    const isPdf = ext === 'pdf';
+
+    if (isPdf) {
+        if (imgEl) imgEl.classList.add('hidden');
+        if (pdfEl) pdfEl.classList.remove('hidden');
+    } else {
+        if (pdfEl) pdfEl.classList.add('hidden');
+        if (imgEl) {
+            imgEl.classList.remove('hidden');
+            if (localFile && localFile instanceof File) {
+                // Use local file for immediate preview (before save)
+                const reader = new FileReader();
+                reader.onload = (e) => { imgEl.src = e.target.result; };
+                reader.readAsDataURL(localFile);
+            } else if (documentId) {
+                imgEl.src = `/api/documents/${documentId}`;
+            }
+        }
+    }
+
+    container.classList.remove('hidden');
+
+    // Hide the upload buttons since doc is already uploaded
+    const uploadSection = container.previousElementSibling;
+    // We don't hide upload section — user can still see the retake button in preview
+}
+
+/**
+ * Hide the document preview section.
+ */
+function hideDocumentPreview() {
+    const container = document.getElementById('modal-document-preview');
+    if (container) container.classList.add('hidden');
+    const docIdField = document.getElementById('modal-document-id');
+    if (docIdField) docIdField.value = '';
+    const imgEl = document.getElementById('doc-preview-img');
+    if (imgEl) imgEl.src = '';
+}
+
+/**
+ * Open the full-screen document viewer lightbox.
+ */
+function viewDocument() {
+    const docId = document.getElementById('modal-document-id')?.value;
+    if (!docId) return;
+
+    const viewer = document.getElementById('document-viewer');
+    if (!viewer) return;
+
+    const imgEl = document.getElementById('doc-viewer-img');
+    const pdfEl = document.getElementById('doc-viewer-pdf');
+    const titleEl = document.getElementById('doc-viewer-title');
+
+    const nameEl = document.getElementById('doc-preview-name');
+    const filename = nameEl ? nameEl.textContent : 'Document';
+    if (titleEl) titleEl.textContent = filename;
+
+    const ext = filename.split('.').pop().toLowerCase();
+    const isPdf = ext === 'pdf';
+
+    if (isPdf) {
+        if (imgEl) imgEl.classList.add('hidden');
+        if (pdfEl) {
+            pdfEl.classList.remove('hidden');
+            pdfEl.src = `/api/documents/${docId}`;
+        }
+    } else {
+        if (pdfEl) pdfEl.classList.add('hidden');
+        if (imgEl) {
+            imgEl.classList.remove('hidden');
+            imgEl.src = `/api/documents/${docId}`;
+        }
+    }
+
+    viewer.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+/**
+ * View a document by ID (callable from anywhere, e.g., identity cards).
+ */
+function viewDocumentById(documentId, filename) {
+    if (!documentId) return;
+
+    const viewer = document.getElementById('document-viewer');
+    if (!viewer) return;
+
+    const imgEl = document.getElementById('doc-viewer-img');
+    const pdfEl = document.getElementById('doc-viewer-pdf');
+    const titleEl = document.getElementById('doc-viewer-title');
+
+    if (titleEl) titleEl.textContent = filename || 'Document';
+
+    const ext = (filename || '').split('.').pop().toLowerCase();
+    const isPdf = ext === 'pdf';
+
+    if (isPdf) {
+        if (imgEl) imgEl.classList.add('hidden');
+        if (pdfEl) { pdfEl.classList.remove('hidden'); pdfEl.src = `/api/documents/${documentId}`; }
+    } else {
+        if (pdfEl) pdfEl.classList.add('hidden');
+        if (imgEl) { imgEl.classList.remove('hidden'); imgEl.src = `/api/documents/${documentId}`; }
+    }
+
+    viewer.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+/**
+ * Close the document viewer lightbox.
+ */
+function closeDocumentViewer() {
+    const viewer = document.getElementById('document-viewer');
+    if (viewer) viewer.classList.add('hidden');
+    document.body.style.overflow = '';
+    // Clear sources to stop any loading
+    const imgEl = document.getElementById('doc-viewer-img');
+    const pdfEl = document.getElementById('doc-viewer-pdf');
+    if (imgEl) imgEl.src = '';
+    if (pdfEl) { pdfEl.src = ''; pdfEl.classList.add('hidden'); }
+}
+
+/**
+ * Retake/replace the uploaded document.
+ */
+function retakeDocument() {
+    openCameraForNRIC();
+}
+
+/**
+ * Remove the uploaded document from the identity modal.
+ */
+async function removeDocument() {
+    const docId = document.getElementById('modal-document-id')?.value;
+    if (docId) {
+        try {
+            await fetch(`/api/documents/${docId}`, { method: 'DELETE' });
+        } catch (e) {
+            console.error('Failed to delete document:', e);
+        }
+    }
+    hideDocumentPreview();
+}
+
+// Keyboard shortcut: Escape to close document viewer
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const viewer = document.getElementById('document-viewer');
+        if (viewer && !viewer.classList.contains('hidden')) {
+            closeDocumentViewer();
+            e.stopPropagation();
+        }
+    }
+});
 
 // ===========================================================================
 // CAMERA VIEWFINDER WITH IC/DOCUMENT GUIDE BOX
@@ -629,6 +808,8 @@ function openAddIdentityModal(presetRelationship) {
         toggleRelationshipOther();
     }
     if (relOther) relOther.value = '';
+    // Reset document preview
+    hideDocumentPreview();
     modal.classList.remove('hidden');
     // Show address suggestions from existing identities
     showAddressSuggestions();
@@ -674,6 +855,12 @@ function openEditIdentityModal(personId) {
     }
     document.getElementById('modal-nric-upload').value = '';
     document.getElementById('modal-nric-status').innerHTML = '';
+    // Show document preview if identity has a linked document
+    if (person.document_id) {
+        showDocumentPreview(person.document_id, person.full_name + ' - IC/Passport');
+    } else {
+        hideDocumentPreview();
+    }
     modal.classList.remove('hidden');
     // Show address suggestions from existing identities
     showAddressSuggestions();
@@ -689,6 +876,8 @@ function closeIdentityModal() {
     if (dup) dup.classList.add('hidden');
     // Hide address suggestions
     hideAddressSuggestions();
+    // Hide document preview
+    hideDocumentPreview();
     // Reset save button style
     const saveBtn = document.getElementById('modal-save-btn');
     if (saveBtn) {
@@ -868,6 +1057,9 @@ async function saveIdentityGlobal() {
         relationship = otherInput ? otherInput.value.trim() : '';
     }
 
+    // Get document ID if a document was uploaded
+    const documentId = document.getElementById('modal-document-id')?.value || '';
+
     const data = {
         full_name: fullName,
         nric_passport: nricPassport,
@@ -879,6 +1071,7 @@ async function saveIdentityGlobal() {
         email: document.getElementById('modal-email').value.trim(),
         phone: document.getElementById('modal-phone').value.trim(),
         relationship: relationship,
+        document_id: documentId,
     };
 
     const url = finalPersonId ? `/api/persons/${finalPersonId}` : '/api/persons';
@@ -1059,6 +1252,10 @@ async function uploadNRICForIdentity(inputOrFile) {
                     document.getElementById('passport-expiry-field').classList.remove('hidden');
                     const expiryVal = convertDateForInput(confirmed.passport_expiry);
                     if (expiryVal) document.getElementById('modal-passport-expiry').value = expiryVal;
+                }
+                // Store document ID and show document preview
+                if (data.document_id) {
+                    showDocumentPreview(data.document_id, file.name || 'IC/Passport scan', file);
                 }
                 // Check for duplicate NRIC — switch to update mode if exists
                 if (confirmed.nric_number) {

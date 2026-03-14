@@ -26,6 +26,13 @@ db.init_app(app)
 with app.app_context():
     os.makedirs(DATA_DIR, exist_ok=True)
     db.create_all()
+    # Migrate: add document_id column to persons if not exists
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(db.text("ALTER TABLE persons ADD COLUMN document_id VARCHAR(36)"))
+            conn.commit()
+    except Exception:
+        pass  # Column already exists
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +151,7 @@ def load_will_to_session(will_record):
 def upsert_person(client_id, full_name, nric_passport, address=None,
                   date_of_birth=None, nationality=None, gender=None,
                   passport_expiry=None, email=None, phone=None,
-                  relationship=None):
+                  relationship=None, document_id=None):
     """Add or update a person identity in the registry."""
     if not full_name or not nric_passport:
         return None
@@ -176,6 +183,8 @@ def upsert_person(client_id, full_name, nric_passport, address=None,
             existing.phone = phone
         if relationship is not None:
             existing.relationship = relationship
+        if document_id is not None:
+            existing.document_id = document_id
         db.session.commit()
         _refresh_session_person_registry(client_id)
         return existing
@@ -192,6 +201,7 @@ def upsert_person(client_id, full_name, nric_passport, address=None,
             email=email,
             phone=phone,
             relationship=relationship or '',
+            document_id=document_id or None,
         )
         db.session.add(person)
         db.session.commit()
@@ -208,7 +218,8 @@ def _refresh_session_person_registry(client_id):
          'nationality': p.nationality or 'Malaysian', 'gender': p.gender or '',
          'passport_expiry': p.passport_expiry or '',
          'email': p.email or '', 'phone': p.phone or '',
-         'relationship': p.relationship or ''}
+         'relationship': p.relationship or '',
+         'document_id': p.document_id or ''}
         for p in persons
     ]
     session.modified = True
@@ -480,7 +491,8 @@ def api_persons_list():
          'nationality': p.nationality or 'Malaysian', 'gender': p.gender or '',
          'passport_expiry': p.passport_expiry or '',
          'email': p.email or '', 'phone': p.phone or '',
-         'relationship': p.relationship or ''}
+         'relationship': p.relationship or '',
+         'document_id': p.document_id or ''}
         for p in persons
     ])
 
@@ -506,6 +518,7 @@ def api_persons_create():
         email=(data.get('email') or '').strip() or None,
         phone=(data.get('phone') or '').strip() or None,
         relationship=(data.get('relationship') or '').strip() or None,
+        document_id=(data.get('document_id') or '').strip() or None,
     )
     return jsonify({'ok': True, 'person': {
         'id': person.id, 'full_name': person.full_name,
@@ -516,6 +529,7 @@ def api_persons_create():
         'email': person.email or '', 'phone': person.phone or '',
         'passport_expiry': person.passport_expiry or '',
         'relationship': person.relationship or '',
+        'document_id': person.document_id or '',
     }})
 
 
@@ -546,6 +560,8 @@ def api_persons_update(person_id):
         person.phone = (data['phone'] or '').strip() or None
     if 'relationship' in data:
         person.relationship = (data['relationship'] or '').strip() or None
+    if 'document_id' in data:
+        person.document_id = (data['document_id'] or '').strip() or None
     db.session.commit()
     _refresh_session_person_registry(person.client_id)
     return jsonify({'ok': True, 'person': {
@@ -557,6 +573,7 @@ def api_persons_update(person_id):
         'email': person.email or '', 'phone': person.phone or '',
         'passport_expiry': person.passport_expiry or '',
         'relationship': person.relationship or '',
+        'document_id': person.document_id or '',
     }})
 
 
@@ -631,6 +648,28 @@ def api_document_view(doc_id):
     if not os.path.exists(abs_path):
         return jsonify({'error': 'File not found on disk'}), 404
     return send_file(abs_path, download_name=doc.original_filename)
+
+
+@app.route('/api/documents/<doc_id>', methods=['DELETE'])
+def api_document_delete(doc_id):
+    """Delete a specific document."""
+    doc = db.session.get(Document, doc_id)
+    if not doc:
+        return jsonify({'ok': False, 'error': 'Document not found'}), 404
+    # Remove file from disk
+    from config import UPLOAD_DIR
+    abs_path = os.path.join(UPLOAD_DIR, doc.file_path)
+    if os.path.exists(abs_path):
+        os.remove(abs_path)
+    # Clear document_id from any linked persons
+    linked_persons = Person.query.filter_by(document_id=doc_id).all()
+    for p in linked_persons:
+        p.document_id = None
+    db.session.delete(doc)
+    db.session.commit()
+    if linked_persons:
+        _refresh_session_person_registry(linked_persons[0].client_id)
+    return jsonify({'ok': True})
 
 
 # -- OCR Extraction API -------------------------------------------------------

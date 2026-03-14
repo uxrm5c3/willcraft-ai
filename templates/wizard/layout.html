@@ -152,7 +152,30 @@
             <span id="modal-nric-status" class="text-xs block mt-2"></span>
         </div>
 
+        <!-- Document Preview (shown after upload or when editing identity with document) -->
+        <div id="modal-document-preview" class="hidden mb-4 border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+            <div class="relative cursor-pointer" onclick="viewDocument()">
+                <img id="doc-preview-img" src="" alt="Uploaded document" class="w-full max-h-40 object-cover">
+                <div id="doc-preview-pdf" class="hidden w-full h-32 bg-gray-100 flex flex-col items-center justify-center">
+                    <span class="text-3xl">📄</span>
+                    <span class="text-xs text-gray-500 mt-1">PDF Document</span>
+                </div>
+                <div class="absolute inset-0 bg-black/0 hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 hover:opacity-100">
+                    <span class="bg-white/90 text-gray-700 text-xs font-medium px-3 py-1.5 rounded-full shadow">👁 Tap to view</span>
+                </div>
+            </div>
+            <div class="flex items-center justify-between px-3 py-2 border-t border-gray-200">
+                <span class="text-xs text-gray-500 truncate mr-2" id="doc-preview-name">document.jpg</span>
+                <div class="flex gap-1 flex-shrink-0">
+                    <button type="button" onclick="viewDocument()" class="px-2.5 py-1 text-xs bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 font-medium transition-colors">👁 View</button>
+                    <button type="button" onclick="retakeDocument()" class="px-2.5 py-1 text-xs bg-amber-100 text-amber-700 rounded-md hover:bg-amber-200 font-medium transition-colors">📷 Retake</button>
+                    <button type="button" onclick="removeDocument()" class="px-2.5 py-1 text-xs bg-red-100 text-red-700 rounded-md hover:bg-red-200 font-medium transition-colors">✕</button>
+                </div>
+            </div>
+        </div>
+
         <input type="hidden" id="modal-person-id" value="">
+        <input type="hidden" id="modal-document-id" value="">
 
         <!-- Unsaved data banner (shown after OCR fill) -->
         <div id="modal-unsaved-banner" class="hidden mb-4 p-3 bg-amber-50 border border-amber-300 rounded-lg">
@@ -332,6 +355,6 @@
 <script>
     window._personRegistry = {{ (persons | default([])) | tojson }};
 </script>
-<script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260314n"></script>
+<script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260314p"></script>
 {% block wizard_scripts %}{% endblock %}
 {% endblock %}

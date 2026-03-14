@@ -73,6 +73,8 @@ class Person(db.Model):
     gender = db.Column(db.String(10), nullable=True)
     email = db.Column(db.String(200), nullable=True)
     phone = db.Column(db.String(50), nullable=True)
+    # Linked document (NRIC/passport scan)
+    document_id = db.Column(db.String(36), nullable=True)
     # Deprecated (kept for SQLite compat)
     relationship = db.Column(db.String(100), nullable=True)
     source_step = db.Column(db.String(20), nullable=True)
