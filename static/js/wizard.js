@@ -376,11 +376,13 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
         const isAddress = key.toLowerCase().includes('address');
         const displayValue = (value||'').toString().replace(/"/g,'&quot;');
         if (isAddress) {
-            // Use textarea for address fields so multi-line addresses display properly
-            const textareaValue = displayValue.replace(/\\n/g, '\n').replace(/&quot;/g, '"');
+            // Convert comma-separated address to multi-line for textarea display
+            let textareaValue = (value||'').toString()
+                .replace(/\\n/g, '\n')       // literal \n → newline
+                .replace(/, /g, '\n');        // ", " → newline for multi-line display
             container.innerHTML += `<div class="flex flex-col gap-1">
                 <label class="text-sm font-medium text-gray-700">${label}</label>
-                <textarea name="ocr-field-${key}" rows="3"
+                <textarea name="ocr-field-${key}" rows="4"
                        class="w-full px-3 py-1.5 border ${bc} rounded-lg text-sm focus:ring-2 focus:ring-primary-500">${textareaValue}</textarea>
             </div>`;
         } else {
