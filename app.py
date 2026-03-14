@@ -1099,6 +1099,7 @@ def wizard_step_executors():
                 'trustee_data': session.get('step3_trustees', {'same_as_executor': True, 'trustees': [{}]}),
             },
             persons=session.get('person_registry', []),
+            beneficiaries=session.get('step4_beneficiaries', []),
         )
 
     # POST -- parse executor and trustee data
@@ -1249,6 +1250,7 @@ def wizard_step_beneficiaries():
             data={'beneficiaries': session.get('step4_beneficiaries', [{}])},
             persons=session.get('person_registry', []),
             executor_type=session.get('step3_executor_type', 'single'),
+            executors=session.get('step2_executors', []),
         )
 
     # POST -- parse beneficiary selections from identities

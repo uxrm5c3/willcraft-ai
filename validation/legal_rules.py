@@ -42,16 +42,30 @@ def validate_will_data(will_data) -> List[ValidationResult]:
             field="executors"
         ))
 
-    # Rule 3: If any beneficiary is a minor, need at least 2 executors (PAA s.4(2))
+    # Rule 3: If any beneficiary is a minor, recommend at least 2 executors (PAA s.4(2))
     has_minor_beneficiary = _check_minor_beneficiaries(will_data)
     non_substitute_executors = [e for e in will_data.executors if e.role != "Substitute"]
     if has_minor_beneficiary and len(non_substitute_executors) < 2:
-        results.append(ValidationResult(
-            rule_id="PAA_S4_2",
-            severity="ERROR",
-            message="At least 2 joint executors are required when a beneficiary is a minor (Probate and Administration Act 1959 s.4(2)).",
-            field="executors"
-        ))
+        # Check if sole executor is spouse — downgrade to WARNING (user can override)
+        is_spouse_executor = False
+        if len(non_substitute_executors) == 1:
+            rel = non_substitute_executors[0].relationship.lower()
+            if rel in ("spouse", "husband", "wife"):
+                is_spouse_executor = True
+        if is_spouse_executor:
+            results.append(ValidationResult(
+                rule_id="PAA_S4_2_SPOUSE",
+                severity="WARNING",
+                message="Testator has named spouse as sole executor/trustee but minor children exist as beneficiaries. Joint executors are recommended under PAA s.4(2).",
+                field="executors"
+            ))
+        else:
+            results.append(ValidationResult(
+                rule_id="PAA_S4_2",
+                severity="WARNING",
+                message="Joint executors are recommended when a beneficiary is a minor (Probate and Administration Act 1959 s.4(2)). You may proceed with a single executor at your own discretion.",
+                field="executors"
+            ))
 
     # Rule 4: Executors should not be minors (PAA s.20)
     # Note: We can't check executor age without their DOB, so this is a warning

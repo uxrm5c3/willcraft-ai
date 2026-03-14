@@ -20,6 +20,24 @@
             <strong>Legal Note:</strong> Maximum 4 executors (PAA s.4(1)). If any beneficiary is a minor, at least 2 joint executors are required (PAA s.4(2)).
         </div>
 
+        <!-- Minor beneficiary warning (shown when single executor selected & minors exist) -->
+        <div id="exec-minor-warning" class="hidden p-4 bg-amber-50 rounded-lg text-sm border border-amber-300 mb-4">
+            <div class="flex items-start gap-2">
+                <svg class="w-5 h-5 flex-shrink-0 mt-0.5 text-amber-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+                <div>
+                    <p class="font-semibold text-amber-800">Alert: Minor beneficiaries exist</p>
+                    <p class="text-amber-700 mt-1">You have beneficiaries under 18 years old. Joint executors and a trustee are recommended. You may proceed with a single executor (e.g. spouse) but acknowledge this is at your own discretion.</p>
+                    <div class="mt-2">
+                        <label class="flex items-start cursor-pointer gap-2">
+                            <input type="checkbox" name="minor_exec_override" value="1"
+                                   class="mt-0.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500">
+                            <span class="text-amber-800 text-xs">I acknowledge and wish to proceed with a sole executor/trustee.</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Executor Type Toggle -->
         {% set exec_type = data.get('executor_type', 'single') %}
         <div class="mb-4">
@@ -308,6 +326,31 @@
 <script>
 let executorCount = {{ (primary_executors|default([{}]))|length }};
 let trusteeCount = {{ (trustee_data.get('trustees', [{}]) if trustee_data else [{}])|length }};
+const _existingBeneficiaries = {{ beneficiaries | tojson }};
+
+function _hasMinorBeneficiaries() {
+    // Check if any existing beneficiaries are under 18
+    const registry = window._personRegistry || [];
+    for (const ben of _existingBeneficiaries) {
+        if (!ben.person_id) continue;
+        const person = registry.find(p => p.id === ben.person_id);
+        if (person && typeof getPersonAge === 'function') {
+            const age = getPersonAge(person);
+            if (age !== null && age < 18) return true;
+        }
+    }
+    return false;
+}
+
+function checkExecMinorWarning(type) {
+    const warning = document.getElementById('exec-minor-warning');
+    if (!warning) return;
+    if (type === 'single' && _hasMinorBeneficiaries()) {
+        warning.classList.remove('hidden');
+    } else {
+        warning.classList.add('hidden');
+    }
+}
 
 function switchExecutorType(type) {
     const addSection = document.getElementById('add-executor-section');
@@ -340,6 +383,7 @@ function switchExecutorType(type) {
         if (executorCount < 2) addExecutor();
     }
     updateExecutorTypeLabels(type);
+    checkExecMinorWarning(type);
 }
 
 function updateExecutorTypeLabels(type) {
@@ -481,9 +525,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const subTr = document.querySelector('[name="sub_trustee_person_id"]');
     if (subTr && subTr.value) showIdentityInfo(subTr, 'sub-trustee-info');
 
-    // Style executor type toggle
+    // Style executor type toggle + check minor warning
     const checkedRadio = document.querySelector('input[name="executor_type"]:checked');
-    if (checkedRadio) updateExecutorTypeLabels(checkedRadio.value);
+    if (checkedRadio) {
+        updateExecutorTypeLabels(checkedRadio.value);
+        checkExecMinorWarning(checkedRadio.value);
+    }
 });
 
 // Refresh dropdowns after adding a new identity

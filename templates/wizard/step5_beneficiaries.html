@@ -71,16 +71,28 @@
     </button>
 
     <!-- Minor Beneficiary Warning (shown dynamically) -->
-    <div id="minor-beneficiary-warning" class="hidden p-4 bg-red-50 rounded-lg text-sm text-red-700 border border-red-200">
+    <div id="minor-beneficiary-warning" class="hidden p-4 bg-amber-50 rounded-lg text-sm border border-amber-300">
         <div class="flex items-start gap-2">
-            <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
-            <div>
-                <strong>Minor Beneficiary Detected:</strong> You have added a beneficiary under 18 years old. Under the Wills Act 1959 (Malaysia), it is recommended to appoint <strong>joint executors</strong> (not a single executor) to safeguard the interests of minor beneficiaries and to appoint a <strong>trustee</strong> to manage their inheritance.
-                <div class="mt-2">
-                    <a href="/wizard/step/3" class="inline-flex items-center px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-800 rounded-lg font-medium transition-colors">
+            <svg class="w-5 h-5 flex-shrink-0 mt-0.5 text-amber-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+            <div class="flex-1">
+                <p class="font-semibold text-amber-800" id="minor-warning-title">Alert</p>
+                <p class="text-amber-700 mt-1" id="minor-warning-message"></p>
+                <p class="text-amber-700 mt-1">It is recommended to appoint <strong>joint executors</strong> and a <strong>trustee</strong> to safeguard the interests of minor beneficiaries.</p>
+
+                <div class="mt-3 flex flex-col sm:flex-row gap-2">
+                    <a href="/wizard/step/3" class="inline-flex items-center px-3 py-1.5 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded-lg font-medium transition-colors text-sm">
                         <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
                         Go to Step 3 to update Executors &amp; Trustees
                     </a>
+                </div>
+
+                <div class="mt-3 pt-3 border-t border-amber-200">
+                    <label class="flex items-start cursor-pointer gap-2">
+                        <input type="checkbox" name="minor_override_acknowledged" id="minor-override-checkbox" value="1"
+                               class="mt-0.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+                               onchange="toggleMinorOverride(this.checked)">
+                        <span class="text-amber-800 text-xs">I acknowledge the above and wish to proceed with a sole executor/trustee for minor beneficiaries.</span>
+                    </label>
                 </div>
             </div>
         </div>
@@ -171,12 +183,25 @@ document.addEventListener('identitySaved', function() {
     refreshPersonDropdowns();
 });
 
-// Minor beneficiary warning
+// Minor beneficiary warning with spouse override
 const _executorType = '{{ executor_type }}';
+const _executors = {{ executors | tojson }};
+
+function _isExecutorSpouse() {
+    // Check if the single executor's relationship is spouse/husband/wife
+    const primary = _executors.filter(e => e.role !== 'Substitute');
+    if (primary.length !== 1) return false;
+    const rel = (primary[0].relationship || '').toLowerCase();
+    return ['spouse', 'husband', 'wife'].includes(rel);
+}
 
 function checkMinorBeneficiaries() {
     const warning = document.getElementById('minor-beneficiary-warning');
+    const msgEl = document.getElementById('minor-warning-message');
+    const titleEl = document.getElementById('minor-warning-title');
+    const overrideCb = document.getElementById('minor-override-checkbox');
     if (!warning) return;
+
     let hasMinor = false;
     document.querySelectorAll('[name^="ben_person_id_"]').forEach(sel => {
         if (!sel.value) return;
@@ -186,11 +211,30 @@ function checkMinorBeneficiaries() {
             if (age !== null && age < 18) hasMinor = true;
         }
     });
+
     if (hasMinor && _executorType === 'single') {
+        const isSpouse = _isExecutorSpouse();
+        if (isSpouse) {
+            const execName = _executors.filter(e => e.role !== 'Substitute')[0]?.full_name || 'spouse';
+            titleEl.textContent = 'Alert: Sole Executor is Spouse';
+            msgEl.innerHTML = 'Testator has named <strong>' + execName + '</strong> (spouse) as sole executor/trustee but minor children exist as beneficiaries.';
+        } else {
+            titleEl.textContent = 'Alert: Minor Beneficiary Detected';
+            msgEl.innerHTML = 'You have added a beneficiary under 18 years old with only a single executor appointed.';
+        }
         warning.classList.remove('hidden');
+        // Reset override checkbox when warning re-appears
+        if (overrideCb) overrideCb.checked = false;
+        toggleMinorOverride(false);
     } else {
         warning.classList.add('hidden');
+        toggleMinorOverride(true); // no warning = allow submit
     }
+}
+
+function toggleMinorOverride(allowed) {
+    // No-op — user can always submit; the override is just an acknowledgment
+    // But we could disable submit if needed in the future
 }
 
 // Check on page load and on selection change
