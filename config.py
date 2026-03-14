@@ -6,7 +6,7 @@ load_dotenv()
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
-CLAUDE_MODEL_FAST = "claude-3-5-haiku-20241022"  # Faster model for OCR tasks
+CLAUDE_MODEL_FAST = "claude-sonnet-4-20250514"  # Same as main model (Haiku not available on this API key)
 MAX_TOKENS = 8000
 
 # Database & file storage

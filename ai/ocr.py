@@ -20,10 +20,32 @@ def extract_nric_data(image_path: str) -> dict:
         image_data = base64.standard_b64encode(f.read()).decode('utf-8')
 
     ext = image_path.rsplit('.', 1)[-1].lower()
-    media_type = {
-        'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-        'png': 'image/png', 'gif': 'image/gif',
-    }.get(ext, 'image/jpeg')
+    if ext == 'pdf':
+        media_type = 'application/pdf'
+    else:
+        media_type = {
+            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+            'png': 'image/png', 'gif': 'image/gif',
+        }.get(ext, 'image/jpeg')
+
+    if ext == 'pdf':
+        content_block = {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": image_data,
+            }
+        }
+    else:
+        content_block = {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": image_data,
+            }
+        }
 
     message = client.messages.create(
         model=CLAUDE_MODEL_FAST,
@@ -31,14 +53,7 @@ def extract_nric_data(image_path: str) -> dict:
         messages=[{
             "role": "user",
             "content": [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": media_type,
-                        "data": image_data,
-                    }
-                },
+                content_block,
                 {
                     "type": "text",
                     "text": """Extract personal data from this Malaysian IC (MyKad) or Passport image.
