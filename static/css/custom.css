@@ -38,3 +38,73 @@ textarea:focus {
 html {
     scroll-behavior: smooth;
 }
+
+/* ── Mobile & Tablet Responsive ─────────────────────── */
+
+/* Prevent iOS zoom on input focus (requires 16px min) */
+@media (max-width: 768px) {
+    input, select, textarea {
+        font-size: 16px !important;
+    }
+}
+
+/* Touch-friendly tap targets */
+@media (max-width: 1024px) {
+    button, a.inline-flex, [type="submit"] {
+        min-height: 44px;
+    }
+    input[type="checkbox"], input[type="radio"] {
+        width: 20px;
+        height: 20px;
+    }
+}
+
+/* ── Mobile (phones) ── */
+@media (max-width: 640px) {
+    /* Smaller step headings on mobile */
+    h2.text-2xl {
+        font-size: 1.25rem;
+    }
+    /* Tighter padding on wizard cards */
+    .gift-entry {
+        padding: 12px;
+    }
+    /* Stack identity card actions below content */
+    .identity-card {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    .identity-card > .flex.items-center {
+        margin-left: 0;
+        width: 100%;
+        justify-content: flex-end;
+    }
+    /* Stack bottom nav buttons */
+    .nav-buttons-mobile {
+        flex-direction: column-reverse;
+        gap: 8px;
+    }
+    .nav-buttons-mobile > * {
+        width: 100%;
+        text-align: center;
+        justify-content: center;
+    }
+    /* Saved wills list */
+    .will-list-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+    .will-list-item .flex.gap-2 {
+        width: 100%;
+    }
+}
+
+/* ── Tablet (iPad) ── */
+@media (min-width: 641px) and (max-width: 1024px) {
+    /* Slightly reduce wizard card padding */
+    .gift-entry {
+        padding: 16px;
+    }
+}
