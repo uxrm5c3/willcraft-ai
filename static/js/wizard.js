@@ -376,10 +376,9 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
         const isAddress = key.toLowerCase().includes('address');
         const displayValue = (value||'').toString().replace(/"/g,'&quot;');
         if (isAddress) {
-            // Convert comma-separated address to multi-line for textarea display
-            let textareaValue = (value||'').toString()
-                .replace(/\\n/g, '\n')       // literal \n → newline
-                .replace(/, /g, '\n');        // ", " → newline for multi-line display
+            // Address comes as multi-line from server (line1\nline2\nline3)
+            // Real newlines display correctly in textarea
+            let textareaValue = (value||'').toString();
             container.innerHTML += `<div class="flex flex-col gap-1">
                 <label class="text-sm font-medium text-gray-700">${label}</label>
                 <textarea name="ocr-field-${key}" rows="4"
