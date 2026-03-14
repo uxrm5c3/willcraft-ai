@@ -373,11 +373,23 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
         const label = formatFieldLabel(key);
         const isEmpty = !value || value.toString().trim() === '';
         const bc = isEmpty ? 'border-amber-300 bg-amber-50' : 'border-gray-300';
-        container.innerHTML += `<div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
-            <label class="text-sm font-medium text-gray-700 sm:w-40 shrink-0">${label}</label>
-            <input name="ocr-field-${key}" value="${(value||'').toString().replace(/"/g,'&quot;')}"
-                   class="flex-1 px-3 py-1.5 border ${bc} rounded-lg text-sm focus:ring-2 focus:ring-primary-500">
-        </div>`;
+        const isAddress = key.toLowerCase().includes('address');
+        const displayValue = (value||'').toString().replace(/"/g,'&quot;');
+        if (isAddress) {
+            // Use textarea for address fields so multi-line addresses display properly
+            const textareaValue = displayValue.replace(/\\n/g, '\n').replace(/&quot;/g, '"');
+            container.innerHTML += `<div class="flex flex-col gap-1">
+                <label class="text-sm font-medium text-gray-700">${label}</label>
+                <textarea name="ocr-field-${key}" rows="3"
+                       class="w-full px-3 py-1.5 border ${bc} rounded-lg text-sm focus:ring-2 focus:ring-primary-500">${textareaValue}</textarea>
+            </div>`;
+        } else {
+            container.innerHTML += `<div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+                <label class="text-sm font-medium text-gray-700 sm:w-40 shrink-0">${label}</label>
+                <input name="ocr-field-${key}" value="${displayValue}"
+                       class="flex-1 px-3 py-1.5 border ${bc} rounded-lg text-sm focus:ring-2 focus:ring-primary-500">
+            </div>`;
+        }
     }
     if (extracted.assets && extracted.assets.length > 0) {
         for (const [key, value] of Object.entries(extracted.assets[0])) {
@@ -395,7 +407,7 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
 }
 
 function applyOCRData() {
-    const fields = document.querySelectorAll('#ocr-fields-container input');
+    const fields = document.querySelectorAll('#ocr-fields-container input, #ocr-fields-container textarea');
     const data = {};
     const assetData = {};
     fields.forEach(f => {

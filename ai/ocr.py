@@ -67,7 +67,12 @@ Return ONLY a JSON object with these fields (use empty string "" if not visible/
   * The IC number is the large number printed prominently on the card, usually below or next to the name.
   * Double-check: the first 6 digits MUST match the date_of_birth (YYMMDD = DD-MM-YYYY reversed).
 - FULL NAME: Read the name EXACTLY as printed, in UPPERCASE. It is usually the largest text on the front.
-- ADDRESS: The address is printed on the BACK of the MyKad (or sometimes visible on front of older versions). It includes multiple lines: house number, street, taman/kampung, postcode, city, and state. Extract ALL lines and join them with ", ". Example: "NO 12 JALAN MERBAU 3, TAMAN MERBAU, 47100 PUCHONG, SELANGOR". If you can see address text anywhere on the card, extract it completely.
+- ADDRESS: The address is printed on the BACK of the MyKad (or sometimes visible on front of older versions).
+  * CRITICAL: Read the address text CHARACTER BY CHARACTER exactly as printed. Do NOT guess, substitute, or hallucinate words.
+  * Malaysian NRIC addresses commonly contain: unit/lot numbers (e.g. "02-08"), block names (e.g. "BLK B1"), apartment/condo names (e.g. "APT MOLEK PINE 3"), street names (e.g. "JALAN MOLEK 1/5"), taman names, postcode (5 digits), city, and state.
+  * Read every word and number EXACTLY as it appears on the card. If it says "MOLEK PINE" do NOT change it to something else.
+  * Join all address lines with "\\n" (newline character) to preserve the multi-line format. Example: "02-08 BLK B1\\nAPT MOLEK PINE 3\\nJALAN MOLEK 1/5\\nTAMAN MOLEK\\n81100 JOHOR BAHRU\\nJOHOR"
+  * If the image is blurry, extract whatever you CAN read clearly and leave unclear parts as-is.
 - GENDER: Determined from the LAST digit of the IC number. Odd number (1,3,5,7,9) = Male. Even number (0,2,4,6,8) = Female.
 - passport_expiry: MUST be empty string "" for NRIC.
 - date_of_birth: Derive from first 6 digits of IC. E.g., IC starts with 781117 → DOB is 17-11-1978. For years: 00-30 → 2000-2030, 31-99 → 1931-1999.
