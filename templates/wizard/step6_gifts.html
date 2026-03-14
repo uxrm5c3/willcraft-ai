@@ -85,10 +85,7 @@
                         </div>
                     </div>
                     <div class="flex items-center gap-2">
-                        <!-- Camera capture for property docs -->
-                        <input type="file" id="prop-camera-{{ loop.index0 }}" accept="image/*" capture="environment" class="hidden"
-                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'general')">
-                        <button type="button" onclick="document.getElementById('prop-camera-{{ loop.index0 }}').click()"
+                        <button type="button" onclick="openCameraForProperty({{ loop.index0 }})"
                                 class="px-3 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors whitespace-nowrap">
                             📷 Take Photo of Document
                         </button>
@@ -176,10 +173,7 @@
                         <label class="text-xs font-medium text-green-600 whitespace-nowrap">📄 Upload Financial Doc:</label>
                         <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-200 file:text-green-800"
                                onchange="uploadAndExtractAsset(this, 'fin-status-{{ loop.index0 }}', {{ loop.index0 }})">
-                        <!-- Camera capture -->
-                        <input type="file" id="fin-camera-{{ loop.index0 }}" accept="image/*" capture="environment" class="hidden"
-                               onchange="uploadAndExtractAsset(this, 'fin-status-{{ loop.index0 }}', {{ loop.index0 }})">
-                        <button type="button" onclick="document.getElementById('fin-camera-{{ loop.index0 }}').click()"
+                        <button type="button" onclick="openCameraForFinancial({{ loop.index0 }})"
                                 class="px-3 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors whitespace-nowrap">
                             📷 Take Photo
                         </button>
@@ -338,6 +332,19 @@ document.addEventListener('DOMContentLoaded', function() {
         updatePropertyPreview(i);
     }
 });
+
+// Camera viewfinder helpers for Step 6
+function openCameraForProperty(giftIndex) {
+    openCameraViewfinder((file) => {
+        uploadAndExtractProperty(file, 'prop-status-' + giftIndex, giftIndex, 'general');
+    }, 'property');
+}
+
+function openCameraForFinancial(giftIndex) {
+    openCameraViewfinder((file) => {
+        uploadAndExtractAsset(file, 'fin-status-' + giftIndex, giftIndex);
+    }, 'financial');
+}
 
 function switchGiftType(giftIndex, type) {
     document.getElementById('property-panel-' + giftIndex).classList.toggle('hidden', type !== 'property');

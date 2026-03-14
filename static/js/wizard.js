@@ -3,16 +3,18 @@
 // Save Draft via AJAX
 async function saveDraft() {
     const statusEl = document.getElementById('save-status');
+    const statusMobile = document.getElementById('save-status-mobile');
     if (statusEl) statusEl.textContent = 'Saving...';
+    if (statusMobile) statusMobile.textContent = 'Saving...';
     try {
         const resp = await fetch('/api/will/save', { method: 'POST' });
         const data = await resp.json();
-        if (statusEl) {
-            statusEl.textContent = data.ok ? 'Saved!' : 'Error saving.';
-            setTimeout(() => { statusEl.textContent = ''; }, 3000);
-        }
+        const msg = data.ok ? 'Saved!' : 'Error saving.';
+        if (statusEl) { statusEl.textContent = msg; setTimeout(() => { statusEl.textContent = ''; }, 3000); }
+        if (statusMobile) { statusMobile.textContent = msg; setTimeout(() => { statusMobile.textContent = ''; }, 3000); }
     } catch (e) {
         if (statusEl) statusEl.textContent = 'Save failed.';
+        if (statusMobile) statusMobile.textContent = 'Save failed.';
     }
 }
 
@@ -62,6 +64,213 @@ function handleDrop(event, uploadId, category) {
 }
 
 // ===========================================================================
+// CLIENT-SIDE FILE VALIDATION
+// ===========================================================================
+const MAX_FILE_SIZE_MB = 10;
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif', 'image/bmp', 'image/tiff'];
+const ALLOWED_DOC_TYPES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+
+function validateFile(file) {
+    if (!file) return { valid: false, error: 'No file selected.' };
+
+    // Check size
+    const sizeMB = file.size / (1024 * 1024);
+    if (sizeMB > MAX_FILE_SIZE_MB) {
+        return { valid: false, error: `File too large (${sizeMB.toFixed(1)}MB). Maximum is ${MAX_FILE_SIZE_MB}MB.` };
+    }
+
+    // Check type — be lenient since mobile browsers sometimes report empty types
+    if (file.type && !ALLOWED_IMAGE_TYPES.includes(file.type) && !ALLOWED_DOC_TYPES.includes(file.type)) {
+        // Also check extension as fallback
+        const ext = file.name.split('.').pop().toLowerCase();
+        const allowedExts = ['png', 'jpg', 'jpeg', 'gif', 'pdf', 'docx', 'doc', 'heic', 'heif', 'webp', 'bmp', 'tiff', 'tif'];
+        if (!allowedExts.includes(ext)) {
+            return { valid: false, error: `File type not supported: .${ext}. Please use JPG, PNG, PDF, or HEIC.` };
+        }
+    }
+
+    return { valid: true };
+}
+
+// ===========================================================================
+// CAMERA VIEWFINDER MODAL SYSTEM
+// ===========================================================================
+
+let _cameraStream = null;
+let _cameraFacingMode = 'environment'; // 'environment' = back camera, 'user' = front
+let _cameraCapturedBlob = null;
+let _cameraCallback = null;  // Called with the captured File
+let _cameraDocType = 'document'; // 'nric', 'property', 'financial'
+
+/**
+ * Open the camera viewfinder modal.
+ * @param {Function} callback - Called with the captured File object
+ * @param {string} docType - Type of document being scanned: 'nric', 'property', 'financial'
+ */
+async function openCameraViewfinder(callback, docType) {
+    _cameraCallback = callback;
+    _cameraDocType = docType || 'document';
+    _cameraCapturedBlob = null;
+
+    // Set guide text based on document type
+    const titleEl = document.getElementById('camera-title');
+    const subtitleEl = document.getElementById('camera-subtitle');
+    const guideTextEl = document.getElementById('camera-guide-text');
+    const guideBoxEl = document.getElementById('camera-guide-box');
+
+    if (docType === 'nric') {
+        titleEl.textContent = 'Scan NRIC / Passport';
+        subtitleEl.textContent = 'Position your ID card within the frame';
+        guideTextEl.textContent = 'Place NRIC / Passport here';
+        guideBoxEl.style.aspectRatio = '1.6/1';
+    } else if (docType === 'property') {
+        titleEl.textContent = 'Scan Property Document';
+        subtitleEl.textContent = 'Position title/cukai/SPA document in frame';
+        guideTextEl.textContent = 'Place document here';
+        guideBoxEl.style.aspectRatio = '1/1.4';
+    } else if (docType === 'financial') {
+        titleEl.textContent = 'Scan Financial Document';
+        subtitleEl.textContent = 'Position bank statement in frame';
+        guideTextEl.textContent = 'Place document here';
+        guideBoxEl.style.aspectRatio = '1/1.4';
+    } else {
+        titleEl.textContent = 'Scan Document';
+        subtitleEl.textContent = 'Position document within the frame';
+        guideTextEl.textContent = 'Align document here';
+        guideBoxEl.style.aspectRatio = '1.6/1';
+    }
+
+    // Show modal
+    document.getElementById('camera-modal').classList.remove('hidden');
+    document.getElementById('camera-controls').classList.remove('hidden');
+    document.getElementById('camera-preview-controls').classList.add('hidden');
+    document.getElementById('camera-video').classList.remove('hidden');
+    document.getElementById('camera-preview').classList.add('hidden');
+
+    // Start camera
+    await startCamera();
+}
+
+async function startCamera() {
+    // Stop any existing stream first
+    stopCameraStream();
+
+    try {
+        const constraints = {
+            video: {
+                facingMode: _cameraFacingMode,
+                width: { ideal: 1920 },
+                height: { ideal: 1080 }
+            }
+        };
+
+        _cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+        const video = document.getElementById('camera-video');
+        video.srcObject = _cameraStream;
+        await video.play();
+    } catch (err) {
+        console.error('Camera access error:', err);
+        // Fall back to file picker if camera not available
+        closeCameraModal();
+        // Create a temporary file input and trigger it
+        const tempInput = document.createElement('input');
+        tempInput.type = 'file';
+        tempInput.accept = 'image/*';
+        tempInput.onchange = function() {
+            if (tempInput.files[0] && _cameraCallback) {
+                _cameraCallback(tempInput.files[0]);
+            }
+        };
+        tempInput.click();
+    }
+}
+
+function stopCameraStream() {
+    if (_cameraStream) {
+        _cameraStream.getTracks().forEach(track => track.stop());
+        _cameraStream = null;
+    }
+}
+
+async function switchCamera() {
+    _cameraFacingMode = _cameraFacingMode === 'environment' ? 'user' : 'environment';
+    await startCamera();
+}
+
+function capturePhoto() {
+    const video = document.getElementById('camera-video');
+    const canvas = document.getElementById('camera-canvas');
+    const preview = document.getElementById('camera-preview');
+
+    // Set canvas to video resolution
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    // Draw video frame to canvas
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+
+    // Convert to blob
+    canvas.toBlob((blob) => {
+        _cameraCapturedBlob = blob;
+
+        // Show preview
+        const url = URL.createObjectURL(blob);
+        preview.src = url;
+        preview.classList.remove('hidden');
+        video.classList.add('hidden');
+
+        // Switch controls
+        document.getElementById('camera-controls').classList.add('hidden');
+        document.getElementById('camera-preview-controls').classList.remove('hidden');
+
+        // Pause camera
+        stopCameraStream();
+    }, 'image/jpeg', 0.92);
+}
+
+function retakePhoto() {
+    _cameraCapturedBlob = null;
+
+    // Switch back to live view
+    document.getElementById('camera-preview').classList.add('hidden');
+    document.getElementById('camera-video').classList.remove('hidden');
+    document.getElementById('camera-controls').classList.remove('hidden');
+    document.getElementById('camera-preview-controls').classList.add('hidden');
+
+    // Restart camera
+    startCamera();
+}
+
+function usePhoto() {
+    if (!_cameraCapturedBlob || !_cameraCallback) return;
+
+    // Create a File from the blob
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = `${_cameraDocType}_${timestamp}.jpg`;
+    const file = new File([_cameraCapturedBlob], filename, { type: 'image/jpeg' });
+
+    closeCameraModal();
+    _cameraCallback(file);
+}
+
+function handleGallerySelect(input) {
+    if (input.files[0] && _cameraCallback) {
+        closeCameraModal();
+        _cameraCallback(input.files[0]);
+    }
+}
+
+function closeCameraModal() {
+    stopCameraStream();
+    document.getElementById('camera-modal').classList.add('hidden');
+    _cameraCapturedBlob = null;
+    // Reset gallery input
+    document.getElementById('camera-gallery-input').value = '';
+}
+
+
+// ===========================================================================
 // OCR CONFIRMATION MODAL SYSTEM
 // ===========================================================================
 
@@ -69,6 +278,7 @@ let _ocrPendingData = null;       // Extracted data waiting for confirmation
 let _ocrPendingCallback = null;   // Function to call with confirmed data
 let _ocrRetryInputEl = null;      // File input to re-trigger for retry
 let _ocrRetryArgs = null;         // Arguments for retry
+let _ocrRetryCamera = null;       // Camera callback for retry via camera
 
 // Field label mapping for human-readable display
 const OCR_FIELD_LABELS = {
@@ -107,16 +317,18 @@ function formatFieldLabel(key) {
  * @param {Function} callback - Called with confirmed (possibly edited) data
  * @param {HTMLInputElement} retryInputEl - The file input for retry
  * @param {Array} retryArgs - Arguments for the retry function call
+ * @param {Object} retryCameraInfo - { callback, docType } for camera retry
  */
-function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retryArgs) {
+function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retryArgs, retryCameraInfo) {
     _ocrPendingData = extracted;
     _ocrPendingCallback = callback;
     _ocrRetryInputEl = retryInputEl;
     _ocrRetryArgs = retryArgs;
+    _ocrRetryCamera = retryCameraInfo || null;
 
     // Show image preview
     const previewImg = document.getElementById('ocr-preview-img');
-    if (imageFile && imageFile.type.startsWith('image/')) {
+    if (imageFile && imageFile.type && imageFile.type.startsWith('image/')) {
         const reader = new FileReader();
         reader.onload = (e) => { previewImg.src = e.target.result; };
         reader.readAsDataURL(imageFile);
@@ -207,7 +419,14 @@ function applyOCRData() {
 
 function retryOCRUpload() {
     closeOCRModal();
-    // Re-trigger the file input so user can pick a new file
+
+    // If we have camera info, open camera viewfinder
+    if (_ocrRetryCamera) {
+        openCameraViewfinder(_ocrRetryCamera.callback, _ocrRetryCamera.docType);
+        return;
+    }
+
+    // Otherwise re-trigger the file input so user can pick a new file
     if (_ocrRetryInputEl) {
         _ocrRetryInputEl.value = '';
         _ocrRetryInputEl.click();
@@ -221,25 +440,26 @@ function closeOCRModal() {
 }
 
 // ===========================================================================
-// CAMERA CAPTURE HELPERS
-// ===========================================================================
-
-/**
- * Open a file picker that prefers camera capture on mobile devices.
- * @param {HTMLInputElement} hiddenInput - The hidden file input to trigger
- */
-function openCameraCapture(hiddenInput) {
-    hiddenInput.value = '';
-    hiddenInput.click();
-}
-
-// ===========================================================================
 // NRIC / Passport OCR Upload (with confirmation)
 // ===========================================================================
 
-async function uploadAndExtractNRIC(inputEl, statusElId, fieldMapping) {
-    const file = inputEl.files[0];
+async function uploadAndExtractNRIC(inputOrFile, statusElId, fieldMapping) {
+    let file;
+    if (inputOrFile instanceof File) {
+        file = inputOrFile;
+    } else {
+        file = inputOrFile.files[0];
+    }
     if (!file) return;
+
+    // Validate file
+    const validation = validateFile(file);
+    if (!validation.valid) {
+        const statusEl = document.getElementById(statusElId);
+        if (statusEl) statusEl.innerHTML = `<span class="text-red-600">${validation.error}</span>`;
+        return;
+    }
+
     const statusEl = document.getElementById(statusElId);
     if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Scanning document...</span>';
 
@@ -248,9 +468,16 @@ async function uploadAndExtractNRIC(inputEl, statusElId, fieldMapping) {
 
     try {
         const resp = await fetch('/api/ocr/nric', { method: 'POST', body: formData });
+        if (!resp.ok) {
+            const errText = await resp.text();
+            let errMsg = 'Server error';
+            try { errMsg = JSON.parse(errText).error || errMsg; } catch(e) {}
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${errMsg}</span>`;
+            return;
+        }
         const data = await resp.json();
         if (data.ok && data.extracted) {
-            if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">Review extracted data...</span>';
+            if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">📋 Review extracted data...</span>';
 
             // Show confirmation modal instead of auto-filling
             showOCRConfirmation(data.extracted, file, (confirmed) => {
@@ -269,12 +496,14 @@ async function uploadAndExtractNRIC(inputEl, statusElId, fieldMapping) {
                 if (fieldMapping.nationality && confirmed.nationality) setValueIfEmpty(fieldMapping.nationality, confirmed.nationality);
                 if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Data applied!</span>';
                 setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
-            }, inputEl, [inputEl, statusElId, fieldMapping]);
+            }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
+            { callback: (f) => uploadAndExtractNRIC(f, statusElId, fieldMapping), docType: 'nric' });
         } else {
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${data.error || 'Extraction failed'}</span>`;
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${data.error || 'Extraction failed. Try a clearer image.'}</span>`;
         }
     } catch (e) {
-        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Please try again.</span>';
+        console.error('NRIC upload error:', e);
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Check your connection and try again.</span>';
     }
 }
 
@@ -301,9 +530,23 @@ function convertDateForInput(dateStr) {
 // Property Document OCR Upload (with confirmation)
 // ===========================================================================
 
-async function uploadAndExtractProperty(inputEl, statusElId, giftIndex, docType) {
-    const file = inputEl.files[0];
+async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docType) {
+    let file;
+    if (inputOrFile instanceof File) {
+        file = inputOrFile;
+    } else {
+        file = inputOrFile.files[0];
+    }
     if (!file) return;
+
+    // Validate file
+    const validation = validateFile(file);
+    if (!validation.valid) {
+        const statusEl = document.getElementById(statusElId);
+        if (statusEl) statusEl.innerHTML = `<span class="text-red-600">${validation.error}</span>`;
+        return;
+    }
+
     const statusEl = document.getElementById(statusElId);
     if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Scanning property document...</span>';
 
@@ -313,9 +556,16 @@ async function uploadAndExtractProperty(inputEl, statusElId, giftIndex, docType)
 
     try {
         const resp = await fetch('/api/ocr/property', { method: 'POST', body: formData });
+        if (!resp.ok) {
+            const errText = await resp.text();
+            let errMsg = 'Server error';
+            try { errMsg = JSON.parse(errText).error || errMsg; } catch(e) {}
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${errMsg}</span>`;
+            return;
+        }
         const data = await resp.json();
         if (data.ok && data.extracted) {
-            if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">Review extracted data...</span>';
+            if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">📋 Review extracted data...</span>';
 
             // Show confirmation modal
             showOCRConfirmation(data.extracted, file, (confirmed) => {
@@ -338,12 +588,14 @@ async function uploadAndExtractProperty(inputEl, statusElId, giftIndex, docType)
                 updatePropertyPreview(giftIndex);
                 if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Property data applied!</span>';
                 setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
-            }, inputEl, [inputEl, statusElId, giftIndex, docType]);
+            }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
+            { callback: (f) => uploadAndExtractProperty(f, statusElId, giftIndex, docType), docType: 'property' });
         } else {
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${data.error || 'Extraction failed'}</span>`;
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${data.error || 'Extraction failed. Try a clearer image.'}</span>`;
         }
     } catch (e) {
-        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Please try again.</span>';
+        console.error('Property upload error:', e);
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Check your connection and try again.</span>';
     }
 }
 
@@ -351,9 +603,23 @@ async function uploadAndExtractProperty(inputEl, statusElId, giftIndex, docType)
 // Asset Document OCR Upload (with confirmation)
 // ===========================================================================
 
-async function uploadAndExtractAsset(inputEl, statusElId, giftIndex) {
-    const file = inputEl.files[0];
+async function uploadAndExtractAsset(inputOrFile, statusElId, giftIndex) {
+    let file;
+    if (inputOrFile instanceof File) {
+        file = inputOrFile;
+    } else {
+        file = inputOrFile.files[0];
+    }
     if (!file) return;
+
+    // Validate file
+    const validation = validateFile(file);
+    if (!validation.valid) {
+        const statusEl = document.getElementById(statusElId);
+        if (statusEl) statusEl.innerHTML = `<span class="text-red-600">${validation.error}</span>`;
+        return;
+    }
+
     const statusEl = document.getElementById(statusElId);
     if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Scanning financial document...</span>';
 
@@ -362,9 +628,16 @@ async function uploadAndExtractAsset(inputEl, statusElId, giftIndex) {
 
     try {
         const resp = await fetch('/api/ocr/asset', { method: 'POST', body: formData });
+        if (!resp.ok) {
+            const errText = await resp.text();
+            let errMsg = 'Server error';
+            try { errMsg = JSON.parse(errText).error || errMsg; } catch(e) {}
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${errMsg}</span>`;
+            return;
+        }
         const data = await resp.json();
         if (data.ok && data.extracted) {
-            if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">Review extracted data...</span>';
+            if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">📋 Review extracted data...</span>';
 
             // Show confirmation modal
             showOCRConfirmation(data.extracted, file, (confirmed) => {
@@ -383,11 +656,13 @@ async function uploadAndExtractAsset(inputEl, statusElId, giftIndex) {
                 if (finRadio) { finRadio.checked = true; switchGiftType(giftIndex, 'financial'); }
                 if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Asset data applied!</span>';
                 setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
-            }, inputEl, [inputEl, statusElId, giftIndex]);
+            }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
+            { callback: (f) => uploadAndExtractAsset(f, statusElId, giftIndex), docType: 'financial' });
         } else {
-            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${data.error || 'Extraction failed'}</span>`;
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">Error: ${data.error || 'Extraction failed. Try a clearer image.'}</span>`;
         }
     } catch (e) {
-        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Please try again.</span>';
+        console.error('Asset upload error:', e);
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Upload failed. Check your connection and try again.</span>';
     }
 }
