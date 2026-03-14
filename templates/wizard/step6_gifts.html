@@ -16,7 +16,8 @@
         {% set gifts = data.get('gifts', []) %}
         {% if not gifts %}{% set gifts = [{'gift_type': 'property', 'description': '', 'property_details': {}, 'financial_details': {}, 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}] %}{% endif %}
         {% for gift in gifts %}
-        <div class="gift-entry border border-gray-200 rounded-lg p-5 mb-4" data-gift-index="{{ loop.index0 }}">
+        {% set gift_idx = loop.index0 %}
+        <div class="gift-entry border border-gray-200 rounded-lg p-5 mb-4" data-gift-index="{{ gift_idx }}">
             <div class="flex justify-between items-center mb-4">
                 <h3 class="font-semibold text-gray-700">Gift No. {{ loop.index }}</h3>
                 {% if loop.index > 1 %}
@@ -234,21 +235,21 @@
                     <div class="allocation-entry grid md:grid-cols-4 gap-3 mb-3 items-end" data-alloc-index="{{ loop.index0 }}">
                         <div>
                             <label class="block text-xs font-medium text-gray-500 mb-1">Beneficiary Name</label>
-                            <input type="text" name="gift_{{ loop.parent.loop.index0 }}_alloc_name_{{ loop.index0 }}"
+                            <input type="text" name="gift_{{ gift_idx }}_alloc_name_{{ loop.index0 }}"
                                    value="{{ alloc.get('beneficiary_name', '') }}"
                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                                    placeholder="Name from beneficiary list">
                         </div>
                         <div>
                             <label class="block text-xs font-medium text-gray-500 mb-1">Share</label>
-                            <input type="text" name="gift_{{ loop.parent.loop.index0 }}_alloc_share_{{ loop.index0 }}"
+                            <input type="text" name="gift_{{ gift_idx }}_alloc_share_{{ loop.index0 }}"
                                    value="{{ alloc.get('share', '') }}"
                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                                    placeholder="e.g., 100% or 50%">
                         </div>
                         <div>
                             <label class="block text-xs font-medium text-gray-500 mb-1">Role</label>
-                            <select name="gift_{{ loop.parent.loop.index0 }}_alloc_role_{{ loop.index0 }}"
+                            <select name="gift_{{ gift_idx }}_alloc_role_{{ loop.index0 }}"
                                     class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                                 <option value="MB" {% if alloc.get('role') == 'MB' %}selected{% endif %}>MB (Main Beneficiary)</option>
                                 <option value="SB" {% if alloc.get('role') == 'SB' %}selected{% endif %}>SB (Substitute Beneficiary)</option>
