@@ -80,14 +80,12 @@
                 <div class="sm:col-span-2">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Full Name (as per NRIC/Passport) <span class="text-red-500">*</span></label>
                     <input type="text" id="modal-full-name" required
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="e.g., TAN AH KOW">
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No. <span class="text-red-500">*</span></label>
                     <input type="text" id="modal-nric-passport" required
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="e.g., 800101-14-1234">
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Nationality</label>
@@ -98,18 +96,17 @@
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
                 <textarea id="modal-address" rows="2"
-                          class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
-                          placeholder="Full residential address"></textarea>
+                          class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"></textarea>
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Passport Expiry</label>
-                    <input type="date" id="modal-passport-expiry"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                </div>
-                <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Date of Birth</label>
                     <input type="date" id="modal-dob"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div id="passport-expiry-field" class="hidden">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Passport Expiry</label>
+                    <input type="date" id="modal-passport-expiry"
                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                 </div>
             </div>
@@ -157,6 +154,7 @@ function openAddModal() {
     document.getElementById('modal-nationality').value = 'Malaysian';
     document.getElementById('modal-address').value = '';
     document.getElementById('modal-passport-expiry').value = '';
+    document.getElementById('passport-expiry-field').classList.add('hidden');
     document.getElementById('modal-dob').value = '';
     document.getElementById('modal-gender').value = '';
     document.getElementById('modal-email').value = '';
@@ -175,11 +173,18 @@ function openEditModal(personId) {
     document.getElementById('modal-nric-passport').value = person.nric_passport || '';
     document.getElementById('modal-nationality').value = person.nationality || 'Malaysian';
     document.getElementById('modal-address').value = person.address || '';
-    document.getElementById('modal-passport-expiry').value = person.passport_expiry ? convertDateForInput(person.passport_expiry) : '';
     document.getElementById('modal-dob').value = person.date_of_birth ? convertDateForInput(person.date_of_birth) : '';
     document.getElementById('modal-gender').value = person.gender || '';
     document.getElementById('modal-email').value = person.email || '';
     document.getElementById('modal-phone').value = person.phone || '';
+    // Show passport expiry only if person has one
+    if (person.passport_expiry) {
+        document.getElementById('passport-expiry-field').classList.remove('hidden');
+        document.getElementById('modal-passport-expiry').value = convertDateForInput(person.passport_expiry);
+    } else {
+        document.getElementById('passport-expiry-field').classList.add('hidden');
+        document.getElementById('modal-passport-expiry').value = '';
+    }
     document.getElementById('modal-nric-upload').value = '';
     document.getElementById('modal-nric-status').innerHTML = '';
     document.getElementById('identity-modal').classList.remove('hidden');
@@ -304,8 +309,17 @@ async function uploadNRICForIdentity(inputOrFile) {
         if (data.ok && data.extracted) {
             if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">📋 Review extracted data...</span>';
 
+            // Remove passport_expiry from review if doc is NRIC (not relevant)
+            const extracted = data.extracted;
+            const isPassport = (extracted.doc_type || '').toLowerCase() === 'passport';
+            if (!isPassport) {
+                delete extracted.passport_expiry;
+            }
+            // Remove doc_type from review fields (internal use only)
+            delete extracted.doc_type;
+
             // Show confirmation modal for user to review/edit before applying
-            showOCRConfirmation(data.extracted, file, (confirmed) => {
+            showOCRConfirmation(extracted, file, (confirmed) => {
                 if (confirmed.full_name) document.getElementById('modal-full-name').value = confirmed.full_name;
                 if (confirmed.nric_number) document.getElementById('modal-nric-passport').value = confirmed.nric_number;
                 if (confirmed.address) document.getElementById('modal-address').value = confirmed.address;
@@ -315,7 +329,9 @@ async function uploadNRICForIdentity(inputOrFile) {
                     const dateVal = convertDateForInput(confirmed.date_of_birth);
                     if (dateVal) document.getElementById('modal-dob').value = dateVal;
                 }
-                if (confirmed.passport_expiry) {
+                // Show passport expiry field only for passports
+                if (isPassport && confirmed.passport_expiry) {
+                    document.getElementById('passport-expiry-field').classList.remove('hidden');
                     const expiryVal = convertDateForInput(confirmed.passport_expiry);
                     if (expiryVal) document.getElementById('modal-passport-expiry').value = expiryVal;
                 }

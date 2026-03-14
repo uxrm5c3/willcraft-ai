@@ -39,29 +39,34 @@ def extract_nric_data(image_path: str) -> dict:
                     "type": "text",
                     "text": """Extract all personal information from this Malaysian NRIC (identity card) or passport image.
 
-Return ONLY a JSON object with these fields (use empty string if not visible/readable):
+Return ONLY a JSON object with these fields (use empty string "" if not visible/readable):
 {
+    "doc_type": "nric" or "passport",
     "full_name": "FULL NAME IN UPPERCASE",
-    "nric_number": "XXXXXX-XX-XXXX format",
+    "nric_number": "XXXXXX-XX-XXXX format for NRIC, or passport number",
     "date_of_birth": "DD-MM-YYYY format",
-    "address": "Full address if visible",
+    "address": "Full address exactly as printed on the card",
     "gender": "Male or Female",
     "nationality": "Malaysian or the nationality shown",
-    "passport_expiry": "DD-MM-YYYY format (empty string for NRIC)"
+    "passport_expiry": "DD-MM-YYYY format (ONLY for passport, empty string for NRIC)"
 }
 
-For Malaysian NRIC:
-- The 12-digit number is in format YYMMDD-SS-NNNN
-- Extract the name exactly as printed
-- The address is on the back of the NRIC
-- Gender: last digit odd = Male, even = Female
-- passport_expiry should be empty string
+For Malaysian NRIC (MyKad):
+- doc_type must be "nric"
+- The 12-digit IC number is in format YYMMDD-SS-NNNN (e.g. 800101-14-1234)
+- Extract the full name EXACTLY as printed on the card in UPPERCASE
+- IMPORTANT: The address is printed on the BACK of the NRIC. It typically includes street, taman/kampung, postcode, city, and state. Extract the FULL address including all lines. If both front and back are visible, get the address from the back.
+- If address is visible, extract it completely with all lines joined (e.g. "NO 12 JALAN MERBAU 3, TAMAN MERBAU, 47100 PUCHONG, SELANGOR")
+- Gender: determine from last digit of IC number - odd = Male, even = Female
+- passport_expiry MUST be empty string ""
 
 For passport:
-- Extract as shown on the data page
+- doc_type must be "passport"
+- Extract all fields as shown on the data page
 - Include the passport expiry date if visible
+- Address may not be available on passport - use empty string if not visible
 
-Return ONLY the JSON, no explanation."""
+Return ONLY the JSON, no explanation or markdown."""
                 }
             ]
         }]
