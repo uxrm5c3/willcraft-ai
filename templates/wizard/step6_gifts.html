@@ -60,28 +60,40 @@
                 <h4 class="text-sm font-semibold text-blue-800 mb-3">Property Details (Malaysian Standard Format)</h4>
 
                 <!-- Upload buttons for property docs -->
-                <div class="mb-3 flex flex-wrap gap-2">
-                    <div class="flex items-center gap-1">
-                        <label class="text-xs font-medium text-blue-600 whitespace-nowrap">Upload Title/Geran:</label>
-                        <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
-                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'title')">
+                <div class="mb-3 space-y-2">
+                    <p class="text-xs font-semibold text-blue-700">📄 Upload Document or 📷 Take Photo to Auto-Fill:</p>
+                    <div class="flex flex-wrap gap-2">
+                        <div class="flex items-center gap-1">
+                            <label class="text-xs font-medium text-blue-600 whitespace-nowrap">Title/Geran:</label>
+                            <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                                   onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'title')">
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <label class="text-xs font-medium text-blue-600 whitespace-nowrap">Cukai Harta:</label>
+                            <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                                   onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'cukai_harta')">
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <label class="text-xs font-medium text-blue-600 whitespace-nowrap">Cukai Pintu:</label>
+                            <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                                   onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'cukai_pintu')">
+                        </div>
+                        <div class="flex items-center gap-1">
+                            <label class="text-xs font-medium text-blue-600 whitespace-nowrap">SPA:</label>
+                            <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                                   onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'spa')">
+                        </div>
                     </div>
-                    <div class="flex items-center gap-1">
-                        <label class="text-xs font-medium text-blue-600 whitespace-nowrap">Cukai Harta:</label>
-                        <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
-                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'cukai_harta')">
+                    <div class="flex items-center gap-2">
+                        <!-- Camera capture for property docs -->
+                        <input type="file" id="prop-camera-{{ loop.index0 }}" accept="image/*" capture="environment" class="hidden"
+                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'general')">
+                        <button type="button" onclick="document.getElementById('prop-camera-{{ loop.index0 }}').click()"
+                                class="px-3 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors whitespace-nowrap">
+                            📷 Take Photo of Document
+                        </button>
+                        <span id="prop-status-{{ loop.index0 }}" class="text-xs"></span>
                     </div>
-                    <div class="flex items-center gap-1">
-                        <label class="text-xs font-medium text-blue-600 whitespace-nowrap">Cukai Pintu:</label>
-                        <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
-                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'cukai_pintu')">
-                    </div>
-                    <div class="flex items-center gap-1">
-                        <label class="text-xs font-medium text-blue-600 whitespace-nowrap">SPA:</label>
-                        <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
-                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'spa')">
-                    </div>
-                    <span id="prop-status-{{ loop.index0 }}" class="text-xs"></span>
                 </div>
 
                 <div class="mb-3">
@@ -159,11 +171,20 @@
             <div id="financial-panel-{{ loop.index0 }}" class="{% if gt != 'financial' %}hidden{% endif %} mb-4 p-4 bg-green-50 rounded-lg border border-green-200">
                 <h4 class="text-sm font-semibold text-green-800 mb-3">Financial / Asset Details</h4>
 
-                <div class="mb-3 flex items-center gap-2">
-                    <label class="text-xs font-medium text-green-600 whitespace-nowrap">Upload Financial Doc:</label>
-                    <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-200 file:text-green-800"
-                           onchange="uploadAndExtractAsset(this, 'fin-status-{{ loop.index0 }}', {{ loop.index0 }})">
-                    <span id="fin-status-{{ loop.index0 }}" class="text-xs"></span>
+                <div class="mb-3 space-y-1">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <label class="text-xs font-medium text-green-600 whitespace-nowrap">📄 Upload Financial Doc:</label>
+                        <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-200 file:text-green-800"
+                               onchange="uploadAndExtractAsset(this, 'fin-status-{{ loop.index0 }}', {{ loop.index0 }})">
+                        <!-- Camera capture -->
+                        <input type="file" id="fin-camera-{{ loop.index0 }}" accept="image/*" capture="environment" class="hidden"
+                               onchange="uploadAndExtractAsset(this, 'fin-status-{{ loop.index0 }}', {{ loop.index0 }})">
+                        <button type="button" onclick="document.getElementById('fin-camera-{{ loop.index0 }}').click()"
+                                class="px-3 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors whitespace-nowrap">
+                            📷 Take Photo
+                        </button>
+                    </div>
+                    <span id="fin-status-{{ loop.index0 }}" class="text-xs block"></span>
                 </div>
 
                 <div class="grid md:grid-cols-2 gap-3 mb-3">

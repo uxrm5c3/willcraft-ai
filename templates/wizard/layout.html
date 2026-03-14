@@ -1,14 +1,68 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 py-8">
+<div class="max-w-7xl mx-auto px-4 py-4 sm:py-8">
+
+    <!-- Mobile Progress Bar (visible on small screens) -->
+    <div class="lg:hidden mb-4">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-gray-500 uppercase">Step {{ current_step }} of 10</span>
+                <button onclick="document.getElementById('mobile-nav').classList.toggle('hidden')" class="text-xs text-primary-600 font-medium">
+                    Show Steps ▾
+                </button>
+            </div>
+            <!-- Progress bar -->
+            <div class="w-full bg-gray-200 rounded-full h-2">
+                <div class="bg-primary-600 h-2 rounded-full transition-all" style="width: {{ (current_step / 10 * 100) | int }}%"></div>
+            </div>
+
+            <!-- Collapsible step navigation -->
+            <nav id="mobile-nav" class="hidden mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-1">
+                {% set steps = [
+                    (1, "Identities", "compulsory"),
+                    (2, "Testator Info", "compulsory"),
+                    (3, "Executors", "compulsory"),
+                    (4, "Guardians", "optional"),
+                    (5, "Beneficiaries", "compulsory"),
+                    (6, "Gifts", "optional"),
+                    (7, "Residuary", "compulsory"),
+                    (8, "Trust", "optional"),
+                    (9, "Other", "optional"),
+                    (10, "Generate", "final")
+                ] %}
+                {% for num, name, type in steps %}
+                <a href="/wizard/step/{{ num }}"
+                   class="flex items-center px-2 py-1.5 rounded text-xs transition-colors
+                          {% if current_step == num %}bg-primary-50 text-primary-700 font-semibold
+                          {% elif num in completed_steps %}text-green-700
+                          {% else %}text-gray-500{% endif %}">
+                    <span class="w-5 h-5 flex items-center justify-center rounded-full mr-1.5 text-[10px] font-bold
+                          {% if num in completed_steps %}bg-green-100 text-green-700
+                          {% elif current_step == num %}bg-primary-600 text-white
+                          {% else %}bg-gray-200 text-gray-500{% endif %}">
+                        {% if num in completed_steps %}✓{% else %}{{ num }}{% endif %}
+                    </span>
+                    {{ name }}
+                </a>
+                {% endfor %}
+            </nav>
+
+            <!-- Save draft button (mobile) -->
+            <div class="flex items-center gap-2 mt-2">
+                <button onclick="saveDraft()" class="px-4 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700">Save Draft</button>
+                <span id="save-status-mobile" class="text-xs text-gray-400"></span>
+            </div>
+        </div>
+    </div>
+
     <div class="flex gap-8">
-        <!-- Sidebar -->
-        <div class="w-72 flex-shrink-0">
+        <!-- Desktop Sidebar (hidden on mobile) -->
+        <div class="hidden lg:block w-72 flex-shrink-0">
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sticky top-8">
                 <h3 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Progress</h3>
                 <nav class="space-y-1">
-                    {% set steps = [
+                    {% set steps_full = [
                         (1, "Identities", "compulsory"),
                         (2, "Testator Info", "compulsory"),
                         (3, "Executors & Trustees", "compulsory"),
@@ -20,7 +74,7 @@
                         (9, "Other Matters", "optional"),
                         (10, "Review & Generate", "final")
                     ] %}
-                    {% for num, name, type in steps %}
+                    {% for num, name, type in steps_full %}
                     <a href="/wizard/step/{{ num }}"
                        class="flex items-center px-3 py-2 rounded-lg text-sm transition-colors
                               {% if current_step == num %}bg-primary-50 text-primary-700 font-semibold border border-primary-200
@@ -65,7 +119,7 @@
             {% endif %}
             {% endwith %}
 
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-8">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-8">
                 {% block wizard_content %}{% endblock %}
             </div>
         </div>
