@@ -22,6 +22,15 @@ class Client(db.Model):
     documents = db.relationship('Document', backref='client', lazy=True)
     persons = db.relationship('Person', backref='client', lazy=True)
 
+    @property
+    def folder_name(self):
+        """Generate a filesystem-safe folder name: ClientName_shortid."""
+        safe_name = "".join(
+            c for c in self.full_name if c.isalnum() or c in (' ', '-', '_')
+        ).strip().replace(' ', '_')
+        short_id = self.id[:8]
+        return f"{safe_name}_{short_id}"
+
 
 class Will(db.Model):
     """A will draft with all wizard step data stored as JSON."""

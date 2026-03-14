@@ -121,7 +121,7 @@ function convertDateForInput(dateStr) {
 
 // ---- Property Document OCR Upload -----------------------------------------
 
-async function uploadAndExtractProperty(inputEl, statusElId, giftIndex) {
+async function uploadAndExtractProperty(inputEl, statusElId, giftIndex, docType) {
     const file = inputEl.files[0];
     if (!file) return;
     const statusEl = document.getElementById(statusElId);
@@ -129,27 +129,31 @@ async function uploadAndExtractProperty(inputEl, statusElId, giftIndex) {
 
     const formData = new FormData();
     formData.append('file', file);
+    if (docType) formData.append('doc_type', docType);
 
     try {
         const resp = await fetch('/api/ocr/property', { method: 'POST', body: formData });
         const data = await resp.json();
         if (data.ok && data.extracted) {
             const ext = data.extracted;
-            // Build property description from extracted data
-            let desc = '';
-            if (ext.property_address) desc += ext.property_address;
-            if (ext.title_type && ext.title_number) {
-                desc += ` (${ext.title_type} ${ext.title_number}`;
-                if (ext.lot_number) desc += `, Lot ${ext.lot_number}`;
-                desc += ')';
+            // Fill structured property fields
+            if (ext.property_address) setFieldValue(`gift_prop_address_${giftIndex}`, ext.property_address);
+            if (ext.title_type) {
+                const ttField = document.querySelector(`[name="gift_prop_title_type_${giftIndex}"]`);
+                if (ttField) { ttField.value = ext.title_type; ttField.classList.add('bg-yellow-50'); }
             }
-            if (ext.mukim) desc += `, Mukim ${ext.mukim}`;
-            if (ext.daerah) desc += `, Daerah ${ext.daerah}`;
-            if (ext.negeri) desc += `, ${ext.negeri}`;
-            if (desc) {
-                const descField = document.querySelector(`[name="gift_desc_${giftIndex}"]`);
-                if (descField) { descField.value = desc; descField.classList.add('bg-yellow-50'); }
+            if (ext.title_number) setFieldValue(`gift_prop_title_number_${giftIndex}`, ext.title_number);
+            if (ext.lot_number) setFieldValue(`gift_prop_lot_number_${giftIndex}`, ext.lot_number);
+            if (ext.bandar_pekan || ext.mukim) setFieldValue(`gift_prop_bandar_${giftIndex}`, ext.bandar_pekan || ext.mukim || '');
+            if (ext.daerah) setFieldValue(`gift_prop_daerah_${giftIndex}`, ext.daerah);
+            if (ext.negeri) {
+                const ngField = document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`);
+                if (ngField) { ngField.value = ext.negeri.toUpperCase(); ngField.classList.add('bg-yellow-50'); }
             }
+            // Switch to property type and update preview
+            const propRadio = document.querySelector(`[name="gift_type_${giftIndex}"][value="property"]`);
+            if (propRadio) { propRadio.checked = true; switchGiftType(giftIndex, 'property'); }
+            updatePropertyPreview(giftIndex);
             if (statusEl) statusEl.innerHTML = '<span class="text-green-600">Property data extracted!</span>';
             setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
         } else {
@@ -176,21 +180,20 @@ async function uploadAndExtractAsset(inputEl, statusElId, giftIndex) {
         const data = await resp.json();
         if (data.ok && data.extracted) {
             const ext = data.extracted;
-            let desc = '';
+            // Fill structured financial fields
             if (ext.assets && ext.assets.length > 0) {
-                desc = ext.assets.map(a => {
-                    let line = '';
-                    if (a.institution) line += a.institution;
-                    if (a.account_number) line += ` (Account: ${a.account_number})`;
-                    if (a.type) line += ` - ${a.type}`;
-                    if (a.description) line += `: ${a.description}`;
-                    return line;
-                }).join('\n');
+                const a = ext.assets[0];
+                if (a.institution) setFieldValue(`gift_fin_institution_${giftIndex}`, a.institution);
+                if (a.account_number) setFieldValue(`gift_fin_account_${giftIndex}`, a.account_number);
+                if (a.type) {
+                    const typeField = document.querySelector(`[name="gift_fin_type_${giftIndex}"]`);
+                    if (typeField) { typeField.value = a.type; typeField.classList.add('bg-yellow-50'); }
+                }
+                if (a.description) setFieldValue(`gift_fin_desc_${giftIndex}`, a.description);
             }
-            if (desc) {
-                const descField = document.querySelector(`[name="gift_desc_${giftIndex}"]`);
-                if (descField) { descField.value = desc; descField.classList.add('bg-yellow-50'); }
-            }
+            // Switch to financial type
+            const finRadio = document.querySelector(`[name="gift_type_${giftIndex}"][value="financial"]`);
+            if (finRadio) { finRadio.checked = true; switchGiftType(giftIndex, 'financial'); }
             if (statusEl) statusEl.innerHTML = '<span class="text-green-600">Asset data extracted!</span>';
             setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
         } else {

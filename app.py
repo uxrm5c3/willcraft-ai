@@ -260,11 +260,22 @@ def build_will_data():
     gifts_data = session.get('step5_gifts', [])
     gifts = None
     if gifts_data:
+        from models.gift import PropertyDetails, FinancialDetails
         gifts = []
         for gd in gifts_data:
             allocations = [GiftAllocation(**a) for a in gd.get('allocations', [])]
+            prop_details = None
+            fin_details = None
+            gift_type = gd.get('gift_type', 'other')
+            if gift_type == 'property' and gd.get('property_details'):
+                prop_details = PropertyDetails(**gd['property_details'])
+            if gift_type == 'financial' and gd.get('financial_details'):
+                fin_details = FinancialDetails(**gd['financial_details'])
             gifts.append(Gift(
+                gift_type=gift_type,
                 description=gd.get('description', ''),
+                property_details=prop_details,
+                financial_details=fin_details,
                 allocations=allocations,
                 subject_to_trust=gd.get('subject_to_trust', False),
                 subject_to_guardian_allowance=gd.get('subject_to_guardian_allowance', False),
@@ -341,9 +352,22 @@ def api_will_save():
 
 @app.route('/wills')
 def will_list():
-    """List all saved wills."""
-    saved_wills = Will.query.order_by(Will.updated_at.desc()).all()
-    return render_template('will_list.html', saved_wills=saved_wills)
+    """List all saved wills with optional search."""
+    q = request.args.get('q', '').strip()
+    if q:
+        matching_clients = Client.query.filter(
+            db.or_(
+                Client.full_name.ilike(f'%{q}%'),
+                Client.nric_passport.ilike(f'%{q}%'),
+            )
+        ).all()
+        client_ids = [c.id for c in matching_clients]
+        saved_wills = Will.query.filter(
+            Will.client_id.in_(client_ids)
+        ).order_by(Will.updated_at.desc()).all() if client_ids else []
+    else:
+        saved_wills = Will.query.order_by(Will.updated_at.desc()).all()
+    return render_template('will_list.html', saved_wills=saved_wills, search_query=q)
 
 
 @app.route('/wills/<will_id>/load')
@@ -579,7 +603,8 @@ def api_ocr_property():
     abs_path = os.path.join(UPLOAD_DIR, rel_path)
     try:
         from ai.property_extractor import extract_property_data
-        extracted = extract_property_data(abs_path)
+        doc_type = request.form.get('doc_type', 'general')
+        extracted = extract_property_data(abs_path, doc_type=doc_type)
     except Exception as e:
         return jsonify({'ok': False, 'error': f'Extraction failed: {e}'}), 500
     doc = Document(
@@ -935,12 +960,42 @@ def wizard_step_gifts():
             beneficiaries=session.get('step4_beneficiaries', []),
         )
 
-    # POST -- parse gifts with nested allocations
+    # POST -- parse gifts with nested allocations and structured details
     gift_count = int(request.form.get('gift_count', 0))
     gifts = []
     for gi in range(gift_count):
+        gift_type = request.form.get(f'gift_type_{gi}', 'other').strip()
         desc = request.form.get(f'gift_desc_{gi}', '').strip()
-        if not desc:
+
+        # Parse structured property details
+        property_details = {}
+        if gift_type == 'property':
+            property_details = {
+                'property_address': request.form.get(f'gift_prop_address_{gi}', '').strip(),
+                'title_type': request.form.get(f'gift_prop_title_type_{gi}', '').strip(),
+                'title_number': request.form.get(f'gift_prop_title_number_{gi}', '').strip(),
+                'lot_number': request.form.get(f'gift_prop_lot_number_{gi}', '').strip(),
+                'bandar_pekan': request.form.get(f'gift_prop_bandar_{gi}', '').strip(),
+                'daerah': request.form.get(f'gift_prop_daerah_{gi}', '').strip(),
+                'negeri': request.form.get(f'gift_prop_negeri_{gi}', '').strip(),
+            }
+            if not property_details['property_address']:
+                continue
+
+        # Parse structured financial details
+        financial_details = {}
+        if gift_type == 'financial':
+            financial_details = {
+                'institution': request.form.get(f'gift_fin_institution_{gi}', '').strip(),
+                'account_number': request.form.get(f'gift_fin_account_{gi}', '').strip(),
+                'asset_type': request.form.get(f'gift_fin_type_{gi}', '').strip(),
+                'description': request.form.get(f'gift_fin_desc_{gi}', '').strip(),
+            }
+            if not financial_details['institution'] and not financial_details['description']:
+                continue
+
+        # For "other" type, skip if no description
+        if gift_type == 'other' and not desc:
             continue
 
         subject_to_trust = bool(request.form.get(f'gift_trust_{gi}'))
@@ -959,7 +1014,10 @@ def wizard_step_gifts():
             })
 
         gifts.append({
+            'gift_type': gift_type,
             'description': desc,
+            'property_details': property_details,
+            'financial_details': financial_details,
             'allocations': allocations,
             'subject_to_trust': subject_to_trust,
             'subject_to_guardian_allowance': subject_to_guardian_allowance,
@@ -1260,24 +1318,45 @@ def download(fmt):
     if fmt == 'docx':
         from documents.docx_generator import generate_docx
         filepath = generate_docx(will_text, safe_name)
-        return send_file(
-            filepath,
-            as_attachment=True,
-            download_name=f'{safe_name}_Will.docx',
-            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        )
     elif fmt == 'pdf':
         from documents.pdf_generator import generate_pdf
         filepath = generate_pdf(will_text, safe_name)
-        return send_file(
-            filepath,
-            as_attachment=True,
-            download_name=f'{safe_name}_Will.pdf',
-            mimetype='application/pdf',
-        )
     else:
         flash('Unsupported download format.', 'error')
         return redirect(url_for('preview'))
+
+    # Save persistent copy to client folder
+    try:
+        client_id = session.get('client_id')
+        if client_id:
+            client = db.session.get(Client, client_id)
+            if client:
+                from uploads import save_generated_will
+                with open(filepath, 'rb') as f:
+                    file_bytes = f.read()
+                will_record = db.session.get(Will, session.get('will_id'))
+                is_draft = will_record.status == 'draft' if will_record else True
+                saved_name, rel_path = save_generated_will(
+                    client.folder_name, file_bytes, fmt, is_draft=is_draft
+                )
+                # Update will status
+                if will_record:
+                    will_record.status = 'generated'
+                    db.session.commit()
+    except Exception as e:
+        app.logger.warning(f'Could not save persistent copy: {e}')
+
+    mime = {
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'pdf': 'application/pdf',
+    }.get(fmt, 'application/octet-stream')
+
+    return send_file(
+        filepath,
+        as_attachment=True,
+        download_name=f'{safe_name}_Will.{fmt}',
+        mimetype=mime,
+    )
 
 
 # -- Reset Session ------------------------------------------------------------

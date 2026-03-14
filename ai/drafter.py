@@ -77,7 +77,7 @@ def format_will_data(will_data) -> str:
     if will_data.gifts:
         gift_lines = []
         for i, g in enumerate(will_data.gifts, 1):
-            gift_lines.append(f"  Gift {i}: {g.description}")
+            gift_lines.append(f"  Gift {i} ({g.gift_type}): {g.get_formatted_description()}")
             if g.subject_to_trust:
                 gift_lines.append(f"    (Subject to Testamentary Trust)")
             if g.subject_to_guardian_allowance:

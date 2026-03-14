@@ -12,9 +12,9 @@
 </div>
 
 <form method="POST" action="/wizard/step/6" class="space-y-6">
-    <!-- Gifts List -->
     <div id="gifts-container">
-        {% set gifts = data.get('gifts', [{'description': '', 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}]) %}
+        {% set gifts = data.get('gifts', []) %}
+        {% if not gifts %}{% set gifts = [{'gift_type': 'property', 'description': '', 'property_details': {}, 'financial_details': {}, 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}] %}{% endif %}
         {% for gift in gifts %}
         <div class="gift-entry border border-gray-200 rounded-lg p-5 mb-4" data-gift-index="{{ loop.index0 }}">
             <div class="flex justify-between items-center mb-4">
@@ -24,28 +24,189 @@
                 {% endif %}
             </div>
 
-            <!-- Document Upload for Auto-fill -->
-            <div class="mb-4 flex flex-wrap gap-3 items-start">
-                <div class="flex items-center gap-2">
-                    <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Upload Property Doc:</label>
-                    <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-1 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-100 file:text-blue-700"
-                           onchange="uploadAndExtractProperty(this, 'property-status-{{ loop.index0 }}', {{ loop.index0 }})">
-                    <span id="property-status-{{ loop.index0 }}" class="text-xs"></span>
-                </div>
-                <div class="flex items-center gap-2">
-                    <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Upload Financial Doc:</label>
-                    <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-1 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-100 file:text-green-700"
-                           onchange="uploadAndExtractAsset(this, 'asset-status-{{ loop.index0 }}', {{ loop.index0 }})">
-                    <span id="asset-status-{{ loop.index0 }}" class="text-xs"></span>
+            <!-- Gift Type Selector -->
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Gift Type</label>
+                <div class="flex gap-4">
+                    {% set gt = gift.get('gift_type', 'property') %}
+                    <label class="flex items-center cursor-pointer">
+                        <input type="radio" name="gift_type_{{ loop.index0 }}" value="property"
+                               {% if gt == 'property' %}checked{% endif %}
+                               onchange="switchGiftType({{ loop.index0 }}, 'property')"
+                               class="text-primary-600 mr-2">
+                        <span class="text-sm font-medium text-gray-700">Property</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="radio" name="gift_type_{{ loop.index0 }}" value="financial"
+                               {% if gt == 'financial' %}checked{% endif %}
+                               onchange="switchGiftType({{ loop.index0 }}, 'financial')"
+                               class="text-primary-600 mr-2">
+                        <span class="text-sm font-medium text-gray-700">Financial / Other Asset</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="radio" name="gift_type_{{ loop.index0 }}" value="other"
+                               {% if gt == 'other' %}checked{% endif %}
+                               onchange="switchGiftType({{ loop.index0 }}, 'other')"
+                               class="text-primary-600 mr-2">
+                        <span class="text-sm font-medium text-gray-700">Free Text</span>
+                    </label>
                 </div>
             </div>
 
-            <!-- Gift Description -->
-            <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Asset Description</label>
+            <!-- PROPERTY PANEL -->
+            {% set pd = gift.get('property_details', {}) %}
+            <div id="property-panel-{{ loop.index0 }}" class="{% if gt != 'property' %}hidden{% endif %} mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                <h4 class="text-sm font-semibold text-blue-800 mb-3">Property Details (Malaysian Standard Format)</h4>
+
+                <!-- Upload buttons for property docs -->
+                <div class="mb-3 flex flex-wrap gap-2">
+                    <div class="flex items-center gap-1">
+                        <label class="text-xs font-medium text-blue-600 whitespace-nowrap">Upload Title/Geran:</label>
+                        <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'title')">
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <label class="text-xs font-medium text-blue-600 whitespace-nowrap">Cukai Harta:</label>
+                        <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'cukai_harta')">
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <label class="text-xs font-medium text-blue-600 whitespace-nowrap">Cukai Pintu:</label>
+                        <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'cukai_pintu')">
+                    </div>
+                    <div class="flex items-center gap-1">
+                        <label class="text-xs font-medium text-blue-600 whitespace-nowrap">SPA:</label>
+                        <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                               onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'spa')">
+                    </div>
+                    <span id="prop-status-{{ loop.index0 }}" class="text-xs"></span>
+                </div>
+
+                <div class="mb-3">
+                    <label class="block text-xs font-medium text-gray-600 mb-1">Property Address <span class="text-red-500">*</span></label>
+                    <textarea name="gift_prop_address_{{ loop.index0 }}" rows="2"
+                              class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                              placeholder="e.g., No. 11, JALAN BERLIAN, KIM TENG PARK, JOHOR BAHRU, JOHOR"
+                              oninput="updatePropertyPreview({{ loop.index0 }})">{{ pd.get('property_address', '') }}</textarea>
+                </div>
+                <div class="grid md:grid-cols-3 gap-3 mb-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Title Type</label>
+                        <select name="gift_prop_title_type_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                onchange="updatePropertyPreview({{ loop.index0 }})">
+                            <option value="">-- Select --</option>
+                            {% for tt in ['HAKMILIK', 'HSD', 'HSM', 'GRN', 'EMR', 'PM', 'PN', 'PAJAKAN', 'GERAN', 'Other'] %}
+                            <option value="{{ tt }}" {% if pd.get('title_type', '') == tt %}selected{% endif %}>{{ tt }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Title Number</label>
+                        <input type="text" name="gift_prop_title_number_{{ loop.index0 }}"
+                               value="{{ pd.get('title_number', '') }}"
+                               class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="e.g., 27395"
+                               oninput="updatePropertyPreview({{ loop.index0 }})">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">LOT Number</label>
+                        <input type="text" name="gift_prop_lot_number_{{ loop.index0 }}"
+                               value="{{ pd.get('lot_number', '') }}"
+                               class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="e.g., 7119"
+                               oninput="updatePropertyPreview({{ loop.index0 }})">
+                    </div>
+                </div>
+                <div class="grid md:grid-cols-3 gap-3 mb-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Bandar / Pekan</label>
+                        <input type="text" name="gift_prop_bandar_{{ loop.index0 }}"
+                               value="{{ pd.get('bandar_pekan', '') }}"
+                               class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="e.g., JOHOR BAHRU"
+                               oninput="updatePropertyPreview({{ loop.index0 }})">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Daerah (District)</label>
+                        <input type="text" name="gift_prop_daerah_{{ loop.index0 }}"
+                               value="{{ pd.get('daerah', '') }}"
+                               class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="e.g., JOHOR BAHRU"
+                               oninput="updatePropertyPreview({{ loop.index0 }})">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Negeri (State)</label>
+                        <select name="gift_prop_negeri_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                onchange="updatePropertyPreview({{ loop.index0 }})">
+                            <option value="">-- Select --</option>
+                            {% for state in ['JOHOR', 'KEDAH', 'KELANTAN', 'MELAKA', 'NEGERI SEMBILAN', 'PAHANG', 'PERAK', 'PERLIS', 'PULAU PINANG', 'SABAH', 'SARAWAK', 'SELANGOR', 'TERENGGANU', 'W.P. KUALA LUMPUR', 'W.P. LABUAN', 'W.P. PUTRAJAYA'] %}
+                            <option value="{{ state }}" {% if pd.get('negeri', '') == state %}selected{% endif %}>{{ state }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <!-- Live Preview -->
+                <div class="p-3 bg-white rounded border border-blue-300">
+                    <label class="block text-xs font-medium text-blue-700 mb-1">Preview (Will Format):</label>
+                    <p id="property-preview-{{ loop.index0 }}" class="text-sm text-gray-800 italic"></p>
+                </div>
+            </div>
+
+            <!-- FINANCIAL PANEL -->
+            {% set fd = gift.get('financial_details', {}) %}
+            <div id="financial-panel-{{ loop.index0 }}" class="{% if gt != 'financial' %}hidden{% endif %} mb-4 p-4 bg-green-50 rounded-lg border border-green-200">
+                <h4 class="text-sm font-semibold text-green-800 mb-3">Financial / Asset Details</h4>
+
+                <div class="mb-3 flex items-center gap-2">
+                    <label class="text-xs font-medium text-green-600 whitespace-nowrap">Upload Financial Doc:</label>
+                    <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-200 file:text-green-800"
+                           onchange="uploadAndExtractAsset(this, 'fin-status-{{ loop.index0 }}', {{ loop.index0 }})">
+                    <span id="fin-status-{{ loop.index0 }}" class="text-xs"></span>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Institution / Bank</label>
+                        <input type="text" name="gift_fin_institution_{{ loop.index0 }}"
+                               value="{{ fd.get('institution', '') }}"
+                               class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="e.g., Maybank, CIMB, Public Bank">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Account Number</label>
+                        <input type="text" name="gift_fin_account_{{ loop.index0 }}"
+                               value="{{ fd.get('account_number', '') }}"
+                               class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="e.g., 1234-5678-9012">
+                    </div>
+                </div>
+                <div class="grid md:grid-cols-2 gap-3 mb-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Asset Type</label>
+                        <select name="gift_fin_type_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
+                            <option value="">-- Select --</option>
+                            {% for at in ['Savings Account', 'Current Account', 'Fixed Deposit', 'Investment Account', 'Unit Trust', 'Shares/Stocks', 'Insurance Policy', 'EPF', 'ASB/ASN', 'Tabung Haji', 'Vehicle', 'Jewellery', 'Other'] %}
+                            <option value="{{ at }}" {% if fd.get('asset_type', '') == at %}selected{% endif %}>{{ at }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Description</label>
+                        <input type="text" name="gift_fin_desc_{{ loop.index0 }}"
+                               value="{{ fd.get('description', '') }}"
+                               class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="Additional details">
+                    </div>
+                </div>
+            </div>
+
+            <!-- FREE TEXT PANEL -->
+            <div id="other-panel-{{ loop.index0 }}" class="{% if gt != 'other' %}hidden{% endif %} mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Asset Description (Free Text)</label>
                 <textarea name="gift_desc_{{ loop.index0 }}" rows="3"
                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                          placeholder="e.g., My property at No. 10, Jalan Bukit Tunku, 50480 Kuala Lumpur (Title No. GRN 12345, Lot 678)">{{ gift.get('description', '') }}</textarea>
+                          placeholder="Describe the asset in your own words">{{ gift.get('description', '') }}</textarea>
             </div>
 
             <!-- Trust & Guardian Allowance Checkboxes -->
@@ -101,9 +262,7 @@
                     </div>
                     {% endfor %}
                 </div>
-
                 <input type="hidden" name="gift_{{ loop.index0 }}_alloc_count" class="alloc-count" value="{{ allocations|length }}">
-
                 <button type="button" onclick="addAllocation({{ loop.index0 }})"
                         class="mt-2 px-3 py-1.5 text-sm border border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
                     + Add Beneficiary to Gift
@@ -139,11 +298,162 @@
 
 {% block wizard_scripts %}
 <script>
-let giftCount = {{ data.get('gifts', [{'description': '', 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}])|length }};
+const MALAYSIAN_STATES = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK','PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU','W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA'];
+const TITLE_TYPES = ['HAKMILIK','HSD','HSM','GRN','EMR','PM','PN','PAJAKAN','GERAN','Other'];
+const ASSET_TYPES = ['Savings Account','Current Account','Fixed Deposit','Investment Account','Unit Trust','Shares/Stocks','Insurance Policy','EPF','ASB/ASN','Tabung Haji','Vehicle','Jewellery','Other'];
+
+{% set gifts = data.get('gifts', []) %}
+{% if not gifts %}{% set gifts = [{'gift_type': 'property', 'description': '', 'property_details': {}, 'financial_details': {}, 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}] %}{% endif %}
+let giftCount = {{ gifts|length }};
 let allocCounts = {};
-{% for gift in data.get('gifts', [{'description': '', 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}]) %}
+{% for gift in gifts %}
 allocCounts[{{ loop.index0 }}] = {{ gift.get('allocations', [{}])|length }};
 {% endfor %}
+
+// Initialize property previews
+document.addEventListener('DOMContentLoaded', function() {
+    for (let i = 0; i < giftCount; i++) {
+        updatePropertyPreview(i);
+    }
+});
+
+function switchGiftType(giftIndex, type) {
+    document.getElementById('property-panel-' + giftIndex).classList.toggle('hidden', type !== 'property');
+    document.getElementById('financial-panel-' + giftIndex).classList.toggle('hidden', type !== 'financial');
+    document.getElementById('other-panel-' + giftIndex).classList.toggle('hidden', type !== 'other');
+}
+
+function updatePropertyPreview(giftIndex) {
+    const addr = document.querySelector(`[name="gift_prop_address_${giftIndex}"]`)?.value || '';
+    const titleType = document.querySelector(`[name="gift_prop_title_type_${giftIndex}"]`)?.value || '';
+    const titleNum = document.querySelector(`[name="gift_prop_title_number_${giftIndex}"]`)?.value || '';
+    const lotNum = document.querySelector(`[name="gift_prop_lot_number_${giftIndex}"]`)?.value || '';
+    const bandar = document.querySelector(`[name="gift_prop_bandar_${giftIndex}"]`)?.value || '';
+    const daerah = document.querySelector(`[name="gift_prop_daerah_${giftIndex}"]`)?.value || '';
+    const negeri = document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`)?.value || '';
+
+    if (!addr) {
+        document.getElementById('property-preview-' + giftIndex).textContent = '(Fill in property address to see preview)';
+        return;
+    }
+    let parts = ['my property known as ' + addr];
+    if (titleType && titleNum) parts.push('held under ' + titleType + ' No. ' + titleNum);
+    if (lotNum) parts.push('LOT No. ' + lotNum);
+    if (bandar) parts.push('BANDAR ' + bandar.toUpperCase());
+    if (daerah) parts.push('DAERAH ' + daerah.toUpperCase());
+    if (negeri) parts.push('NEGERI ' + negeri.toUpperCase());
+    parts.push('MALAYSIA');
+    document.getElementById('property-preview-' + giftIndex).textContent = parts.join(', ') + ';';
+}
+
+function buildPropertyPanelHtml(idx) {
+    const titleOptions = TITLE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
+    const stateOptions = MALAYSIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
+    return `
+    <div id="property-panel-${idx}" class="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+        <h4 class="text-sm font-semibold text-blue-800 mb-3">Property Details (Malaysian Standard Format)</h4>
+        <div class="mb-3 flex flex-wrap gap-2">
+            <div class="flex items-center gap-1">
+                <label class="text-xs font-medium text-blue-600">Upload Title/Geran:</label>
+                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                       onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'title')">
+            </div>
+            <div class="flex items-center gap-1">
+                <label class="text-xs font-medium text-blue-600">Cukai Harta:</label>
+                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                       onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'cukai_harta')">
+            </div>
+            <div class="flex items-center gap-1">
+                <label class="text-xs font-medium text-blue-600">Cukai Pintu:</label>
+                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                       onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'cukai_pintu')">
+            </div>
+            <div class="flex items-center gap-1">
+                <label class="text-xs font-medium text-blue-600">SPA:</label>
+                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
+                       onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'spa')">
+            </div>
+            <span id="prop-status-${idx}" class="text-xs"></span>
+        </div>
+        <div class="mb-3">
+            <label class="block text-xs font-medium text-gray-600 mb-1">Property Address <span class="text-red-500">*</span></label>
+            <textarea name="gift_prop_address_${idx}" rows="2" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                      placeholder="e.g., No. 11, JALAN BERLIAN, KIM TENG PARK, JOHOR BAHRU, JOHOR" oninput="updatePropertyPreview(${idx})"></textarea>
+        </div>
+        <div class="grid md:grid-cols-3 gap-3 mb-3">
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Title Type</label>
+                <select name="gift_prop_title_type_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" onchange="updatePropertyPreview(${idx})">
+                    <option value="">-- Select --</option>${titleOptions}
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Title Number</label>
+                <input type="text" name="gift_prop_title_number_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., 27395" oninput="updatePropertyPreview(${idx})">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">LOT Number</label>
+                <input type="text" name="gift_prop_lot_number_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., 7119" oninput="updatePropertyPreview(${idx})">
+            </div>
+        </div>
+        <div class="grid md:grid-cols-3 gap-3 mb-3">
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Bandar / Pekan</label>
+                <input type="text" name="gift_prop_bandar_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Daerah (District)</label>
+                <input type="text" name="gift_prop_daerah_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Negeri (State)</label>
+                <select name="gift_prop_negeri_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" onchange="updatePropertyPreview(${idx})">
+                    <option value="">-- Select --</option>${stateOptions}
+                </select>
+            </div>
+        </div>
+        <div class="p-3 bg-white rounded border border-blue-300">
+            <label class="block text-xs font-medium text-blue-700 mb-1">Preview (Will Format):</label>
+            <p id="property-preview-${idx}" class="text-sm text-gray-800 italic">(Fill in property address to see preview)</p>
+        </div>
+    </div>`;
+}
+
+function buildFinancialPanelHtml(idx) {
+    const typeOptions = ASSET_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
+    return `
+    <div id="financial-panel-${idx}" class="hidden mb-4 p-4 bg-green-50 rounded-lg border border-green-200">
+        <h4 class="text-sm font-semibold text-green-800 mb-3">Financial / Asset Details</h4>
+        <div class="mb-3 flex items-center gap-2">
+            <label class="text-xs font-medium text-green-600">Upload Financial Doc:</label>
+            <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-200 file:text-green-800"
+                   onchange="uploadAndExtractAsset(this, 'fin-status-${idx}', ${idx})">
+            <span id="fin-status-${idx}" class="text-xs"></span>
+        </div>
+        <div class="grid md:grid-cols-2 gap-3 mb-3">
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Institution / Bank</label>
+                <input type="text" name="gift_fin_institution_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., Maybank, CIMB">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Account Number</label>
+                <input type="text" name="gift_fin_account_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., 1234-5678-9012">
+            </div>
+        </div>
+        <div class="grid md:grid-cols-2 gap-3">
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Asset Type</label>
+                <select name="gift_fin_type_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
+                    <option value="">-- Select --</option>${typeOptions}
+                </select>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Description</label>
+                <input type="text" name="gift_fin_desc_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="Additional details">
+            </div>
+        </div>
+    </div>`;
+}
 
 function addGift() {
     const container = document.getElementById('gifts-container');
@@ -155,25 +465,28 @@ function addGift() {
             <h3 class="font-semibold text-gray-700">Gift No. ${idx + 1}</h3>
             <button type="button" onclick="removeGift(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
         </div>
-        <div class="mb-4 flex flex-wrap gap-3 items-start">
-            <div class="flex items-center gap-2">
-                <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Upload Property Doc:</label>
-                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-1 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-100 file:text-blue-700"
-                       onchange="uploadAndExtractProperty(this, 'property-status-${idx}', ${idx})">
-                <span id="property-status-${idx}" class="text-xs"></span>
-            </div>
-            <div class="flex items-center gap-2">
-                <label class="text-xs font-medium text-gray-500 whitespace-nowrap">Upload Financial Doc:</label>
-                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:mr-1 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-100 file:text-green-700"
-                       onchange="uploadAndExtractAsset(this, 'asset-status-${idx}', ${idx})">
-                <span id="asset-status-${idx}" class="text-xs"></span>
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Gift Type</label>
+            <div class="flex gap-4">
+                <label class="flex items-center cursor-pointer">
+                    <input type="radio" name="gift_type_${idx}" value="property" checked onchange="switchGiftType(${idx}, 'property')" class="text-primary-600 mr-2">
+                    <span class="text-sm font-medium text-gray-700">Property</span>
+                </label>
+                <label class="flex items-center cursor-pointer">
+                    <input type="radio" name="gift_type_${idx}" value="financial" onchange="switchGiftType(${idx}, 'financial')" class="text-primary-600 mr-2">
+                    <span class="text-sm font-medium text-gray-700">Financial / Other Asset</span>
+                </label>
+                <label class="flex items-center cursor-pointer">
+                    <input type="radio" name="gift_type_${idx}" value="other" onchange="switchGiftType(${idx}, 'other')" class="text-primary-600 mr-2">
+                    <span class="text-sm font-medium text-gray-700">Free Text</span>
+                </label>
             </div>
         </div>
-        <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Asset Description</label>
-            <textarea name="gift_desc_${idx}" rows="3"
-                      class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                      placeholder="e.g., My property at No. 10, Jalan Bukit Tunku, 50480 Kuala Lumpur (Title No. GRN 12345, Lot 678)"></textarea>
+        ${buildPropertyPanelHtml(idx)}
+        ${buildFinancialPanelHtml(idx)}
+        <div id="other-panel-${idx}" class="hidden mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Asset Description (Free Text)</label>
+            <textarea name="gift_desc_${idx}" rows="3" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="Describe the asset in your own words"></textarea>
         </div>
         <div class="flex flex-wrap gap-6 mb-4">
             <label class="flex items-center">
@@ -191,15 +504,15 @@ function addGift() {
                 <div class="allocation-entry grid md:grid-cols-4 gap-3 mb-3 items-end" data-alloc-index="0">
                     <div>
                         <label class="block text-xs font-medium text-gray-500 mb-1">Beneficiary Name</label>
-                        <input type="text" name="gift_${idx}_alloc_name_0" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="Name from beneficiary list">
+                        <input type="text" name="gift_${idx}_alloc_name_0" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="Name from beneficiary list">
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-500 mb-1">Share</label>
-                        <input type="text" name="gift_${idx}_alloc_share_0" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., 100% or 50%">
+                        <input type="text" name="gift_${idx}_alloc_share_0" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., 100% or 50%">
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-500 mb-1">Role</label>
-                        <select name="gift_${idx}_alloc_role_0" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        <select name="gift_${idx}_alloc_role_0" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
                             <option value="MB">MB (Main Beneficiary)</option>
                             <option value="SB">SB (Substitute Beneficiary)</option>
                         </select>
@@ -208,8 +521,7 @@ function addGift() {
                 </div>
             </div>
             <input type="hidden" name="gift_${idx}_alloc_count" class="alloc-count" value="1">
-            <button type="button" onclick="addAllocation(${idx})"
-                    class="mt-2 px-3 py-1.5 text-sm border border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+            <button type="button" onclick="addAllocation(${idx})" class="mt-2 px-3 py-1.5 text-sm border border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
                 + Add Beneficiary to Gift
             </button>
         </div>
@@ -232,15 +544,15 @@ function addAllocation(giftIdx) {
     <div class="allocation-entry grid md:grid-cols-4 gap-3 mb-3 items-end" data-alloc-index="${idx}">
         <div>
             <label class="block text-xs font-medium text-gray-500 mb-1">Beneficiary Name</label>
-            <input type="text" name="gift_${giftIdx}_alloc_name_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="Name from beneficiary list">
+            <input type="text" name="gift_${giftIdx}_alloc_name_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="Name from beneficiary list">
         </div>
         <div>
             <label class="block text-xs font-medium text-gray-500 mb-1">Share</label>
-            <input type="text" name="gift_${giftIdx}_alloc_share_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500" placeholder="e.g., 100% or 50%">
+            <input type="text" name="gift_${giftIdx}_alloc_share_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., 100% or 50%">
         </div>
         <div>
             <label class="block text-xs font-medium text-gray-500 mb-1">Role</label>
-            <select name="gift_${giftIdx}_alloc_role_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            <select name="gift_${giftIdx}_alloc_role_${idx}" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
                 <option value="MB">MB (Main Beneficiary)</option>
                 <option value="SB">SB (Substitute Beneficiary)</option>
             </select>

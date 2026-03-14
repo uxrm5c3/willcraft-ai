@@ -5,11 +5,15 @@ import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
 
 
-def extract_property_data(file_path: str) -> dict:
-    """Extract property data from cukai tanah/cukai pintu or title document.
+def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
+    """Extract property data from cukai tanah/cukai pintu, title document, or SPA.
+
+    Args:
+        file_path: Path to the document image/PDF
+        doc_type: One of 'title', 'cukai_harta', 'cukai_pintu', 'spa', 'general'
 
     Returns dict with keys: property_address, title_type, lot_number,
-    title_number, mukim, daerah, negeri, property_description
+    title_number, bandar_pekan, mukim, daerah, negeri, property_description
     """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -52,26 +56,34 @@ def extract_property_data(file_path: str) -> dict:
                 content_block,
                 {
                     "type": "text",
-                    "text": """Extract property information from this Malaysian property document (cukai tanah, cukai pintu, land title, or property assessment).
+                    "text": f"""Extract property information from this Malaysian property document.
+Document type: {doc_type}
+
+This could be one of:
+- Land Title (Hakmilik Tanah) / Geran - look for No. Hakmilik, No. Lot, Mukim, Daerah, Negeri
+- Cukai Harta (Property Assessment Tax / Cukai Taksiran) - look for property address, assessment number
+- Cukai Pintu (Door Tax) - look for property address
+- Sale & Purchase Agreement (SPA) - look for property details in the schedule
 
 Return ONLY a JSON object with these fields (use empty string if not found):
-{
-    "property_address": "Full property address",
-    "title_type": "HSD, HSM, GRN, EMR, PM, PN, or other title type",
-    "lot_number": "Lot/PT number",
-    "title_number": "Title number/reference",
+{{
+    "property_address": "Full property address including number, street, area, city, state",
+    "title_type": "HAKMILIK, HSD, HSM, GRN, EMR, PM, PN, PAJAKAN, GERAN or other title type",
+    "lot_number": "Lot/PT number only (digits)",
+    "title_number": "Title/Hakmilik number only (digits)",
+    "bandar_pekan": "Bandar/Pekan/Township name",
     "mukim": "Mukim name",
     "daerah": "Daerah/District name",
-    "negeri": "State name",
-    "property_description": "Brief description of the property type (e.g., residential, commercial, agricultural)"
-}
+    "negeri": "State name (e.g., JOHOR, SELANGOR, PERAK)",
+    "property_description": "Brief description (residential, commercial, agricultural)"
+}}
 
-For Malaysian property documents:
+Malaysian title types:
+- HAKMILIK = General ownership title
 - HSD = Hakmilik Sementara Daerah (Interim Title - District)
 - HSM = Hakmilik Sementara Mukim (Interim Title - Mukim)
 - GRN = Geran (Final Title - Freehold)
 - EMR = Pajakan Mukim (Leasehold)
-- Look for "No. Hakmilik", "No. Lot", "Mukim", "Daerah", "Negeri"
 
 Return ONLY the JSON, no explanation."""
                 }
