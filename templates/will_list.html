@@ -3,8 +3,8 @@
 {% block title %}Saved Wills - WillCraft AI{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto px-4 py-6 sm:py-8">
-    <div class="flex justify-between items-center mb-4 sm:mb-6">
+<div class="max-w-5xl mx-auto px-4 py-6 sm:py-8">
+    <div class="flex flex-wrap justify-between items-center gap-2 mb-4 sm:mb-6">
         <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Saved Wills</h1>
         <a href="/wizard/new" class="px-3 py-2 sm:px-4 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">
             + New Will
@@ -15,7 +15,7 @@
     <div class="mb-4 sm:mb-6">
         <form method="GET" action="/wills" class="flex flex-col sm:flex-row gap-2">
             <input type="text" name="q" value="{{ search_query or '' }}"
-                   placeholder="Search by name or IC number..."
+                   placeholder="Search by client name or IC/passport number..."
                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
             <div class="flex gap-2">
                 <button type="submit" class="flex-1 sm:flex-none px-4 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
@@ -28,53 +28,96 @@
             </div>
         </form>
         {% if search_query %}
-        <p class="text-sm text-gray-500 mt-2">Showing results for "<strong>{{ search_query }}</strong>" ({{ saved_wills|length }} found)</p>
+        <p class="text-sm text-gray-500 mt-2">Showing results for "<strong>{{ search_query }}</strong>" ({{ client_groups|length }} client{{ 's' if client_groups|length != 1 }})</p>
         {% endif %}
     </div>
 
-    {% if saved_wills %}
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-100">
-        {% for will in saved_wills %}
-        <div class="will-list-item flex flex-col sm:flex-row sm:justify-between sm:items-center p-4 hover:bg-gray-50 gap-3">
-            <div class="flex-1 min-w-0">
-                <p class="font-medium text-gray-900 truncate">{{ will.title }}</p>
-                <div class="text-sm text-gray-500 mt-0.5">
-                    {% if will.client %}
-                    <span class="font-medium text-gray-700">{{ will.client.full_name }}</span>
-                    {% if will.client.nric_passport %}<span class="text-gray-400 text-xs">({{ will.client.nric_passport }})</span>{% endif %}
-                    <br class="sm:hidden">
-                    <span class="hidden sm:inline">&middot;</span>
-                    {% endif %}
-                    <span class="{% if will.status == 'generated' %}text-green-600{% elif will.status == 'finalized' %}text-blue-600{% else %}text-amber-600{% endif %}">{{ will.status }}</span>
-                    &middot; {{ will.updated_at.strftime('%d %b %Y') }}
+    {% if client_groups %}
+    <div class="space-y-4">
+        {% for group in client_groups %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <!-- Client Header -->
+            <div class="px-4 py-3 bg-gray-50 border-b border-gray-100">
+                <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
+                    <div class="flex items-center gap-2 min-w-0">
+                        <svg class="w-5 h-5 text-primary-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                        <span class="font-semibold text-gray-900 truncate">{{ group.client.full_name }}</span>
+                        {% if group.client.nric_passport %}
+                        <span class="text-xs text-gray-400 flex-shrink-0">({{ group.client.nric_passport }})</span>
+                        {% endif %}
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <span class="text-xs text-gray-500">
+                            {{ group.wills|length }} will{{ 's' if group.wills|length != 1 }}
+                            {% if group.doc_count > 0 %} · {{ group.doc_count }} doc{{ 's' if group.doc_count != 1 }}{% endif %}
+                            {% if group.generated_count > 0 %} · <span class="text-green-600">{{ group.generated_count }} generated</span>{% endif %}
+                        </span>
+                        {% if group.doc_count > 0 %}
+                        <a href="/clients/{{ group.client.id }}/files" class="px-2 py-1 text-xs text-gray-600 hover:bg-gray-200 rounded border border-gray-200" title="View documents">
+                            <svg class="inline w-3.5 h-3.5 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                            Files
+                        </a>
+                        {% endif %}
+                        <form method="POST" action="/clients/{{ group.client.id }}/delete" class="inline" onsubmit="return confirm('Delete client &quot;{{ group.client.full_name }}&quot; and ALL their wills and documents? This cannot be undone.')">
+                            <button type="submit" class="px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded border border-red-200" title="Delete client and all data">
+                                <svg class="inline w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
+                        </form>
+                    </div>
                 </div>
             </div>
-            <div class="flex gap-2 flex-shrink-0">
-                {% if will.client %}
-                <a href="/clients/{{ will.client_id }}/files" class="px-3 py-1.5 text-gray-600 text-sm hover:bg-gray-100 rounded-lg border border-gray-200" title="View client files">
-                    <svg class="inline w-4 h-4 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                    Files
-                </a>
-                {% endif %}
-                <a href="/wills/{{ will.id }}/load" class="px-4 py-1.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">Resume</a>
-                <form method="POST" action="/wills/{{ will.id }}/delete" class="inline" onsubmit="return confirm('Delete this will draft?')">
-                    <button type="submit" class="px-3 py-1.5 text-red-600 text-sm hover:bg-red-50 rounded-lg border border-red-200">Delete</button>
-                </form>
+
+            <!-- Wills for this client -->
+            {% if group.wills %}
+            <div class="divide-y divide-gray-100">
+                {% for will in group.wills %}
+                <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center p-4 hover:bg-gray-50 gap-2">
+                    <div class="flex-1 min-w-0">
+                        <p class="font-medium text-gray-900 truncate text-sm">{{ will.title }}</p>
+                        <div class="text-xs text-gray-500 mt-0.5">
+                            <span class="{% if will.status == 'generated' %}text-green-600{% elif will.status == 'finalized' %}text-blue-600{% else %}text-amber-600{% endif %} font-medium">{{ will.status }}</span>
+                            · {{ will.updated_at.strftime('%d %b %Y, %I:%M %p') }}
+                        </div>
+                    </div>
+                    <div class="flex gap-2 flex-shrink-0">
+                        <a href="/wills/{{ will.id }}/load" class="px-4 py-1.5 bg-primary-600 text-white text-xs sm:text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">Resume</a>
+                        <form method="POST" action="/wills/{{ will.id }}/delete" class="inline" onsubmit="return confirm('Delete this will draft?')">
+                            <button type="submit" class="px-3 py-1.5 text-red-600 text-xs sm:text-sm hover:bg-red-50 rounded-lg border border-red-200">Delete</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
             </div>
+            {% else %}
+            <div class="p-4 text-center text-sm text-gray-400">No wills saved for this client yet.</div>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
     {% else %}
     <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-8 sm:p-12 text-center">
         {% if search_query %}
-        <p class="text-gray-500 mb-4">No wills found matching "{{ search_query }}".</p>
-        <a href="/wills" class="text-primary-600 hover:underline font-medium">Show all wills</a>
+        <p class="text-gray-500 mb-4">No clients found matching "{{ search_query }}".</p>
+        <a href="/wills" class="text-primary-600 hover:underline font-medium">Show all clients</a>
         {% else %}
         <p class="text-gray-500 mb-4">No saved wills yet.</p>
         <a href="/wizard/new" class="text-primary-600 hover:underline font-medium">Start drafting your first will</a>
         {% endif %}
     </div>
     {% endif %}
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="mt-4 space-y-2">
+        {% for category, message in messages %}
+        <div class="p-3 rounded-lg text-sm {% if category == 'error' %}bg-red-50 text-red-700 border border-red-200{% else %}bg-green-50 text-green-700 border border-green-200{% endif %}">
+            {{ message }}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
 
     <div class="mt-6">
         <a href="/" class="text-sm text-gray-500 hover:text-gray-700">&larr; Back to Home</a>

@@ -359,22 +359,41 @@ def api_will_save():
 
 @app.route('/wills')
 def will_list():
-    """List all saved wills with optional search."""
+    """Unified client+wills page: list all clients with their wills grouped."""
     q = request.args.get('q', '').strip()
     if q:
-        matching_clients = Client.query.filter(
+        all_clients = Client.query.filter(
             db.or_(
                 Client.full_name.ilike(f'%{q}%'),
                 Client.nric_passport.ilike(f'%{q}%'),
             )
-        ).all()
-        client_ids = [c.id for c in matching_clients]
-        saved_wills = Will.query.filter(
-            Will.client_id.in_(client_ids)
-        ).order_by(Will.updated_at.desc()).all() if client_ids else []
+        ).order_by(Client.updated_at.desc()).all()
     else:
-        saved_wills = Will.query.order_by(Will.updated_at.desc()).all()
-    return render_template('will_list.html', saved_wills=saved_wills, search_query=q)
+        all_clients = Client.query.order_by(Client.updated_at.desc()).all()
+
+    # Build grouped data: each client with their wills and stats
+    client_groups = []
+    for c in all_clients:
+        wills = Will.query.filter_by(client_id=c.id).order_by(Will.updated_at.desc()).all()
+        doc_count = Document.query.filter_by(client_id=c.id).count()
+        # Count generated files on disk
+        draft_count = 0
+        generated_count = 0
+        folder_path = os.path.join(UPLOAD_DIR, c.folder_name)
+        drafts_dir = os.path.join(folder_path, 'drafts')
+        gen_dir = os.path.join(folder_path, 'generated')
+        if os.path.isdir(drafts_dir):
+            draft_count = len([f for f in os.listdir(drafts_dir) if os.path.isfile(os.path.join(drafts_dir, f))])
+        if os.path.isdir(gen_dir):
+            generated_count = len([f for f in os.listdir(gen_dir) if os.path.isfile(os.path.join(gen_dir, f))])
+        client_groups.append({
+            'client': c,
+            'wills': wills,
+            'doc_count': doc_count,
+            'draft_count': draft_count,
+            'generated_count': generated_count,
+        })
+    return render_template('will_list.html', client_groups=client_groups, search_query=q)
 
 
 @app.route('/wills/<will_id>/load')
@@ -400,7 +419,36 @@ def will_delete(will_id):
         if session.get('will_id') == will_id:
             session.pop('will_id', None)
         flash('Will deleted.', 'info')
-    return redirect(url_for('index'))
+    return redirect(url_for('will_list'))
+
+
+@app.route('/clients/<client_id>/delete', methods=['POST'])
+def client_delete(client_id):
+    """Delete a client and ALL associated data (wills, persons, documents, disk files)."""
+    import shutil
+    client = db.session.get(Client, client_id)
+    if not client:
+        flash('Client not found.', 'error')
+        return redirect(url_for('will_list'))
+
+    # Delete associated documents from disk
+    folder_path = os.path.join(UPLOAD_DIR, client.folder_name)
+    if os.path.isdir(folder_path):
+        shutil.rmtree(folder_path, ignore_errors=True)
+
+    # Delete DB records (cascade: documents, wills, persons)
+    Document.query.filter_by(client_id=client_id).delete()
+    Will.query.filter_by(client_id=client_id).delete()
+    Person.query.filter_by(client_id=client_id).delete()
+    db.session.delete(client)
+    db.session.commit()
+
+    # Clear session if we deleted the currently loaded client
+    if session.get('client_id') == client_id:
+        session.clear()
+
+    flash(f'Client "{client.full_name}" and all associated data deleted.', 'info')
+    return redirect(url_for('will_list'))
 
 
 # -- Person Registry API -------------------------------------------------------
@@ -674,43 +722,11 @@ def client_documents():
 
 @app.route('/clients')
 def clients_list():
-    """List all clients with links to their file folders."""
-    q = request.args.get('q', '').strip()
+    """Redirect to unified /wills page (backward compatibility)."""
+    q = request.args.get('q', '')
     if q:
-        all_clients = Client.query.filter(
-            db.or_(
-                Client.full_name.ilike(f'%{q}%'),
-                Client.nric_passport.ilike(f'%{q}%'),
-            )
-        ).order_by(Client.updated_at.desc()).all()
-    else:
-        all_clients = Client.query.order_by(Client.updated_at.desc()).all()
-
-    # Gather stats for each client
-    client_data = []
-    for c in all_clients:
-        will_count = Will.query.filter_by(client_id=c.id).count()
-        doc_count = Document.query.filter_by(client_id=c.id).count()
-        latest_will = Will.query.filter_by(client_id=c.id).order_by(Will.updated_at.desc()).first()
-        # Count files in client folder on disk
-        draft_count = 0
-        generated_count = 0
-        folder_path = os.path.join(UPLOAD_DIR, c.folder_name)
-        drafts_dir = os.path.join(folder_path, 'drafts')
-        gen_dir = os.path.join(folder_path, 'generated')
-        if os.path.isdir(drafts_dir):
-            draft_count = len([f for f in os.listdir(drafts_dir) if os.path.isfile(os.path.join(drafts_dir, f))])
-        if os.path.isdir(gen_dir):
-            generated_count = len([f for f in os.listdir(gen_dir) if os.path.isfile(os.path.join(gen_dir, f))])
-        client_data.append({
-            'client': c,
-            'will_count': will_count,
-            'doc_count': doc_count,
-            'draft_count': draft_count,
-            'generated_count': generated_count,
-            'latest_will': latest_will,
-        })
-    return render_template('clients_list.html', client_data=client_data, search_query=q)
+        return redirect(url_for('will_list', q=q))
+    return redirect(url_for('will_list'))
 
 
 @app.route('/clients/<client_id>/files')
@@ -719,7 +735,7 @@ def client_files(client_id):
     client = db.session.get(Client, client_id)
     if not client:
         flash('Client not found.', 'error')
-        return redirect(url_for('clients_list'))
+        return redirect(url_for('will_list'))
 
     # Uploaded documents from DB
     documents = Document.query.filter_by(client_id=client_id).order_by(Document.created_at.desc()).all()

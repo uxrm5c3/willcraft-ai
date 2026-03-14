@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}AI Will Writing System{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}?v=20260314d">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}?v=20260314e">
     <script>
         tailwind.config = {
             theme: {
@@ -31,8 +31,8 @@
                     </a>
                 </div>
                 <div class="flex items-center gap-2 sm:gap-4">
-                    <a href="/clients" class="text-xs sm:text-sm text-gray-600 hover:text-primary-600 font-medium px-2 py-1">Clients</a>
                     <a href="/wills" class="text-xs sm:text-sm text-gray-600 hover:text-primary-600 font-medium px-2 py-1">Saved Wills</a>
+                    <a href="/wizard/new" class="text-xs sm:text-sm bg-primary-600 text-white hover:bg-primary-700 font-medium px-3 py-1.5 rounded-lg">+ New Will</a>
                 </div>
             </div>
         </div>
