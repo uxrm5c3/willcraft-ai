@@ -292,24 +292,24 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             padding-top: 10pt;
         }}
 
-        /* Testator and Witness signature spaces - bottom center */
+        /* Testator signature space - bottom center-left area */
         @bottom-center {{
-            content: "_______________     _______________     _______________\\ATestator\\A0000000000000Witness 1\\A00000000000000000000000000Witness 2";
+            content: "_______________\\ATestator";
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
-            white-space: pre;
+            white-space: pre-wrap;
             text-align: center;
             vertical-align: top;
             padding-top: 10pt;
         }}
 
-        /* Continued on next page - bottom right */
+        /* Witness and Continued text - bottom right */
         @bottom-right {{
-            content: "Continued on\\Anext page";
+            content: "Continued on next page\\A_______________\\AWitness 1 / Witness 2";
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
-            white-space: pre;
-            text-align: right;
+            white-space: pre-wrap;
+            text-align: center;
             vertical-align: top;
             padding-top: 10pt;
         }}
