@@ -1,11 +1,16 @@
-/* WillCraft AI - Wizard JavaScript (v20260315a) */
+/* WillCraft AI - Wizard JavaScript (v20260315b) */
 
-// Apply dropdown filtering on initial page load
+// Apply dropdown filtering on initial page load + dedup change listeners
 document.addEventListener('DOMContentLoaded', function() {
-    // Filter person dropdowns based on data-role attributes
     if (document.querySelector('select.person-select[data-role]')) {
         refreshPersonDropdowns();
     }
+    // When any person-select changes, refresh siblings to remove duplicates
+    document.addEventListener('change', function(e) {
+        if (e.target && e.target.classList.contains('person-select')) {
+            refreshPersonDropdowns();
+        }
+    });
 });
 
 // Save Draft via AJAX
@@ -338,6 +343,44 @@ function openCameraViewfinder(callback, docType) {
  * This is the most reliable way to access camera on iOS/Android.
  */
 function _openNativeCamera(callback, docType) {
+    // Show photo guidance tip for NRIC
+    if (docType === 'nric') {
+        _showPhotoTip('📷 Photo Tips for IC/Passport', [
+            'Hold the card upright in your hand (not flat on table)',
+            'Use good, even lighting — avoid shadows and glare',
+            'Make sure all text on the card is clearly visible',
+            'Keep the card steady and in focus before taking photo'
+        ], function() {
+            _launchNativeFileInput(callback);
+        });
+        return;
+    }
+    _launchNativeFileInput(callback);
+}
+
+function _showPhotoTip(title, tips, onContinue) {
+    const overlay = document.createElement('div');
+    overlay.id = 'photo-tip-overlay';
+    overlay.className = 'fixed inset-0 bg-black/60 z-[70] flex items-center justify-center p-4';
+    overlay.innerHTML = `
+        <div class="bg-white rounded-2xl max-w-sm w-full p-5 shadow-xl">
+            <h3 class="text-lg font-bold text-gray-900 mb-3">${title}</h3>
+            <ul class="space-y-2 mb-5">
+                ${tips.map(t => `<li class="flex items-start gap-2 text-sm text-gray-700"><span class="text-green-500 mt-0.5">✓</span><span>${t}</span></li>`).join('')}
+            </ul>
+            <div class="flex gap-3">
+                <button onclick="document.getElementById('photo-tip-overlay').remove()" class="flex-1 px-4 py-2.5 border border-gray-300 rounded-lg text-gray-600 font-medium">Cancel</button>
+                <button id="photo-tip-continue" class="flex-1 px-4 py-2.5 bg-primary-600 text-white rounded-lg font-semibold hover:bg-primary-700">Take Photo</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('photo-tip-continue').addEventListener('click', function() {
+        overlay.remove();
+        onContinue();
+    });
+}
+
+function _launchNativeFileInput(callback) {
     const tmp = document.createElement('input');
     tmp.type = 'file';
     tmp.accept = 'image/*';
@@ -350,7 +393,6 @@ function _openNativeCamera(callback, docType) {
         }
         document.body.removeChild(tmp);
     };
-    // Cleanup if cancelled (no change event fired for cancel on most browsers)
     tmp.addEventListener('cancel', function() {
         document.body.removeChild(tmp);
     });
@@ -371,7 +413,7 @@ async function _openDesktopViewfinder(callback, docType) {
     // Configure guide box shape based on document type
     if (docType === 'nric') {
         if (titleEl) titleEl.textContent = 'Scan IC / Passport';
-        if (subtitleEl) subtitleEl.textContent = 'Fit your IC card inside the frame';
+        if (subtitleEl) subtitleEl.textContent = 'Hold card upright with good lighting — avoid shadows';
         if (guideTextEl) guideTextEl.textContent = 'Place IC / Passport here';
         if (maskCutout) { maskCutout.setAttribute('x','5%'); maskCutout.setAttribute('y','25%'); maskCutout.setAttribute('width','90%'); maskCutout.setAttribute('height','50%'); }
         if (guideBorder) { guideBorder.setAttribute('x','5%'); guideBorder.setAttribute('y','25%'); guideBorder.setAttribute('width','90%'); guideBorder.setAttribute('height','50%'); }
@@ -1219,16 +1261,30 @@ function getTestatorId() {
 /**
  * Build filtered person options HTML for dynamic dropdown creation.
  * @param {string} role - "testator", "executor", "guardian", "beneficiary", "trustee"
+ * @param {Set} excludeIds - Set of person IDs to exclude (already selected siblings)
  * @returns {string} HTML string of <option> elements
  */
-function buildFilteredPersonOptions(role) {
+function buildFilteredPersonOptions(role, excludeIds) {
     const testatorId = getTestatorId();
+    const exclude = excludeIds || _getSelectedIdsForRole(role);
     let html = '<option value="">-- Select an identity --</option>';
     for (const p of window._personRegistry) {
         if (!_personPassesFilter(p, role, testatorId)) continue;
+        if (exclude.has(p.id)) continue;
         html += `<option value="${p.id}" data-name="${p.full_name}" data-nric="${p.nric_passport}" data-address="${p.address || ''}" data-nationality="${p.nationality || 'Malaysian'}" data-dob="${p.date_of_birth || ''}" data-gender="${p.gender || ''}" data-email="${p.email || ''}" data-phone="${p.phone || ''}" data-relationship="${p.relationship || ''}">${p.full_name} (${p.nric_passport})${p.relationship ? ' [' + p.relationship + ']' : ''}</option>`;
     }
     return html;
+}
+
+/**
+ * Get set of already-selected person IDs for a given role.
+ */
+function _getSelectedIdsForRole(role) {
+    const ids = new Set();
+    document.querySelectorAll(`select.person-select[data-role="${role}"]`).forEach(sel => {
+        if (sel.value) ids.add(sel.value);
+    });
+    return ids;
 }
 
 /**
@@ -1251,45 +1307,67 @@ function _personPassesFilter(person, role, testatorId) {
 /**
  * Refresh all <select> elements with class "person-select" from window._personRegistry.
  * Preserves currently selected value. Filters based on data-role attribute.
+ * Prevents duplicate selections within the same role group.
  */
 function refreshPersonDropdowns() {
     const testatorId = getTestatorId();
 
+    // Group dropdowns by role for dedup
+    const roleGroups = {};
     document.querySelectorAll('select.person-select').forEach(sel => {
-        const currentVal = sel.value;
-        const role = sel.dataset.role || '';
-
-        // Keep the first placeholder option
-        const placeholder = sel.querySelector('option[value=""]');
-        sel.innerHTML = '';
-        if (placeholder) {
-            sel.appendChild(placeholder);
-        } else {
-            const opt = document.createElement('option');
-            opt.value = '';
-            opt.textContent = '-- Select an identity --';
-            sel.appendChild(opt);
-        }
-        for (const p of window._personRegistry) {
-            // Apply filters based on role
-            if (!_personPassesFilter(p, role, testatorId)) continue;
-
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = `${p.full_name} (${p.nric_passport})${p.relationship ? ' [' + p.relationship + ']' : ''}`;
-            opt.dataset.name = p.full_name;
-            opt.dataset.nric = p.nric_passport;
-            opt.dataset.address = p.address || '';
-            opt.dataset.nationality = p.nationality || 'Malaysian';
-            opt.dataset.dob = p.date_of_birth || '';
-            opt.dataset.gender = p.gender || '';
-            opt.dataset.email = p.email || '';
-            opt.dataset.phone = p.phone || '';
-            opt.dataset.relationship = p.relationship || '';
-            if (p.id === currentVal) opt.selected = true;
-            sel.appendChild(opt);
-        }
+        const role = sel.dataset.role || '_default';
+        if (!roleGroups[role]) roleGroups[role] = [];
+        roleGroups[role].push(sel);
     });
+
+    for (const [role, selects] of Object.entries(roleGroups)) {
+        // Collect all selected values in this role group
+        const allSelectedInGroup = new Set();
+        selects.forEach(sel => {
+            if (sel.value) allSelectedInGroup.add(sel.value);
+        });
+
+        selects.forEach(sel => {
+            const currentVal = sel.value;
+
+            // IDs selected by OTHER dropdowns in same group (exclude own value)
+            const othersSelected = new Set(allSelectedInGroup);
+            if (currentVal) othersSelected.delete(currentVal);
+
+            // Keep the first placeholder option
+            const placeholder = sel.querySelector('option[value=""]');
+            sel.innerHTML = '';
+            if (placeholder) {
+                sel.appendChild(placeholder);
+            } else {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = '-- Select an identity --';
+                sel.appendChild(opt);
+            }
+            for (const p of window._personRegistry) {
+                // Apply role-based filters (age, testator exclusion)
+                if (role !== '_default' && !_personPassesFilter(p, role, testatorId)) continue;
+                // Apply dedup filter (skip persons selected by siblings)
+                if (othersSelected.has(p.id)) continue;
+
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = `${p.full_name} (${p.nric_passport})${p.relationship ? ' [' + p.relationship + ']' : ''}`;
+                opt.dataset.name = p.full_name;
+                opt.dataset.nric = p.nric_passport;
+                opt.dataset.address = p.address || '';
+                opt.dataset.nationality = p.nationality || 'Malaysian';
+                opt.dataset.dob = p.date_of_birth || '';
+                opt.dataset.gender = p.gender || '';
+                opt.dataset.email = p.email || '';
+                opt.dataset.phone = p.phone || '';
+                opt.dataset.relationship = p.relationship || '';
+                if (p.id === currentVal) opt.selected = true;
+                sel.appendChild(opt);
+            }
+        });
+    }
 }
 
 /**

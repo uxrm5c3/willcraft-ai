@@ -5,48 +5,141 @@
 {% block wizard_content %}
 <div class="mb-6">
     <h2 class="text-2xl font-bold text-gray-900">Step 3: Executor(s) & Trustee(s)</h2>
-    <p class="text-gray-600 mt-1">Select the person(s) who will carry out the instructions in your will from your identities.</p>
-    <div class="mt-2 p-3 bg-blue-50 rounded-lg text-sm text-blue-700">
-        <strong>Legal Note:</strong> Maximum 4 executors allowed (PAA s.4(1)). If any beneficiary is a minor, at least 2 joint executors are required (PAA s.4(2)).
-    </div>
+    <p class="text-gray-600 mt-1">Appoint person(s) to carry out your will and manage assets for minor beneficiaries.</p>
 </div>
 
-<form method="POST" action="/wizard/step/3">
-    <div id="executors-container">
-        {% set executors = data.get('executors', [{}]) %}
-        {% for exec in executors %}
-        <div class="executor-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="{{ loop.index0 }}">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="font-semibold text-gray-700">Executor & Trustee No. {{ loop.index }}</h3>
-                <div class="flex items-center gap-4">
+<form method="POST" action="/wizard/step/3" class="space-y-8">
+
+    <!-- ═══════════ SECTION 1: EXECUTORS ═══════════ -->
+    <div>
+        <div class="flex items-center gap-2 mb-4">
+            <h3 class="text-lg font-semibold text-gray-800">Executor(s)</h3>
+            <span class="px-2 py-0.5 bg-red-50 text-red-600 text-xs font-semibold rounded-full">Required</span>
+        </div>
+        <div class="p-3 bg-blue-50 rounded-lg text-sm text-blue-700 mb-4">
+            <strong>Legal Note:</strong> Maximum 4 executors (PAA s.4(1)). If any beneficiary is a minor, at least 2 joint executors are required (PAA s.4(2)).
+        </div>
+
+        <!-- Executor Type Toggle -->
+        {% set exec_type = data.get('executor_type', 'single') %}
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Executor Appointment Type</label>
+            <div class="flex gap-4">
+                <label class="flex items-center cursor-pointer px-4 py-2 rounded-lg border-2 transition-colors"
+                       id="exec-type-single-label"
+                       onclick="switchExecutorType('single')">
+                    <input type="radio" name="executor_type" value="single"
+                           {% if exec_type == 'single' %}checked{% endif %}
+                           class="text-primary-600 mr-2"
+                           onchange="switchExecutorType('single')">
+                    <span class="text-sm font-medium">Single Executor</span>
+                </label>
+                <label class="flex items-center cursor-pointer px-4 py-2 rounded-lg border-2 transition-colors"
+                       id="exec-type-joint-label"
+                       onclick="switchExecutorType('joint')">
+                    <input type="radio" name="executor_type" value="joint"
+                           {% if exec_type == 'joint' %}checked{% endif %}
+                           class="text-primary-600 mr-2"
+                           onchange="switchExecutorType('joint')">
+                    <span class="text-sm font-medium">Joint Executors</span>
+                </label>
+            </div>
+        </div>
+
+        <!-- Primary/Joint Executors -->
+        {% set executors = data.get('executors', []) %}
+        {% set primary_executors = [] %}
+        {% set substitute_executors = [] %}
+        {% for e in executors %}
+            {% if e.get('role') == 'Substitute' %}
+                {% if substitute_executors.append(e) %}{% endif %}
+            {% else %}
+                {% if primary_executors.append(e) %}{% endif %}
+            {% endif %}
+        {% endfor %}
+        {% if not primary_executors %}{% set primary_executors = [{}] %}{% endif %}
+
+        <div id="executors-container">
+            {% for exec in primary_executors %}
+            <div class="executor-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="{{ loop.index0 }}">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-semibold text-gray-700">
+                        {% if exec_type == 'single' %}Executor{% else %}Executor No. {{ loop.index }}{% endif %}
+                    </h3>
                     {% if loop.index > 1 %}
-                    <select name="exec_role_{{ loop.index0 }}" class="text-sm px-3 py-1 border border-gray-300 rounded-lg">
-                        <option value="Joint" {% if exec.get('role') == 'Joint' %}selected{% endif %}>Joint</option>
-                        <option value="Substitute" {% if exec.get('role') == 'Substitute' %}selected{% endif %}>Substitute</option>
-                    </select>
                     <button type="button" onclick="removeExecutor(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
-                    {% else %}
-                    <span class="text-sm text-gray-400">Primary</span>
-                    <input type="hidden" name="exec_role_0" value="Primary">
                     {% endif %}
                 </div>
+                <input type="hidden" name="exec_role_{{ loop.index0 }}" value="{% if exec_type == 'single' %}Primary{% else %}Joint{% endif %}">
+                <div class="grid md:grid-cols-2 gap-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
+                        <div class="flex gap-2">
+                            <select name="exec_person_id_{{ loop.index0 }}" required
+                                    onchange="showIdentityInfo(this, 'exec-info-{{ loop.index0 }}')"
+                                    data-role="executor"
+                                    class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                                <option value="">-- Select an identity --</option>
+                                {% for person in persons %}
+                                <option value="{{ person.id }}"
+                                        data-name="{{ person.full_name }}"
+                                        data-nric="{{ person.nric_passport }}"
+                                        data-address="{{ person.address or '' }}"
+                                        data-relationship="{{ person.relationship or '' }}"
+                                        {% if exec.get('person_id') == person.id %}selected{% endif %}>
+                                    {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <button type="button" onclick="openAddIdentityModal()"
+                                    class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
+                                + New
+                            </button>
+                        </div>
+                        <div id="exec-info-{{ loop.index0 }}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not exec.get('person_id') %}hidden{% endif %}">
+                            {% if exec.get('person_id') %}{{ exec.full_name }} &middot; {{ exec.nric_passport }} &middot; {{ exec.address }}{% endif %}
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator <span class="text-red-500">*</span></label>
+                        <input type="text" name="exec_relationship_{{ loop.index0 }}" value="{{ exec.get('relationship', '') }}" required
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="e.g., Spouse, Brother, Friend">
+                    </div>
+                </div>
             </div>
+            {% endfor %}
+        </div>
+
+        <input type="hidden" name="executor_count" id="executor-count" value="{{ primary_executors|length }}">
+
+        <div id="add-executor-section" class="{% if exec_type == 'single' %}hidden{% endif %} mb-4">
+            <button type="button" onclick="addExecutor()" id="add-executor-btn"
+                    class="px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors">
+                + Add Another Executor (max 4)
+            </button>
+        </div>
+
+        <!-- Substitute Executor -->
+        <div class="border-t border-gray-200 pt-4 mt-4">
+            <h4 class="text-sm font-semibold text-gray-600 mb-3">Substitute Executor <span class="text-gray-400 font-normal">(optional)</span></h4>
+            <p class="text-xs text-gray-500 mb-3">If the appointed executor(s) are unable or unwilling to act, the substitute takes over.</p>
+            {% set sub_exec = substitute_executors[0] if substitute_executors else {} %}
             <div class="grid md:grid-cols-2 gap-4">
                 <div class="md:col-span-2">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
                     <div class="flex gap-2">
-                        <select name="exec_person_id_{{ loop.index0 }}" required
-                                onchange="showIdentityInfo(this, 'exec-info-{{ loop.index0 }}')"
+                        <select name="sub_exec_person_id"
+                                onchange="showIdentityInfo(this, 'sub-exec-info')"
                                 data-role="executor"
                                 class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                            <option value="">-- Select an identity --</option>
+                            <option value="">-- No substitute (optional) --</option>
                             {% for person in persons %}
                             <option value="{{ person.id }}"
                                     data-name="{{ person.full_name }}"
                                     data-nric="{{ person.nric_passport }}"
                                     data-address="{{ person.address or '' }}"
                                     data-relationship="{{ person.relationship or '' }}"
-                                    {% if exec.get('person_id') == person.id %}selected{% endif %}>
+                                    {% if sub_exec.get('person_id') == person.id %}selected{% endif %}>
                                 {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
                             </option>
                             {% endfor %}
@@ -56,27 +149,146 @@
                             + New
                         </button>
                     </div>
-                    <div id="exec-info-{{ loop.index0 }}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not exec.get('person_id') %}hidden{% endif %}">
-                        {% if exec.get('person_id') %}{{ exec.full_name }} &middot; {{ exec.nric_passport }} &middot; {{ exec.address }}{% endif %}
+                    <div id="sub-exec-info" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not sub_exec.get('person_id') %}hidden{% endif %}">
+                        {% if sub_exec.get('person_id') %}{{ sub_exec.full_name }} &middot; {{ sub_exec.nric_passport }} &middot; {{ sub_exec.address }}{% endif %}
                     </div>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator <span class="text-red-500">*</span></label>
-                    <input type="text" name="exec_relationship_{{ loop.index0 }}" value="{{ exec.get('relationship', '') }}" required
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                    <input type="text" name="sub_exec_relationship" value="{{ sub_exec.get('relationship', '') }}"
                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="e.g., Spouse, Brother, Friend">
+                           placeholder="e.g., Brother, Friend">
                 </div>
             </div>
         </div>
-        {% endfor %}
     </div>
 
-    <input type="hidden" name="executor_count" id="executor-count" value="{{ executors|length }}">
+    <!-- ═══════════ SECTION 2: TRUSTEES ═══════════ -->
+    <div class="border-t-2 border-gray-300 pt-6">
+        <div class="flex items-center gap-2 mb-2">
+            <h3 class="text-lg font-semibold text-gray-800">Trustee(s)</h3>
+            <span class="px-2 py-0.5 bg-amber-50 text-amber-600 text-xs font-semibold rounded-full">Required for minor beneficiaries</span>
+        </div>
+        <p class="text-sm text-gray-500 mb-4">Trustees manage assets held in trust for minor or vulnerable beneficiaries. Under the Probate and Administration Act 1959, trustee appointment is compulsory when any beneficiary is under 18.</p>
 
-    <button type="button" onclick="addExecutor()" id="add-executor-btn"
-            class="mb-6 px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors">
-        + Add Another Executor (max 4)
-    </button>
+        {% set trustee_data = data.get('trustee_data', {}) %}
+        {% set trustee_same = trustee_data.get('same_as_executor', true) %}
+
+        <!-- Same as Executor Toggle -->
+        <div class="mb-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
+            <label class="flex items-center cursor-pointer">
+                <input type="checkbox" name="trustee_same_as_executor" value="1"
+                       {% if trustee_same %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-3 w-5 h-5"
+                       onchange="toggleTrusteeSection(!this.checked)">
+                <div>
+                    <span class="text-sm font-semibold text-gray-700">Appoint same person(s) as Executor(s) as Trustee(s)</span>
+                    <p class="text-xs text-gray-500 mt-0.5">The executor(s) above will also serve as trustee(s). This is the most common arrangement.</p>
+                </div>
+            </label>
+        </div>
+
+        <!-- Separate Trustee Section (hidden if same as executor) -->
+        <div id="separate-trustee-section" class="{% if trustee_same %}hidden{% endif %} space-y-4">
+            {% set trustees = trustee_data.get('trustees', [{}]) %}
+            <div id="trustees-container">
+                {% for tr in trustees %}
+                <div class="trustee-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="{{ loop.index0 }}">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="font-semibold text-gray-700">Trustee No. {{ loop.index }}</h3>
+                        {% if loop.index > 1 %}
+                        <button type="button" onclick="removeTrustee(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+                        {% endif %}
+                    </div>
+                    <div class="grid md:grid-cols-2 gap-4">
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
+                            <div class="flex gap-2">
+                                <select name="trustee_person_id_{{ loop.index0 }}"
+                                        onchange="showIdentityInfo(this, 'trustee-info-{{ loop.index0 }}')"
+                                        data-role="trustee"
+                                        class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                                    <option value="">-- Select an identity --</option>
+                                    {% for person in persons %}
+                                    <option value="{{ person.id }}"
+                                            data-name="{{ person.full_name }}"
+                                            data-nric="{{ person.nric_passport }}"
+                                            data-address="{{ person.address or '' }}"
+                                            data-relationship="{{ person.relationship or '' }}"
+                                            {% if tr.get('person_id') == person.id %}selected{% endif %}>
+                                        {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                                <button type="button" onclick="openAddIdentityModal()"
+                                        class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
+                                    + New
+                                </button>
+                            </div>
+                            <div id="trustee-info-{{ loop.index0 }}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not tr.get('person_id') %}hidden{% endif %}">
+                                {% if tr.get('person_id') %}{{ tr.full_name }} &middot; {{ tr.nric_passport }} &middot; {{ tr.address }}{% endif %}
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                            <input type="text" name="trustee_relationship_{{ loop.index0 }}" value="{{ tr.get('relationship', '') }}"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                   placeholder="e.g., Spouse, Brother, Friend">
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <input type="hidden" name="trustee_count" id="trustee-count" value="{{ trustees|length }}">
+
+            <button type="button" onclick="addTrustee()" id="add-trustee-btn"
+                    class="px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors mb-4">
+                + Add Another Trustee
+            </button>
+
+            <!-- Substitute Trustee -->
+            <div class="border-t border-gray-200 pt-4">
+                <h4 class="text-sm font-semibold text-gray-600 mb-3">Substitute Trustee <span class="text-gray-400 font-normal">(optional)</span></h4>
+                {% set sub_tr = trustee_data.get('substitute_trustee', {}) %}
+                <div class="grid md:grid-cols-2 gap-4">
+                    <div class="md:col-span-2">
+                        <div class="flex gap-2">
+                            <select name="sub_trustee_person_id"
+                                    onchange="showIdentityInfo(this, 'sub-trustee-info')"
+                                    data-role="trustee"
+                                    class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                                <option value="">-- No substitute (optional) --</option>
+                                {% for person in persons %}
+                                <option value="{{ person.id }}"
+                                        data-name="{{ person.full_name }}"
+                                        data-nric="{{ person.nric_passport }}"
+                                        data-address="{{ person.address or '' }}"
+                                        data-relationship="{{ person.relationship or '' }}"
+                                        {% if sub_tr.get('person_id') == person.id %}selected{% endif %}>
+                                    {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <button type="button" onclick="openAddIdentityModal()"
+                                    class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
+                                + New
+                            </button>
+                        </div>
+                        <div id="sub-trustee-info" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not sub_tr.get('person_id') %}hidden{% endif %}">
+                            {% if sub_tr.get('person_id') %}{{ sub_tr.full_name }} &middot; {{ sub_tr.nric_passport }} &middot; {{ sub_tr.address }}{% endif %}
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                        <input type="text" name="sub_trustee_relationship" value="{{ sub_tr.get('relationship', '') }}"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                               placeholder="e.g., Sibling, Friend">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <!-- Navigation -->
     <div class="flex flex-col-reverse sm:flex-row justify-between gap-3 pt-6 border-t border-gray-200">
@@ -94,7 +306,56 @@
 
 {% block wizard_scripts %}
 <script>
-let executorCount = {{ data.get('executors', [{}])|length }};
+let executorCount = {{ (primary_executors|default([{}]))|length }};
+let trusteeCount = {{ (trustee_data.get('trustees', [{}]) if trustee_data else [{}])|length }};
+
+function switchExecutorType(type) {
+    const addSection = document.getElementById('add-executor-section');
+    const container = document.getElementById('executors-container');
+    const entries = container.querySelectorAll('.executor-entry');
+
+    if (type === 'single') {
+        addSection.classList.add('hidden');
+        // Remove extra executors, keep only first
+        entries.forEach((entry, i) => {
+            if (i > 0) entry.remove();
+        });
+        executorCount = 1;
+        document.getElementById('executor-count').value = 1;
+        // Update role hidden input
+        const roleInput = container.querySelector('input[name="exec_role_0"]');
+        if (roleInput) roleInput.value = 'Primary';
+        // Update label
+        const label = container.querySelector('.executor-entry h3');
+        if (label) label.textContent = 'Executor';
+    } else {
+        addSection.classList.remove('hidden');
+        // Update role to Joint
+        const roleInput = container.querySelector('input[name="exec_role_0"]');
+        if (roleInput) roleInput.value = 'Joint';
+        // Update label
+        const label = container.querySelector('.executor-entry h3');
+        if (label) label.textContent = 'Executor No. 1';
+        // If only 1, auto-add second
+        if (executorCount < 2) addExecutor();
+    }
+    updateExecutorTypeLabels(type);
+}
+
+function updateExecutorTypeLabels(type) {
+    const singleLabel = document.getElementById('exec-type-single-label');
+    const jointLabel = document.getElementById('exec-type-joint-label');
+    if (singleLabel) {
+        singleLabel.classList.toggle('border-primary-500', type === 'single');
+        singleLabel.classList.toggle('bg-primary-50', type === 'single');
+        singleLabel.classList.toggle('border-gray-200', type !== 'single');
+    }
+    if (jointLabel) {
+        jointLabel.classList.toggle('border-primary-500', type === 'joint');
+        jointLabel.classList.toggle('bg-primary-50', type === 'joint');
+        jointLabel.classList.toggle('border-gray-200', type !== 'joint');
+    }
+}
 
 function addExecutor() {
     if (executorCount >= 4) { alert('Maximum 4 executors allowed.'); return; }
@@ -104,15 +365,10 @@ function addExecutor() {
     const html = `
     <div class="executor-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="${idx}">
         <div class="flex justify-between items-center mb-4">
-            <h3 class="font-semibold text-gray-700">Executor & Trustee No. ${idx + 1}</h3>
-            <div class="flex items-center gap-4">
-                <select name="exec_role_${idx}" class="text-sm px-3 py-1 border border-gray-300 rounded-lg">
-                    <option value="Joint">Joint</option>
-                    <option value="Substitute">Substitute</option>
-                </select>
-                <button type="button" onclick="removeExecutor(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
-            </div>
+            <h3 class="font-semibold text-gray-700">Executor No. ${idx + 1}</h3>
+            <button type="button" onclick="removeExecutor(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
         </div>
+        <input type="hidden" name="exec_role_${idx}" value="Joint">
         <div class="grid md:grid-cols-2 gap-4">
             <div class="md:col-span-2">
                 <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
@@ -141,6 +397,7 @@ function addExecutor() {
     executorCount++;
     document.getElementById('executor-count').value = executorCount;
     if (executorCount >= 4) document.getElementById('add-executor-btn').classList.add('hidden');
+    refreshPersonDropdowns();
 }
 
 function removeExecutor(btn) {
@@ -148,17 +405,87 @@ function removeExecutor(btn) {
     executorCount--;
     document.getElementById('executor-count').value = executorCount;
     document.getElementById('add-executor-btn').classList.remove('hidden');
+    refreshPersonDropdowns();
 }
 
-// Show identity info for pre-selected entries on page load
+function toggleTrusteeSection(show) {
+    document.getElementById('separate-trustee-section').classList.toggle('hidden', !show);
+}
+
+function addTrustee() {
+    const container = document.getElementById('trustees-container');
+    const idx = trusteeCount;
+    const personOptions = buildFilteredPersonOptions('trustee');
+    const html = `
+    <div class="trustee-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="${idx}">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-semibold text-gray-700">Trustee No. ${idx + 1}</h3>
+            <button type="button" onclick="removeTrustee(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+        </div>
+        <div class="grid md:grid-cols-2 gap-4">
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
+                <div class="flex gap-2">
+                    <select name="trustee_person_id_${idx}"
+                            onchange="showIdentityInfo(this, 'trustee-info-${idx}')"
+                            data-role="trustee"
+                            class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        ${personOptions}
+                    </select>
+                    <button type="button" onclick="openAddIdentityModal()"
+                            class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
+                        + New
+                    </button>
+                </div>
+                <div id="trustee-info-${idx}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                <input type="text" name="trustee_relationship_${idx}"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="e.g., Spouse, Brother, Friend">
+            </div>
+        </div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
+    trusteeCount++;
+    document.getElementById('trustee-count').value = trusteeCount;
+    refreshPersonDropdowns();
+}
+
+function removeTrustee(btn) {
+    btn.closest('.trustee-entry').remove();
+    trusteeCount--;
+    document.getElementById('trustee-count').value = trusteeCount;
+    refreshPersonDropdowns();
+}
+
+// Init on page load
 document.addEventListener('DOMContentLoaded', function() {
+    // Show pre-selected identity info
     document.querySelectorAll('[name^="exec_person_id_"]').forEach(sel => {
         if (sel.value) {
             const idx = sel.name.replace('exec_person_id_', '');
             showIdentityInfo(sel, `exec-info-${idx}`);
         }
     });
+    const subExec = document.querySelector('[name="sub_exec_person_id"]');
+    if (subExec && subExec.value) showIdentityInfo(subExec, 'sub-exec-info');
+
+    document.querySelectorAll('[name^="trustee_person_id_"]').forEach(sel => {
+        if (sel.value) {
+            const idx = sel.name.replace('trustee_person_id_', '');
+            showIdentityInfo(sel, `trustee-info-${idx}`);
+        }
+    });
+    const subTr = document.querySelector('[name="sub_trustee_person_id"]');
+    if (subTr && subTr.value) showIdentityInfo(subTr, 'sub-trustee-info');
+
+    // Style executor type toggle
+    const checkedRadio = document.querySelector('input[name="executor_type"]:checked');
+    if (checkedRadio) updateExecutorTypeLabels(checkedRadio.value);
 });
+
 // Refresh dropdowns after adding a new identity
 document.addEventListener('identitySaved', function() {
     refreshPersonDropdowns();

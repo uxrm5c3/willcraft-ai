@@ -104,7 +104,11 @@ def save_will_to_db():
 
     will_record.identities_data = json.dumps(session.get('person_registry', []))
     will_record.step1_data = json.dumps(session.get('step1', {}))
-    will_record.step2_data = json.dumps(session.get('step2_executors', []))
+    will_record.step2_data = json.dumps({
+        'executors': session.get('step2_executors', []),
+        'executor_type': session.get('step3_executor_type', 'single'),
+        'trustee_data': session.get('step3_trustees', {'same_as_executor': True}),
+    })
     will_record.step3_data = json.dumps({
         'guardians': session.get('step3_guardians', []),
         'guardian_allowance': session.get('step3_guardian_allowance', {}),
@@ -137,7 +141,18 @@ def load_will_to_session(will_record):
     session['will_id'] = will_record.id
     session['client_id'] = will_record.client_id
     session['step1'] = json.loads(will_record.step1_data or '{}')
-    session['step2_executors'] = json.loads(will_record.step2_data or '[]')
+    # Load executor data (handle both old array and new object format)
+    step2_raw = json.loads(will_record.step2_data or '[]')
+    if isinstance(step2_raw, list):
+        # Old format: plain array of executors
+        session['step2_executors'] = step2_raw
+        session['step3_executor_type'] = 'joint' if len(step2_raw) > 1 else 'single'
+        session['step3_trustees'] = {'same_as_executor': True, 'trustees': [{}]}
+    else:
+        # New format: object with executors, executor_type, trustee_data
+        session['step2_executors'] = step2_raw.get('executors', [])
+        session['step3_executor_type'] = step2_raw.get('executor_type', 'single')
+        session['step3_trustees'] = step2_raw.get('trustee_data', {'same_as_executor': True, 'trustees': [{}]})
     step3 = json.loads(will_record.step3_data or '{}')
     session['step3_guardians'] = step3.get('guardians', [])
     session['step3_guardian_allowance'] = step3.get('guardian_allowance', {})
@@ -247,7 +262,7 @@ def build_will_data():
         Beneficiary, Gift, GiftAllocation,
         ResiduaryEstate, ResiduaryBeneficiary,
         TestamentaryTrust, TrustBeneficiary,
-        OtherMatters, WillData,
+        OtherMatters, WillData, Trustee,
     )
 
     # -- Section A: Testator --------------------------------------------------
@@ -280,6 +295,21 @@ def build_will_data():
 
     # -- Section B: Executors --------------------------------------------------
     executors = [Executor(**e) for e in session.get('step2_executors', [])]
+
+    # -- Section B2: Trustees (separate from executors) -----------------------
+    trustee_session = session.get('step3_trustees', {'same_as_executor': True})
+    trustee_same_as_executor = trustee_session.get('same_as_executor', True)
+    trustees = None
+    substitute_trustee = None
+    if not trustee_same_as_executor:
+        trustees_raw = trustee_session.get('trustees', [])
+        if trustees_raw:
+            trustees = [Trustee(**t) for t in trustees_raw if t.get('full_name')]
+            if not trustees:
+                trustees = None
+        sub_trustee_raw = trustee_session.get('substitute_trustee', {})
+        if sub_trustee_raw and sub_trustee_raw.get('full_name'):
+            substitute_trustee = Trustee(**sub_trustee_raw)
 
     # -- Section C: Guardians (optional) --------------------------------------
     guardians_data = session.get('step3_guardians', [])
@@ -356,6 +386,9 @@ def build_will_data():
     return WillData(
         testator=testator,
         executors=executors,
+        trustee_same_as_executor=trustee_same_as_executor,
+        trustees=trustees,
+        substitute_trustee=substitute_trustee,
         guardians=guardians,
         guardian_allowance=guardian_allowance,
         beneficiaries=beneficiaries,
@@ -1060,11 +1093,16 @@ def wizard_step_executors():
             'wizard/step3_executors.html',
             current_step=3,
             completed_steps=get_completed_steps(),
-            data={'executors': session.get('step2_executors', [{}])},
+            data={
+                'executors': session.get('step2_executors', [{}]),
+                'executor_type': session.get('step3_executor_type', 'single'),
+                'trustee_data': session.get('step3_trustees', {'same_as_executor': True, 'trustees': [{}]}),
+            },
             persons=session.get('person_registry', []),
         )
 
-    # POST -- parse executor selections from identities
+    # POST -- parse executor and trustee data
+    executor_type = request.form.get('executor_type', 'single')
     count = int(request.form.get('executor_count', 1))
     executors = []
     for i in range(count):
@@ -1072,16 +1110,70 @@ def wizard_step_executors():
         person = _get_person_from_registry(person_id)
         if not person:
             continue
+        role = request.form.get(f'exec_role_{i}', 'Primary')
+        if executor_type == 'joint':
+            role = 'Joint'
+        elif executor_type == 'single':
+            role = 'Primary'
         executors.append({
             'person_id': person_id,
             'full_name': person['full_name'],
             'nric_passport': person['nric_passport'],
             'address': person['address'],
             'relationship': request.form.get(f'exec_relationship_{i}', '').strip(),
-            'role': request.form.get(f'exec_role_{i}', 'Primary'),
+            'role': role,
         })
 
+    # Substitute executor
+    sub_exec_pid = request.form.get('sub_exec_person_id', '').strip()
+    if sub_exec_pid:
+        sub_person = _get_person_from_registry(sub_exec_pid)
+        if sub_person:
+            executors.append({
+                'person_id': sub_exec_pid,
+                'full_name': sub_person['full_name'],
+                'nric_passport': sub_person['nric_passport'],
+                'address': sub_person['address'],
+                'relationship': request.form.get('sub_exec_relationship', '').strip(),
+                'role': 'Substitute',
+            })
+
     session['step2_executors'] = executors
+    session['step3_executor_type'] = executor_type
+
+    # Parse trustees
+    trustee_same = bool(request.form.get('trustee_same_as_executor'))
+    trustee_data = {'same_as_executor': trustee_same, 'trustees': [], 'substitute_trustee': {}}
+
+    if not trustee_same:
+        trustee_count = int(request.form.get('trustee_count', 1))
+        for i in range(trustee_count):
+            pid = request.form.get(f'trustee_person_id_{i}', '').strip()
+            person = _get_person_from_registry(pid)
+            if not person:
+                continue
+            trustee_data['trustees'].append({
+                'person_id': pid,
+                'full_name': person['full_name'],
+                'nric_passport': person['nric_passport'],
+                'address': person['address'],
+                'relationship': request.form.get(f'trustee_relationship_{i}', '').strip(),
+            })
+
+        # Substitute trustee
+        sub_tr_pid = request.form.get('sub_trustee_person_id', '').strip()
+        if sub_tr_pid:
+            sub_tr = _get_person_from_registry(sub_tr_pid)
+            if sub_tr:
+                trustee_data['substitute_trustee'] = {
+                    'person_id': sub_tr_pid,
+                    'full_name': sub_tr['full_name'],
+                    'nric_passport': sub_tr['nric_passport'],
+                    'address': sub_tr['address'],
+                    'relationship': request.form.get('sub_trustee_relationship', '').strip(),
+                }
+
+    session['step3_trustees'] = trustee_data
     session.modified = True
     mark_step_complete(3)
     save_will_to_db()
@@ -1156,6 +1248,7 @@ def wizard_step_beneficiaries():
             completed_steps=get_completed_steps(),
             data={'beneficiaries': session.get('step4_beneficiaries', [{}])},
             persons=session.get('person_registry', []),
+            executor_type=session.get('step3_executor_type', 'single'),
         )
 
     # POST -- parse beneficiary selections from identities
@@ -1456,6 +1549,8 @@ def wizard_step_review():
         'identities': session.get('person_registry', []),
         'testator': session.get('step1', {}),
         'executors': session.get('step2_executors', []),
+        'executor_type': session.get('step3_executor_type', 'single'),
+        'trustee_data': session.get('step3_trustees', {'same_as_executor': True}),
         'guardians': session.get('step3_guardians', []),
         'guardian_allowance': session.get('step3_guardian_allowance', {}),
         'beneficiaries': session.get('step4_beneficiaries', []),

@@ -70,6 +70,22 @@
         + Add Another Beneficiary (max 20)
     </button>
 
+    <!-- Minor Beneficiary Warning (shown dynamically) -->
+    <div id="minor-beneficiary-warning" class="hidden p-4 bg-red-50 rounded-lg text-sm text-red-700 border border-red-200">
+        <div class="flex items-start gap-2">
+            <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+            <div>
+                <strong>Minor Beneficiary Detected:</strong> You have added a beneficiary under 18 years old. Under the Wills Act 1959 (Malaysia), it is recommended to appoint <strong>joint executors</strong> (not a single executor) to safeguard the interests of minor beneficiaries and to appoint a <strong>trustee</strong> to manage their inheritance.
+                <div class="mt-2">
+                    <a href="/wizard/step/3" class="inline-flex items-center px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-800 rounded-lg font-medium transition-colors">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                        Go to Step 3 to update Executors &amp; Trustees
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Exclusion Note -->
     <div class="p-3 bg-amber-50 rounded-lg text-sm text-amber-700 border border-amber-200">
         <strong>Note:</strong> If you wish to exclude any family member from your will, you may do so in Step 9 (Other Matters) with a reason for the exclusion.
@@ -153,6 +169,38 @@ document.addEventListener('DOMContentLoaded', function() {
 // Refresh dropdowns after adding a new identity
 document.addEventListener('identitySaved', function() {
     refreshPersonDropdowns();
+});
+
+// Minor beneficiary warning
+const _executorType = '{{ executor_type }}';
+
+function checkMinorBeneficiaries() {
+    const warning = document.getElementById('minor-beneficiary-warning');
+    if (!warning) return;
+    let hasMinor = false;
+    document.querySelectorAll('[name^="ben_person_id_"]').forEach(sel => {
+        if (!sel.value) return;
+        const person = (window._personRegistry || []).find(p => p.id === sel.value);
+        if (person && typeof getPersonAge === 'function') {
+            const age = getPersonAge(person);
+            if (age !== null && age < 18) hasMinor = true;
+        }
+    });
+    if (hasMinor && _executorType === 'single') {
+        warning.classList.remove('hidden');
+    } else {
+        warning.classList.add('hidden');
+    }
+}
+
+// Check on page load and on selection change
+document.addEventListener('DOMContentLoaded', function() {
+    checkMinorBeneficiaries();
+    document.addEventListener('change', function(e) {
+        if (e.target && e.target.name && e.target.name.startsWith('ben_person_id_')) {
+            checkMinorBeneficiaries();
+        }
+    });
 });
 </script>
 {% endblock %}

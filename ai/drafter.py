@@ -43,8 +43,24 @@ def format_will_data(will_data) -> str:
         for i, e in enumerate(will_data.executors, 1):
             exec_lines.append(f"  {i}. {e.full_name} (NRIC: {e.nric_passport}), {e.address}, Relationship: {e.relationship}, Role: {e.role}")
         sections.append(f"""
-## EXECUTORS AND TRUSTEES
+## EXECUTORS
 {chr(10).join(exec_lines)}""")
+
+    # Section B2: Trustees
+    if will_data.trustee_same_as_executor:
+        sections.append("""
+## TRUSTEES
+- Trustees: Same as Executors (Executors shall also act as Trustees)""")
+    elif will_data.trustees:
+        trustee_lines = []
+        for i, tr in enumerate(will_data.trustees, 1):
+            trustee_lines.append(f"  {i}. {tr.full_name} (NRIC: {tr.nric_passport}), {tr.address}, Relationship: {tr.relationship}")
+        if will_data.substitute_trustee:
+            st = will_data.substitute_trustee
+            trustee_lines.append(f"  Substitute: {st.full_name} (NRIC: {st.nric_passport}), {st.address}, Relationship: {st.relationship}")
+        sections.append(f"""
+## TRUSTEES (SEPARATE FROM EXECUTORS)
+{chr(10).join(trustee_lines)}""")
 
     # Section C: Guardians
     if will_data.guardians:
@@ -217,9 +233,32 @@ def draft_will_mock(will_data) -> str:
 {next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Executor my {sub.relationship.lower()} {sub.full_name.upper()} MALAYSIA NRIC No. {sub.nric_passport} of {sub.address}."""
         next_clause += 1
 
-    trustee_clause = f"""
+    # Trustee clause
+    if will_data.trustee_same_as_executor:
+        trustee_clause = f"""
 {next_clause}.  In this Will unless it is specifically stated to the contrary, my Executor(s) shall also act as my Trustee(s)."""
-    next_clause += 1
+        next_clause += 1
+    elif will_data.trustees:
+        trustees = will_data.trustees
+        if len(trustees) >= 2:
+            trustee_clause = f"""
+{next_clause}.  I appoint as my joint Trustees my {trustees[0].relationship.lower()} {trustees[0].full_name.upper()} MALAYSIA NRIC No. {trustees[0].nric_passport} of {trustees[0].address} and my {trustees[1].relationship.lower()} {trustees[1].full_name.upper()} MALAYSIA NRIC No. {trustees[1].nric_passport} of {trustees[1].address}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Trustee named herein shall act as my sole Trustee."""
+            next_clause += 1
+        else:
+            trustee_clause = f"""
+{next_clause}.  I appoint as my sole Trustee my {trustees[0].relationship.lower()} {trustees[0].full_name.upper()} MALAYSIA NRIC No. {trustees[0].nric_passport} of {trustees[0].address}."""
+            next_clause += 1
+
+        if will_data.substitute_trustee:
+            st = will_data.substitute_trustee
+            trustee_clause += f"""
+
+{next_clause}.  With reference to Clause {next_clause - 1} above, if all the Trustees named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Trustee my {st.relationship.lower()} {st.full_name.upper()} MALAYSIA NRIC No. {st.nric_passport} of {st.address}."""
+            next_clause += 1
+    else:
+        trustee_clause = f"""
+{next_clause}.  In this Will unless it is specifically stated to the contrary, my Executor(s) shall also act as my Trustee(s)."""
+        next_clause += 1
 
     # Residuary estate
     residuary_text = ""

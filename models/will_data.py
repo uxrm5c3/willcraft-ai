@@ -10,9 +10,20 @@ from models.trust import TestamentaryTrust
 from models.other_matters import OtherMatters
 
 
+class Trustee(BaseModel):
+    full_name: str
+    address: str = ''
+    nric_passport: str = ''
+    relationship: str = ''
+    person_id: Optional[str] = None
+
+
 class WillData(BaseModel):
     testator: Testator
     executors: List[Executor] = []
+    trustee_same_as_executor: bool = True
+    trustees: Optional[List[Trustee]] = None
+    substitute_trustee: Optional[Trustee] = None
     guardians: Optional[List[Guardian]] = None
     guardian_allowance: Optional[GuardianAllowance] = None
     exclude_spouse_as_guardian: bool = False

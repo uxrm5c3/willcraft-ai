@@ -118,7 +118,7 @@
         </div>
     </div>
 
-    <!-- Step 3: Executors & Trustees -->
+    <!-- Step 3: Executors -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
             <h3 class="font-semibold text-gray-800">Step 3: Executors & Trustees</h3>
@@ -127,7 +127,8 @@
         <div class="px-5 py-4">
             {% set executors = will_data.get('executors', []) %}
             {% if executors %}
-            <div class="space-y-3">
+            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Executors</h4>
+            <div class="space-y-3 mb-4">
                 {% for exec in executors %}
                 <div class="flex items-start gap-3 text-sm">
                     <span class="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs font-medium rounded">{{ exec.get('role', 'Primary') }}</span>
@@ -138,6 +139,40 @@
                 </div>
                 {% endfor %}
             </div>
+
+            <!-- Trustees -->
+            {% set trustee_data = will_data.get('trustee_data', {}) %}
+            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 pt-3 border-t border-gray-100">Trustees</h4>
+            {% if trustee_data.get('same_as_executor', true) %}
+            <p class="text-sm text-gray-600 italic">Same as Executor(s) — Executor(s) shall also act as Trustee(s)</p>
+            {% else %}
+                {% set trustees = trustee_data.get('trustees', []) %}
+                {% if trustees %}
+                <div class="space-y-3">
+                    {% for tr in trustees %}
+                    <div class="flex items-start gap-3 text-sm">
+                        <span class="px-2 py-0.5 bg-indigo-100 text-indigo-600 text-xs font-medium rounded">Trustee</span>
+                        <div>
+                            <p class="font-medium text-gray-900">{{ tr.get('full_name', '-') }}</p>
+                            <p class="text-gray-500">{{ tr.get('nric_passport', '-') }} &middot; {{ tr.get('relationship', '-') }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    {% set sub_trustee = trustee_data.get('substitute_trustee', {}) %}
+                    {% if sub_trustee and sub_trustee.get('full_name') %}
+                    <div class="flex items-start gap-3 text-sm">
+                        <span class="px-2 py-0.5 bg-amber-100 text-amber-600 text-xs font-medium rounded">Substitute</span>
+                        <div>
+                            <p class="font-medium text-gray-900">{{ sub_trustee.get('full_name', '-') }}</p>
+                            <p class="text-gray-500">{{ sub_trustee.get('nric_passport', '-') }} &middot; {{ sub_trustee.get('relationship', '-') }}</p>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                {% else %}
+                <p class="text-sm text-gray-400 italic">No separate trustees specified.</p>
+                {% endif %}
+            {% endif %}
             {% else %}
             <p class="text-sm text-gray-400 italic">No data entered yet.</p>
             {% endif %}
