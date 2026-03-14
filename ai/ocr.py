@@ -1,4 +1,4 @@
-"""OCR extraction using Claude Vision API — strict accuracy mode."""
+"""OCR extraction using Claude Vision API — chain-of-thought accuracy mode."""
 import base64
 import json
 import re
@@ -9,8 +9,9 @@ from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
 def extract_nric_data(image_path: str) -> dict:
     """Extract personal data from a Malaysian NRIC or passport image.
 
-    STRICT MODE: Only returns data that can be read with high confidence.
-    Any unclear field is returned as empty string rather than guessed.
+    Uses chain-of-thought prompting: the model first spells out each character
+    it sees, then produces the final JSON. This significantly improves accuracy
+    for names and IC numbers.
 
     Returns dict with keys: full_name, nric_number, date_of_birth, address, gender, nationality
     """
@@ -49,75 +50,62 @@ def extract_nric_data(image_path: str) -> dict:
 
     message = client.messages.create(
         model=CLAUDE_MODEL_FAST,
-        max_tokens=1024,
+        max_tokens=2048,
         messages=[{
             "role": "user",
             "content": [
                 content_block,
                 {
                     "type": "text",
-                    "text": """Extract personal data from this Malaysian IC (MyKad) or Passport image.
+                    "text": """Read this Malaysian IC (MyKad) or Passport image carefully.
 
-CRITICAL RULE: ACCURACY IS PARAMOUNT.
-- Read each character carefully, one at a time.
-- If you are truly unable to read a field at all, return "" (empty string).
-- It is far better to return an empty field than wrong data.
-- If the image is very blurry, dark, or mostly obscured, return "" for affected fields.
+You MUST follow these steps IN ORDER. Do NOT skip any step.
 
-STEP 1 — DOCUMENT TYPE:
-- ID number starts with a LETTER (e.g. A12345678) → "passport"
-- ID number is 12 digits YYMMDD-SS-NNNN → "nric"
+STEP 1 — IDENTIFY DOCUMENT TYPE:
+Look at the ID number. Does it start with a letter? → passport. Is it 12 digits? → nric.
 
-STEP 2 — Return ONLY this JSON (no markdown, no explanation):
+STEP 2 — READ THE FULL NAME:
+Spell out the name CHARACTER BY CHARACTER. Write each letter you see:
+"Name characters: [letter1] [letter2] [letter3] ..."
+Then write the complete name.
+Watch for: I vs L, O vs 0, S vs 5, B vs 8, G vs C, U vs V.
+
+STEP 3 — READ THE IC/PASSPORT NUMBER:
+Spell out EACH DIGIT one by one:
+"IC digits: [d1] [d2] [d3] [d4] [d5] [d6] - [d7] [d8] - [d9] [d10] [d11] [d12]"
+Then write the complete number.
+Verify: first 6 digits = YYMMDD. Is this a valid date? If not, re-read.
+Watch for: 0 vs O, 1 vs 7, 3 vs 8, 5 vs 6, 6 vs 8.
+
+STEP 4 — READ THE ADDRESS (back of MyKad only, skip for passport):
+Read each line of the address top to bottom. Write each line separately.
+
+STEP 5 — OUTPUT THE FINAL JSON:
+After your analysis above, output ONLY this JSON block (no extra text after it):
+
+```json
 {
-    "doc_type": "nric" or "passport",
-    "full_name": "",
-    "nric_number": "",
-    "date_of_birth": "",
-    "address": "",
-    "gender": "",
-    "nationality": "",
-    "passport_expiry": "",
-    "confidence": ""
+    "doc_type": "nric or passport",
+    "full_name": "EXACT NAME IN UPPERCASE",
+    "nric_number": "YYMMDD-SS-NNNN",
+    "date_of_birth": "DD-MM-YYYY",
+    "address": "line1\\nline2\\nline3",
+    "gender": "Male or Female",
+    "nationality": "Malaysian",
+    "passport_expiry": ""
 }
+```
 
-FIELD RULES:
+RULES:
+- full_name: UPPERCASE, exactly as printed. Include BIN/BINTI/A/L/A/P if present.
+- nric_number: 12 digits with dashes YYMMDD-SS-NNNN for NRIC. Passport number for passport.
+- date_of_birth: DD-MM-YYYY. For NRIC derive from IC (first 6 digits). 00-30→2000s, 31-99→1900s.
+- address: Back of MyKad only. Separate lines with \\n. For passport return "".
+- gender: NRIC last digit odd=Male, even=Female. Passport: read M/F field.
+- passport_expiry: Passport only (DD-MM-YYYY). For NRIC return "".
+- Return "" for any field you truly cannot read at all.
 
-full_name: Read the name EXACTLY as printed, UPPERCASE.
-  - Spell out each word carefully letter by letter.
-  - Common Malay/Chinese/Indian names: double-check against common spellings.
-  - Watch for easily confused letters: I/L, O/0, S/5, B/8, G/C.
-  - Include BIN/BINTI/A/L/A/P if present.
-  - Return your best reading even if slightly uncertain — the user will verify.
-
-nric_number: For NRIC, format YYMMDD-SS-NNNN (12 digits with dashes).
-  - Read each digit one by one, left to right.
-  - Double-check: the first 6 digits form a valid date (YYMMDD).
-  - Watch for easily confused digits: 0/O, 1/7, 3/8, 5/6, 6/8.
-  - For MyKad, the number appears prominently on the front of the card.
-  - Return your best reading even if slightly uncertain — the user will verify.
-
-date_of_birth: Format DD-MM-YYYY.
-  For NRIC: derive from IC number (first 6 digits = YYMMDD). 00-30 → 2000s, 31-99 → 1900s.
-  For passport: read from "Date of Birth" field.
-  If unclear, return "".
-
-address: ONLY for NRIC (back of MyKad). For passport, return "".
-  Read EXACTLY as printed, line by line, top to bottom.
-  Separate each line with \\n.
-  Do NOT add any text not printed on the card (no "MALAYSIA", no reformatting).
-  Include ALL details: unit numbers, block numbers, street numbers, postcodes.
-  Return your best reading even if some parts are slightly unclear — the user will verify.
-
-gender: For NRIC: last digit of IC — odd=Male, even=Female. For passport: M=Male, F=Female. If IC number is unclear, return "".
-
-nationality: Usually "Malaysian". Only change if clearly stated otherwise. If unclear, return "Malaysian".
-
-passport_expiry: For passport only (DD-MM-YYYY). For NRIC, return "".
-
-confidence: Rate your overall reading confidence: "high", "medium", or "low".
-
-IMPORTANT: Return your best reading for each field. The user will review and correct any errors. Only return "" if a field is completely unreadable."""
+IMPORTANT: The character-by-character reading in Steps 2-3 is CRITICAL for accuracy. Do NOT skip it."""
                 }
             ]
         }]
@@ -125,25 +113,20 @@ IMPORTANT: Return your best reading for each field. The user will review and cor
 
     response_text = message.content[0].text.strip()
 
-    # Strip markdown code fences if present
-    if response_text.startswith('```'):
-        response_text = response_text.split('\n', 1)[1].rsplit('```', 1)[0].strip()
-
-    # Try to extract JSON from response even if there's extra text
-    if not response_text.startswith('{'):
-        match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
-        if match:
-            response_text = match.group(0)
+    # Extract JSON from the response (it may have chain-of-thought text before it)
+    json_str = _extract_json(response_text)
+    if not json_str:
+        return {"error": "Could not parse extraction results", "raw": response_text[:500]}
 
     try:
-        result = json.loads(response_text)
+        result = json.loads(json_str)
     except json.JSONDecodeError:
         # Try fixing common issues: unescaped newlines in strings
         try:
-            fixed = re.sub(r'(?<!\\)\n', ' ', response_text)
+            fixed = re.sub(r'(?<!\\)\n', ' ', json_str)
             result = json.loads(fixed)
         except json.JSONDecodeError:
-            return {"error": "Could not parse extraction results", "raw": response_text}
+            return {"error": "Could not parse extraction results", "raw": response_text[:500]}
 
     # =====================================================================
     # POST-PROCESSING VALIDATION — reject bad data rather than pass it through
@@ -244,4 +227,51 @@ IMPORTANT: Return your best reading for each field. The user will review and cor
     if not result.get('nationality'):
         result['nationality'] = 'Malaysian'
 
+    # 10. Remove internal fields not needed in response
+    result.pop('confidence', None)
+
     return result
+
+
+def _extract_json(text: str) -> str:
+    """Extract JSON object from text that may contain chain-of-thought reasoning.
+
+    Tries multiple strategies:
+    1. Look for ```json code block
+    2. Find the last { ... } block in the text
+    3. Try the whole text as JSON
+    """
+    # Strategy 1: Look for ```json ... ``` code block
+    json_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if json_block_match:
+        return json_block_match.group(1).strip()
+
+    # Strategy 2: Find the last JSON object (the final answer after reasoning)
+    # Use a greedy approach to find the last { ... } block
+    last_brace = text.rfind('}')
+    if last_brace >= 0:
+        # Walk backwards to find the matching opening brace
+        depth = 0
+        for i in range(last_brace, -1, -1):
+            if text[i] == '}':
+                depth += 1
+            elif text[i] == '{':
+                depth -= 1
+            if depth == 0:
+                candidate = text[i:last_brace + 1]
+                # Quick validation: does it look like JSON with expected keys?
+                if '"full_name"' in candidate or '"nric_number"' in candidate or '"doc_type"' in candidate:
+                    return candidate
+                break
+
+    # Strategy 3: Try the whole text
+    text = text.strip()
+    if text.startswith('{') and text.endswith('}'):
+        return text
+
+    # Strategy 4: Simple regex for any JSON-like object
+    match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', text, re.DOTALL)
+    if match:
+        return match.group(0)
+
+    return None
