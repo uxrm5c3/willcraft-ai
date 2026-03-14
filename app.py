@@ -669,6 +669,9 @@ def api_ocr_nric():
                 extracted['_address_from_existing'] = True
                 break
 
+    # Remove internal confidence field (not needed in response)
+    extracted.pop('confidence', None)
+
     doc = Document(
         client_id=client_id, will_id=session.get('will_id'),
         filename=saved_name, original_filename=file.filename,

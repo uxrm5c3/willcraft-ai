@@ -630,6 +630,8 @@ function openAddIdentityModal(presetRelationship) {
     }
     if (relOther) relOther.value = '';
     modal.classList.remove('hidden');
+    // Show address suggestions from existing identities
+    showAddressSuggestions();
 }
 
 function openEditIdentityModal(personId) {
@@ -673,6 +675,8 @@ function openEditIdentityModal(personId) {
     document.getElementById('modal-nric-upload').value = '';
     document.getElementById('modal-nric-status').innerHTML = '';
     modal.classList.remove('hidden');
+    // Show address suggestions from existing identities
+    showAddressSuggestions();
 }
 
 function closeIdentityModal() {
@@ -683,6 +687,8 @@ function closeIdentityModal() {
     if (unsaved) unsaved.classList.add('hidden');
     const dup = document.getElementById('modal-duplicate-banner');
     if (dup) dup.classList.add('hidden');
+    // Hide address suggestions
+    hideAddressSuggestions();
     // Reset save button style
     const saveBtn = document.getElementById('modal-save-btn');
     if (saveBtn) {
@@ -723,6 +729,63 @@ function showUnsavedBanner() {
     }
     // Scroll save button into view
     if (saveBtn) saveBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/**
+ * Show clickable address suggestions from existing identities.
+ * Allows user to pick an existing address instead of typing manually.
+ * Called after OCR fills the modal or when the modal opens.
+ */
+function showAddressSuggestions() {
+    const container = document.getElementById('address-suggestions');
+    const list = document.getElementById('address-suggestions-list');
+    if (!container || !list) return;
+
+    // Get unique addresses from existing identities
+    const currentPersonId = document.getElementById('modal-person-id').value;
+    const addresses = [];
+    const seen = new Set();
+    (window._personRegistry || []).forEach(p => {
+        if (currentPersonId && p.id == currentPersonId) return; // skip self
+        if (!p.address || !p.address.trim()) return;
+        const normalized = p.address.trim().toLowerCase();
+        if (seen.has(normalized)) return;
+        seen.add(normalized);
+        addresses.push({ name: p.full_name, relationship: p.relationship || '', address: p.address.trim() });
+    });
+
+    if (addresses.length === 0) {
+        container.classList.add('hidden');
+        return;
+    }
+
+    list.innerHTML = '';
+    addresses.forEach(a => {
+        const shortAddr = a.address.replace(/\n/g, ', ');
+        const displayAddr = shortAddr.length > 60 ? shortAddr.substring(0, 60) + '...' : shortAddr;
+        const label = a.relationship ? `${a.name} (${a.relationship})` : a.name;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'w-full text-left px-3 py-2 border border-gray-200 rounded-lg hover:bg-primary-50 hover:border-primary-300 transition-colors text-xs';
+        btn.innerHTML = `<span class="font-medium text-gray-700">${label}</span><br><span class="text-gray-500">${displayAddr}</span>`;
+        btn.onclick = function() {
+            document.getElementById('modal-address').value = a.address;
+            // Highlight the address field briefly
+            const addrField = document.getElementById('modal-address');
+            addrField.classList.add('bg-green-50', 'border-green-400');
+            setTimeout(() => { addrField.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+        };
+        list.appendChild(btn);
+    });
+    container.classList.remove('hidden');
+}
+
+/**
+ * Hide address suggestions.
+ */
+function hideAddressSuggestions() {
+    const container = document.getElementById('address-suggestions');
+    if (container) container.classList.add('hidden');
 }
 
 /**
@@ -1003,6 +1066,8 @@ async function uploadNRICForIdentity(inputOrFile) {
                 }
                 // Show unsaved banner + highlight save button
                 showUnsavedBanner();
+                // Show address suggestions if address is empty or low quality
+                showAddressSuggestions();
                 if (statusEl) statusEl.innerHTML = '';
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadNRICForIdentity(f), docType: 'nric' });

@@ -58,11 +58,11 @@ def extract_nric_data(image_path: str) -> dict:
                     "type": "text",
                     "text": """Extract personal data from this Malaysian IC (MyKad) or Passport image.
 
-CRITICAL RULE: ACCURACY OVER COMPLETENESS.
-- If you CANNOT clearly read a field, return "" (empty string). NEVER guess or infer.
+CRITICAL RULE: ACCURACY IS PARAMOUNT.
+- Read each character carefully, one at a time.
+- If you are truly unable to read a field at all, return "" (empty string).
 - It is far better to return an empty field than wrong data.
-- Only output characters you can see clearly in the image.
-- If the image is blurry, dark, or partially obscured, return "" for affected fields.
+- If the image is very blurry, dark, or mostly obscured, return "" for affected fields.
 
 STEP 1 — DOCUMENT TYPE:
 - ID number starts with a LETTER (e.g. A12345678) → "passport"
@@ -77,14 +77,25 @@ STEP 2 — Return ONLY this JSON (no markdown, no explanation):
     "address": "",
     "gender": "",
     "nationality": "",
-    "passport_expiry": ""
+    "passport_expiry": "",
+    "confidence": ""
 }
 
 FIELD RULES:
 
-full_name: EXACTLY as printed. UPPERCASE. If any character is unclear, return "".
+full_name: Read the name EXACTLY as printed, UPPERCASE.
+  - Spell out each word carefully letter by letter.
+  - Common Malay/Chinese/Indian names: double-check against common spellings.
+  - Watch for easily confused letters: I/L, O/0, S/5, B/8, G/C.
+  - Include BIN/BINTI/A/L/A/P if present.
+  - Return your best reading even if slightly uncertain — the user will verify.
 
-nric_number: For NRIC, format YYMMDD-SS-NNNN (12 digits with dashes). Read each digit one by one. If ANY digit is unclear, return "".
+nric_number: For NRIC, format YYMMDD-SS-NNNN (12 digits with dashes).
+  - Read each digit one by one, left to right.
+  - Double-check: the first 6 digits form a valid date (YYMMDD).
+  - Watch for easily confused digits: 0/O, 1/7, 3/8, 5/6, 6/8.
+  - For MyKad, the number appears prominently on the front of the card.
+  - Return your best reading even if slightly uncertain — the user will verify.
 
 date_of_birth: Format DD-MM-YYYY.
   For NRIC: derive from IC number (first 6 digits = YYMMDD). 00-30 → 2000s, 31-99 → 1900s.
@@ -95,8 +106,8 @@ address: ONLY for NRIC (back of MyKad). For passport, return "".
   Read EXACTLY as printed, line by line, top to bottom.
   Separate each line with \\n.
   Do NOT add any text not printed on the card (no "MALAYSIA", no reformatting).
-  If the address is blurry or partially unreadable, return "".
-  Every character matters — unit numbers, block numbers, street numbers, postcodes.
+  Include ALL details: unit numbers, block numbers, street numbers, postcodes.
+  Return your best reading even if some parts are slightly unclear — the user will verify.
 
 gender: For NRIC: last digit of IC — odd=Male, even=Female. For passport: M=Male, F=Female. If IC number is unclear, return "".
 
@@ -104,7 +115,9 @@ nationality: Usually "Malaysian". Only change if clearly stated otherwise. If un
 
 passport_expiry: For passport only (DD-MM-YYYY). For NRIC, return "".
 
-REMEMBER: "" is always acceptable. Wrong data is NEVER acceptable."""
+confidence: Rate your overall reading confidence: "high", "medium", or "low".
+
+IMPORTANT: Return your best reading for each field. The user will review and correct any errors. Only return "" if a field is completely unreadable."""
                 }
             ]
         }]
