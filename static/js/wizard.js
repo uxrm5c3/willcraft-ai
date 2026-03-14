@@ -1,4 +1,4 @@
-/* WillCraft AI - Wizard JavaScript */
+/* WillCraft AI - Wizard JavaScript (v20260314c) */
 
 // Save Draft via AJAX
 async function saveDraft() {
@@ -106,6 +106,14 @@ function validateFile(file) {
 }
 
 // ===========================================================================
+// MOBILE DETECTION
+// ===========================================================================
+function isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+        || (navigator.maxTouchPoints && navigator.maxTouchPoints > 2);
+}
+
+// ===========================================================================
 // CAMERA VIEWFINDER WITH IC/DOCUMENT GUIDE BOX
 // ===========================================================================
 
@@ -117,14 +125,54 @@ let _cameraDocType = 'nric';
 
 /**
  * Open camera viewfinder with document guide overlay.
+ * On mobile: uses native camera via file input (more reliable).
+ * On desktop: tries getUserMedia with in-browser viewfinder.
  * @param {Function} callback - Called with captured File object
  * @param {string} docType - 'nric', 'property', 'financial'
  */
-async function openCameraViewfinder(callback, docType) {
+function openCameraViewfinder(callback, docType) {
     _cameraCallback = callback;
     _cameraDocType = docType || 'nric';
     _cameraCapturedBlob = null;
 
+    // On mobile, go straight to native camera (more reliable than getUserMedia)
+    if (isMobileDevice()) {
+        _openNativeCamera(callback, docType);
+        return;
+    }
+
+    // Desktop: try in-browser viewfinder with getUserMedia
+    _openDesktopViewfinder(callback, docType);
+}
+
+/**
+ * Mobile: Open native camera via file input with capture attribute.
+ * This is the most reliable way to access camera on iOS/Android.
+ */
+function _openNativeCamera(callback, docType) {
+    const tmp = document.createElement('input');
+    tmp.type = 'file';
+    tmp.accept = 'image/*';
+    tmp.capture = 'environment';
+    tmp.style.display = 'none';
+    document.body.appendChild(tmp);
+    tmp.onchange = function() {
+        if (tmp.files && tmp.files[0]) {
+            callback(tmp.files[0]);
+        }
+        document.body.removeChild(tmp);
+    };
+    // Cleanup if cancelled (no change event fired for cancel on most browsers)
+    tmp.addEventListener('cancel', function() {
+        document.body.removeChild(tmp);
+    });
+    tmp.click();
+}
+
+/**
+ * Desktop: Use getUserMedia with in-browser viewfinder overlay.
+ */
+async function _openDesktopViewfinder(callback, docType) {
     const titleEl = document.getElementById('camera-title');
     const subtitleEl = document.getElementById('camera-subtitle');
     const guideTextEl = document.getElementById('camera-guide-text');
@@ -134,25 +182,23 @@ async function openCameraViewfinder(callback, docType) {
 
     // Configure guide box shape based on document type
     if (docType === 'nric') {
-        titleEl.textContent = 'Scan IC / Passport';
-        subtitleEl.textContent = 'Fit your IC card inside the frame';
-        guideTextEl.textContent = 'Place IC / Passport here';
-        // IC card ratio: landscape rectangle
+        if (titleEl) titleEl.textContent = 'Scan IC / Passport';
+        if (subtitleEl) subtitleEl.textContent = 'Fit your IC card inside the frame';
+        if (guideTextEl) guideTextEl.textContent = 'Place IC / Passport here';
         if (maskCutout) { maskCutout.setAttribute('x','5%'); maskCutout.setAttribute('y','25%'); maskCutout.setAttribute('width','90%'); maskCutout.setAttribute('height','50%'); }
         if (guideBorder) { guideBorder.setAttribute('x','5%'); guideBorder.setAttribute('y','25%'); guideBorder.setAttribute('width','90%'); guideBorder.setAttribute('height','50%'); }
         if (cornersEl) { cornersEl.style.cssText = 'left:5%;top:25%;width:90%;height:50%;position:absolute;'; }
     } else if (docType === 'property' || docType === 'financial') {
-        titleEl.textContent = docType === 'property' ? 'Scan Property Document' : 'Scan Financial Document';
-        subtitleEl.textContent = 'Fit the document inside the frame';
-        guideTextEl.textContent = 'Place document here';
-        // Document: taller rectangle
+        if (titleEl) titleEl.textContent = docType === 'property' ? 'Scan Property Document' : 'Scan Financial Document';
+        if (subtitleEl) subtitleEl.textContent = 'Fit the document inside the frame';
+        if (guideTextEl) guideTextEl.textContent = 'Place document here';
         if (maskCutout) { maskCutout.setAttribute('x','5%'); maskCutout.setAttribute('y','10%'); maskCutout.setAttribute('width','90%'); maskCutout.setAttribute('height','75%'); }
         if (guideBorder) { guideBorder.setAttribute('x','5%'); guideBorder.setAttribute('y','10%'); guideBorder.setAttribute('width','90%'); guideBorder.setAttribute('height','75%'); }
         if (cornersEl) { cornersEl.style.cssText = 'left:5%;top:10%;width:90%;height:75%;position:absolute;'; }
     } else {
-        titleEl.textContent = 'Scan Document';
-        subtitleEl.textContent = 'Fit the document inside the frame';
-        guideTextEl.textContent = 'Align document here';
+        if (titleEl) titleEl.textContent = 'Scan Document';
+        if (subtitleEl) subtitleEl.textContent = 'Fit the document inside the frame';
+        if (guideTextEl) guideTextEl.textContent = 'Align document here';
         if (maskCutout) { maskCutout.setAttribute('x','5%'); maskCutout.setAttribute('y','20%'); maskCutout.setAttribute('width','90%'); maskCutout.setAttribute('height','55%'); }
         if (guideBorder) { guideBorder.setAttribute('x','5%'); guideBorder.setAttribute('y','20%'); guideBorder.setAttribute('width','90%'); guideBorder.setAttribute('height','55%'); }
         if (cornersEl) { cornersEl.style.cssText = 'left:5%;top:20%;width:90%;height:55%;position:absolute;'; }
@@ -160,13 +206,15 @@ async function openCameraViewfinder(callback, docType) {
 
     // Show modal, reset state
     const modal = document.getElementById('camera-modal');
-    modal.classList.remove('hidden');
-    document.getElementById('camera-controls').classList.remove('hidden');
-    document.getElementById('camera-preview-controls').classList.add('hidden');
-    document.getElementById('camera-video').classList.remove('hidden');
-    document.getElementById('camera-preview').classList.add('hidden');
-    document.getElementById('camera-overlay').classList.remove('hidden');
-    document.getElementById('camera-processing').classList.add('hidden');
+    if (modal) {
+        modal.classList.remove('hidden');
+        document.getElementById('camera-controls').classList.remove('hidden');
+        document.getElementById('camera-preview-controls').classList.add('hidden');
+        document.getElementById('camera-video').classList.remove('hidden');
+        document.getElementById('camera-preview').classList.add('hidden');
+        document.getElementById('camera-overlay').classList.remove('hidden');
+        document.getElementById('camera-processing').classList.add('hidden');
+    }
 
     await startCamera();
 }
@@ -174,6 +222,9 @@ async function openCameraViewfinder(callback, docType) {
 async function startCamera() {
     stopCameraStream();
     try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('getUserMedia not supported');
+        }
         _cameraStream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: _cameraFacingMode, width: { ideal: 1920 }, height: { ideal: 1080 } }
         });
@@ -181,17 +232,10 @@ async function startCamera() {
         video.srcObject = _cameraStream;
         await video.play();
     } catch (err) {
-        console.error('Camera error:', err);
+        console.warn('Camera error (falling back to file picker):', err.message || err);
         closeCameraModal();
         // Fallback: open file picker
-        const tmp = document.createElement('input');
-        tmp.type = 'file';
-        tmp.accept = 'image/*';
-        tmp.capture = 'environment';
-        tmp.onchange = function() {
-            if (tmp.files[0] && _cameraCallback) _cameraCallback(tmp.files[0]);
-        };
-        tmp.click();
+        _openNativeCamera(_cameraCallback || function(){}, _cameraDocType);
     }
 }
 
@@ -256,8 +300,10 @@ function handleGallerySelect(input) {
 
 function closeCameraModal() {
     stopCameraStream();
-    document.getElementById('camera-modal').classList.add('hidden');
-    document.getElementById('camera-processing').classList.add('hidden');
+    const modal = document.getElementById('camera-modal');
+    if (modal) modal.classList.add('hidden');
+    const proc = document.getElementById('camera-processing');
+    if (proc) proc.classList.add('hidden');
     _cameraCapturedBlob = null;
     const gi = document.getElementById('camera-gallery-input');
     if (gi) gi.value = '';

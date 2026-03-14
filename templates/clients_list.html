@@ -4,21 +4,21 @@
 
 {% block content %}
 <div class="max-w-5xl mx-auto px-4 py-8">
-    <div class="flex justify-between items-center mb-6">
-        <h1 class="text-2xl font-bold text-gray-900">Client Folders</h1>
+    <div class="flex flex-wrap justify-between items-center gap-2 mb-4 sm:mb-6">
+        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Client Folders</h1>
         <div class="flex gap-2">
-            <a href="/wills" class="px-4 py-2 text-gray-600 border border-gray-300 font-medium rounded-lg hover:bg-gray-50 transition-colors">
+            <a href="/wills" class="px-3 py-2 sm:px-4 text-gray-600 border border-gray-300 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors">
                 Saved Wills
             </a>
-            <a href="/wizard/step/1" class="px-4 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
-                New Will
+            <a href="/wizard/new" class="px-3 py-2 sm:px-4 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">
+                + New Will
             </a>
         </div>
     </div>
 
     <!-- Search Bar -->
-    <div class="mb-6">
-        <form method="GET" action="/clients" class="flex gap-2">
+    <div class="mb-4 sm:mb-6">
+        <form method="GET" action="/clients" class="flex flex-col sm:flex-row gap-2">
             <input type="text" name="q" value="{{ search_query or '' }}"
                    placeholder="Search by client name or IC/passport number..."
                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
@@ -39,42 +39,26 @@
     <div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-100">
         {% for item in client_data %}
         <div class="p-4 hover:bg-gray-50">
-            <div class="flex justify-between items-start">
-                <div class="flex-1">
-                    <div class="flex items-center gap-3 mb-1">
+            <div class="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-2">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 sm:gap-3 mb-1">
                         <svg class="w-5 h-5 text-primary-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-                        <a href="/clients/{{ item.client.id }}/files" class="font-semibold text-gray-900 hover:text-primary-600">
+                        <a href="/clients/{{ item.client.id }}/files" class="font-semibold text-gray-900 hover:text-primary-600 truncate">
                             {{ item.client.full_name }}
                         </a>
                         {% if item.client.nric_passport %}
-                        <span class="text-sm text-gray-400">({{ item.client.nric_passport }})</span>
+                        <span class="text-xs sm:text-sm text-gray-400 flex-shrink-0">({{ item.client.nric_passport }})</span>
                         {% endif %}
                     </div>
-                    <div class="ml-8 flex flex-wrap gap-3 text-sm text-gray-500">
-                        <span title="Will drafts in database">
-                            <svg class="inline w-4 h-4 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                            {{ item.will_count }} will{{ 's' if item.will_count != 1 }}
-                        </span>
-                        <span title="Uploaded documents">
-                            <svg class="inline w-4 h-4 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
-                            {{ item.doc_count }} doc{{ 's' if item.doc_count != 1 }}
-                        </span>
-                        {% if item.draft_count > 0 %}
-                        <span class="text-amber-600" title="Draft files on disk">
-                            {{ item.draft_count }} draft{{ 's' if item.draft_count != 1 }}
-                        </span>
-                        {% endif %}
-                        {% if item.generated_count > 0 %}
-                        <span class="text-green-600" title="Generated will files">
-                            {{ item.generated_count }} generated
-                        </span>
-                        {% endif %}
-                        {% if item.latest_will %}
-                        <span class="text-gray-400">&middot; Last updated: {{ item.latest_will.updated_at.strftime('%d %b %Y') }}</span>
-                        {% endif %}
+                    <div class="ml-7 sm:ml-8 flex flex-wrap gap-2 sm:gap-3 text-xs sm:text-sm text-gray-500">
+                        <span title="Will drafts">{{ item.will_count }} will{{ 's' if item.will_count != 1 }}</span>
+                        <span title="Documents">{{ item.doc_count }} doc{{ 's' if item.doc_count != 1 }}</span>
+                        {% if item.draft_count > 0 %}<span class="text-amber-600">{{ item.draft_count }} draft{{ 's' if item.draft_count != 1 }}</span>{% endif %}
+                        {% if item.generated_count > 0 %}<span class="text-green-600">{{ item.generated_count }} generated</span>{% endif %}
+                        {% if item.latest_will %}<span class="text-gray-400">{{ item.latest_will.updated_at.strftime('%d %b %Y') }}</span>{% endif %}
                     </div>
                 </div>
-                <a href="/clients/{{ item.client.id }}/files" class="px-4 py-1.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors flex-shrink-0">
+                <a href="/clients/{{ item.client.id }}/files" class="px-4 py-1.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors flex-shrink-0 text-center">
                     View Files
                 </a>
             </div>
@@ -88,7 +72,7 @@
         <a href="/clients" class="text-primary-600 hover:underline font-medium">Show all clients</a>
         {% else %}
         <p class="text-gray-500 mb-4">No clients yet.</p>
-        <a href="/wizard/step/1" class="text-primary-600 hover:underline font-medium">Start drafting your first will</a>
+        <a href="/wizard/new" class="text-primary-600 hover:underline font-medium">Start drafting your first will</a>
         {% endif %}
     </div>
     {% endif %}

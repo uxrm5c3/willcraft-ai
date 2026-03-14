@@ -3,27 +3,29 @@
 {% block title %}Saved Wills - WillCraft AI{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto px-4 py-8">
-    <div class="flex justify-between items-center mb-6">
-        <h1 class="text-2xl font-bold text-gray-900">Saved Wills</h1>
-        <a href="/wizard/step/1" class="px-4 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
-            New Will
+<div class="max-w-4xl mx-auto px-4 py-6 sm:py-8">
+    <div class="flex justify-between items-center mb-4 sm:mb-6">
+        <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Saved Wills</h1>
+        <a href="/wizard/new" class="px-3 py-2 sm:px-4 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">
+            + New Will
         </a>
     </div>
 
     <!-- Search Bar -->
-    <div class="mb-6">
-        <form method="GET" action="/wills" class="flex gap-2">
+    <div class="mb-4 sm:mb-6">
+        <form method="GET" action="/wills" class="flex flex-col sm:flex-row gap-2">
             <input type="text" name="q" value="{{ search_query or '' }}"
-                   placeholder="Search by testator name or IC/passport number..."
+                   placeholder="Search by name or IC number..."
                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-            <button type="submit" class="px-4 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
-                <svg class="inline w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                Search
-            </button>
-            {% if search_query %}
-            <a href="/wills" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium">Clear</a>
-            {% endif %}
+            <div class="flex gap-2">
+                <button type="submit" class="flex-1 sm:flex-none px-4 py-2 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors">
+                    <svg class="inline w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                    Search
+                </button>
+                {% if search_query %}
+                <a href="/wills" class="px-4 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium text-center">Clear</a>
+                {% endif %}
+            </div>
         </form>
         {% if search_query %}
         <p class="text-sm text-gray-500 mt-2">Showing results for "<strong>{{ search_query }}</strong>" ({{ saved_wills|length }} found)</p>
@@ -33,21 +35,21 @@
     {% if saved_wills %}
     <div class="bg-white rounded-xl shadow-sm border border-gray-100 divide-y divide-gray-100">
         {% for will in saved_wills %}
-        <div class="flex justify-between items-center p-4 hover:bg-gray-50">
-            <div>
-                <p class="font-medium text-gray-900">{{ will.title }}</p>
-                <p class="text-sm text-gray-500">
+        <div class="will-list-item flex flex-col sm:flex-row sm:justify-between sm:items-center p-4 hover:bg-gray-50 gap-3">
+            <div class="flex-1 min-w-0">
+                <p class="font-medium text-gray-900 truncate">{{ will.title }}</p>
+                <div class="text-sm text-gray-500 mt-0.5">
                     {% if will.client %}
                     <span class="font-medium text-gray-700">{{ will.client.full_name }}</span>
-                    {% if will.client.nric_passport %}<span class="text-gray-400">({{ will.client.nric_passport }})</span>{% endif %}
-                    &middot;
+                    {% if will.client.nric_passport %}<span class="text-gray-400 text-xs">({{ will.client.nric_passport }})</span>{% endif %}
+                    <br class="sm:hidden">
+                    <span class="hidden sm:inline">&middot;</span>
                     {% endif %}
-                    Status: <span class="{% if will.status == 'generated' %}text-green-600{% elif will.status == 'finalized' %}text-blue-600{% else %}text-amber-600{% endif %}">{{ will.status }}</span>
-                    &middot; Created: {{ will.created_at.strftime('%d %b %Y') }}
-                    &middot; Updated: {{ will.updated_at.strftime('%d %b %Y, %I:%M %p') }}
-                </p>
+                    <span class="{% if will.status == 'generated' %}text-green-600{% elif will.status == 'finalized' %}text-blue-600{% else %}text-amber-600{% endif %}">{{ will.status }}</span>
+                    &middot; {{ will.updated_at.strftime('%d %b %Y') }}
+                </div>
             </div>
-            <div class="flex gap-2">
+            <div class="flex gap-2 flex-shrink-0">
                 {% if will.client %}
                 <a href="/clients/{{ will.client_id }}/files" class="px-3 py-1.5 text-gray-600 text-sm hover:bg-gray-100 rounded-lg border border-gray-200" title="View client files">
                     <svg class="inline w-4 h-4 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
@@ -63,13 +65,13 @@
         {% endfor %}
     </div>
     {% else %}
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-8 sm:p-12 text-center">
         {% if search_query %}
         <p class="text-gray-500 mb-4">No wills found matching "{{ search_query }}".</p>
         <a href="/wills" class="text-primary-600 hover:underline font-medium">Show all wills</a>
         {% else %}
         <p class="text-gray-500 mb-4">No saved wills yet.</p>
-        <a href="/wizard/step/1" class="text-primary-600 hover:underline font-medium">Start drafting your first will</a>
+        <a href="/wizard/new" class="text-primary-600 hover:underline font-medium">Start drafting your first will</a>
         {% endif %}
     </div>
     {% endif %}

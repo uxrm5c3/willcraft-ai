@@ -1494,6 +1494,13 @@ def reset():
     return redirect(url_for('index'))
 
 
+@app.route('/wizard/new')
+def wizard_new():
+    """Start a brand-new will by clearing the current session."""
+    session.clear()
+    return redirect(url_for('wizard_step_identities'))
+
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
