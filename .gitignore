@@ -4,7 +4,6 @@ __pycache__/
 data/
 *.db
 .claude/
-documents/
 *.DS_Store
 venv/
 .venv/
