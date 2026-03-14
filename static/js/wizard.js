@@ -436,6 +436,12 @@ function closeOCRModal() {
     document.getElementById('ocr-confirm-modal').classList.add('hidden');
     _ocrPendingData = null;
     _ocrPendingCallback = null;
+    // Clear file inputs so the same file can be re-selected
+    const modalUpload = document.getElementById('modal-nric-upload');
+    if (modalUpload) modalUpload.value = '';
+    // Clear status messages
+    const modalStatus = document.getElementById('modal-nric-status');
+    if (modalStatus) modalStatus.innerHTML = '';
 }
 
 
@@ -561,10 +567,6 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
     }
 }
 
-
-// ===========================================================================
-// Asset Document OCR Upload
-// ===========================================================================
 
 // ===========================================================================
 // GLOBAL IDENTITY MODAL — available from all wizard steps

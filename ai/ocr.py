@@ -64,9 +64,7 @@ Return ONLY a JSON object (no markdown, no explanation):
     "full_name": "FULL NAME IN UPPERCASE",
     "nric_number": "the ID number",
     "date_of_birth": "DD-MM-YYYY",
-    "address_line1": "unit/block/apartment and street (first part of address)",
-    "address_line2": "taman/area name",
-    "address_line3": "postcode city, state, MALAYSIA",
+    "address": "complete address exactly as printed, lines separated by newline character",
     "gender": "Male or Female",
     "nationality": "Malaysian or as shown",
     "passport_expiry": "DD-MM-YYYY for passport, empty string for NRIC"
@@ -76,26 +74,29 @@ Return ONLY a JSON object (no markdown, no explanation):
 - nric_number: 12 digits as YYMMDD-SS-NNNN. Read each digit ONE BY ONE carefully.
   The first 6 digits encode the date of birth. Cross-check: if IC starts 781117, DOB must be 17-11-1978.
 - full_name: EXACTLY as printed in UPPERCASE.
-- ADDRESS EXTRACTION (CRITICAL — read with extreme care):
+
+- ADDRESS EXTRACTION — THIS IS THE MOST CRITICAL FIELD:
   The address is printed on the BACK of the MyKad (or front on older cards).
-  EVERY digit and letter matters. Read SLOWLY, character by character.
-  Pay special attention to:
-  * Unit/lot numbers (e.g. "02-08" — read both digits carefully, is it 02 or 03?)
-  * Block numbers (e.g. "BLK B1" — is it B1 or B2?)
-  * Apartment/condo names (e.g. "APT MOLEK PINE 3" — read the number at the end, is it 1, 2, or 3?)
-  * "NO" prefix before street numbers (e.g. "NO 7 JALAN..." — do NOT skip the "NO 7")
-  * Street numbers with slashes (e.g. "JALAN MOLEK 1/27" — read BOTH numbers carefully, is it 1/27 or 1/5?)
-  * Postcode (5 digits, e.g. "81100")
+  Read the address EXACTLY as printed on the card, character by character. Do NOT rearrange, summarize, or add words that are not printed.
 
-  Split address into 3 structured lines:
-  - address_line1: Unit + block + apartment name + street number + street name
-    Example: "02-08 BLK B1 APT MOLEK PINE 3, NO 7 JALAN MOLEK 1/27"
-  - address_line2: Taman/kampung/area name
-    Example: "TAMAN MOLEK"
-  - address_line3: Postcode + City + State + MALAYSIA (always add "MALAYSIA")
-    Example: "81100 JOHOR BAHRU, JOHOR, MALAYSIA"
+  READING RULES:
+  1. Start from the FIRST line of the address and read LEFT to RIGHT, TOP to BOTTOM
+  2. Read each character individually — every digit, letter, dash, slash, and comma matters
+  3. Separate each printed line with a newline character (\\n)
+  4. Do NOT add "MALAYSIA" or any text that is not physically printed on the card
+  5. Do NOT reformat or rearrange — output EXACTLY what is printed
 
-  If address is short (no taman), use just 2 lines and leave address_line2 as "".
+  COMMON TRICKY ELEMENTS (double-check these):
+  * Unit numbers: "02-08" vs "03-08" — is the first digit 0, 1, 2, or 3?
+  * Block identifiers: "BLK B1" vs "BLK B2" — which letter/number?
+  * Building names: "APT MOLEK PINE 3" — read the number at the end carefully (1, 2, or 3?)
+  * Street prefixes: "NO 7 JALAN..." — do NOT skip "NO 7"
+  * Street numbers with slashes: "JALAN MOLEK 1/27" — read BOTH numbers (is it 1/27 or 1/5?)
+  * Postcodes: always 5 digits (e.g. "81100") — read each digit
+
+  EXAMPLE of correct output for a 3-line address on the card:
+  "02-08 BLK B1 APT MOLEK PINE 3\\nNO 7 JALAN MOLEK 1/27\\nTAMAN MOLEK\\n81100 JOHOR BAHRU, JOHOR"
+
 - gender: From last digit of IC — odd = Male, even = Female.
 - passport_expiry: MUST be "" (empty string).
 - date_of_birth: Derive from IC first 6 digits. Years 00-30 → 2000-2030, 31-99 → 1931-1999.
@@ -107,7 +108,7 @@ Return ONLY a JSON object (no markdown, no explanation):
 - gender: M = Male, F = Female.
 - nationality: As shown (usually "MALAYSIAN").
 - passport_expiry: From "Date of Expiry" / "Tarikh Luput". Format DD-MM-YYYY. MUST be filled.
-- address_line1, address_line2, address_line3: Usually not on passport. Use "" for all.
+- address: Usually not on passport. Use "".
 
 Return ONLY valid JSON. No markdown code fences. No explanation."""
                 }
@@ -147,14 +148,22 @@ Return ONLY valid JSON. No markdown code fences. No explanation."""
         result['doc_type'] = 'nric'
         result['passport_expiry'] = ''
 
-    # Combine structured address lines into single "address" field
-    lines = []
-    for key in ('address_line1', 'address_line2', 'address_line3'):
-        val = result.pop(key, '').strip()
-        if val:
-            lines.append(val)
-    if lines:
-        result['address'] = '\n'.join(lines)
+    # Handle address: if old 3-line format is returned, combine into single field
+    if 'address_line1' in result or 'address_line2' in result or 'address_line3' in result:
+        lines = []
+        for key in ('address_line1', 'address_line2', 'address_line3'):
+            val = result.pop(key, '').strip()
+            if val:
+                lines.append(val)
+        if lines:
+            result['address'] = '\n'.join(lines)
+
+    # Clean up address: replace literal \n with actual newlines, strip excess whitespace
+    if 'address' in result and result['address']:
+        addr = result['address']
+        addr = addr.replace('\\n', '\n')  # literal \n to real newline
+        addr = '\n'.join(line.strip() for line in addr.split('\n') if line.strip())
+        result['address'] = addr
     elif 'address' not in result:
         result['address'] = ''
 

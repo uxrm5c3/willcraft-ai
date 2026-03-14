@@ -125,7 +125,6 @@
         </div>
     </div>
 </div>
-{% endblock %}
 
 <!-- Global Identity Modal (available on all wizard steps) -->
 <div id="identity-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4">
@@ -300,11 +299,12 @@
         </div>
     </div>
 </div>
+{% endblock %}
 
 {% block scripts %}
 <script>
     window._personRegistry = {{ (persons | default([])) | tojson }};
 </script>
-<script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260314i"></script>
+<script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260314j"></script>
 {% block wizard_scripts %}{% endblock %}
 {% endblock %}
