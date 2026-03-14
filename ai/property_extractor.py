@@ -2,7 +2,7 @@
 import base64
 import json
 import anthropic
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
 
 
 def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
@@ -48,7 +48,7 @@ def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
         }
 
     message = client.messages.create(
-        model=CLAUDE_MODEL,
+        model=CLAUDE_MODEL_FAST,
         max_tokens=1500,
         messages=[{
             "role": "user",

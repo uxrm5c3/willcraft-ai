@@ -154,6 +154,28 @@
 
         <input type="hidden" id="modal-person-id" value="">
 
+        <!-- Unsaved data banner (shown after OCR fill) -->
+        <div id="modal-unsaved-banner" class="hidden mb-4 p-3 bg-amber-50 border border-amber-300 rounded-lg">
+            <div class="flex items-start gap-2">
+                <span class="text-amber-600 text-lg leading-none mt-0.5">⚠</span>
+                <div class="flex-1">
+                    <p class="text-sm font-semibold text-amber-800">Data not saved yet</p>
+                    <p class="text-xs text-amber-600 mt-0.5">Review the fields below and click <strong>Save Identity</strong> to save.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Duplicate NRIC banner (shown if scanned IC already exists) -->
+        <div id="modal-duplicate-banner" class="hidden mb-4 p-3 bg-blue-50 border border-blue-300 rounded-lg">
+            <div class="flex items-start gap-2">
+                <span class="text-blue-600 text-lg leading-none mt-0.5">ℹ</span>
+                <div class="flex-1">
+                    <p id="duplicate-message" class="text-sm font-semibold text-blue-800"></p>
+                    <p class="text-xs text-blue-600 mt-0.5">Saving will update the existing identity instead of creating a new one.</p>
+                </div>
+            </div>
+        </div>
+
         <div class="space-y-4">
             <!-- Relationship to Testator -->
             <div>
@@ -275,7 +297,7 @@
 
         <div class="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-200">
             <button type="button" onclick="closeIdentityModal()" class="px-4 py-2 text-gray-600 hover:text-gray-800 font-medium text-sm">Cancel</button>
-            <button type="button" onclick="saveIdentityGlobal()" class="px-6 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 text-sm">Save Identity</button>
+            <button type="button" id="modal-save-btn" onclick="saveIdentityGlobal()" class="px-6 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 text-sm transition-all">Save Identity</button>
         </div>
     </div>
 </div>
@@ -305,6 +327,6 @@
 <script>
     window._personRegistry = {{ (persons | default([])) | tojson }};
 </script>
-<script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260314j"></script>
+<script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260314k"></script>
 {% block wizard_scripts %}{% endblock %}
 {% endblock %}

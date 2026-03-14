@@ -603,6 +603,18 @@ function openAddIdentityModal(presetRelationship) {
     document.getElementById('modal-phone').value = '';
     document.getElementById('modal-nric-upload').value = '';
     document.getElementById('modal-nric-status').innerHTML = '';
+    // Hide banners
+    const unsavedBanner = document.getElementById('modal-unsaved-banner');
+    if (unsavedBanner) unsavedBanner.classList.add('hidden');
+    const dupBanner = document.getElementById('modal-duplicate-banner');
+    if (dupBanner) dupBanner.classList.add('hidden');
+    // Reset save button
+    const saveBtn = document.getElementById('modal-save-btn');
+    if (saveBtn) {
+        saveBtn.classList.remove('bg-green-600', 'hover:bg-green-700', 'animate-pulse', 'ring-2', 'ring-green-400');
+        saveBtn.classList.add('bg-primary-600', 'hover:bg-primary-700');
+        saveBtn.textContent = 'Save Identity';
+    }
     // Set relationship
     const relSelect = document.getElementById('modal-relationship');
     const relOther = document.getElementById('modal-relationship-other');
@@ -666,6 +678,73 @@ function openEditIdentityModal(personId) {
 function closeIdentityModal() {
     const modal = document.getElementById('identity-modal');
     if (modal) modal.classList.add('hidden');
+    // Hide banners
+    const unsaved = document.getElementById('modal-unsaved-banner');
+    if (unsaved) unsaved.classList.add('hidden');
+    const dup = document.getElementById('modal-duplicate-banner');
+    if (dup) dup.classList.add('hidden');
+    // Reset save button style
+    const saveBtn = document.getElementById('modal-save-btn');
+    if (saveBtn) {
+        saveBtn.classList.remove('bg-green-600', 'hover:bg-green-700', 'animate-pulse', 'ring-2', 'ring-green-400');
+        saveBtn.classList.add('bg-primary-600', 'hover:bg-primary-700');
+        saveBtn.textContent = 'Save Identity';
+    }
+}
+
+/**
+ * Find existing identity by NRIC/Passport number.
+ * @param {string} nric - The NRIC or passport number to search for
+ * @param {string} excludeId - Person ID to exclude (for edit mode)
+ * @returns {object|null} The matching person or null
+ */
+function findDuplicateNRIC(nric, excludeId) {
+    if (!nric || !window._personRegistry) return null;
+    const normalized = nric.replace(/[-\s]/g, '').toUpperCase();
+    return window._personRegistry.find(p => {
+        if (excludeId && p.id === excludeId) return false;
+        const pNric = (p.nric_passport || '').replace(/[-\s]/g, '').toUpperCase();
+        return pNric === normalized;
+    }) || null;
+}
+
+/**
+ * Show unsaved data banner and highlight save button after OCR fill.
+ */
+function showUnsavedBanner() {
+    const banner = document.getElementById('modal-unsaved-banner');
+    if (banner) banner.classList.remove('hidden');
+    // Highlight save button
+    const saveBtn = document.getElementById('modal-save-btn');
+    if (saveBtn) {
+        saveBtn.classList.remove('bg-primary-600', 'hover:bg-primary-700');
+        saveBtn.classList.add('bg-green-600', 'hover:bg-green-700', 'ring-2', 'ring-green-400');
+        saveBtn.textContent = '✓ Save Identity';
+    }
+    // Scroll save button into view
+    if (saveBtn) saveBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/**
+ * Check for duplicate and switch to edit mode if found.
+ * @param {string} nricNumber - The scanned NRIC number
+ */
+function checkAndHandleDuplicate(nricNumber) {
+    const currentId = document.getElementById('modal-person-id').value;
+    const existing = findDuplicateNRIC(nricNumber, currentId);
+    const dupBanner = document.getElementById('modal-duplicate-banner');
+    if (existing) {
+        // Switch to edit mode for the existing person
+        document.getElementById('modal-person-id').value = existing.id;
+        document.getElementById('modal-title').textContent = 'Update Identity';
+        if (dupBanner) {
+            const msg = document.getElementById('duplicate-message');
+            if (msg) msg.textContent = `This NRIC already exists for "${existing.full_name}". Will update existing record.`;
+            dupBanner.classList.remove('hidden');
+        }
+    } else {
+        if (dupBanner) dupBanner.classList.add('hidden');
+    }
 }
 
 function toggleRelationshipOther() {
@@ -684,6 +763,23 @@ async function saveIdentityGlobal() {
         alert('Name and NRIC/Passport are required.');
         return;
     }
+
+    // Check for duplicate NRIC before creating new identity
+    if (!personId) {
+        const existing = findDuplicateNRIC(nricPassport);
+        if (existing) {
+            const update = confirm(`An identity with this NRIC/Passport already exists:\n\n${existing.full_name} (${existing.nric_passport})\n\nDo you want to UPDATE the existing record instead?`);
+            if (update) {
+                // Switch to edit mode
+                document.getElementById('modal-person-id').value = existing.id;
+            } else {
+                return; // Cancel save
+            }
+        }
+    }
+
+    // Re-read personId in case it was updated by duplicate check
+    const finalPersonId = document.getElementById('modal-person-id').value;
 
     const dobRaw = document.getElementById('modal-dob').value;
     let dob = '';
@@ -722,8 +818,8 @@ async function saveIdentityGlobal() {
         relationship: relationship,
     };
 
-    const url = personId ? `/api/persons/${personId}` : '/api/persons';
-    const method = personId ? 'PUT' : 'POST';
+    const url = finalPersonId ? `/api/persons/${finalPersonId}` : '/api/persons';
+    const method = finalPersonId ? 'PUT' : 'POST';
 
     try {
         const resp = await fetch(url, {
@@ -735,8 +831,8 @@ async function saveIdentityGlobal() {
         if (result.ok) {
             // Update person registry
             if (result.person) {
-                if (personId) {
-                    const idx = window._personRegistry.findIndex(p => p.id === personId);
+                if (finalPersonId) {
+                    const idx = window._personRegistry.findIndex(p => p.id === finalPersonId);
                     if (idx >= 0) window._personRegistry[idx] = result.person;
                 } else {
                     window._personRegistry.push(result.person);
@@ -887,6 +983,7 @@ async function uploadNRICForIdentity(inputOrFile) {
             delete extracted.doc_type;
 
             showOCRConfirmation(extracted, file, (confirmed) => {
+                // Apply confirmed data to identity modal fields
                 if (confirmed.full_name) document.getElementById('modal-full-name').value = confirmed.full_name;
                 if (confirmed.nric_number) document.getElementById('modal-nric-passport').value = confirmed.nric_number;
                 if (confirmed.address) document.getElementById('modal-address').value = confirmed.address;
@@ -901,8 +998,13 @@ async function uploadNRICForIdentity(inputOrFile) {
                     const expiryVal = convertDateForInput(confirmed.passport_expiry);
                     if (expiryVal) document.getElementById('modal-passport-expiry').value = expiryVal;
                 }
-                if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Data applied!</span>';
-                setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
+                // Check for duplicate NRIC — switch to update mode if exists
+                if (confirmed.nric_number) {
+                    checkAndHandleDuplicate(confirmed.nric_number);
+                }
+                // Show unsaved banner + highlight save button
+                showUnsavedBanner();
+                if (statusEl) statusEl.innerHTML = '';
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadNRICForIdentity(f), docType: 'nric' });
         } else {
