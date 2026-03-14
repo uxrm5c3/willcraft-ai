@@ -354,7 +354,8 @@
 {% block scripts %}
 <script>
     window._personRegistry = {{ (persons | default([])) | tojson }};
+    window._testatorPersonId = {{ (testator_person_id | default('')) | tojson }};
 </script>
-<script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260314p"></script>
+<script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260315a"></script>
 {% block wizard_scripts %}{% endblock %}
 {% endblock %}

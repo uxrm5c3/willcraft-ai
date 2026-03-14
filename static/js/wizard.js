@@ -1,4 +1,12 @@
-/* WillCraft AI - Wizard JavaScript (v20260314p) */
+/* WillCraft AI - Wizard JavaScript (v20260315a) */
+
+// Apply dropdown filtering on initial page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Filter person dropdowns based on data-role attributes
+    if (document.querySelector('select.person-select[data-role]')) {
+        refreshPersonDropdowns();
+    }
+});
 
 // Save Draft via AJAX
 async function saveDraft() {
@@ -1139,12 +1147,118 @@ function addAnotherIdentity() {
 }
 
 /**
+ * Calculate age from person's date_of_birth (DD-MM-YYYY) or nric_passport (YYMMDD-SS-NNNN).
+ * Returns null if age cannot be determined.
+ */
+function getPersonAge(person) {
+    const today = new Date();
+    let birthYear, birthMonth, birthDay;
+
+    // Try date_of_birth first (formats: DD-MM-YYYY or YYYY-MM-DD)
+    if (person.date_of_birth) {
+        const dob = person.date_of_birth;
+        if (dob.includes('-') && dob.length >= 8) {
+            const parts = dob.split('-');
+            if (parts[0].length === 4) {
+                birthYear = parseInt(parts[0]);
+                birthMonth = parseInt(parts[1]);
+                birthDay = parseInt(parts[2]);
+            } else {
+                birthDay = parseInt(parts[0]);
+                birthMonth = parseInt(parts[1]);
+                birthYear = parseInt(parts[2]);
+            }
+        }
+    }
+
+    // Fall back to NRIC (YYMMDD-SS-NNNN or 12-digit)
+    if (!birthYear && person.nric_passport) {
+        const nric = person.nric_passport.replace(/-/g, '');
+        if (/^\d{12}$/.test(nric)) {
+            const yy = parseInt(nric.substring(0, 2));
+            birthMonth = parseInt(nric.substring(2, 4));
+            birthDay = parseInt(nric.substring(4, 6));
+            const currentYY = today.getFullYear() % 100;
+            birthYear = yy > (currentYY + 5) ? 1900 + yy : 2000 + yy;
+        }
+    }
+
+    if (!birthYear || !birthMonth || !birthDay) return null;
+    if (birthMonth < 1 || birthMonth > 12 || birthDay < 1 || birthDay > 31) return null;
+
+    let age = today.getFullYear() - birthYear;
+    const monthDiff = (today.getMonth() + 1) - birthMonth;
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDay)) {
+        age--;
+    }
+    return age;
+}
+
+/**
+ * Get the testator's person ID from the registry or session.
+ */
+function getTestatorId() {
+    // Check registry for person with relationship "Testator"
+    for (const p of window._personRegistry) {
+        if (p.relationship && p.relationship.toLowerCase() === 'testator') {
+            return p.id;
+        }
+    }
+    // Check step 2 selector if on that page
+    const testatorSelect = document.getElementById('testator-identity');
+    if (testatorSelect && testatorSelect.value) {
+        return testatorSelect.value;
+    }
+    // Check session data passed from server
+    if (window._testatorPersonId) {
+        return window._testatorPersonId;
+    }
+    return null;
+}
+
+/**
+ * Build filtered person options HTML for dynamic dropdown creation.
+ * @param {string} role - "testator", "executor", "guardian", "beneficiary", "trustee"
+ * @returns {string} HTML string of <option> elements
+ */
+function buildFilteredPersonOptions(role) {
+    const testatorId = getTestatorId();
+    let html = '<option value="">-- Select an identity --</option>';
+    for (const p of window._personRegistry) {
+        if (!_personPassesFilter(p, role, testatorId)) continue;
+        html += `<option value="${p.id}" data-name="${p.full_name}" data-nric="${p.nric_passport}" data-address="${p.address || ''}" data-nationality="${p.nationality || 'Malaysian'}" data-dob="${p.date_of_birth || ''}" data-gender="${p.gender || ''}" data-email="${p.email || ''}" data-phone="${p.phone || ''}" data-relationship="${p.relationship || ''}">${p.full_name} (${p.nric_passport})${p.relationship ? ' [' + p.relationship + ']' : ''}</option>`;
+    }
+    return html;
+}
+
+/**
+ * Check if a person passes the filter for a given role.
+ */
+function _personPassesFilter(person, role, testatorId) {
+    if (role === 'testator') {
+        const age = getPersonAge(person);
+        if (age !== null && age < 18) return false;
+    } else if (role === 'executor' || role === 'trustee' || role === 'guardian') {
+        const age = getPersonAge(person);
+        if (age !== null && age < 18) return false;
+        if (testatorId && person.id === testatorId) return false;
+    } else if (role === 'beneficiary') {
+        if (testatorId && person.id === testatorId) return false;
+    }
+    return true;
+}
+
+/**
  * Refresh all <select> elements with class "person-select" from window._personRegistry.
- * Preserves currently selected value.
+ * Preserves currently selected value. Filters based on data-role attribute.
  */
 function refreshPersonDropdowns() {
+    const testatorId = getTestatorId();
+
     document.querySelectorAll('select.person-select').forEach(sel => {
         const currentVal = sel.value;
+        const role = sel.dataset.role || '';
+
         // Keep the first placeholder option
         const placeholder = sel.querySelector('option[value=""]');
         sel.innerHTML = '';
@@ -1157,6 +1271,9 @@ function refreshPersonDropdowns() {
             sel.appendChild(opt);
         }
         for (const p of window._personRegistry) {
+            // Apply filters based on role
+            if (!_personPassesFilter(p, role, testatorId)) continue;
+
             const opt = document.createElement('option');
             opt.value = p.id;
             opt.textContent = `${p.full_name} (${p.nric_passport})${p.relationship ? ' [' + p.relationship + ']' : ''}`;
@@ -1186,6 +1303,17 @@ function showIdentityInfo(selectEl, infoId) {
     if (!opt || !opt.value) { info.classList.add('hidden'); info.innerHTML = ''; return; }
     info.innerHTML = `${opt.dataset.name || ''} &middot; ${opt.dataset.nric || ''} &middot; ${opt.dataset.address || 'N/A'}`;
     info.classList.remove('hidden');
+
+    // Auto-populate relationship field from identity's relationship
+    if (opt.dataset.relationship) {
+        const entry = selectEl.closest('.executor-entry, .guardian-entry, .beneficiary-entry, [class*="-entry"]');
+        if (entry) {
+            const relInput = entry.querySelector('input[name*="_relationship_"]');
+            if (relInput && !relInput.value) {
+                relInput.value = opt.dataset.relationship;
+            }
+        }
+    }
 }
 
 /**

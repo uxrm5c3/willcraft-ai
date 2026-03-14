@@ -23,6 +23,13 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 
 db.init_app(app)
 
+
+@app.context_processor
+def inject_testator_id():
+    """Make testator_person_id available to all templates."""
+    return {'testator_person_id': session.get('step1', {}).get('person_id', '')}
+
+
 with app.app_context():
     os.makedirs(DATA_DIR, exist_ok=True)
     db.create_all()

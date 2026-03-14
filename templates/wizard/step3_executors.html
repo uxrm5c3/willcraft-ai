@@ -37,6 +37,7 @@
                     <div class="flex gap-2">
                         <select name="exec_person_id_{{ loop.index0 }}" required
                                 onchange="showIdentityInfo(this, 'exec-info-{{ loop.index0 }}')"
+                                data-role="executor"
                                 class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                             <option value="">-- Select an identity --</option>
                             {% for person in persons %}
@@ -99,10 +100,7 @@ function addExecutor() {
     if (executorCount >= 4) { alert('Maximum 4 executors allowed.'); return; }
     const container = document.getElementById('executors-container');
     const idx = executorCount;
-    let personOptions = '<option value="">-- Select an identity --</option>';
-    for (const p of window._personRegistry) {
-        personOptions += `<option value="${p.id}" data-name="${p.full_name}" data-nric="${p.nric_passport}" data-address="${p.address || ''}" data-relationship="${p.relationship || ''}">${p.full_name} (${p.nric_passport})${p.relationship ? ' [' + p.relationship + ']' : ''}</option>`;
-    }
+    const personOptions = buildFilteredPersonOptions('executor');
     const html = `
     <div class="executor-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="${idx}">
         <div class="flex justify-between items-center mb-4">
@@ -120,6 +118,7 @@ function addExecutor() {
                 <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
                 <div class="flex gap-2">
                     <select name="exec_person_id_${idx}" required onchange="showIdentityInfo(this, 'exec-info-${idx}')"
+                            data-role="executor"
                             class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                         ${personOptions}
                     </select>
