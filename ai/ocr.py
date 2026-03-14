@@ -85,6 +85,22 @@ CRITICAL DATE VALIDATION for NRIC:
 
 STEP 4 — READ THE ADDRESS (back of MyKad only, skip for passport):
 Read each line of the address top to bottom. Write each line separately.
+Address is on the BACK of MyKad, printed in small text. Read VERY carefully.
+
+Spell out each line word by word:
+"Address line 1: [word1] [word2] ..."
+"Address line 2: [word1] [word2] ..."
+"Address line 3: [word1] [word2] ..."
+
+Malaysian address patterns to expect:
+- Line 1: Unit/house number + street name (e.g., "NO 12 JALAN MAWAR 3")
+- Line 2: Neighbourhood/area (e.g., "TAMAN BUKIT INDAH")
+- Line 3: Postcode + City + State (e.g., "81200 JOHOR BAHRU JOHOR")
+- Common street words: JALAN, LORONG, PERSIARAN, LEBUH, LENGKOK, SOLOK
+- Common area words: TAMAN, KAMPUNG, FLAT, PANGSAPURI, APARTMENT, KONDOMINIUM
+- Postcode: always 5 digits (e.g., 81200, 47810, 53000)
+- States: JOHOR, KEDAH, KELANTAN, MELAKA, NEGERI SEMBILAN, PAHANG, PERAK, PERLIS, PULAU PINANG, SABAH, SARAWAK, SELANGOR, TERENGGANU, W.P. KUALA LUMPUR, W.P. PUTRAJAYA, W.P. LABUAN
+- Watch for: 0 vs O, 1 vs I, 5 vs S, 8 vs B in address text
 
 STEP 5 — OUTPUT THE FINAL JSON:
 After your analysis above, output ONLY this JSON block (no extra text after it):
@@ -237,11 +253,13 @@ IMPORTANT: The character-by-character reading in Steps 2-3 is CRITICAL for accur
         if lines:
             result['address'] = '\n'.join(lines)
 
-    # 7. Clean up address formatting
+    # 7. Clean up address formatting + Malaysian address post-processing
     if result.get('address'):
         addr = result['address']
         addr = addr.replace('\\n', '\n')  # literal \n to real newline
         addr = '\n'.join(line.strip() for line in addr.split('\n') if line.strip())
+        # Fix common OCR errors in Malaysian addresses
+        addr = _clean_malaysian_address(addr)
         result['address'] = addr
     elif 'address' not in result:
         result['address'] = ''
@@ -256,10 +274,130 @@ IMPORTANT: The character-by-character reading in Steps 2-3 is CRITICAL for accur
     if not result.get('nationality'):
         result['nationality'] = 'Malaysian'
 
-    # 10. Remove internal fields not needed in response
+    # 10. If address is empty and doc_type is NRIC, try a second focused OCR pass
+    if result.get('doc_type') == 'nric' and not result.get('address', '').strip():
+        try:
+            address_result = _extract_address_only(client, content_block)
+            if address_result:
+                result['address'] = address_result
+        except Exception:
+            pass  # Address retry failed — user can enter manually
+
+    # 11. Remove internal fields not needed in response
     result.pop('confidence', None)
+    result.pop('_nric_date_invalid', None)
 
     return result
+
+
+def _clean_malaysian_address(addr: str) -> str:
+    """Fix common OCR errors in Malaysian addresses."""
+    if not addr:
+        return addr
+
+    lines = addr.split('\n')
+    cleaned = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Uppercase (MyKad addresses are always uppercase)
+        line = line.upper()
+        # Fix common abbreviation errors
+        line = re.sub(r'\bJLN\b', 'JALAN', line)
+        line = re.sub(r'\bLRG\b', 'LORONG', line)
+        line = re.sub(r'\bTMN\b', 'TAMAN', line)
+        line = re.sub(r'\bKG\b', 'KAMPUNG', line)
+        line = re.sub(r'\bAPT\b', 'APARTMENT', line)
+        line = re.sub(r'\bBLK\b', 'BLOK', line)
+        # Fix O/0 confusion in postcodes: 5-digit sequences should be all digits
+        postcode_match = re.search(r'\b([O0-9]{5})\b', line)
+        if postcode_match:
+            pc = postcode_match.group(1).replace('O', '0').replace('o', '0')
+            line = line[:postcode_match.start(1)] + pc + line[postcode_match.end(1):]
+        # Fix common state name misspellings
+        state_fixes = {
+            r'SELANC[O0]R\b': 'SELANGOR',
+            r'J[O0]H[O0]R\b': 'JOHOR',
+            r'MELA[KG]A\b': 'MELAKA',
+            r'PERA[KG]\b': 'PERAK',
+            r'PAHANG\b': 'PAHANG',
+            r'KEDAH\b': 'KEDAH',
+            r'KUALA\s*LUMPUR': 'KUALA LUMPUR',
+            r'PU[LI]AU\s*PINANG': 'PULAU PINANG',
+            r'TERENGGAN[OU]\b': 'TERENGGANU',
+            r'NEGERI\s*SEMBI[LI]AN': 'NEGERI SEMBILAN',
+        }
+        for pattern, replacement in state_fixes.items():
+            line = re.sub(pattern, replacement, line, flags=re.IGNORECASE)
+        cleaned.append(line)
+
+    return '\n'.join(cleaned)
+
+
+def _extract_address_only(client, content_block) -> str:
+    """Second-pass OCR focused specifically on reading the address from MyKad back.
+
+    Uses a simpler, address-focused prompt to improve readability.
+    """
+    message = client.messages.create(
+        model=CLAUDE_MODEL_FAST,
+        max_tokens=1024,
+        messages=[{
+            "role": "user",
+            "content": [
+                content_block,
+                {
+                    "type": "text",
+                    "text": """This is the back of a Malaysian MyKad (IC card). I need you to read ONLY the address.
+
+The address is the multi-line text block printed on the card. It is typically 2-4 lines.
+
+Read VERY CAREFULLY, word by word, character by character. The text may be small or blurry.
+
+Malaysian address format:
+- Line 1: House/unit number + street (e.g., "NO 12 JALAN MAWAR 3" or "B-12-3 KONDOMINIUM SERI")
+- Line 2: Area/neighbourhood (e.g., "TAMAN BUKIT INDAH" or "KAMPUNG BARU")
+- Line 3: Postcode (5 digits) + City + State
+
+Common words: JALAN, LORONG, TAMAN, KAMPUNG, FLAT, PANGSAPURI, PERSIARAN, LEBUH
+Postcodes: always exactly 5 digits (10000-99999)
+States: JOHOR, KEDAH, KELANTAN, MELAKA, NEGERI SEMBILAN, PAHANG, PERAK, PERLIS, PULAU PINANG, SABAH, SARAWAK, SELANGOR, TERENGGANU, W.P. KUALA LUMPUR, W.P. PUTRAJAYA, W.P. LABUAN
+
+Return ONLY the address text, each line separated by \\n. No JSON, no explanation.
+If you cannot read the address at all, return exactly: UNREADABLE"""
+                }
+            ]
+        }]
+    )
+
+    text = message.content[0].text.strip()
+    if not text or text == 'UNREADABLE' or len(text) < 5:
+        return ''
+
+    # Clean up the response
+    # Remove any markdown or quotes
+    text = text.strip('"\'`')
+    text = re.sub(r'^```\w*\s*', '', text)
+    text = re.sub(r'\s*```$', '', text)
+
+    # Convert literal \n to real newlines
+    text = text.replace('\\n', '\n')
+
+    # Clean each line
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+
+    # Validate: at least one line should look like a Malaysian address
+    has_address_words = any(
+        re.search(r'(JALAN|JLN|LORONG|LRG|TAMAN|TMN|KAMPUNG|KG|FLAT|NO\s*\.?\s*\d|PERSIARAN|LEBUH|PANGSAPURI|APARTMENT|APT|KONDOMINIUM|BLOK|BLK)', line, re.IGNORECASE)
+        for line in lines
+    )
+    has_postcode = any(re.search(r'\b\d{5}\b', line) for line in lines)
+
+    if not has_address_words and not has_postcode and len(lines) < 2:
+        return ''
+
+    return '\n'.join(lines)
 
 
 def _extract_json(text: str) -> str:
