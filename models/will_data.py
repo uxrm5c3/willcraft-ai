@@ -23,7 +23,8 @@ class WillData(BaseModel):
     executors: List[Executor] = []
     trustee_same_as_executor: bool = True
     trustees: Optional[List[Trustee]] = None
-    substitute_trustee: Optional[Trustee] = None
+    substitute_trustee: Optional[Trustee] = None  # backward compat (first substitute)
+    substitute_trustees: Optional[List[Trustee]] = None  # multiple joint substitutes
     guardians: Optional[List[Guardian]] = None
     guardian_allowance: Optional[GuardianAllowance] = None
     exclude_spouse_as_guardian: bool = False

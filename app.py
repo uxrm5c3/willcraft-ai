@@ -459,15 +459,27 @@ def build_will_data():
     trustee_same_as_executor = trustee_session.get('same_as_executor', True)
     trustees = None
     substitute_trustee = None
+    substitute_trustees = None
     if not trustee_same_as_executor:
         trustees_raw = trustee_session.get('trustees', [])
         if trustees_raw:
             trustees = [Trustee(**t) for t in trustees_raw if t.get('full_name')]
             if not trustees:
                 trustees = None
-        sub_trustee_raw = trustee_session.get('substitute_trustee', {})
-        if sub_trustee_raw and sub_trustee_raw.get('full_name'):
-            substitute_trustee = Trustee(**sub_trustee_raw)
+        # Support multiple substitute trustees (new format)
+        sub_trustees_raw = trustee_session.get('substitute_trustees', [])
+        if sub_trustees_raw:
+            substitute_trustees = [Trustee(**st) for st in sub_trustees_raw if st.get('full_name')]
+            if substitute_trustees:
+                substitute_trustee = substitute_trustees[0]  # backward compat
+            else:
+                substitute_trustees = None
+        else:
+            # Backward compat: single substitute_trustee
+            sub_trustee_raw = trustee_session.get('substitute_trustee', {})
+            if sub_trustee_raw and sub_trustee_raw.get('full_name'):
+                substitute_trustee = Trustee(**sub_trustee_raw)
+                substitute_trustees = [substitute_trustee]
 
     # -- Section C: Guardians (optional) --------------------------------------
     guardians_data = session.get('step3_guardians', [])
@@ -547,6 +559,7 @@ def build_will_data():
         trustee_same_as_executor=trustee_same_as_executor,
         trustees=trustees,
         substitute_trustee=substitute_trustee,
+        substitute_trustees=substitute_trustees,
         guardians=guardians,
         guardian_allowance=guardian_allowance,
         beneficiaries=beneficiaries,
@@ -1591,26 +1604,28 @@ def wizard_step_executors():
             'role': role,
         })
 
-    # Substitute executor
-    sub_exec_pid = request.form.get('sub_exec_person_id', '').strip()
-    if sub_exec_pid:
-        sub_person = _get_person_from_registry(sub_exec_pid)
-        if sub_person:
-            executors.append({
-                'person_id': sub_exec_pid,
-                'full_name': sub_person['full_name'],
-                'nric_passport': sub_person['nric_passport'],
-                'address': sub_person['address'],
-                'relationship': request.form.get('sub_exec_relationship', '').strip(),
-                'role': 'Substitute',
-            })
+    # Substitute executor(s) - now supports multiple joint substitutes
+    sub_exec_count = int(request.form.get('sub_executor_count', 1))
+    for i in range(sub_exec_count):
+        sub_exec_pid = request.form.get(f'sub_exec_person_id_{i}', '').strip()
+        if sub_exec_pid:
+            sub_person = _get_person_from_registry(sub_exec_pid)
+            if sub_person:
+                executors.append({
+                    'person_id': sub_exec_pid,
+                    'full_name': sub_person['full_name'],
+                    'nric_passport': sub_person['nric_passport'],
+                    'address': sub_person['address'],
+                    'relationship': request.form.get(f'sub_exec_relationship_{i}', '').strip(),
+                    'role': 'Substitute',
+                })
 
     session['step2_executors'] = executors
     session['step3_executor_type'] = executor_type
 
     # Parse trustees
     trustee_same = bool(request.form.get('trustee_same_as_executor'))
-    trustee_data = {'same_as_executor': trustee_same, 'trustees': [], 'substitute_trustee': {}}
+    trustee_data = {'same_as_executor': trustee_same, 'trustees': [], 'substitute_trustee': {}, 'substitute_trustees': []}
 
     if not trustee_same:
         trustee_count = int(request.form.get('trustee_count', 1))
@@ -1627,18 +1642,25 @@ def wizard_step_executors():
                 'relationship': request.form.get(f'trustee_relationship_{i}', '').strip(),
             })
 
-        # Substitute trustee
-        sub_tr_pid = request.form.get('sub_trustee_person_id', '').strip()
-        if sub_tr_pid:
-            sub_tr = _get_person_from_registry(sub_tr_pid)
-            if sub_tr:
-                trustee_data['substitute_trustee'] = {
-                    'person_id': sub_tr_pid,
-                    'full_name': sub_tr['full_name'],
-                    'nric_passport': sub_tr['nric_passport'],
-                    'address': sub_tr['address'],
-                    'relationship': request.form.get('sub_trustee_relationship', '').strip(),
-                }
+        # Substitute trustee(s) - now supports multiple joint substitutes
+        sub_tr_count = int(request.form.get('sub_trustee_count', 1))
+        sub_trustees = []
+        for i in range(sub_tr_count):
+            sub_tr_pid = request.form.get(f'sub_trustee_person_id_{i}', '').strip()
+            if sub_tr_pid:
+                sub_tr = _get_person_from_registry(sub_tr_pid)
+                if sub_tr:
+                    sub_trustees.append({
+                        'person_id': sub_tr_pid,
+                        'full_name': sub_tr['full_name'],
+                        'nric_passport': sub_tr['nric_passport'],
+                        'address': sub_tr['address'],
+                        'relationship': request.form.get(f'sub_trustee_relationship_{i}', '').strip(),
+                    })
+        trustee_data['substitute_trustees'] = sub_trustees
+        # Keep backward compat: set substitute_trustee to first one if any
+        if sub_trustees:
+            trustee_data['substitute_trustee'] = sub_trustees[0]
 
     session['step3_trustees'] = trustee_data
     session.modified = True

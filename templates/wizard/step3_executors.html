@@ -8,7 +8,7 @@
     <p class="text-gray-600 mt-1">Appoint person(s) to carry out your will and manage assets for minor beneficiaries.</p>
 </div>
 
-<form method="POST" action="/wizard/step/3" class="space-y-8">
+<form method="POST" action="/wizard/step/3" class="space-y-8" onsubmit="return validateStep3Form()">
 
     <!-- ═══════════ SECTION 1: EXECUTORS ═══════════ -->
     <div>
@@ -94,7 +94,7 @@
                         <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
                         <div class="flex gap-2">
                             <select name="exec_person_id_{{ loop.index0 }}" required
-                                    onchange="showIdentityInfo(this, 'exec-info-{{ loop.index0 }}')"
+                                    onchange="validateExecutorAge(this); showIdentityInfo(this, 'exec-info-{{ loop.index0 }}')"
                                     data-role="executor"
                                     class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                                 <option value="">-- Select an identity --</option>
@@ -138,46 +138,74 @@
             </button>
         </div>
 
-        <!-- Substitute Executor -->
+        <!-- Substitute Executor(s) -->
         <div class="border-t border-gray-200 pt-4 mt-4">
-            <h4 class="text-sm font-semibold text-gray-600 mb-3">Substitute Executor <span class="text-gray-400 font-normal">(optional)</span></h4>
-            <p class="text-xs text-gray-500 mb-3">If the appointed executor(s) are unable or unwilling to act, the substitute takes over.</p>
-            {% set sub_exec = substitute_executors[0] if substitute_executors else {} %}
-            <div class="grid md:grid-cols-2 gap-4">
-                <div class="md:col-span-2">
-                    <div class="flex gap-2">
-                        <select name="sub_exec_person_id"
-                                onchange="showIdentityInfo(this, 'sub-exec-info')"
-                                data-role="executor"
-                                class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                            <option value="">-- No substitute (optional) --</option>
-                            {% for person in persons %}
-                            <option value="{{ person.id }}"
-                                    data-name="{{ person.full_name }}"
-                                    data-nric="{{ person.nric_passport }}"
-                                    data-address="{{ person.address or '' }}"
-                                    data-relationship="{{ person.relationship or '' }}"
-                                    {% if sub_exec.get('person_id') == person.id %}selected{% endif %}>
-                                {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
-                            </option>
-                            {% endfor %}
-                        </select>
-                        <button type="button" onclick="openAddIdentityModal()"
-                                class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
-                            + New
-                        </button>
-                    </div>
-                    <div id="sub-exec-info" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not sub_exec.get('person_id') %}hidden{% endif %}">
-                        {% if sub_exec.get('person_id') %}{{ sub_exec.full_name }} &middot; {{ sub_exec.nric_passport }} &middot; {{ sub_exec.address }}{% endif %}
-                    </div>
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator</label>
-                    <input type="text" name="sub_exec_relationship" value="{{ sub_exec.get('relationship', '') }}"
-                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="e.g., Brother, Friend">
-                </div>
+            <div class="flex items-center gap-2 mb-2">
+                <h4 class="text-sm font-semibold text-gray-600">Substitute Executor(s) <span class="text-gray-400 font-normal">(recommended)</span></h4>
             </div>
+            <p class="text-xs text-gray-500 mb-3">If the appointed executor(s) are unable or unwilling to act, the substitute(s) take over. When minor beneficiaries exist, joint substitute executors (at least 2) are strongly recommended.</p>
+
+            <!-- Joint substitute warning for minors -->
+            <div id="sub-exec-minor-warning" class="hidden p-3 bg-amber-50 rounded-lg text-xs border border-amber-300 mb-3">
+                <span class="font-semibold text-amber-800">⚠ Minor beneficiaries detected:</span>
+                <span class="text-amber-700">At least 2 joint substitute executors are required under PAA s.4(2).</span>
+            </div>
+
+            {% set sub_execs = substitute_executors if substitute_executors else [{}] %}
+            <div id="sub-executors-container">
+                {% for sub_exec in sub_execs %}
+                <div class="sub-executor-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="{{ loop.index0 }}">
+                    <div class="flex justify-between items-center mb-3">
+                        <h5 class="font-medium text-gray-600 text-sm">Substitute Executor {{ loop.index }}</h5>
+                        {% if loop.index > 1 %}
+                        <button type="button" onclick="removeSubExecutor(this)" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
+                        {% endif %}
+                    </div>
+                    <div class="grid md:grid-cols-2 gap-3">
+                        <div class="md:col-span-2">
+                            <div class="flex gap-2">
+                                <select name="sub_exec_person_id_{{ loop.index0 }}"
+                                        onchange="validateExecutorAge(this); showIdentityInfo(this, 'sub-exec-info-{{ loop.index0 }}')"
+                                        data-role="executor"
+                                        class="person-select flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm">
+                                    <option value="">-- Select identity (optional) --</option>
+                                    {% for person in persons %}
+                                    <option value="{{ person.id }}"
+                                            data-name="{{ person.full_name }}"
+                                            data-nric="{{ person.nric_passport }}"
+                                            data-address="{{ person.address or '' }}"
+                                            data-relationship="{{ person.relationship or '' }}"
+                                            {% if sub_exec.get('person_id') == person.id %}selected{% endif %}>
+                                        {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                                <button type="button" onclick="openAddIdentityModal()"
+                                        class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-xs font-medium whitespace-nowrap">
+                                    + New
+                                </button>
+                            </div>
+                            <div id="sub-exec-info-{{ loop.index0 }}" class="mt-1 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not sub_exec.get('person_id') %}hidden{% endif %}">
+                                {% if sub_exec.get('person_id') %}{{ sub_exec.full_name }} &middot; {{ sub_exec.nric_passport }} &middot; {{ sub_exec.address }}{% endif %}
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                            <input type="text" name="sub_exec_relationship_{{ loop.index0 }}" value="{{ sub_exec.get('relationship', '') }}"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                                   placeholder="e.g., Brother, Friend">
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <input type="hidden" name="sub_executor_count" id="sub-executor-count" value="{{ sub_execs|length }}">
+
+            <button type="button" onclick="addSubExecutor()" id="add-sub-executor-btn"
+                    class="px-3 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors text-sm">
+                + Add Another Substitute Executor
+            </button>
         </div>
     </div>
 
@@ -265,45 +293,75 @@
                 + Add Another Trustee
             </button>
 
-            <!-- Substitute Trustee -->
+            <!-- Substitute Trustee(s) -->
             <div class="border-t border-gray-200 pt-4">
-                <h4 class="text-sm font-semibold text-gray-600 mb-3">Substitute Trustee <span class="text-gray-400 font-normal">(optional)</span></h4>
-                {% set sub_tr = trustee_data.get('substitute_trustee', {}) %}
-                <div class="grid md:grid-cols-2 gap-4">
-                    <div class="md:col-span-2">
-                        <div class="flex gap-2">
-                            <select name="sub_trustee_person_id"
-                                    onchange="showIdentityInfo(this, 'sub-trustee-info')"
-                                    data-role="trustee"
-                                    class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                                <option value="">-- No substitute (optional) --</option>
-                                {% for person in persons %}
-                                <option value="{{ person.id }}"
-                                        data-name="{{ person.full_name }}"
-                                        data-nric="{{ person.nric_passport }}"
-                                        data-address="{{ person.address or '' }}"
-                                        data-relationship="{{ person.relationship or '' }}"
-                                        {% if sub_tr.get('person_id') == person.id %}selected{% endif %}>
-                                    {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
-                                </option>
-                                {% endfor %}
-                            </select>
-                            <button type="button" onclick="openAddIdentityModal()"
-                                    class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
-                                + New
-                            </button>
-                        </div>
-                        <div id="sub-trustee-info" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not sub_tr.get('person_id') %}hidden{% endif %}">
-                            {% if sub_tr.get('person_id') %}{{ sub_tr.full_name }} &middot; {{ sub_tr.nric_passport }} &middot; {{ sub_tr.address }}{% endif %}
-                        </div>
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator</label>
-                        <input type="text" name="sub_trustee_relationship" value="{{ sub_tr.get('relationship', '') }}"
-                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                               placeholder="e.g., Sibling, Friend">
-                    </div>
+                <div class="flex items-center gap-2 mb-2">
+                    <h4 class="text-sm font-semibold text-gray-600">Substitute Trustee(s) <span class="text-gray-400 font-normal">(recommended)</span></h4>
                 </div>
+                <p class="text-xs text-gray-500 mb-3">When minor beneficiaries exist, joint substitute trustees (at least 2) are strongly recommended.</p>
+
+                <!-- Joint substitute trustee warning for minors -->
+                <div id="sub-trustee-minor-warning" class="hidden p-3 bg-amber-50 rounded-lg text-xs border border-amber-300 mb-3">
+                    <span class="font-semibold text-amber-800">⚠ Minor beneficiaries detected:</span>
+                    <span class="text-amber-700">At least 2 joint substitute trustees are required under PAA s.4(2) & s.75.</span>
+                </div>
+
+                {% set sub_trustees = trustee_data.get('substitute_trustees', [trustee_data.get('substitute_trustee', {})]) %}
+                {% if sub_trustees == [{}] or sub_trustees == [] %}{% set sub_trustees = [{}] %}{% endif %}
+                <div id="sub-trustees-container">
+                    {% for sub_tr in sub_trustees %}
+                    <div class="sub-trustee-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="{{ loop.index0 }}">
+                        <div class="flex justify-between items-center mb-3">
+                            <h5 class="font-medium text-gray-600 text-sm">Substitute Trustee {{ loop.index }}</h5>
+                            {% if loop.index > 1 %}
+                            <button type="button" onclick="removeSubTrustee(this)" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
+                            {% endif %}
+                        </div>
+                        <div class="grid md:grid-cols-2 gap-3">
+                            <div class="md:col-span-2">
+                                <div class="flex gap-2">
+                                    <select name="sub_trustee_person_id_{{ loop.index0 }}"
+                                            onchange="showIdentityInfo(this, 'sub-trustee-info-{{ loop.index0 }}')"
+                                            data-role="trustee"
+                                            class="person-select flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm">
+                                        <option value="">-- Select identity (optional) --</option>
+                                        {% for person in persons %}
+                                        <option value="{{ person.id }}"
+                                                data-name="{{ person.full_name }}"
+                                                data-nric="{{ person.nric_passport }}"
+                                                data-address="{{ person.address or '' }}"
+                                                data-relationship="{{ person.relationship or '' }}"
+                                                {% if sub_tr.get('person_id') == person.id %}selected{% endif %}>
+                                            {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="button" onclick="openAddIdentityModal()"
+                                            class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-xs font-medium whitespace-nowrap">
+                                        + New
+                                    </button>
+                                </div>
+                                <div id="sub-trustee-info-{{ loop.index0 }}" class="mt-1 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not sub_tr.get('person_id') %}hidden{% endif %}">
+                                    {% if sub_tr.get('person_id') %}{{ sub_tr.full_name }} &middot; {{ sub_tr.nric_passport }} &middot; {{ sub_tr.address }}{% endif %}
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                                <input type="text" name="sub_trustee_relationship_{{ loop.index0 }}" value="{{ sub_tr.get('relationship', '') }}"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                                       placeholder="e.g., Sibling, Friend">
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <input type="hidden" name="sub_trustee_count" id="sub-trustee-count" value="{{ sub_trustees|length }}">
+
+                <button type="button" onclick="addSubTrustee()" id="add-sub-trustee-btn"
+                        class="px-3 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors text-sm">
+                    + Add Another Substitute Trustee
+                </button>
             </div>
         </div>
     </div>
@@ -326,10 +384,11 @@
 <script>
 let executorCount = {{ (primary_executors|default([{}]))|length }};
 let trusteeCount = {{ (trustee_data.get('trustees', [{}]) if trustee_data else [{}])|length }};
+let subExecutorCount = {{ (substitute_executors|default([{}]))|length }};
+let subTrusteeCount = {{ (trustee_data.get('substitute_trustees', [trustee_data.get('substitute_trustee', {})]) if trustee_data else [{}])|length }};
 const _existingBeneficiaries = {{ beneficiaries | tojson }};
 
 function _hasMinorBeneficiaries() {
-    // Check if any existing beneficiaries are under 18
     const registry = window._personRegistry || [];
     for (const ben of _existingBeneficiaries) {
         if (!ben.person_id) continue;
@@ -342,13 +401,47 @@ function _hasMinorBeneficiaries() {
     return false;
 }
 
+function _isExecutorMinor(selectEl) {
+    // PAA s.20: Minor cannot be executor
+    if (!selectEl || !selectEl.value) return false;
+    const registry = window._personRegistry || [];
+    const person = registry.find(p => p.id === selectEl.value);
+    if (person && typeof getPersonAge === 'function') {
+        const age = getPersonAge(person);
+        if (age !== null && age < 18) return true;
+    }
+    return false;
+}
+
 function checkExecMinorWarning(type) {
     const warning = document.getElementById('exec-minor-warning');
-    if (!warning) return;
-    if (type === 'single' && _hasMinorBeneficiaries()) {
-        warning.classList.remove('hidden');
-    } else {
-        warning.classList.add('hidden');
+    const subExecWarning = document.getElementById('sub-exec-minor-warning');
+    const subTrusteeWarning = document.getElementById('sub-trustee-minor-warning');
+    const hasMinors = _hasMinorBeneficiaries();
+
+    // Main executor warning (single + minors)
+    if (warning) {
+        if (type === 'single' && hasMinors) {
+            warning.classList.remove('hidden');
+        } else {
+            warning.classList.add('hidden');
+        }
+    }
+    // Substitute executor joint warning
+    if (subExecWarning) {
+        if (hasMinors) {
+            subExecWarning.classList.remove('hidden');
+        } else {
+            subExecWarning.classList.add('hidden');
+        }
+    }
+    // Substitute trustee joint warning
+    if (subTrusteeWarning) {
+        if (hasMinors) {
+            subTrusteeWarning.classList.remove('hidden');
+        } else {
+            subTrusteeWarning.classList.add('hidden');
+        }
     }
 }
 
@@ -359,27 +452,19 @@ function switchExecutorType(type) {
 
     if (type === 'single') {
         addSection.classList.add('hidden');
-        // Remove extra executors, keep only first
-        entries.forEach((entry, i) => {
-            if (i > 0) entry.remove();
-        });
+        entries.forEach((entry, i) => { if (i > 0) entry.remove(); });
         executorCount = 1;
         document.getElementById('executor-count').value = 1;
-        // Update role hidden input
         const roleInput = container.querySelector('input[name="exec_role_0"]');
         if (roleInput) roleInput.value = 'Primary';
-        // Update label
         const label = container.querySelector('.executor-entry h3');
         if (label) label.textContent = 'Executor';
     } else {
         addSection.classList.remove('hidden');
-        // Update role to Joint
         const roleInput = container.querySelector('input[name="exec_role_0"]');
         if (roleInput) roleInput.value = 'Joint';
-        // Update label
         const label = container.querySelector('.executor-entry h3');
         if (label) label.textContent = 'Executor No. 1';
-        // If only 1, auto-add second
         if (executorCount < 2) addExecutor();
     }
     updateExecutorTypeLabels(type);
@@ -402,7 +487,7 @@ function updateExecutorTypeLabels(type) {
 }
 
 function addExecutor() {
-    if (executorCount >= 4) { alert('Maximum 4 executors allowed.'); return; }
+    if (executorCount >= 4) { alert('Maximum 4 executors allowed (PAA s.4(1)).'); return; }
     const container = document.getElementById('executors-container');
     const idx = executorCount;
     const personOptions = buildFilteredPersonOptions('executor');
@@ -417,7 +502,7 @@ function addExecutor() {
             <div class="md:col-span-2">
                 <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
                 <div class="flex gap-2">
-                    <select name="exec_person_id_${idx}" required onchange="showIdentityInfo(this, 'exec-info-${idx}')"
+                    <select name="exec_person_id_${idx}" required onchange="validateExecutorAge(this); showIdentityInfo(this, 'exec-info-${idx}')"
                             data-role="executor"
                             class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                         ${personOptions}
@@ -452,6 +537,58 @@ function removeExecutor(btn) {
     refreshPersonDropdowns();
 }
 
+// ── Substitute Executors (joint) ──
+function addSubExecutor() {
+    if (subExecutorCount >= 4) { alert('Maximum 4 substitute executors allowed.'); return; }
+    const container = document.getElementById('sub-executors-container');
+    const idx = subExecutorCount;
+    const personOptions = buildFilteredPersonOptions('executor');
+    const html = `
+    <div class="sub-executor-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="${idx}">
+        <div class="flex justify-between items-center mb-3">
+            <h5 class="font-medium text-gray-600 text-sm">Substitute Executor ${idx + 1}</h5>
+            <button type="button" onclick="removeSubExecutor(this)" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
+        </div>
+        <div class="grid md:grid-cols-2 gap-3">
+            <div class="md:col-span-2">
+                <div class="flex gap-2">
+                    <select name="sub_exec_person_id_${idx}"
+                            onchange="validateExecutorAge(this); showIdentityInfo(this, 'sub-exec-info-${idx}')"
+                            data-role="executor"
+                            class="person-select flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm">
+                        ${personOptions}
+                    </select>
+                    <button type="button" onclick="openAddIdentityModal()"
+                            class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-xs font-medium whitespace-nowrap">
+                        + New
+                    </button>
+                </div>
+                <div id="sub-exec-info-${idx}" class="mt-1 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                <input type="text" name="sub_exec_relationship_${idx}"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                       placeholder="e.g., Brother, Friend">
+            </div>
+        </div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
+    subExecutorCount++;
+    document.getElementById('sub-executor-count').value = subExecutorCount;
+    if (subExecutorCount >= 4) document.getElementById('add-sub-executor-btn').classList.add('hidden');
+    refreshPersonDropdowns();
+}
+
+function removeSubExecutor(btn) {
+    btn.closest('.sub-executor-entry').remove();
+    subExecutorCount--;
+    document.getElementById('sub-executor-count').value = subExecutorCount;
+    document.getElementById('add-sub-executor-btn').classList.remove('hidden');
+    refreshPersonDropdowns();
+}
+
+// ── Trustees ──
 function toggleTrusteeSection(show) {
     document.getElementById('separate-trustee-section').classList.toggle('hidden', !show);
 }
@@ -504,26 +641,146 @@ function removeTrustee(btn) {
     refreshPersonDropdowns();
 }
 
+// ── Substitute Trustees (joint) ──
+function addSubTrustee() {
+    if (subTrusteeCount >= 4) { alert('Maximum 4 substitute trustees allowed.'); return; }
+    const container = document.getElementById('sub-trustees-container');
+    const idx = subTrusteeCount;
+    const personOptions = buildFilteredPersonOptions('trustee');
+    const html = `
+    <div class="sub-trustee-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="${idx}">
+        <div class="flex justify-between items-center mb-3">
+            <h5 class="font-medium text-gray-600 text-sm">Substitute Trustee ${idx + 1}</h5>
+            <button type="button" onclick="removeSubTrustee(this)" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
+        </div>
+        <div class="grid md:grid-cols-2 gap-3">
+            <div class="md:col-span-2">
+                <div class="flex gap-2">
+                    <select name="sub_trustee_person_id_${idx}"
+                            onchange="showIdentityInfo(this, 'sub-trustee-info-${idx}')"
+                            data-role="trustee"
+                            class="person-select flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm">
+                        ${personOptions}
+                    </select>
+                    <button type="button" onclick="openAddIdentityModal()"
+                            class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-xs font-medium whitespace-nowrap">
+                        + New
+                    </button>
+                </div>
+                <div id="sub-trustee-info-${idx}" class="mt-1 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                <input type="text" name="sub_trustee_relationship_${idx}"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                       placeholder="e.g., Sibling, Friend">
+            </div>
+        </div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
+    subTrusteeCount++;
+    document.getElementById('sub-trustee-count').value = subTrusteeCount;
+    if (subTrusteeCount >= 4) document.getElementById('add-sub-trustee-btn').classList.add('hidden');
+    refreshPersonDropdowns();
+}
+
+function removeSubTrustee(btn) {
+    btn.closest('.sub-trustee-entry').remove();
+    subTrusteeCount--;
+    document.getElementById('sub-trustee-count').value = subTrusteeCount;
+    document.getElementById('add-sub-trustee-btn').classList.remove('hidden');
+    refreshPersonDropdowns();
+}
+
+// ── PAA s.20: Minor cannot be executor ──
+function validateExecutorAge(selectEl) {
+    if (_isExecutorMinor(selectEl)) {
+        alert('A person under 18 years old cannot be appointed as an executor (PAA s.20). Please select another person.');
+        selectEl.value = '';
+        return false;
+    }
+    return true;
+}
+
+// ── Form submission validation ──
+function validateStep3Form() {
+    const hasMinors = _hasMinorBeneficiaries();
+    const execType = document.querySelector('input[name="executor_type"]:checked')?.value || 'single';
+
+    // Check all executor selects for minors (PAA s.20)
+    let hasMinorExec = false;
+    document.querySelectorAll('[name^="exec_person_id_"], [name^="sub_exec_person_id_"]').forEach(sel => {
+        if (_isExecutorMinor(sel)) hasMinorExec = true;
+    });
+    if (hasMinorExec) {
+        alert('A person under 18 cannot be appointed as an executor (PAA s.20). Please review your selections.');
+        return false;
+    }
+
+    // If minor beneficiaries exist, warn about joint substitute requirement
+    if (hasMinors) {
+        // Count filled substitute executors
+        let filledSubExecs = 0;
+        document.querySelectorAll('[name^="sub_exec_person_id_"]').forEach(sel => {
+            if (sel.value) filledSubExecs++;
+        });
+
+        if (filledSubExecs > 0 && filledSubExecs < 2) {
+            const override = document.querySelector('[name="minor_exec_override"]');
+            if (!override || !override.checked) {
+                if (!confirm('Minor beneficiaries exist. It is recommended to have at least 2 joint substitute executors (PAA s.4(2)). Continue with only ' + filledSubExecs + ' substitute executor?')) {
+                    return false;
+                }
+            }
+        }
+
+        // Count filled substitute trustees (if separate)
+        const trusteeSame = document.querySelector('[name="trustee_same_as_executor"]');
+        if (trusteeSame && !trusteeSame.checked) {
+            let filledSubTrustees = 0;
+            document.querySelectorAll('[name^="sub_trustee_person_id_"]').forEach(sel => {
+                if (sel.value) filledSubTrustees++;
+            });
+            if (filledSubTrustees > 0 && filledSubTrustees < 2) {
+                if (!confirm('Minor beneficiaries exist. It is recommended to have at least 2 joint substitute trustees (PAA s.75). Continue with only ' + filledSubTrustees + ' substitute trustee?')) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
 // Init on page load
 document.addEventListener('DOMContentLoaded', function() {
-    // Show pre-selected identity info
+    // Show pre-selected identity info for primary executors
     document.querySelectorAll('[name^="exec_person_id_"]').forEach(sel => {
         if (sel.value) {
             const idx = sel.name.replace('exec_person_id_', '');
             showIdentityInfo(sel, `exec-info-${idx}`);
         }
     });
-    const subExec = document.querySelector('[name="sub_exec_person_id"]');
-    if (subExec && subExec.value) showIdentityInfo(subExec, 'sub-exec-info');
-
+    // Show pre-selected identity info for substitute executors
+    document.querySelectorAll('[name^="sub_exec_person_id_"]').forEach(sel => {
+        if (sel.value) {
+            const idx = sel.name.replace('sub_exec_person_id_', '');
+            showIdentityInfo(sel, `sub-exec-info-${idx}`);
+        }
+    });
+    // Show pre-selected identity info for trustees
     document.querySelectorAll('[name^="trustee_person_id_"]').forEach(sel => {
         if (sel.value) {
             const idx = sel.name.replace('trustee_person_id_', '');
             showIdentityInfo(sel, `trustee-info-${idx}`);
         }
     });
-    const subTr = document.querySelector('[name="sub_trustee_person_id"]');
-    if (subTr && subTr.value) showIdentityInfo(subTr, 'sub-trustee-info');
+    // Show pre-selected identity info for substitute trustees
+    document.querySelectorAll('[name^="sub_trustee_person_id_"]').forEach(sel => {
+        if (sel.value) {
+            const idx = sel.name.replace('sub_trustee_person_id_', '');
+            showIdentityInfo(sel, `sub-trustee-info-${idx}`);
+        }
+    });
 
     // Style executor type toggle + check minor warning
     const checkedRadio = document.querySelector('input[name="executor_type"]:checked');

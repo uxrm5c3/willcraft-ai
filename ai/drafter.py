@@ -55,9 +55,9 @@ def format_will_data(will_data) -> str:
         trustee_lines = []
         for i, tr in enumerate(will_data.trustees, 1):
             trustee_lines.append(f"  {i}. {tr.full_name} (NRIC: {tr.nric_passport}), {tr.address}, Relationship: {tr.relationship}")
-        if will_data.substitute_trustee:
-            st = will_data.substitute_trustee
-            trustee_lines.append(f"  Substitute: {st.full_name} (NRIC: {st.nric_passport}), {st.address}, Relationship: {st.relationship}")
+        sub_trustees = will_data.substitute_trustees or ([will_data.substitute_trustee] if will_data.substitute_trustee else [])
+        for j, st in enumerate(sub_trustees, 1):
+            trustee_lines.append(f"  Substitute {j}: {st.full_name} (NRIC: {st.nric_passport}), {st.address}, Relationship: {st.relationship}")
         sections.append(f"""
 ## TRUSTEES (SEPARATE FROM EXECUTORS)
 {chr(10).join(trustee_lines)}""")
@@ -228,9 +228,18 @@ def draft_will_mock(will_data) -> str:
     next_clause = 3
     substitute_clause = ""
     if substitute_executors:
-        sub = substitute_executors[0]
-        substitute_clause = f"""
-{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Executor my {sub.relationship.lower()} {sub.full_name.upper()} MALAYSIA NRIC No. {sub.nric_passport} of {sub.address}."""
+        if len(substitute_executors) >= 2:
+            # Joint substitute executors
+            sub_names = " and ".join(
+                f"my {s.relationship.lower()} {s.full_name.upper()} MALAYSIA NRIC No. {s.nric_passport} of {s.address}"
+                for s in substitute_executors
+            )
+            substitute_clause = f"""
+{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my joint Substitute Executors {sub_names}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Substitute Executor named herein shall act as my sole Executor."""
+        else:
+            sub = substitute_executors[0]
+            substitute_clause = f"""
+{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Substitute Executor my {sub.relationship.lower()} {sub.full_name.upper()} MALAYSIA NRIC No. {sub.nric_passport} of {sub.address}."""
         next_clause += 1
 
     # Trustee clause
@@ -249,11 +258,22 @@ def draft_will_mock(will_data) -> str:
 {next_clause}.  I appoint as my sole Trustee my {trustees[0].relationship.lower()} {trustees[0].full_name.upper()} MALAYSIA NRIC No. {trustees[0].nric_passport} of {trustees[0].address}."""
             next_clause += 1
 
-        if will_data.substitute_trustee:
-            st = will_data.substitute_trustee
-            trustee_clause += f"""
+        # Handle multiple substitute trustees
+        sub_trustees = will_data.substitute_trustees or ([will_data.substitute_trustee] if will_data.substitute_trustee else [])
+        if sub_trustees:
+            if len(sub_trustees) >= 2:
+                sub_names = " and ".join(
+                    f"my {st.relationship.lower()} {st.full_name.upper()} MALAYSIA NRIC No. {st.nric_passport} of {st.address}"
+                    for st in sub_trustees
+                )
+                trustee_clause += f"""
 
-{next_clause}.  With reference to Clause {next_clause - 1} above, if all the Trustees named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Trustee my {st.relationship.lower()} {st.full_name.upper()} MALAYSIA NRIC No. {st.nric_passport} of {st.address}."""
+{next_clause}.  With reference to Clause {next_clause - 1} above, if all the Trustees named therein are unable or unwilling to act for whatsoever reason, then I appoint as my joint Substitute Trustees {sub_names}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Substitute Trustee named herein shall act as my sole Trustee."""
+            else:
+                st = sub_trustees[0]
+                trustee_clause += f"""
+
+{next_clause}.  With reference to Clause {next_clause - 1} above, if all the Trustees named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Substitute Trustee my {st.relationship.lower()} {st.full_name.upper()} MALAYSIA NRIC No. {st.nric_passport} of {st.address}."""
             next_clause += 1
     else:
         trustee_clause = f"""
