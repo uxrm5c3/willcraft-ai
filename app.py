@@ -320,7 +320,9 @@ def load_will_to_session(will_record):
     session['step7_trust'] = json.loads(will_record.step7_data or '{}')
     session['step8_others'] = json.loads(will_record.step8_data or '{}')
     session['completed_steps'] = json.loads(will_record.completed_steps or '[]')
-    session['generated_will_text'] = will_record.generated_will_text
+    # Don't load generated_will_text into session — it makes the cookie too large.
+    # preview() and download() now read from DB directly.
+    session.pop('generated_will_text', None)
     # Refresh identity registry from DB (preferred) or from saved snapshot
     _refresh_session_person_registry(will_record.client_id)
     if not session.get('person_registry'):
@@ -2123,9 +2125,13 @@ def wizard_generate():
         traceback.print_exc()
         return redirect(url_for('wizard_step_review'))
 
-    session['generated_will_text'] = will_text
+    # Store generated will text in DB (not session — session cookie too large)
+    session['generated_will_text'] = will_text  # temporary for save_will_to_db
     session.modified = True
     save_will_to_db()
+    # Remove from session to keep cookie small
+    session.pop('generated_will_text', None)
+    session.modified = True
     return redirect(url_for('preview'))
 
 
@@ -2134,13 +2140,21 @@ def wizard_generate():
 @app.route('/preview')
 @login_required
 def preview():
-    will_text = session.get('generated_will_text', '')
+    # Read will text from DB (not session) to avoid oversized cookies
+    will_text = ''
+    will_record = None
+    if session.get('will_id'):
+        will_record = db.session.get(Will, session['will_id'])
+        if will_record:
+            will_text = will_record.generated_will_text or ''
+    if not will_text:
+        # Fallback to session for backward compat
+        will_text = session.get('generated_will_text', '')
     if not will_text:
         flash('No will has been generated yet. Please complete the wizard first.', 'warning')
         return redirect(url_for('wizard_step_review'))
 
     testator_name = session.get('step1', {}).get('full_name', 'Unknown')
-    will_record = db.session.get(Will, session.get('will_id')) if session.get('will_id') else None
     return render_template(
         'preview.html',
         will_text=will_text,
@@ -2154,7 +2168,14 @@ def preview():
 @app.route('/download/<fmt>')
 @login_required
 def download(fmt):
-    will_text = session.get('generated_will_text', '')
+    # Read will text from DB (not session) to avoid oversized cookies
+    will_text = ''
+    if session.get('will_id'):
+        will_record = db.session.get(Will, session['will_id'])
+        if will_record:
+            will_text = will_record.generated_will_text or ''
+    if not will_text:
+        will_text = session.get('generated_will_text', '')
     if not will_text:
         flash('No will has been generated yet.', 'warning')
         return redirect(url_for('preview'))
