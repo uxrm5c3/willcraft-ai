@@ -183,14 +183,18 @@ with app.app_context():
         except Exception:
             pass
     # Seed default users if none exist
-    if User.query.count() == 0:
-        tenant = DEFAULT_TENANT
-        for u in tenant['default_users']:
-            user = User(email=u['email'], name=u['name'], role=u['role'])
-            user.set_password(u['password'])
-            db.session.add(user)
-        db.session.commit()
-        print(f"[Auth] Seeded {len(tenant['default_users'])} default users.")
+    try:
+        if User.query.count() == 0:
+            tenant = DEFAULT_TENANT
+            for u in tenant['default_users']:
+                user = User(email=u['email'], name=u['name'], role=u['role'])
+                user.set_password(u['password'])
+                db.session.add(user)
+            db.session.commit()
+            print(f"[Auth] Seeded {len(tenant['default_users'])} default users.")
+    except Exception as e:
+        db.session.rollback()
+        print(f"[Auth] User seeding skipped (may already exist): {e}")
 
 
 # ---------------------------------------------------------------------------
