@@ -9,6 +9,11 @@
     <div class="mt-2 p-3 bg-amber-50 rounded-lg text-sm text-amber-700">
         <strong>Important:</strong> There must be more than one residuary estate beneficiary to avoid partial intestacy.
     </div>
+    {% if not beneficiaries %}
+    <div class="mt-2 p-3 bg-red-50 rounded-lg text-sm text-red-700 border border-red-200">
+        <strong>No beneficiaries found.</strong> Please go to <a href="/wizard/step/5" class="underline font-medium">Step 5</a> to add beneficiaries first.
+    </div>
+    {% endif %}
 </div>
 
 <form method="POST" action="/wizard/step/7" class="space-y-8">
@@ -16,7 +21,7 @@
     <!-- Main Beneficiaries -->
     <div>
         <h3 class="text-lg font-semibold text-gray-800 mb-1">Main Beneficiaries</h3>
-        <p class="text-sm text-gray-500 mb-4">Allocate shares (percentages) of your residuary estate. Shares must total 100%.</p>
+        <p class="text-sm text-gray-500 mb-4">Select beneficiaries from your list and allocate shares (percentages). Shares must total 100%.</p>
 
         <div id="main-beneficiaries-container">
             {% set main_beneficiaries = data.get('main_beneficiaries', [{}]) %}
@@ -30,10 +35,20 @@
                 </div>
                 <div class="grid md:grid-cols-3 gap-4">
                     <div class="md:col-span-2">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
-                        <input type="text" name="main_ben_name_{{ loop.index0 }}" value="{{ ben.get('beneficiary_name', '') }}" required
-                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                               placeholder="Full name as per NRIC">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Select Beneficiary <span class="text-red-500">*</span></label>
+                        <select name="main_ben_person_id_{{ loop.index0 }}" required
+                                data-role="residuary_main"
+                                class="person-select w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                            <option value="">-- Select a beneficiary --</option>
+                            {% for b in beneficiaries %}
+                            <option value="{{ b.person_id or b.full_name }}"
+                                    data-name="{{ b.full_name }}"
+                                    {% if ben.get('person_id') == b.person_id or ben.get('beneficiary_name') == b.full_name %}selected{% endif %}>
+                                {{ b.full_name }} ({{ b.relationship }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <input type="hidden" name="main_ben_name_{{ loop.index0 }}" value="{{ ben.get('beneficiary_name', '') }}">
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">Share (%) <span class="text-red-500">*</span></label>
@@ -78,10 +93,20 @@
                     {% for sub in group %}
                     <div class="substitute-entry grid md:grid-cols-3 gap-4" data-sub-index="{{ loop.index0 }}">
                         <div class="md:col-span-2">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Name</label>
-                            <input type="text" name="sub_group_{{ loop.parent.loop.index0 }}_name_{{ loop.index0 }}" value="{{ sub.get('beneficiary_name', '') }}"
-                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                                   placeholder="Full name as per NRIC">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Beneficiary</label>
+                            <select name="sub_group_{{ loop.parent.loop.index0 }}_person_id_{{ loop.index0 }}"
+                                    data-role="residuary_sub"
+                                    class="person-select w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                                <option value="">-- Select a beneficiary --</option>
+                                {% for b in beneficiaries %}
+                                <option value="{{ b.person_id or b.full_name }}"
+                                        data-name="{{ b.full_name }}"
+                                        {% if sub.get('person_id') == b.person_id or sub.get('beneficiary_name') == b.full_name %}selected{% endif %}>
+                                    {{ b.full_name }} ({{ b.relationship }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="sub_group_{{ loop.parent.loop.index0 }}_name_{{ loop.index0 }}" value="{{ sub.get('beneficiary_name', '') }}">
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
@@ -118,7 +143,7 @@
         <p class="text-sm text-gray-500 mb-3">Any special instructions regarding the distribution of your residuary estate.</p>
         <textarea name="additional_notes" rows="4"
                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                  placeholder="e.g., If all main and substitute beneficiaries predecease me, my residuary estate shall go to...">{{ data.get('residuary', {}).get('additional_notes', '') }}</textarea>
+                  placeholder="e.g., If all main and substitute beneficiaries predecease me, my residuary estate shall go to...">{{ data.get('additional_notes', '') }}</textarea>
     </div>
 
     <!-- Navigation -->
@@ -137,12 +162,37 @@
 
 {% block wizard_scripts %}
 <script>
+const _beneficiaryList = {{ beneficiaries | tojson }};
 let mainBenCount = {{ data.get('main_beneficiaries', [{}])|length }};
 let subGroupCount = {{ data.get('substitute_groups', [])|length }};
 let subCountsPerGroup = {};
 {% for group in data.get('substitute_groups', []) %}
 subCountsPerGroup[{{ loop.index0 }}] = {{ group|length }};
 {% endfor %}
+
+function _buildBeneficiaryOptions() {
+    let html = '<option value="">-- Select a beneficiary --</option>';
+    for (const b of _beneficiaryList) {
+        const val = b.person_id || b.full_name;
+        html += `<option value="${val}" data-name="${b.full_name}">${b.full_name} (${b.relationship})</option>`;
+    }
+    return html;
+}
+
+// Sync hidden name field when dropdown changes
+document.addEventListener('change', function(e) {
+    if (e.target.tagName === 'SELECT' && e.target.name.includes('person_id')) {
+        const sel = e.target;
+        const opt = sel.options[sel.selectedIndex];
+        const name = opt ? (opt.dataset.name || opt.textContent.split('(')[0].trim()) : '';
+        // Find the sibling hidden name input
+        const parent = sel.closest('.main-beneficiary-entry') || sel.closest('.substitute-entry');
+        if (parent) {
+            const hiddenName = parent.querySelector('input[type="hidden"][name*="_name_"]');
+            if (hiddenName) hiddenName.value = name;
+        }
+    }
+});
 
 function updateShareTotal() {
     let total = 0;
@@ -157,6 +207,7 @@ function updateShareTotal() {
 
 function addMainBeneficiary() {
     const idx = mainBenCount;
+    const options = _buildBeneficiaryOptions();
     const html = `
     <div class="main-beneficiary-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="${idx}">
         <div class="flex justify-between items-center mb-3">
@@ -165,10 +216,13 @@ function addMainBeneficiary() {
         </div>
         <div class="grid md:grid-cols-3 gap-4">
             <div class="md:col-span-2">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
-                <input type="text" name="main_ben_name_${idx}" required
-                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                       placeholder="Full name as per NRIC">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Select Beneficiary <span class="text-red-500">*</span></label>
+                <select name="main_ben_person_id_${idx}" required
+                        data-role="residuary_main"
+                        class="person-select w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    ${options}
+                </select>
+                <input type="hidden" name="main_ben_name_${idx}" value="">
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Share (%) <span class="text-red-500">*</span></label>
@@ -194,6 +248,7 @@ function addSubstituteGroup() {
     if (subGroupCount >= 3) { alert('Maximum 3 substitute groups allowed.'); return; }
     const gIdx = subGroupCount;
     subCountsPerGroup[gIdx] = 1;
+    const options = _buildBeneficiaryOptions();
     const html = `
     <div class="substitute-group border border-gray-200 rounded-lg p-4 mb-4" data-group-index="${gIdx}">
         <div class="flex justify-between items-center mb-3">
@@ -203,10 +258,13 @@ function addSubstituteGroup() {
         <div class="substitute-entries space-y-3">
             <div class="substitute-entry grid md:grid-cols-3 gap-4" data-sub-index="0">
                 <div class="md:col-span-2">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Name</label>
-                    <input type="text" name="sub_group_${gIdx}_name_0"
-                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="Full name as per NRIC">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Beneficiary</label>
+                    <select name="sub_group_${gIdx}_person_id_0"
+                            data-role="residuary_sub"
+                            class="person-select w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        ${options}
+                    </select>
+                    <input type="hidden" name="sub_group_${gIdx}_name_0" value="">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
@@ -237,13 +295,17 @@ function removeSubstituteGroup(btn) {
 
 function addSubstituteToGroup(btn, groupIdx) {
     const subIdx = subCountsPerGroup[groupIdx] || 0;
+    const options = _buildBeneficiaryOptions();
     const html = `
     <div class="substitute-entry grid md:grid-cols-3 gap-4" data-sub-index="${subIdx}">
         <div class="md:col-span-2">
-            <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Name</label>
-            <input type="text" name="sub_group_${groupIdx}_name_${subIdx}"
-                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                   placeholder="Full name as per NRIC">
+            <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Beneficiary</label>
+            <select name="sub_group_${groupIdx}_person_id_${subIdx}"
+                    data-role="residuary_sub"
+                    class="person-select w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                ${options}
+            </select>
+            <input type="hidden" name="sub_group_${groupIdx}_name_${subIdx}" value="">
         </div>
         <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
@@ -258,7 +320,21 @@ function addSubstituteToGroup(btn, groupIdx) {
     countInput.value = subIdx + 1;
 }
 
-// Initialize share total on page load
-document.addEventListener('DOMContentLoaded', updateShareTotal);
+// Initialize share total on page load + sync hidden name fields for pre-selected
+document.addEventListener('DOMContentLoaded', function() {
+    updateShareTotal();
+    // Sync hidden name fields for pre-selected dropdowns
+    document.querySelectorAll('select[name*="person_id"]').forEach(sel => {
+        if (sel.value) {
+            const opt = sel.options[sel.selectedIndex];
+            const name = opt ? (opt.dataset.name || '') : '';
+            const parent = sel.closest('.main-beneficiary-entry') || sel.closest('.substitute-entry');
+            if (parent) {
+                const hiddenName = parent.querySelector('input[type="hidden"][name*="_name_"]');
+                if (hiddenName && !hiddenName.value) hiddenName.value = name;
+            }
+        }
+    });
+});
 </script>
 {% endblock %}

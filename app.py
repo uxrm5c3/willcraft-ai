@@ -1369,20 +1369,30 @@ def wizard_step_residuary():
             completed_steps=get_completed_steps(),
             data=session.get('step6_residuary', {}),
             beneficiaries=session.get('step4_beneficiaries', []),
+            persons=session.get('person_registry', []),
         )
 
     # POST -- parse main beneficiaries and substitute groups
     main_count = int(request.form.get('main_beneficiary_count', 0))
     main_beneficiaries = []
     for i in range(main_count):
+        # Support both person_id (dropdown) and name (text fallback)
+        person_id = request.form.get(f'main_ben_person_id_{i}', '').strip()
         name = request.form.get(f'main_ben_name_{i}', '').strip()
+        if person_id:
+            person = _get_person_from_registry(person_id)
+            if person:
+                name = person['full_name']
         if not name:
             continue
-        main_beneficiaries.append({
+        entry = {
             'beneficiary_name': name,
             'share': request.form.get(f'main_ben_share_{i}', '').strip(),
             'group': 'main',
-        })
+        }
+        if person_id:
+            entry['person_id'] = person_id
+        main_beneficiaries.append(entry)
 
     # Substitute groups
     sub_group_count = int(request.form.get('substitute_group_count', 0))
@@ -1391,14 +1401,22 @@ def wizard_step_residuary():
         sub_count = int(request.form.get(f'sub_group_{gi}_count', 0))
         group = []
         for si in range(sub_count):
+            person_id = request.form.get(f'sub_group_{gi}_person_id_{si}', '').strip()
             name = request.form.get(f'sub_group_{gi}_name_{si}', '').strip()
+            if person_id:
+                person = _get_person_from_registry(person_id)
+                if person:
+                    name = person['full_name']
             if not name:
                 continue
-            group.append({
+            entry = {
                 'beneficiary_name': name,
                 'share': request.form.get(f'sub_group_{gi}_share_{si}', '').strip(),
                 'group': f'substitute_{gi + 1}',
-            })
+            }
+            if person_id:
+                entry['person_id'] = person_id
+            group.append(entry)
         if group:
             substitute_groups.append(group)
 
