@@ -952,18 +952,17 @@ def api_will_edit_text(will_id):
 # ---------------------------------------------------------------------------
 
 def send_will_email(to_email, subject, body_html, attachments=None, tenant=None):
-    """Send email via Google Workspace SMTP with tenant-specific FROM/CC."""
+    """Send email via Google Workspace SMTP Relay (IP-based auth) with tenant-specific FROM/CC."""
     import smtplib
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
     from email.mime.base import MIMEBase
     from email import encoders
 
-    if not SMTP_USER or not SMTP_PASSWORD:
-        raise ValueError('SMTP credentials not configured. Set SMTP_USER and SMTP_PASSWORD in .env')
-
     tenant = tenant or get_tenant()
-    from_email = tenant.get('email_from') or SMTP_USER
+    from_email = tenant.get('email_from')
+    if not from_email:
+        raise ValueError('No email_from configured for this tenant')
     cc_list = tenant.get('email_cc', [])
 
     msg = MIMEMultipart()
@@ -985,8 +984,12 @@ def send_will_email(to_email, subject, body_html, attachments=None, tenant=None)
 
     all_recipients = [to_email] + cc_list
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.ehlo()
         server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.ehlo()
+        # IP-based relay: login only if credentials are configured
+        if SMTP_USER and SMTP_PASSWORD:
+            server.login(SMTP_USER, SMTP_PASSWORD)
         server.sendmail(from_email, all_recipients, msg.as_string())
 
     return True
