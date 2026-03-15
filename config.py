@@ -5,6 +5,12 @@ load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-key")
+
+# SMTP settings (Google Workspace)
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 CLAUDE_MODEL_FAST = "claude-sonnet-4-20250514"  # Same as main model (Haiku not available on this API key)
 MAX_TOKENS = 8000

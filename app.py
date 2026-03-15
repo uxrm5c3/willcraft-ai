@@ -15,7 +15,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
 
-from config import FLASK_SECRET_KEY, ANTHROPIC_API_KEY, SQLALCHEMY_DATABASE_URI, DATA_DIR, UPLOAD_DIR
+from config import FLASK_SECRET_KEY, ANTHROPIC_API_KEY, SQLALCHEMY_DATABASE_URI, DATA_DIR, UPLOAD_DIR, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
 from database import db, Client, Will, WillEditLog, Person, Document, User, ROLE_PERMS, ROLE_LABELS
 
 app = Flask(__name__)
@@ -43,6 +43,8 @@ TENANT_CONFIG = {
         'btn_bg': '#059669',
         'btn_hover': '#047857',
         'email_domain': '@lifa.com.my',
+        'email_from': '',
+        'email_cc': [],
         'default_users': [
             {'email': 'admin@lifa.com.my', 'password': 'Admin2026#', 'name': 'Admin', 'role': 'admin'},
             {'email': 'advisor@lifa.com.my', 'password': 'Advisor2026#', 'name': 'Advisor', 'role': 'advisor'},
@@ -61,6 +63,8 @@ TENANT_CONFIG = {
         'btn_bg': '#4f46e5',
         'btn_hover': '#4338ca',
         'email_domain': '@alantanjb.com',
+        'email_from': 'enquiry@alantanjb.com',
+        'email_cc': ['kylie.tan@alantanjb.com'],
         'default_users': [
             {'email': 'accounts@alantanjb.com', 'password': 'Finance88#', 'name': 'Accounts', 'role': 'admin'},
             {'email': 'enquiry@alantanjb.com', 'password': 'Enquiry88#', 'name': 'Enquiry', 'role': 'advisor'},
@@ -83,6 +87,8 @@ DEFAULT_TENANT = {
     'btn_bg': '#059669',
     'btn_hover': '#047857',
     'email_domain': '@lifa.com.my',
+    'email_from': '',
+    'email_cc': [],
     'default_users': [
         {'email': 'admin@lifa.com.my', 'password': 'Admin2026#', 'name': 'Admin', 'role': 'admin'},
         {'email': 'advisor@lifa.com.my', 'password': 'Advisor2026#', 'name': 'Advisor', 'role': 'advisor'},
@@ -938,6 +944,136 @@ def api_will_edit_text(will_id):
         'edited_at': will_record.text_edited_at.strftime('%d %b %Y, %I:%M %p'),
         'summary': summary,
         'editor_name': editor_name,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Email sending
+# ---------------------------------------------------------------------------
+
+def send_will_email(to_email, subject, body_html, attachments=None, tenant=None):
+    """Send email via Google Workspace SMTP with tenant-specific FROM/CC."""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.base import MIMEBase
+    from email import encoders
+
+    if not SMTP_USER or not SMTP_PASSWORD:
+        raise ValueError('SMTP credentials not configured. Set SMTP_USER and SMTP_PASSWORD in .env')
+
+    tenant = tenant or get_tenant()
+    from_email = tenant.get('email_from') or SMTP_USER
+    cc_list = tenant.get('email_cc', [])
+
+    msg = MIMEMultipart()
+    msg['From'] = from_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    if cc_list:
+        msg['Cc'] = ', '.join(cc_list)
+
+    msg.attach(MIMEText(body_html, 'html'))
+
+    # Attach files (list of dicts: {'filename': ..., 'data': bytes, 'mime': ...})
+    for att in (attachments or []):
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(att['data'])
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename="{att["filename"]}"')
+        msg.attach(part)
+
+    all_recipients = [to_email] + cc_list
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.sendmail(from_email, all_recipients, msg.as_string())
+
+    return True
+
+
+@app.route('/api/will/<will_id>/send-email', methods=['POST'])
+@login_required
+def api_will_send_email(will_id):
+    """Email the approved will (PDF) to the client."""
+    will_record = db.session.get(Will, will_id)
+    if not will_record:
+        return jsonify({'ok': False, 'error': 'Will not found'}), 404
+
+    if will_record.status != 'approved':
+        return jsonify({'ok': False, 'error': 'Only approved wills can be emailed'}), 403
+
+    # Check permission (approver always can, admin/advisor for approved wills)
+    user_perms = ROLE_PERMS.get(session.get('user_role', ''), {})
+    if not user_perms.get('canEmail') and will_record.status != 'approved':
+        return jsonify({'ok': False, 'error': 'You do not have permission to email wills'}), 403
+
+    # Get client email
+    client = db.session.get(Client, will_record.client_id)
+    if not client or not client.email:
+        return jsonify({'ok': False, 'error': 'Client email address not found. Please update the client profile.'}), 400
+
+    # Generate PDF attachment
+    will_text = will_record.generated_will_text or ''
+    if not will_text:
+        return jsonify({'ok': False, 'error': 'No will text to send'}), 400
+
+    testator_name = client.full_name or 'Client'
+    safe_name = "".join(c for c in testator_name if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_') or 'Will'
+
+    try:
+        from documents.pdf_generator import generate_pdf
+        filepath = generate_pdf(will_text, safe_name)
+        with open(filepath, 'rb') as f:
+            pdf_data = f.read()
+    except Exception as e:
+        app.logger.error(f'PDF generation failed: {e}')
+        return jsonify({'ok': False, 'error': 'Failed to generate PDF'}), 500
+
+    # Build email
+    tenant = get_tenant()
+    brand = tenant.get('brand', 'WillCraft AI')
+    subject = f"Your Last Will and Testament - {testator_name}"
+    body_html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1a365d;">Your Last Will and Testament</h2>
+        <p>Dear {testator_name},</p>
+        <p>Please find attached your Last Will and Testament document in PDF format.</p>
+        <p>Kindly review the document carefully. If you have any questions or require
+        any amendments, please do not hesitate to contact us.</p>
+        <br>
+        <p>Best regards,<br><strong>{brand}</strong></p>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+        <p style="font-size: 12px; color: #718096;">
+            This email and its attachment are confidential and intended solely for the addressee.
+        </p>
+    </div>
+    """
+
+    try:
+        send_will_email(
+            to_email=client.email,
+            subject=subject,
+            body_html=body_html,
+            attachments=[{
+                'filename': f'{safe_name}_Will.pdf',
+                'data': pdf_data,
+            }],
+            tenant=tenant,
+        )
+    except Exception as e:
+        app.logger.error(f'Email sending failed: {e}')
+        return jsonify({'ok': False, 'error': f'Failed to send email: {str(e)}'}), 500
+
+    # Log the email send
+    sender_name = session.get('user_name', 'Unknown')
+    app.logger.info(f'Will {will_id} emailed to {client.email} by {sender_name}')
+
+    return jsonify({
+        'ok': True,
+        'sent_to': client.email,
+        'cc': tenant.get('email_cc', []),
+        'message': f'Will emailed to {client.email}',
     })
 
 
@@ -2258,12 +2394,18 @@ def preview():
     # Look up last editor name and edit logs
     editor_name = None
     edit_logs = []
+    client_email = None
     if will_record:
         if will_record.text_edited_by:
             editor = db.session.get(User, will_record.text_edited_by)
             if editor:
                 editor_name = editor.name
         edit_logs = WillEditLog.query.filter_by(will_id=will_record.id).order_by(WillEditLog.edited_at.desc()).all()
+        # Get client email for the send-email button
+        if will_record.client_id:
+            client = db.session.get(Client, will_record.client_id)
+            if client:
+                client_email = client.email
 
     return render_template(
         'preview.html',
@@ -2272,6 +2414,7 @@ def preview():
         will_record=will_record,
         editor_name=editor_name,
         edit_logs=edit_logs,
+        client_email=client_email,
     )
 
 
