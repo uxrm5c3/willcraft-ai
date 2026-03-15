@@ -63,8 +63,8 @@ TENANT_CONFIG = {
         'email_domain': '@alantanjb.com',
         'default_users': [
             {'email': 'admin@alantanjb.com', 'password': 'Admin2026#', 'name': 'Admin', 'role': 'admin'},
-            {'email': 'advisor@alantanjb.com', 'password': 'Advisor2026#', 'name': 'Advisor', 'role': 'advisor'},
-            {'email': 'approver@alantanjb.com', 'password': 'Approver2026#', 'name': 'Approver', 'role': 'approver'},
+            {'email': 'marketing@alantanjb.com', 'password': 'Market2026#', 'name': 'Marketing', 'role': 'advisor'},
+            {'email': 'kylietan@alantanjb.com', 'password': 'Lawyer2026#', 'name': 'Kylie Tan', 'role': 'approver'},
         ],
     },
 }
