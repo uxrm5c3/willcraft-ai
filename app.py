@@ -5,6 +5,7 @@ Flask application with multi-step wizard for will drafting.
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify, g
 from functools import wraps
+import difflib
 import json
 import os
 import sys
@@ -869,7 +870,6 @@ def api_will_edit_text(will_id):
     old_lines = (will_record.generated_will_text or '').splitlines()
     new_lines = new_text.splitlines()
     added = removed = changed = 0
-    import difflib
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old_lines, new_lines).get_opcodes():
         if tag == 'insert':
             added += (j2 - j1)
@@ -905,6 +905,33 @@ def api_will_edit_text(will_id):
     )
     db.session.add(log_entry)
     db.session.commit()
+
+    # Save change log file in client folder
+    try:
+        client = db.session.get(Client, will_record.client_id)
+        if client:
+            log_dir = os.path.join(UPLOAD_DIR, client.folder_name, 'edit_logs')
+            os.makedirs(log_dir, exist_ok=True)
+            log_file = os.path.join(log_dir, f'edit_log_{will_record.id[:8]}.txt')
+            timestamp = will_record.text_edited_at.strftime('%d %b %Y, %I:%M %p')
+            with open(log_file, 'a') as f:
+                f.write(f"[{timestamp}] {editor_name} — {summary}\n")
+
+            # Also write a unified diff file for this edit
+            diff_lines = list(difflib.unified_diff(
+                old_lines, new_lines,
+                fromfile='before', tofile='after',
+                lineterm='',
+            ))
+            if diff_lines:
+                diff_file = os.path.join(log_dir, f'diff_{will_record.text_edited_at.strftime("%Y%m%d_%H%M%S")}.txt')
+                with open(diff_file, 'w') as f:
+                    f.write(f"Edit by {editor_name} at {timestamp}\n")
+                    f.write(f"Summary: {summary}\n")
+                    f.write('=' * 60 + '\n')
+                    f.write('\n'.join(diff_lines) + '\n')
+    except Exception:
+        pass  # Don't fail the API call if file write fails
 
     return jsonify({
         'ok': True,
