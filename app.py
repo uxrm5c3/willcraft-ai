@@ -15,7 +15,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import FLASK_SECRET_KEY, ANTHROPIC_API_KEY, SQLALCHEMY_DATABASE_URI, DATA_DIR, UPLOAD_DIR
-from database import db, Client, Will, Person, Document, User, ROLE_PERMS, ROLE_LABELS
+from database import db, Client, Will, WillEditLog, Person, Document, User, ROLE_PERMS, ROLE_LABELS
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -177,6 +177,8 @@ with app.app_context():
         ("approved_by", "VARCHAR(36)"),
         ("approved_at", "DATETIME"),
         ("approval_remarks", "TEXT"),
+        ("text_edited_by", "VARCHAR(36)"),
+        ("text_edited_at", "DATETIME"),
     ]:
         try:
             with db.engine.connect() as conn:
@@ -184,6 +186,8 @@ with app.app_context():
                 conn.commit()
         except Exception:
             pass
+    # Create new tables (WillEditLog etc.) if they don't exist
+    db.create_all()
     # Seed default users if none exist — detect tenant from WILLCRAFT_DOMAIN env var
     try:
         if User.query.count() == 0:
@@ -840,6 +844,74 @@ def will_reject(will_id):
     db.session.commit()
     flash(f'Will "{will_record.title}" rejected.', 'info')
     return redirect(url_for('approval_list'))
+
+
+@app.route('/api/will/<will_id>/edit-text', methods=['POST'])
+@role_required('approver')
+def api_will_edit_text(will_id):
+    """Save approver's edits to the will text and log the change."""
+    will_record = db.session.get(Will, will_id)
+    if not will_record:
+        return jsonify({'ok': False, 'error': 'Will not found'}), 404
+
+    if will_record.status != 'pending_approval':
+        return jsonify({'ok': False, 'error': 'Will is not pending approval'}), 403
+
+    data = request.get_json()
+    if not data or 'text' not in data:
+        return jsonify({'ok': False, 'error': 'No text provided'}), 400
+
+    new_text = data['text'].strip()
+    if not new_text:
+        return jsonify({'ok': False, 'error': 'Will text cannot be empty'}), 400
+
+    # Compute diff summary
+    old_lines = (will_record.generated_will_text or '').splitlines()
+    new_lines = new_text.splitlines()
+    added = removed = changed = 0
+    import difflib
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old_lines, new_lines).get_opcodes():
+        if tag == 'insert':
+            added += (j2 - j1)
+        elif tag == 'delete':
+            removed += (i2 - i1)
+        elif tag == 'replace':
+            changed += max(i2 - i1, j2 - j1)
+    parts = []
+    if changed:
+        parts.append(f"{changed} line{'s' if changed != 1 else ''} changed")
+    if added:
+        parts.append(f"{added} line{'s' if added != 1 else ''} added")
+    if removed:
+        parts.append(f"{removed} line{'s' if removed != 1 else ''} removed")
+    summary = ', '.join(parts) or 'Minor formatting changes'
+
+    # Get editor name
+    editor = db.session.get(User, session['user_id'])
+    editor_name = editor.name if editor else 'Unknown'
+
+    # Save edited text
+    will_record.generated_will_text = new_text
+    will_record.text_edited_by = session['user_id']
+    will_record.text_edited_at = datetime.utcnow()
+
+    # Create edit log entry
+    log_entry = WillEditLog(
+        will_id=will_id,
+        edited_by=session['user_id'],
+        edited_by_name=editor_name,
+        edited_at=datetime.utcnow(),
+        summary=summary,
+    )
+    db.session.add(log_entry)
+    db.session.commit()
+
+    return jsonify({
+        'ok': True,
+        'edited_at': will_record.text_edited_at.strftime('%d %b %Y, %I:%M %p'),
+        'summary': summary,
+        'editor_name': editor_name,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -2155,11 +2227,24 @@ def preview():
         return redirect(url_for('wizard_step_review'))
 
     testator_name = session.get('step1', {}).get('full_name', 'Unknown')
+
+    # Look up last editor name and edit logs
+    editor_name = None
+    edit_logs = []
+    if will_record:
+        if will_record.text_edited_by:
+            editor = db.session.get(User, will_record.text_edited_by)
+            if editor:
+                editor_name = editor.name
+        edit_logs = WillEditLog.query.filter_by(will_id=will_record.id).order_by(WillEditLog.edited_at.desc()).all()
+
     return render_template(
         'preview.html',
         will_text=will_text,
         testator_name=testator_name,
         will_record=will_record,
+        editor_name=editor_name,
+        edit_logs=edit_logs,
     )
 
 

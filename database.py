@@ -96,13 +96,28 @@ class Will(db.Model):
     approved_by = db.Column(db.String(36), nullable=True)
     approved_at = db.Column(db.DateTime, nullable=True)
     approval_remarks = db.Column(db.Text, nullable=True)
+    # Approver edit tracking
+    text_edited_by = db.Column(db.String(36), nullable=True)
+    text_edited_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     documents = db.relationship('Document', backref='will', lazy=True)
+    edit_logs = db.relationship('WillEditLog', backref='will', lazy=True, order_by='WillEditLog.edited_at.desc()')
 
     # Relationships to User
     creator = db.relationship('User', foreign_keys=[created_by], backref='created_wills')
+
+
+class WillEditLog(db.Model):
+    """Log of edits made to will text by approvers."""
+    __tablename__ = 'will_edit_logs'
+    id = db.Column(db.Integer, primary_key=True)
+    will_id = db.Column(db.String(36), db.ForeignKey('wills.id'), nullable=False)
+    edited_by = db.Column(db.String(36), nullable=False)
+    edited_by_name = db.Column(db.String(100))
+    edited_at = db.Column(db.DateTime, default=datetime.utcnow)
+    summary = db.Column(db.Text)  # e.g. "3 lines changed, 1 line added"
 
 
 class Person(db.Model):
