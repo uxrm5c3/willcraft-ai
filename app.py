@@ -3,17 +3,19 @@ WillCraft AI - Malaysian AI Will Writing System
 Flask application with multi-step wizard for will drafting.
 """
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify, g
+from functools import wraps
 import json
 import os
 import sys
 import tempfile
 import traceback
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import FLASK_SECRET_KEY, ANTHROPIC_API_KEY, SQLALCHEMY_DATABASE_URI, DATA_DIR, UPLOAD_DIR
-from database import db, Client, Will, Person, Document
+from database import db, Client, Will, Person, Document, User, ROLE_PERMS, ROLE_LABELS
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -24,10 +26,135 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 db.init_app(app)
 
 
+# ---------------------------------------------------------------------------
+# Multi-tenant configuration
+# ---------------------------------------------------------------------------
+TENANT_CONFIG = {
+    'will.lifa.com.my': {
+        'brand': 'LIFA',
+        'subtitle': 'WillCraft AI',
+        'theme': 'emerald',
+        'gradient_from': '#064e3b',
+        'gradient_via': '#065f46',
+        'gradient_to': '#0f766e',
+        'accent': '#d4a745',
+        'accent_light': '#fef3c7',
+        'btn_bg': '#059669',
+        'btn_hover': '#047857',
+        'email_domain': '@lifa.com.my',
+        'default_users': [
+            {'email': 'admin@lifa.com.my', 'password': 'Admin2026#', 'name': 'Admin', 'role': 'admin'},
+            {'email': 'advisor@lifa.com.my', 'password': 'Advisor2026#', 'name': 'Advisor', 'role': 'advisor'},
+            {'email': 'approver@lifa.com.my', 'password': 'Approver2026#', 'name': 'Approver', 'role': 'approver'},
+        ],
+    },
+    'will.alantanjb.com.my': {
+        'brand': 'alantanjb',
+        'subtitle': 'WillCraft AI',
+        'theme': 'indigo',
+        'gradient_from': '#1e1b4b',
+        'gradient_via': '#312e81',
+        'gradient_to': '#4338ca',
+        'accent': '#94a3b8',
+        'accent_light': '#e2e8f0',
+        'btn_bg': '#4f46e5',
+        'btn_hover': '#4338ca',
+        'email_domain': '@alantanjb.com',
+        'default_users': [
+            {'email': 'admin@alantanjb.com', 'password': 'Admin2026#', 'name': 'Admin', 'role': 'admin'},
+            {'email': 'advisor@alantanjb.com', 'password': 'Advisor2026#', 'name': 'Advisor', 'role': 'advisor'},
+            {'email': 'approver@alantanjb.com', 'password': 'Approver2026#', 'name': 'Approver', 'role': 'approver'},
+        ],
+    },
+}
+
+DEFAULT_TENANT = {
+    'brand': 'LIFA',
+    'subtitle': 'WillCraft AI',
+    'theme': 'emerald',
+    'gradient_from': '#064e3b',
+    'gradient_via': '#065f46',
+    'gradient_to': '#0f766e',
+    'accent': '#d4a745',
+    'accent_light': '#fef3c7',
+    'btn_bg': '#059669',
+    'btn_hover': '#047857',
+    'email_domain': '@lifa.com.my',
+    'default_users': [
+        {'email': 'admin@lifa.com.my', 'password': 'Admin2026#', 'name': 'Admin', 'role': 'admin'},
+        {'email': 'advisor@lifa.com.my', 'password': 'Advisor2026#', 'name': 'Advisor', 'role': 'advisor'},
+        {'email': 'approver@lifa.com.my', 'password': 'Approver2026#', 'name': 'Approver', 'role': 'approver'},
+    ],
+}
+
+
+def get_tenant():
+    """Get tenant config based on request hostname."""
+    host = request.host.split(':')[0] if request else 'localhost'
+    return TENANT_CONFIG.get(host, DEFAULT_TENANT)
+
+
+# ---------------------------------------------------------------------------
+# Authentication decorators
+# ---------------------------------------------------------------------------
+
+def login_required(f):
+    """Require login for a route."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
+def role_required(*roles):
+    """Require specific role(s) for a route."""
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if 'user_id' not in session:
+                return redirect(url_for('login'))
+            if session.get('user_role') not in roles:
+                flash('You do not have permission to access this page.', 'error')
+                return redirect(url_for('index'))
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
+
+@app.before_request
+def load_current_user():
+    """Load current user into g for template access."""
+    g.user = None
+    g.perms = {}
+    g.tenant = get_tenant() if request else DEFAULT_TENANT
+    user_id = session.get('user_id')
+    if user_id:
+        g.user = db.session.get(User, user_id)
+        if g.user:
+            g.perms = ROLE_PERMS.get(g.user.role, {})
+        else:
+            # User deleted, clear session
+            session.pop('user_id', None)
+            session.pop('user_role', None)
+
+
 @app.context_processor
-def inject_testator_id():
-    """Make testator_person_id available to all templates."""
-    return {'testator_person_id': session.get('step1', {}).get('person_id', '')}
+def inject_global_context():
+    """Make user, permissions, tenant, and testator_person_id available to all templates."""
+    # Count pending approvals for approvers
+    pending_count = 0
+    if g.user and g.perms.get('canApprove'):
+        pending_count = Will.query.filter_by(status='pending_approval').count()
+    return {
+        'testator_person_id': session.get('step1', {}).get('person_id', ''),
+        'current_user': g.user,
+        'perms': g.perms,
+        'tenant': g.tenant,
+        'role_labels': ROLE_LABELS,
+        'pending_approval_count': pending_count,
+    }
 
 
 with app.app_context():
@@ -40,6 +167,30 @@ with app.app_context():
             conn.commit()
     except Exception:
         pass  # Column already exists
+    # Migrate: add approval columns to wills if not exists
+    for col_def in [
+        ("created_by", "VARCHAR(36)"),
+        ("submitted_by", "VARCHAR(36)"),
+        ("submitted_at", "DATETIME"),
+        ("approved_by", "VARCHAR(36)"),
+        ("approved_at", "DATETIME"),
+        ("approval_remarks", "TEXT"),
+    ]:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(db.text(f"ALTER TABLE wills ADD COLUMN {col_def[0]} {col_def[1]}"))
+                conn.commit()
+        except Exception:
+            pass
+    # Seed default users if none exist
+    if User.query.count() == 0:
+        tenant = DEFAULT_TENANT
+        for u in tenant['default_users']:
+            user = User(email=u['email'], name=u['name'], role=u['role'])
+            user.set_password(u['password'])
+            db.session.add(user)
+        db.session.commit()
+        print(f"[Auth] Seeded {len(tenant['default_users'])} default users.")
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +248,7 @@ def save_will_to_db():
         will_record = None
 
     if not will_record:
-        will_record = Will(client_id=client_id)
+        will_record = Will(client_id=client_id, created_by=session.get('user_id'))
         db.session.add(will_record)
         db.session.flush()
         session['will_id'] = will_record.id
@@ -400,19 +551,295 @@ def build_will_data():
 
 
 # ---------------------------------------------------------------------------
+# Authentication Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    """Login page and handler."""
+    if 'user_id' in session:
+        return redirect(url_for('index'))
+
+    tenant = get_tenant()
+    if request.method == 'POST':
+        email = request.form.get('email', '').strip().lower()
+        password = request.form.get('password', '')
+        remember = request.form.get('remember') == '1'
+
+        if not email or not password:
+            return render_template('login.html', error='Please enter email and password.', tenant=tenant)
+
+        user = User.query.filter(db.func.lower(User.email) == email, User.is_active == True).first()
+        if not user or not user.check_password(password):
+            return render_template('login.html', error='Invalid email or password.', tenant=tenant)
+
+        session['user_id'] = user.id
+        session['user_role'] = user.role
+        session['user_name'] = user.name
+        session.permanent = remember
+        return redirect(url_for('index'))
+
+    # Get quick-login users for display
+    quick_users = User.query.filter_by(is_active=True).order_by(User.role, User.name).all()
+    return render_template('login.html', tenant=tenant, quick_users=quick_users)
+
+
+@app.route('/logout')
+def logout():
+    """Logout and redirect to login page."""
+    session.clear()
+    flash('You have been logged out.', 'info')
+    return redirect(url_for('login'))
+
+
+# ---------------------------------------------------------------------------
+# User Management Routes (Admin only)
+# ---------------------------------------------------------------------------
+
+@app.route('/admin/users')
+@role_required('admin')
+def admin_users():
+    """User management page (admin only)."""
+    users = User.query.order_by(User.role, User.name).all()
+    return render_template('admin/users.html', users=users)
+
+
+@app.route('/admin/users/add', methods=['POST'])
+@role_required('admin')
+def admin_user_add():
+    """Add a new user."""
+    email = request.form.get('email', '').strip().lower()
+    password = request.form.get('password', '').strip()
+    name = request.form.get('name', '').strip()
+    contact = request.form.get('contact', '').strip()
+    role = request.form.get('role', 'advisor')
+
+    if not email or not password or not name:
+        flash('Name, email, and password are required.', 'error')
+        return redirect(url_for('admin_users'))
+
+    if len(password) < 6:
+        flash('Password must be at least 6 characters.', 'error')
+        return redirect(url_for('admin_users'))
+
+    if role not in ROLE_PERMS:
+        flash('Invalid role.', 'error')
+        return redirect(url_for('admin_users'))
+
+    existing = User.query.filter(db.func.lower(User.email) == email).first()
+    if existing:
+        flash('A user with this email already exists.', 'error')
+        return redirect(url_for('admin_users'))
+
+    user = User(email=email, name=name, contact=contact, role=role)
+    user.set_password(password)
+    db.session.add(user)
+    db.session.commit()
+    flash(f'User "{name}" ({role}) created successfully.', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/<user_id>/update', methods=['POST'])
+@role_required('admin')
+def admin_user_update(user_id):
+    """Update user details."""
+    user = db.session.get(User, user_id)
+    if not user:
+        flash('User not found.', 'error')
+        return redirect(url_for('admin_users'))
+
+    name = request.form.get('name', '').strip()
+    contact = request.form.get('contact', '').strip()
+    role = request.form.get('role', '').strip()
+    password = request.form.get('password', '').strip()
+
+    if name:
+        user.name = name
+    if contact is not None:
+        user.contact = contact
+    if role and role in ROLE_PERMS:
+        user.role = role
+    if password and len(password) >= 6:
+        user.set_password(password)
+
+    db.session.commit()
+    flash(f'User "{user.name}" updated.', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/<user_id>/toggle', methods=['POST'])
+@role_required('admin')
+def admin_user_toggle(user_id):
+    """Enable/disable a user."""
+    user = db.session.get(User, user_id)
+    if not user:
+        flash('User not found.', 'error')
+        return redirect(url_for('admin_users'))
+    if user.id == session.get('user_id'):
+        flash('You cannot disable your own account.', 'error')
+        return redirect(url_for('admin_users'))
+    user.is_active = not user.is_active
+    db.session.commit()
+    status = 'enabled' if user.is_active else 'disabled'
+    flash(f'User "{user.name}" {status}.', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/admin/users/<user_id>/delete', methods=['POST'])
+@role_required('admin')
+def admin_user_delete(user_id):
+    """Delete a user."""
+    user = db.session.get(User, user_id)
+    if not user:
+        flash('User not found.', 'error')
+        return redirect(url_for('admin_users'))
+    if user.id == session.get('user_id'):
+        flash('You cannot delete your own account.', 'error')
+        return redirect(url_for('admin_users'))
+    name = user.name
+    db.session.delete(user)
+    db.session.commit()
+    flash(f'User "{name}" deleted.', 'success')
+    return redirect(url_for('admin_users'))
+
+
+@app.route('/profile', methods=['GET', 'POST'])
+@login_required
+def profile():
+    """User profile page."""
+    user = db.session.get(User, session['user_id'])
+    if not user:
+        return redirect(url_for('logout'))
+
+    if request.method == 'POST':
+        name = request.form.get('name', '').strip()
+        contact = request.form.get('contact', '').strip()
+        password = request.form.get('password', '').strip()
+        password2 = request.form.get('password2', '').strip()
+
+        if name:
+            user.name = name
+            session['user_name'] = name
+        if contact is not None:
+            user.contact = contact
+        if password:
+            if len(password) < 6:
+                flash('Password must be at least 6 characters.', 'error')
+                return render_template('profile.html', user=user)
+            if password != password2:
+                flash('Passwords do not match.', 'error')
+                return render_template('profile.html', user=user)
+            user.set_password(password)
+
+        db.session.commit()
+        flash('Profile updated.', 'success')
+        return redirect(url_for('profile'))
+
+    return render_template('profile.html', user=user)
+
+
+# ---------------------------------------------------------------------------
+# Approval Workflow Routes
+# ---------------------------------------------------------------------------
+
+@app.route('/wills/<will_id>/submit-for-approval', methods=['POST'])
+@login_required
+def will_submit_for_approval(will_id):
+    """Submit a generated will for approval."""
+    will_record = db.session.get(Will, will_id)
+    if not will_record:
+        flash('Will not found.', 'error')
+        return redirect(url_for('will_list'))
+
+    if will_record.status not in ('generated', 'rejected'):
+        flash('Only generated or rejected wills can be submitted for approval.', 'error')
+        return redirect(url_for('preview'))
+
+    will_record.status = 'pending_approval'
+    will_record.submitted_by = session['user_id']
+    will_record.submitted_at = datetime.utcnow()
+    will_record.approval_remarks = None
+    db.session.commit()
+    flash('Will submitted for approval.', 'success')
+    return redirect(url_for('preview'))
+
+
+@app.route('/approvals')
+@role_required('approver')
+def approval_list():
+    """List wills pending approval."""
+    pending = Will.query.filter_by(status='pending_approval').order_by(Will.submitted_at.desc()).all()
+    approved = Will.query.filter_by(status='approved').order_by(Will.approved_at.desc()).limit(20).all()
+    rejected = Will.query.filter_by(status='rejected').order_by(Will.updated_at.desc()).limit(20).all()
+    return render_template('approvals.html', pending=pending, approved=approved, rejected=rejected)
+
+
+@app.route('/wills/<will_id>/approve', methods=['POST'])
+@role_required('approver')
+def will_approve(will_id):
+    """Approve a will."""
+    will_record = db.session.get(Will, will_id)
+    if not will_record:
+        flash('Will not found.', 'error')
+        return redirect(url_for('approval_list'))
+
+    if will_record.status != 'pending_approval':
+        flash('This will is not pending approval.', 'error')
+        return redirect(url_for('approval_list'))
+
+    remarks = request.form.get('remarks', '').strip()
+    will_record.status = 'approved'
+    will_record.approved_by = session['user_id']
+    will_record.approved_at = datetime.utcnow()
+    will_record.approval_remarks = remarks or None
+    db.session.commit()
+    flash(f'Will "{will_record.title}" approved.', 'success')
+    return redirect(url_for('approval_list'))
+
+
+@app.route('/wills/<will_id>/reject', methods=['POST'])
+@role_required('approver')
+def will_reject(will_id):
+    """Reject a will."""
+    will_record = db.session.get(Will, will_id)
+    if not will_record:
+        flash('Will not found.', 'error')
+        return redirect(url_for('approval_list'))
+
+    if will_record.status != 'pending_approval':
+        flash('This will is not pending approval.', 'error')
+        return redirect(url_for('approval_list'))
+
+    remarks = request.form.get('remarks', '').strip()
+    will_record.status = 'rejected'
+    will_record.approved_by = session['user_id']
+    will_record.approved_at = datetime.utcnow()
+    will_record.approval_remarks = remarks or 'No reason provided.'
+    db.session.commit()
+    flash(f'Will "{will_record.title}" rejected.', 'info')
+    return redirect(url_for('approval_list'))
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 @app.route('/')
+@login_required
 def index():
     """Landing page."""
-    saved_wills = Will.query.order_by(Will.updated_at.desc()).all()
+    wills_query = Will.query
+    # Advisors can only see their own wills
+    if session.get('user_role') == 'advisor':
+        wills_query = wills_query.filter_by(created_by=session.get('user_id'))
+    saved_wills = wills_query.order_by(Will.updated_at.desc()).all()
     return render_template('index.html', saved_wills=saved_wills)
 
 
 # -- Save / Load / Delete Wills ------------------------------------------------
 
 @app.route('/api/will/save', methods=['POST'])
+@login_required
 def api_will_save():
     """AJAX endpoint to save current session to DB."""
     try:
@@ -423,6 +850,7 @@ def api_will_save():
 
 
 @app.route('/wills')
+@login_required
 def will_list():
     """Unified client+wills page: list all clients with their wills grouped."""
     q = request.args.get('q', '').strip()
@@ -437,9 +865,17 @@ def will_list():
         all_clients = Client.query.order_by(Client.updated_at.desc()).all()
 
     # Build grouped data: each client with their wills and stats
+    user_role = session.get('user_role', '')
+    user_id = session.get('user_id', '')
     client_groups = []
     for c in all_clients:
-        wills = Will.query.filter_by(client_id=c.id).order_by(Will.updated_at.desc()).all()
+        wills_query = Will.query.filter_by(client_id=c.id)
+        # Advisors can only see their own wills
+        if user_role == 'advisor':
+            wills_query = wills_query.filter_by(created_by=user_id)
+        wills = wills_query.order_by(Will.updated_at.desc()).all()
+        if user_role == 'advisor' and not wills:
+            continue  # Skip clients with no wills for this advisor
         doc_count = Document.query.filter_by(client_id=c.id).count()
         # Count generated files on disk
         draft_count = 0
@@ -462,6 +898,7 @@ def will_list():
 
 
 @app.route('/wills/<will_id>/load')
+@login_required
 def will_load(will_id):
     """Load a saved will into the session."""
     will_record = db.session.get(Will, will_id)
@@ -474,6 +911,7 @@ def will_load(will_id):
 
 
 @app.route('/wills/<will_id>/delete', methods=['POST'])
+@login_required
 def will_delete(will_id):
     """Delete a saved will."""
     will_record = db.session.get(Will, will_id)
@@ -488,6 +926,7 @@ def will_delete(will_id):
 
 
 @app.route('/clients/<client_id>/delete', methods=['POST'])
+@login_required
 def client_delete(client_id):
     """Delete a client and ALL associated data (wills, persons, documents, disk files)."""
     import shutil
@@ -519,6 +958,7 @@ def client_delete(client_id):
 # -- Person Registry API -------------------------------------------------------
 
 @app.route('/api/persons', methods=['GET'])
+@login_required
 def api_persons_list():
     """Return JSON list of persons for the current client."""
     client_id = session.get('client_id')
@@ -538,6 +978,7 @@ def api_persons_list():
 
 
 @app.route('/api/persons', methods=['POST'])
+@login_required
 def api_persons_create():
     """Create a new person identity."""
     client_id = session.get('client_id')
@@ -574,6 +1015,7 @@ def api_persons_create():
 
 
 @app.route('/api/persons/<person_id>', methods=['PUT'])
+@login_required
 def api_persons_update(person_id):
     """Update an existing person identity."""
     person = db.session.get(Person, person_id)
@@ -618,6 +1060,7 @@ def api_persons_update(person_id):
 
 
 @app.route('/api/persons/<person_id>', methods=['DELETE'])
+@login_required
 def api_persons_delete(person_id):
     """Delete a person identity."""
     person = db.session.get(Person, person_id)
@@ -633,6 +1076,7 @@ def api_persons_delete(person_id):
 # -- Upload & Document API ----------------------------------------------------
 
 @app.route('/api/upload', methods=['POST'])
+@login_required
 def api_upload():
     """Generic file upload endpoint."""
     if 'file' not in request.files:
@@ -664,6 +1108,7 @@ def api_upload():
 
 
 @app.route('/api/documents')
+@login_required
 def api_documents_list():
     """List documents for current client."""
     client_id = session.get('client_id')
@@ -678,6 +1123,7 @@ def api_documents_list():
 
 
 @app.route('/api/documents/<doc_id>')
+@login_required
 def api_document_view(doc_id):
     """View/download a specific document."""
     doc = db.session.get(Document, doc_id)
@@ -691,6 +1137,7 @@ def api_document_view(doc_id):
 
 
 @app.route('/api/documents/<doc_id>', methods=['DELETE'])
+@login_required
 def api_document_delete(doc_id):
     """Delete a specific document."""
     doc = db.session.get(Document, doc_id)
@@ -715,6 +1162,7 @@ def api_document_delete(doc_id):
 # -- OCR Extraction API -------------------------------------------------------
 
 @app.route('/api/ocr/nric', methods=['POST'])
+@login_required
 def api_ocr_nric():
     """Upload NRIC/passport image, extract data via Claude Vision."""
     if 'file' not in request.files:
@@ -766,6 +1214,7 @@ def api_ocr_nric():
 
 
 @app.route('/api/ocr/property', methods=['POST'])
+@login_required
 def api_ocr_property():
     """Upload cukai tanah/cukai pintu, extract property data."""
     if 'file' not in request.files:
@@ -801,6 +1250,7 @@ def api_ocr_property():
 
 
 @app.route('/api/ocr/asset', methods=['POST'])
+@login_required
 def api_ocr_asset():
     """Upload bank/investment statement, extract asset data."""
     if 'file' not in request.files:
@@ -835,6 +1285,7 @@ def api_ocr_asset():
 
 
 @app.route('/client/documents')
+@login_required
 def client_documents():
     """Client document browser page (legacy — redirects to new client files page)."""
     client_id = session.get('client_id')
@@ -845,6 +1296,7 @@ def client_documents():
 
 
 @app.route('/clients')
+@login_required
 def clients_list():
     """Redirect to unified /wills page (backward compatibility)."""
     q = request.args.get('q', '')
@@ -854,6 +1306,7 @@ def clients_list():
 
 
 @app.route('/clients/<client_id>/files')
+@login_required
 def client_files(client_id):
     """Browse all files for a specific client: documents, drafts, generated wills."""
     client = db.session.get(Client, client_id)
@@ -912,6 +1365,7 @@ def client_files(client_id):
 
 
 @app.route('/clients/<client_id>/files/download/<path:rel_path>')
+@login_required
 def client_file_download(client_id, rel_path):
     """Download a file from the client's folder."""
     client = db.session.get(Client, client_id)
@@ -929,12 +1383,14 @@ def client_file_download(client_id, rel_path):
 # -- Upload Existing Will ----------------------------------------------------
 
 @app.route('/upload-will')
+@login_required
 def upload_will():
     """Page to upload an existing will for parsing."""
     return render_template('upload_will.html')
 
 
 @app.route('/api/parse-will', methods=['POST'])
+@login_required
 def api_parse_will():
     """Upload and parse an existing will document, populate session."""
     if 'file' not in request.files:
@@ -1005,6 +1461,7 @@ def api_parse_will():
 # -- Step 1: Identity Management ---------------------------------------------
 
 @app.route('/wizard/step/1', methods=['GET', 'POST'])
+@login_required
 def wizard_step_identities():
     if request.method == 'GET':
         client_id = session.get('client_id')
@@ -1030,6 +1487,7 @@ def wizard_step_identities():
 # -- Step 2: Testator Info (simplified - select identity) --------------------
 
 @app.route('/wizard/step/2', methods=['GET', 'POST'])
+@login_required
 def wizard_step_testator():
     if request.method == 'GET':
         return render_template(
@@ -1087,6 +1545,7 @@ def wizard_step_testator():
 # -- Step 3: Executors (select from identities) -----------------------------
 
 @app.route('/wizard/step/3', methods=['GET', 'POST'])
+@login_required
 def wizard_step_executors():
     if request.method == 'GET':
         return render_template(
@@ -1184,6 +1643,7 @@ def wizard_step_executors():
 # -- Step 4: Guardians (select from identities, optional) -------------------
 
 @app.route('/wizard/step/4', methods=['GET', 'POST'])
+@login_required
 def wizard_step_guardians():
     if request.method == 'GET':
         return render_template(
@@ -1241,6 +1701,7 @@ def wizard_step_guardians():
 # -- Step 5: Beneficiaries (select from identities) -------------------------
 
 @app.route('/wizard/step/5', methods=['GET', 'POST'])
+@login_required
 def wizard_step_beneficiaries():
     if request.method == 'GET':
         return render_template(
@@ -1278,6 +1739,7 @@ def wizard_step_beneficiaries():
 # -- Step 6: Gifts (optional) ------------------------------------------------
 
 @app.route('/wizard/step/6', methods=['GET', 'POST'])
+@login_required
 def wizard_step_gifts():
     if request.method == 'GET':
         return render_template(
@@ -1361,6 +1823,7 @@ def wizard_step_gifts():
 # -- Step 7: Residuary Estate ------------------------------------------------
 
 @app.route('/wizard/step/7', methods=['GET', 'POST'])
+@login_required
 def wizard_step_residuary():
     if request.method == 'GET':
         return render_template(
@@ -1436,6 +1899,7 @@ def wizard_step_residuary():
 # -- Step 8: Testamentary Trust (optional) ------------------------------------
 
 @app.route('/wizard/step/8', methods=['GET', 'POST'])
+@login_required
 def wizard_step_trust():
     if request.method == 'GET':
         return render_template(
@@ -1500,6 +1964,7 @@ def wizard_step_trust():
 # -- Step 9: Other Matters (optional) ----------------------------------------
 
 @app.route('/wizard/step/9', methods=['GET', 'POST'])
+@login_required
 def wizard_step_others():
     if request.method == 'GET':
         return render_template(
@@ -1549,6 +2014,7 @@ def wizard_step_others():
 # -- Step 10: Review ---------------------------------------------------------
 
 @app.route('/wizard/step/10', methods=['GET'])
+@login_required
 def wizard_step_review():
     # Build the will data model from session
     try:
@@ -1598,6 +2064,7 @@ def wizard_step_review():
 # -- Generate Will -----------------------------------------------------------
 
 @app.route('/wizard/generate', methods=['POST'])
+@login_required
 def wizard_generate():
     try:
         will_data = build_will_data()
@@ -1636,6 +2103,7 @@ def wizard_generate():
 # -- Preview -----------------------------------------------------------------
 
 @app.route('/preview')
+@login_required
 def preview():
     will_text = session.get('generated_will_text', '')
     if not will_text:
@@ -1643,21 +2111,33 @@ def preview():
         return redirect(url_for('wizard_step_review'))
 
     testator_name = session.get('step1', {}).get('full_name', 'Unknown')
+    will_record = db.session.get(Will, session.get('will_id')) if session.get('will_id') else None
     return render_template(
         'preview.html',
         will_text=will_text,
         testator_name=testator_name,
+        will_record=will_record,
     )
 
 
 # -- Download -----------------------------------------------------------------
 
 @app.route('/download/<fmt>')
+@login_required
 def download(fmt):
     will_text = session.get('generated_will_text', '')
     if not will_text:
         flash('No will has been generated yet.', 'warning')
         return redirect(url_for('preview'))
+
+    # Check download permissions based on role and approval status
+    user_role = session.get('user_role', '')
+    will_id = session.get('will_id')
+    if user_role in ('admin', 'advisor') and will_id:
+        will_record = db.session.get(Will, will_id)
+        if will_record and will_record.status != 'approved':
+            flash('This will must be approved before it can be downloaded.', 'warning')
+            return redirect(url_for('preview'))
 
     testator_name = session.get('step1', {}).get('full_name', 'Will')
     safe_name = "".join(c for c in testator_name if c.isalnum() or c in (' ', '-', '_')).strip()
@@ -1710,16 +2190,34 @@ def download(fmt):
 # -- Reset Session ------------------------------------------------------------
 
 @app.route('/reset')
+@login_required
 def reset():
+    # Preserve auth keys during session reset
+    user_id = session.get('user_id')
+    user_role = session.get('user_role')
+    user_name = session.get('user_name')
     session.clear()
+    if user_id:
+        session['user_id'] = user_id
+        session['user_role'] = user_role
+        session['user_name'] = user_name
     flash('Your session has been reset. You can start a new will.', 'info')
     return redirect(url_for('index'))
 
 
 @app.route('/wizard/new')
+@login_required
 def wizard_new():
     """Start a brand-new will by clearing the current session."""
+    # Preserve auth keys during session reset
+    user_id = session.get('user_id')
+    user_role = session.get('user_role')
+    user_name = session.get('user_name')
     session.clear()
+    if user_id:
+        session['user_id'] = user_id
+        session['user_role'] = user_role
+        session['user_name'] = user_name
     return redirect(url_for('wizard_step_identities'))
 
 

@@ -10,23 +10,99 @@
             <h1 class="text-2xl font-bold text-gray-900">Will Preview</h1>
             <p class="text-gray-600 mt-1">Review the generated will document for <strong>{{ testator_name }}</strong></p>
         </div>
-        <div class="flex gap-3">
-            <a href="/download/docx"
-               class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm">
-                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                </svg>
-                Download DOCX
-            </a>
-            <a href="/download/pdf"
-               class="inline-flex items-center px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm">
-                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                </svg>
-                Download PDF
-            </a>
+
+        <!-- Status Badge + Actions -->
+        <div class="flex flex-col items-end gap-2">
+            {% if will_record %}
+            <div class="flex items-center gap-2">
+                {% if will_record.status == 'approved' %}
+                <span class="inline-flex items-center px-3 py-1 bg-emerald-100 text-emerald-700 text-sm font-semibold rounded-full">
+                    <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                    Approved
+                </span>
+                {% elif will_record.status == 'pending_approval' %}
+                <span class="inline-flex items-center px-3 py-1 bg-amber-100 text-amber-700 text-sm font-semibold rounded-full animate-pulse">
+                    <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
+                    Pending Approval
+                </span>
+                {% elif will_record.status == 'rejected' %}
+                <span class="inline-flex items-center px-3 py-1 bg-red-100 text-red-700 text-sm font-semibold rounded-full">
+                    <svg class="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                    Rejected
+                </span>
+                {% else %}
+                <span class="inline-flex items-center px-3 py-1 bg-gray-100 text-gray-600 text-sm font-semibold rounded-full">
+                    Draft
+                </span>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Download buttons (only for approver, or approved wills) -->
+            {% set can_download = perms.get('canDownload') or (will_record and will_record.status == 'approved') %}
+            {% if can_download %}
+            <div class="flex gap-2">
+                <a href="/download/docx"
+                   class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm">
+                    <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    DOCX
+                </a>
+                <a href="/download/pdf"
+                   class="inline-flex items-center px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm text-sm">
+                    <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    PDF
+                </a>
+            </div>
+            {% endif %}
         </div>
     </div>
+
+    <!-- Approval Status Banner -->
+    {% if will_record and will_record.status == 'rejected' and will_record.approval_remarks %}
+    <div class="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+        <div class="flex items-start">
+            <svg class="w-5 h-5 text-red-500 mt-0.5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            <div>
+                <p class="text-sm font-semibold text-red-700">Rejection Reason:</p>
+                <p class="text-sm text-red-600 mt-1">{{ will_record.approval_remarks }}</p>
+                <p class="text-xs text-red-400 mt-2">You can edit the will and re-submit for approval.</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if will_record and will_record.status == 'approved' and will_record.approval_remarks %}
+    <div class="bg-emerald-50 border border-emerald-200 rounded-lg p-4 mb-6">
+        <div class="flex items-start">
+            <svg class="w-5 h-5 text-emerald-500 mt-0.5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+            <div>
+                <p class="text-sm font-semibold text-emerald-700">Approved</p>
+                {% if will_record.approval_remarks %}
+                <p class="text-sm text-emerald-600 mt-1">{{ will_record.approval_remarks }}</p>
+                {% endif %}
+                {% if will_record.approved_at %}
+                <p class="text-xs text-emerald-400 mt-1">Approved on {{ will_record.approved_at.strftime('%d %b %Y, %I:%M %p') }}</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if will_record and will_record.status == 'pending_approval' %}
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
+        <div class="flex items-start">
+            <svg class="w-5 h-5 text-amber-500 mt-0.5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
+            <p class="text-sm text-amber-700">
+                <strong>Awaiting Approval.</strong> This will has been submitted and is waiting for an Approver to review it.
+                Downloads are not available until approved.
+            </p>
+        </div>
+    </div>
+    {% endif %}
 
     <!-- Disclaimer -->
     <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
@@ -56,7 +132,7 @@
     <!-- Action Bar -->
     <div class="flex flex-col sm:flex-row justify-between items-center gap-4 mt-8 pt-6 border-t border-gray-200">
         <div class="flex gap-3">
-            <a href="/wizard/step/9"
+            <a href="/wizard/step/10"
                class="inline-flex items-center px-4 py-2 text-gray-600 hover:text-gray-800 font-medium">
                 <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
@@ -71,21 +147,53 @@
                 Edit Details
             </a>
         </div>
-        <div class="flex gap-3">
+
+        <div class="flex gap-3 flex-wrap justify-end">
+            <!-- Submit for Approval (admin & advisor only, when generated or rejected) -->
+            {% if will_record and will_record.status in ('generated', 'rejected') and perms.get('canSubmit') %}
+            <form method="POST" action="/wills/{{ will_record.id }}/submit-for-approval">
+                <button type="submit" class="inline-flex items-center px-5 py-2 bg-amber-500 text-white font-semibold rounded-lg hover:bg-amber-600 transition-colors shadow-sm">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    Submit for Approval
+                </button>
+            </form>
+            {% endif %}
+
+            <!-- Approve / Reject (approver only, when pending) -->
+            {% if will_record and will_record.status == 'pending_approval' and perms.get('canApprove') %}
+            <form method="POST" action="/wills/{{ will_record.id }}/approve" onsubmit="return confirmApprovalPreview(this)">
+                <input type="hidden" name="remarks" class="approval-remarks-input">
+                <button type="submit" class="inline-flex items-center px-5 py-2 bg-emerald-600 text-white font-semibold rounded-lg hover:bg-emerald-700 transition-colors shadow-sm">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    Approve
+                </button>
+            </form>
+            <form method="POST" action="/wills/{{ will_record.id }}/reject" onsubmit="return confirmRejectionPreview(this)">
+                <input type="hidden" name="remarks" class="rejection-remarks-input">
+                <button type="submit" class="inline-flex items-center px-5 py-2 bg-red-50 text-red-600 font-semibold rounded-lg hover:bg-red-100 border border-red-200 transition-colors">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    Reject
+                </button>
+            </form>
+            {% endif %}
+
+            <!-- Download (if allowed) -->
+            {% if can_download %}
             <a href="/download/docx"
                class="inline-flex items-center px-5 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm">
                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                 </svg>
-                Download DOCX
+                DOCX
             </a>
             <a href="/download/pdf"
                class="inline-flex items-center px-5 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm">
                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                 </svg>
-                Download PDF
+                PDF
             </a>
+            {% endif %}
         </div>
     </div>
 
@@ -94,4 +202,19 @@
         <a href="/reset" class="text-sm text-gray-400 hover:text-gray-600">Start a new will (clear all data)</a>
     </div>
 </div>
+
+<script>
+function confirmApprovalPreview(form) {
+    var remarks = prompt('Optional remarks for approval:');
+    if (remarks === null) return false;
+    form.querySelector('.approval-remarks-input').value = remarks || '';
+    return true;
+}
+function confirmRejectionPreview(form) {
+    var remarks = prompt('Reason for rejection (required):');
+    if (!remarks) { alert('Please provide a reason for rejection.'); return false; }
+    form.querySelector('.rejection-remarks-input').value = remarks;
+    return true;
+}
+</script>
 {% endblock %}
