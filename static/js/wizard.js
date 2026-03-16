@@ -1534,13 +1534,6 @@ function validateNRICAndDOB(nricPassport, dobValue) {
             return { valid: false, field: 'nric', message: `Invalid IC: day "${cleaned.substring(4, 6)}" is not valid for month ${mm} (max ${maxDay}).` };
         }
 
-        // Validate state code (digits 7-8): valid codes 01-16, 21-22, 82, 98
-        const stateCode = parseInt(cleaned.substring(6, 8));
-        const validStates = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,21,22,82,98];
-        if (!validStates.includes(stateCode)) {
-            return { valid: false, field: 'nric', message: `Invalid IC: state code "${cleaned.substring(6, 8)}" is not a valid Malaysian state code.` };
-        }
-
         // Format check: accept YYMMDD-SS-NNNN or YYMMDDSSNNNN
         const formatted = nricPassport.replace(/[-\s]/g, '');
         if (formatted.length !== 12) {
