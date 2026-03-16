@@ -1286,12 +1286,128 @@ function toggleRelationshipOther() {
     }
 }
 
+/**
+ * Validate Malaysian NRIC format and date coherence.
+ * Returns { valid: true } or { valid: false, field: string, message: string }.
+ */
+function validateNRICAndDOB(nricPassport, dobValue) {
+    const cleaned = nricPassport.replace(/[-\s]/g, '');
+
+    // Check if it looks like a Malaysian IC (all digits, 12 chars)
+    const isMalaysianIC = /^\d{12}$/.test(cleaned);
+
+    if (isMalaysianIC) {
+        // Validate format: first 6 digits must be valid YYMMDD
+        const yy = parseInt(cleaned.substring(0, 2));
+        const mm = parseInt(cleaned.substring(2, 4));
+        const dd = parseInt(cleaned.substring(4, 6));
+
+        if (mm < 1 || mm > 12) {
+            return { valid: false, field: 'nric', message: `Invalid IC: month "${cleaned.substring(2, 4)}" is not valid (01-12).` };
+        }
+
+        // Determine full year
+        const currentYY = new Date().getFullYear() % 100;
+        const century = yy > (currentYY + 5) ? 1900 : 2000;
+        const fullYear = century + yy;
+
+        // Check day is valid for the given month/year
+        const maxDay = new Date(fullYear, mm, 0).getDate(); // last day of month
+        if (dd < 1 || dd > maxDay) {
+            return { valid: false, field: 'nric', message: `Invalid IC: day "${cleaned.substring(4, 6)}" is not valid for month ${mm} (max ${maxDay}).` };
+        }
+
+        // Validate state code (digits 7-8): valid codes 01-16, 21-22, 82, 98
+        const stateCode = parseInt(cleaned.substring(6, 8));
+        const validStates = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,21,22,82,98];
+        if (!validStates.includes(stateCode)) {
+            return { valid: false, field: 'nric', message: `Invalid IC: state code "${cleaned.substring(6, 8)}" is not a valid Malaysian state code.` };
+        }
+
+        // Format check: accept YYMMDD-SS-NNNN or YYMMDDSSNNNN
+        const formatted = nricPassport.replace(/[-\s]/g, '');
+        if (formatted.length !== 12) {
+            return { valid: false, field: 'nric', message: 'Malaysian IC must be 12 digits (YYMMDD-SS-NNNN).' };
+        }
+
+        // If DOB is provided, check it matches the IC
+        if (dobValue) {
+            // dobValue is in YYYY-MM-DD format (from date input)
+            const dobParts = dobValue.split('-');
+            if (dobParts.length === 3) {
+                const dobYear = parseInt(dobParts[0]);
+                const dobMonth = parseInt(dobParts[1]);
+                const dobDay = parseInt(dobParts[2]);
+
+                if (dobYear !== fullYear || dobMonth !== mm || dobDay !== dd) {
+                    const icDate = `${String(dd).padStart(2, '0')}/${String(mm).padStart(2, '0')}/${fullYear}`;
+                    const dobDate = `${dobParts[2]}/${dobParts[1]}/${dobParts[0]}`;
+                    return { valid: false, field: 'dob', message: `Date of birth (${dobDate}) does not match IC number (${icDate}).` };
+                }
+            }
+        }
+    }
+
+    // Validate DOB is a real date if provided
+    if (dobValue) {
+        const d = new Date(dobValue);
+        if (isNaN(d.getTime())) {
+            return { valid: false, field: 'dob', message: 'Date of birth is not a valid date.' };
+        }
+        if (d > new Date()) {
+            return { valid: false, field: 'dob', message: 'Date of birth cannot be in the future.' };
+        }
+    }
+
+    return { valid: true };
+}
+
+function showFieldError(fieldId, message) {
+    clearFieldError(fieldId);
+    const field = document.getElementById(fieldId);
+    if (!field) return;
+    field.classList.add('border-red-500', 'bg-red-50');
+    const errEl = document.createElement('p');
+    errEl.className = 'text-red-600 text-xs mt-1 field-error';
+    errEl.setAttribute('data-error-for', fieldId);
+    errEl.textContent = message;
+    field.parentElement.appendChild(errEl);
+}
+
+function clearFieldError(fieldId) {
+    const field = document.getElementById(fieldId);
+    if (field) {
+        field.classList.remove('border-red-500', 'bg-red-50');
+    }
+    const existing = document.querySelector(`[data-error-for="${fieldId}"]`);
+    if (existing) existing.remove();
+}
+
+function clearAllFieldErrors() {
+    document.querySelectorAll('.field-error').forEach(el => el.remove());
+    document.querySelectorAll('.border-red-500').forEach(el => {
+        el.classList.remove('border-red-500', 'bg-red-50');
+    });
+}
+
 async function saveIdentityGlobal() {
+    clearAllFieldErrors();
     const personId = document.getElementById('modal-person-id').value;
     const fullName = document.getElementById('modal-full-name').value.trim();
     const nricPassport = document.getElementById('modal-nric-passport').value.trim();
     if (!fullName || !nricPassport) {
-        alert('Name and NRIC/Passport are required.');
+        if (!fullName) showFieldError('modal-full-name', 'Name is required.');
+        if (!nricPassport) showFieldError('modal-nric-passport', 'NRIC/Passport is required.');
+        return;
+    }
+
+    // Validate NRIC and DOB
+    const dobValue = document.getElementById('modal-dob').value;
+    const validation = validateNRICAndDOB(nricPassport, dobValue);
+    if (!validation.valid) {
+        const errorFieldId = validation.field === 'nric' ? 'modal-nric-passport' : 'modal-dob';
+        showFieldError(errorFieldId, validation.message);
+        document.getElementById(errorFieldId).scrollIntoView({ behavior: 'smooth', block: 'center' });
         return;
     }
 
@@ -1509,12 +1625,40 @@ function autoPopulateFromNRIC(nricValue) {
     }
 }
 
-// Attach NRIC auto-populate listener
+// Attach NRIC auto-populate and format listener
 document.addEventListener('DOMContentLoaded', function() {
     const nricField = document.getElementById('modal-nric-passport');
     if (nricField) {
         nricField.addEventListener('input', function() {
+            clearFieldError('modal-nric-passport');
             autoPopulateFromNRIC(this.value);
+        });
+        // Auto-format on blur: add dashes to Malaysian IC (YYMMDD-SS-NNNN)
+        nricField.addEventListener('blur', function() {
+            const cleaned = this.value.replace(/[-\s]/g, '');
+            if (/^\d{12}$/.test(cleaned)) {
+                this.value = cleaned.substring(0, 6) + '-' + cleaned.substring(6, 8) + '-' + cleaned.substring(8);
+                // Validate on blur
+                const dobValue = document.getElementById('modal-dob').value;
+                const result = validateNRICAndDOB(this.value, dobValue);
+                if (!result.valid && result.field === 'nric') {
+                    showFieldError('modal-nric-passport', result.message);
+                }
+            }
+        });
+    }
+    // Validate DOB on change
+    const dobField = document.getElementById('modal-dob');
+    if (dobField) {
+        dobField.addEventListener('change', function() {
+            clearFieldError('modal-dob');
+            const nricVal = document.getElementById('modal-nric-passport').value.trim();
+            if (nricVal && this.value) {
+                const result = validateNRICAndDOB(nricVal, this.value);
+                if (!result.valid && result.field === 'dob') {
+                    showFieldError('modal-dob', result.message);
+                }
+            }
         });
     }
 });
