@@ -1,4 +1,4 @@
-/* WillCraft AI - Wizard JavaScript (v20260317b) */
+/* WillCraft AI - Wizard JavaScript (v20260317c) */
 
 // ===========================================================================
 // Searchable Dropdown Component
