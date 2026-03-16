@@ -1249,18 +1249,22 @@ def api_persons_create():
     nric_passport = (data.get('nric_passport') or '').strip()
     if not full_name or not nric_passport:
         return jsonify({'ok': False, 'error': 'Name and NRIC/Passport are required'}), 400
-    person = upsert_person(
-        client_id, full_name, nric_passport,
-        address=(data.get('address') or '').strip(),
-        date_of_birth=(data.get('date_of_birth') or '').strip() or None,
-        nationality=(data.get('nationality') or 'Malaysian').strip(),
-        gender=(data.get('gender') or '').strip() or None,
-        passport_expiry=(data.get('passport_expiry') or '').strip() or None,
-        email=(data.get('email') or '').strip() or None,
-        phone=(data.get('phone') or '').strip() or None,
-        relationship=(data.get('relationship') or '').strip() or None,
-        document_id=(data.get('document_id') or '').strip() or None,
-    )
+    try:
+        person = upsert_person(
+            client_id, full_name, nric_passport,
+            address=(data.get('address') or '').strip(),
+            date_of_birth=(data.get('date_of_birth') or '').strip() or None,
+            nationality=(data.get('nationality') or 'Malaysian').strip(),
+            gender=(data.get('gender') or '').strip() or None,
+            passport_expiry=(data.get('passport_expiry') or '').strip() or None,
+            email=(data.get('email') or '').strip() or None,
+            phone=(data.get('phone') or '').strip() or None,
+            relationship=(data.get('relationship') or '').strip() or None,
+            document_id=(data.get('document_id') or '').strip() or None,
+        )
+    except Exception as e:
+        app.logger.error(f'Failed to save identity: {e}')
+        return jsonify({'ok': False, 'error': f'Failed to save: {str(e)}'}), 500
     return jsonify({'ok': True, 'person': {
         'id': person.id, 'full_name': person.full_name,
         'nric_passport': person.nric_passport, 'address': person.address or '',
@@ -1304,7 +1308,12 @@ def api_persons_update(person_id):
         person.relationship = (data['relationship'] or '').strip() or None
     if 'document_id' in data:
         person.document_id = (data['document_id'] or '').strip() or None
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Failed to update identity: {e}')
+        return jsonify({'ok': False, 'error': f'Failed to update: {str(e)}'}), 500
     _refresh_session_person_registry(person.client_id)
     return jsonify({'ok': True, 'person': {
         'id': person.id, 'full_name': person.full_name,
@@ -1863,6 +1872,7 @@ def wizard_step_executors():
             'address': person['address'],
             'relationship': request.form.get(f'exec_relationship_{i}', '').strip(),
             'role': role,
+            'nationality': person.get('nationality', 'Malaysian'),
         })
 
     # Substitute executor(s) - now supports multiple joint substitutes
@@ -1879,6 +1889,7 @@ def wizard_step_executors():
                     'address': sub_person['address'],
                     'relationship': request.form.get(f'sub_exec_relationship_{i}', '').strip(),
                     'role': 'Substitute',
+                    'nationality': sub_person.get('nationality', 'Malaysian'),
                 })
 
     session['step2_executors'] = executors
@@ -1901,6 +1912,7 @@ def wizard_step_executors():
                 'nric_passport': person['nric_passport'],
                 'address': person['address'],
                 'relationship': request.form.get(f'trustee_relationship_{i}', '').strip(),
+                'nationality': person.get('nationality', 'Malaysian'),
             })
 
         # Substitute trustee(s) - now supports multiple joint substitutes
@@ -1917,6 +1929,7 @@ def wizard_step_executors():
                         'nric_passport': sub_tr['nric_passport'],
                         'address': sub_tr['address'],
                         'relationship': request.form.get(f'sub_trustee_relationship_{i}', '').strip(),
+                        'nationality': sub_tr.get('nationality', 'Malaysian'),
                     })
         trustee_data['substitute_trustees'] = sub_trustees
         # Keep backward compat: set substitute_trustee to first one if any
@@ -1964,6 +1977,7 @@ def wizard_step_guardians():
             'address': person['address'],
             'relationship': request.form.get(f'guardian_relationship_{i}', '').strip(),
             'role': request.form.get(f'guardian_role_{i}', 'Primary'),
+            'nationality': person.get('nationality', 'Malaysian'),
         })
 
     # Guardian allowance
@@ -2017,6 +2031,7 @@ def wizard_step_beneficiaries():
             'full_name': person['full_name'],
             'nric_passport_birthcert': person['nric_passport'],
             'relationship': request.form.get(f'ben_relationship_{i}', '').strip(),
+            'nationality': person.get('nationality', 'Malaysian'),
         })
 
     session['step4_beneficiaries'] = beneficiaries

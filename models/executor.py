@@ -9,3 +9,4 @@ class Executor(BaseModel):
     relationship: str
     role: Literal["Primary", "Joint", "Substitute"] = "Primary"
     person_id: Optional[str] = None
+    nationality: str = "Malaysian"

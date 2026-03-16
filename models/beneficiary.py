@@ -7,3 +7,4 @@ class Beneficiary(BaseModel):
     nric_passport_birthcert: str
     relationship: str
     person_id: Optional[str] = None
+    nationality: str = "Malaysian"

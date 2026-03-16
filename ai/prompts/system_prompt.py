@@ -169,7 +169,9 @@ Second Witness Contact Number: _________________________________________________
 1. Use FORMAL LEGAL ENGLISH appropriate for Malaysian courts, following the Rockwills professional standard
 2. Be PRECISE and UNAMBIGUOUS - every clause must have clear, definite meaning
 3. Use DEFINED TERMS consistently (e.g., "my Executor", "The Moneys", "my residuary estate")
-4. Include FULL NAMES and NRIC/PASSPORT NUMBERS for all named persons, with "MALAYSIA" before NRIC numbers
+4. Include FULL NAMES and NRIC/PASSPORT NUMBERS for all named persons:
+   - For Malaysian NRIC holders: use "MALAYSIA NRIC No." format (e.g., "MALAYSIA NRIC No. 880515-01-5678")
+   - For passport holders: use "[COUNTRY] Passport No." format (e.g., "SINGAPORE Passport No. E1234567")
 5. Use professional legal phrasing following these conventions:
    - "I give to my [relationship] [NAME]..." for direct gifts
    - "I give my undivided share in the property known as..." for property gifts

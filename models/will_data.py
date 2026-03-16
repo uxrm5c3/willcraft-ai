@@ -16,6 +16,7 @@ class Trustee(BaseModel):
     nric_passport: str = ''
     relationship: str = ''
     person_id: Optional[str] = None
+    nationality: str = "Malaysian"
 
 
 class WillData(BaseModel):

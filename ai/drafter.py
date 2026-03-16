@@ -1,8 +1,37 @@
 """AI Will Drafting Engine using Claude API."""
 
+import re
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, MAX_TOKENS
 from ai.prompts.system_prompt import SYSTEM_PROMPT
+
+
+def _is_malaysian_nric(id_str: str) -> bool:
+    """Check if an ID string is a Malaysian NRIC (12 digits, with optional dashes)."""
+    cleaned = re.sub(r'[-\s]', '', id_str)
+    return bool(re.match(r'^\d{12}$', cleaned))
+
+
+def format_id_for_will(nric_passport: str, nationality: str = "Malaysian") -> str:
+    """Format person ID for will text.
+    - Malaysian NRIC: 'MALAYSIA NRIC No. 123456-01-1234'
+    - Passport: '[NATIONALITY] Passport No. AB1234567'
+    """
+    if _is_malaysian_nric(nric_passport):
+        return f"MALAYSIA NRIC No. {nric_passport}"
+    else:
+        nat = (nationality or 'Malaysian').upper()
+        # Map common nationality values to country names
+        nat_map = {
+            'MALAYSIAN': 'MALAYSIA', 'SINGAPOREAN': 'SINGAPORE',
+            'INDONESIAN': 'INDONESIA', 'THAI': 'THAILAND',
+            'BRITISH': 'UNITED KINGDOM', 'AMERICAN': 'UNITED STATES',
+            'AUSTRALIAN': 'AUSTRALIA', 'INDIAN': 'INDIA', 'CHINESE': 'CHINA',
+            'JAPANESE': 'JAPAN', 'KOREAN': 'SOUTH KOREA',
+            'FILIPINO': 'PHILIPPINES', 'VIETNAMESE': 'VIETNAM',
+        }
+        country = nat_map.get(nat, nat)
+        return f"{country} Passport No. {nric_passport}"
 
 
 def format_will_data(will_data) -> str:
@@ -41,7 +70,8 @@ def format_will_data(will_data) -> str:
     if will_data.executors:
         exec_lines = []
         for i, e in enumerate(will_data.executors, 1):
-            exec_lines.append(f"  {i}. {e.full_name} (NRIC: {e.nric_passport}), {e.address}, Relationship: {e.relationship}, Role: {e.role}")
+            id_str = format_id_for_will(e.nric_passport, getattr(e, 'nationality', 'Malaysian'))
+            exec_lines.append(f"  {i}. {e.full_name} ({id_str}), {e.address}, Relationship: {e.relationship}, Role: {e.role}")
         sections.append(f"""
 ## EXECUTORS
 {chr(10).join(exec_lines)}""")
@@ -54,10 +84,12 @@ def format_will_data(will_data) -> str:
     elif will_data.trustees:
         trustee_lines = []
         for i, tr in enumerate(will_data.trustees, 1):
-            trustee_lines.append(f"  {i}. {tr.full_name} (NRIC: {tr.nric_passport}), {tr.address}, Relationship: {tr.relationship}")
+            id_str = format_id_for_will(tr.nric_passport, getattr(tr, 'nationality', 'Malaysian'))
+            trustee_lines.append(f"  {i}. {tr.full_name} ({id_str}), {tr.address}, Relationship: {tr.relationship}")
         sub_trustees = will_data.substitute_trustees or ([will_data.substitute_trustee] if will_data.substitute_trustee else [])
         for j, st in enumerate(sub_trustees, 1):
-            trustee_lines.append(f"  Substitute {j}: {st.full_name} (NRIC: {st.nric_passport}), {st.address}, Relationship: {st.relationship}")
+            id_str = format_id_for_will(st.nric_passport, getattr(st, 'nationality', 'Malaysian'))
+            trustee_lines.append(f"  Substitute {j}: {st.full_name} ({id_str}), {st.address}, Relationship: {st.relationship}")
         sections.append(f"""
 ## TRUSTEES (SEPARATE FROM EXECUTORS)
 {chr(10).join(trustee_lines)}""")
@@ -66,7 +98,8 @@ def format_will_data(will_data) -> str:
     if will_data.guardians:
         guard_lines = []
         for i, g in enumerate(will_data.guardians, 1):
-            guard_lines.append(f"  {i}. {g.full_name} (NRIC: {g.nric_passport}), {g.address}, Relationship: {g.relationship}, Role: {g.role}")
+            id_str = format_id_for_will(g.nric_passport, getattr(g, 'nationality', 'Malaysian'))
+            guard_lines.append(f"  {i}. {g.full_name} ({id_str}), {g.address}, Relationship: {g.relationship}, Role: {g.role}")
         sections.append(f"""
 ## GUARDIANS OF MINOR CHILDREN
 {chr(10).join(guard_lines)}""")
@@ -84,7 +117,8 @@ def format_will_data(will_data) -> str:
     if will_data.beneficiaries:
         ben_lines = []
         for i, b in enumerate(will_data.beneficiaries, 1):
-            ben_lines.append(f"  {i}. {b.full_name} (NRIC: {b.nric_passport_birthcert}), Relationship: {b.relationship}")
+            id_str = format_id_for_will(b.nric_passport_birthcert, getattr(b, 'nationality', 'Malaysian'))
+            ben_lines.append(f"  {i}. {b.full_name} ({id_str}), Relationship: {b.relationship}")
         sections.append(f"""
 ## LIST OF BENEFICIARIES
 {chr(10).join(ben_lines)}""")
@@ -206,10 +240,18 @@ Draft the complete will now, following the Rockwills professional format and cla
     return message.content[0].text
 
 
+def _fid(person) -> str:
+    """Shorthand to format person's ID string for will text."""
+    nric = getattr(person, 'nric_passport', '') or getattr(person, 'nric_passport_birthcert', '') or ''
+    nat = getattr(person, 'nationality', 'Malaysian')
+    return format_id_for_will(nric, nat)
+
+
 def draft_will_mock(will_data) -> str:
     """Mock will drafter for testing without API key."""
     t = will_data.testator
     his_her = "his" if t.gender == "Male" else "her"
+    t_id = format_id_for_will(t.nric_passport, t.nationality)
 
     # Format executor appointment
     executors = will_data.executors
@@ -217,13 +259,15 @@ def draft_will_mock(will_data) -> str:
     substitute_executors = [e for e in executors if e.role == "Substitute"]
 
     if len(primary_executors) >= 2:
+        pe0, pe1 = primary_executors[0], primary_executors[1]
         exec_clause = f"""Appointment of Executor(s)
 
-2.  I appoint as my joint Executors my {primary_executors[0].relationship.lower()} {primary_executors[0].full_name.upper()} MALAYSIA NRIC No. {primary_executors[0].nric_passport} of {primary_executors[0].address} and my {primary_executors[1].relationship.lower()} {primary_executors[1].full_name.upper()} MALAYSIA NRIC No. {primary_executors[1].nric_passport} of {primary_executors[1].address}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall acts as my sole Executor."""
+2.  I appoint as my joint Executors my {pe0.relationship.lower()} {pe0.full_name.upper()} {_fid(pe0)} of {pe0.address} and my {pe1.relationship.lower()} {pe1.full_name.upper()} {_fid(pe1)} of {pe1.address}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall acts as my sole Executor."""
     elif primary_executors:
+        pe0 = primary_executors[0]
         exec_clause = f"""Appointment of Executor(s)
 
-2.  I appoint as my sole Executor my {primary_executors[0].relationship.lower()} {primary_executors[0].full_name.upper()} MALAYSIA NRIC No. {primary_executors[0].nric_passport} of {primary_executors[0].address}."""
+2.  I appoint as my sole Executor my {pe0.relationship.lower()} {pe0.full_name.upper()} {_fid(pe0)} of {pe0.address}."""
 
     next_clause = 3
     substitute_clause = ""
@@ -231,7 +275,7 @@ def draft_will_mock(will_data) -> str:
         if len(substitute_executors) >= 2:
             # Joint substitute executors
             sub_names = " and ".join(
-                f"my {s.relationship.lower()} {s.full_name.upper()} MALAYSIA NRIC No. {s.nric_passport} of {s.address}"
+                f"my {s.relationship.lower()} {s.full_name.upper()} {_fid(s)} of {s.address}"
                 for s in substitute_executors
             )
             substitute_clause = f"""
@@ -239,7 +283,7 @@ def draft_will_mock(will_data) -> str:
         else:
             sub = substitute_executors[0]
             substitute_clause = f"""
-{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Substitute Executor my {sub.relationship.lower()} {sub.full_name.upper()} MALAYSIA NRIC No. {sub.nric_passport} of {sub.address}."""
+{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Substitute Executor my {sub.relationship.lower()} {sub.full_name.upper()} {_fid(sub)} of {sub.address}."""
         next_clause += 1
 
     # Trustee clause
@@ -250,12 +294,14 @@ def draft_will_mock(will_data) -> str:
     elif will_data.trustees:
         trustees = will_data.trustees
         if len(trustees) >= 2:
+            t0, t1 = trustees[0], trustees[1]
             trustee_clause = f"""
-{next_clause}.  I appoint as my joint Trustees my {trustees[0].relationship.lower()} {trustees[0].full_name.upper()} MALAYSIA NRIC No. {trustees[0].nric_passport} of {trustees[0].address} and my {trustees[1].relationship.lower()} {trustees[1].full_name.upper()} MALAYSIA NRIC No. {trustees[1].nric_passport} of {trustees[1].address}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Trustee named herein shall act as my sole Trustee."""
+{next_clause}.  I appoint as my joint Trustees my {t0.relationship.lower()} {t0.full_name.upper()} {_fid(t0)} of {t0.address} and my {t1.relationship.lower()} {t1.full_name.upper()} {_fid(t1)} of {t1.address}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Trustee named herein shall act as my sole Trustee."""
             next_clause += 1
         else:
+            t0 = trustees[0]
             trustee_clause = f"""
-{next_clause}.  I appoint as my sole Trustee my {trustees[0].relationship.lower()} {trustees[0].full_name.upper()} MALAYSIA NRIC No. {trustees[0].nric_passport} of {trustees[0].address}."""
+{next_clause}.  I appoint as my sole Trustee my {t0.relationship.lower()} {t0.full_name.upper()} {_fid(t0)} of {t0.address}."""
             next_clause += 1
 
         # Handle multiple substitute trustees
@@ -263,7 +309,7 @@ def draft_will_mock(will_data) -> str:
         if sub_trustees:
             if len(sub_trustees) >= 2:
                 sub_names = " and ".join(
-                    f"my {st.relationship.lower()} {st.full_name.upper()} MALAYSIA NRIC No. {st.nric_passport} of {st.address}"
+                    f"my {st.relationship.lower()} {st.full_name.upper()} {_fid(st)} of {st.address}"
                     for st in sub_trustees
                 )
                 trustee_clause += f"""
@@ -273,7 +319,7 @@ def draft_will_mock(will_data) -> str:
                 st = sub_trustees[0]
                 trustee_clause += f"""
 
-{next_clause}.  With reference to Clause {next_clause - 1} above, if all the Trustees named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Substitute Trustee my {st.relationship.lower()} {st.full_name.upper()} MALAYSIA NRIC No. {st.nric_passport} of {st.address}."""
+{next_clause}.  With reference to Clause {next_clause - 1} above, if all the Trustees named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Substitute Trustee my {st.relationship.lower()} {st.full_name.upper()} {_fid(st)} of {st.address}."""
             next_clause += 1
     else:
         trustee_clause = f"""
@@ -284,32 +330,27 @@ def draft_will_mock(will_data) -> str:
     residuary_text = ""
     if will_data.residuary_estate and will_data.residuary_estate.main_beneficiaries:
         roman_numerals = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x']
+
+        def _lookup_ben(name):
+            """Look up NRIC/passport, nationality, and relationship from beneficiary list."""
+            for b in will_data.beneficiaries:
+                if b.full_name.lower() == name.lower():
+                    return b.nric_passport_birthcert, getattr(b, 'nationality', 'Malaysian'), b.relationship.lower()
+            return "", "Malaysian", ""
+
         ben_lines = []
         for i, rb in enumerate(will_data.residuary_estate.main_beneficiaries):
-            # Try to find NRIC and relationship from beneficiary list
-            nric = ""
-            relationship = ""
-            for b in will_data.beneficiaries:
-                if b.full_name.lower() == rb.beneficiary_name.lower():
-                    nric = b.nric_passport_birthcert
-                    relationship = b.relationship.lower()
-                    break
+            nric, nat, relationship = _lookup_ben(rb.beneficiary_name)
             numeral = roman_numerals[i] if i < len(roman_numerals) else str(i + 1)
-            nric_str = f" MALAYSIA NRIC No. {nric}" if nric else ""
+            nric_str = f" {format_id_for_will(nric, nat)}" if nric else ""
             rel_str = f"my {relationship} " if relationship else ""
             ben_lines.append(f"    ({numeral}) {rel_str}{rb.beneficiary_name.upper()}{nric_str} ({rb.share} share)")
 
         if len(ben_lines) == 1:
             # Single residuary beneficiary
             rb = will_data.residuary_estate.main_beneficiaries[0]
-            nric = ""
-            relationship = ""
-            for b in will_data.beneficiaries:
-                if b.full_name.lower() == rb.beneficiary_name.lower():
-                    nric = b.nric_passport_birthcert
-                    relationship = b.relationship.lower()
-                    break
-            nric_str = f" MALAYSIA NRIC No. {nric}" if nric else ""
+            nric, nat, relationship = _lookup_ben(rb.beneficiary_name)
+            nric_str = f" {format_id_for_will(nric, nat)}" if nric else ""
             rel_str = f"my {relationship} " if relationship else ""
             residuary_text = f"""Residuary Estate
 
@@ -361,7 +402,7 @@ The expression 'all bank accounts' in this clause shall exclude any account whic
     will_text = f"""LAST WILL AND TESTAMENT OF
 {t.full_name.upper()}
 
-This Will is made by me {t.full_name.upper()} MALAYSIA NRIC No. {t.nric_passport} born on {t.date_of_birth} of {t.residential_address.upper()}.
+This Will is made by me {t.full_name.upper()} {t_id} born on {t.date_of_birth} of {t.residential_address.upper()}.
 
 Revocation
 

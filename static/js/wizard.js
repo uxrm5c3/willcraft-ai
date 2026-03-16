@@ -1159,7 +1159,8 @@ async function saveIdentityGlobal() {
             alert(result.error || 'Failed to save identity.');
         }
     } catch (e) {
-        alert('Failed to save identity.');
+        console.error('Save identity error:', e);
+        alert('Failed to save identity. ' + (e.message || 'Check your internet connection and try again.'));
     }
 }
 
