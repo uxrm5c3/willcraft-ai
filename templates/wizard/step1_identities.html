@@ -14,8 +14,11 @@
 <!-- Identity Cards List -->
 <div id="identity-list" class="space-y-3 mb-6">
     {% for person in persons %}
-    <div class="identity-card border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-start justify-between gap-2" data-id="{{ person.id }}">
+    <div class="identity-card border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-start justify-between gap-2 cursor-grab active:cursor-grabbing" data-id="{{ person.id }}" draggable="true">
         <div class="flex gap-3 flex-1 min-w-0">
+            <div class="flex-shrink-0 flex items-center text-gray-300 hover:text-gray-500 drag-handle pr-1" title="Drag to reorder">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path d="M7 2a2 2 0 10.001 4.001A2 2 0 007 2zm0 6a2 2 0 10.001 4.001A2 2 0 007 8zm0 6a2 2 0 10.001 4.001A2 2 0 007 14zm6-8a2 2 0 10-.001-4.001A2 2 0 0013 6zm0 2a2 2 0 10.001 4.001A2 2 0 0013 8zm0 6a2 2 0 10.001 4.001A2 2 0 0013 14z"/></svg>
+            </div>
             {% if person.document_id %}
             <div class="flex-shrink-0 cursor-pointer" onclick="viewDocumentById('{{ person.document_id }}', '{{ person.full_name }} - IC')">
                 <img src="/api/documents/{{ person.document_id }}" alt="IC/Passport" class="w-14 h-14 sm:w-16 sm:h-16 rounded-lg object-cover border border-gray-200 hover:border-primary-400 hover:shadow-md transition-all">
@@ -95,5 +98,40 @@ async function deleteIdentity(personId) {
 document.addEventListener('identitySaved', function() {
     window.location.reload();
 });
+
+// Drag-and-drop reordering for identity cards
+(function() {
+    const list = document.getElementById('identity-list');
+    if (!list) return;
+    let dragEl = null;
+
+    list.addEventListener('dragstart', function(e) {
+        dragEl = e.target.closest('.identity-card');
+        if (!dragEl) return;
+        dragEl.classList.add('opacity-50', 'border-primary-400');
+        e.dataTransfer.effectAllowed = 'move';
+    });
+
+    list.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const target = e.target.closest('.identity-card');
+        if (!target || target === dragEl) return;
+        const rect = target.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (e.clientY < midY) {
+            list.insertBefore(dragEl, target);
+        } else {
+            list.insertBefore(dragEl, target.nextSibling);
+        }
+    });
+
+    list.addEventListener('dragend', function(e) {
+        if (dragEl) {
+            dragEl.classList.remove('opacity-50', 'border-primary-400');
+            dragEl = null;
+        }
+    });
+})();
 </script>
 {% endblock %}

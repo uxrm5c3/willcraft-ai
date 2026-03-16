@@ -1,4 +1,4 @@
-/* WillCraft AI - Wizard JavaScript (v20260316b) */
+/* WillCraft AI - Wizard JavaScript (v20260317b) */
 
 // ===========================================================================
 // Searchable Dropdown Component
@@ -51,6 +51,193 @@ const NATIONALITY_LIST = [
     'Brazilian', 'Mexican', 'Argentine',
     'Russian', 'Turkish', 'Iranian',
 ];
+
+const MALAYSIAN_STATES = [
+    'Johor', 'Kedah', 'Kelantan', 'Melaka', 'Negeri Sembilan',
+    'Pahang', 'Perak', 'Perlis', 'Pulau Pinang', 'Sabah',
+    'Sarawak', 'Selangor', 'Terengganu',
+    'Wilayah Persekutuan Kuala Lumpur', 'Wilayah Persekutuan Putrajaya', 'Wilayah Persekutuan Labuan',
+];
+
+const COUNTRY_LIST = [
+    'Malaysia', 'Singapore', 'Indonesia', 'Thailand', 'Philippines',
+    'Vietnam', 'Cambodia', 'Myanmar', 'Brunei', 'Laos',
+    'China', 'India', 'Japan', 'South Korea', 'Taiwan',
+    'Bangladesh', 'Pakistan', 'Sri Lanka', 'Nepal',
+    'United Kingdom', 'United States', 'Canada', 'Australia', 'New Zealand',
+    'Germany', 'France', 'Netherlands', 'Italy', 'Spain', 'Switzerland',
+    'Saudi Arabia', 'United Arab Emirates', 'Qatar', 'Kuwait',
+    'South Africa', 'Nigeria', 'Egypt',
+    'Brazil', 'Mexico', 'Argentina',
+    'Russia', 'Turkey', 'Iran',
+];
+
+// ===========================================================================
+// Address Field Helpers (split ↔ combined)
+// ===========================================================================
+
+/**
+ * Combine split address fields into a single address string for storage.
+ * Format: "STREET, POSTCODE CITY, STATE"
+ */
+function combineAddressFields() {
+    const street = (document.getElementById('modal-address-street')?.value || '').trim();
+    const postcode = (document.getElementById('modal-address-postcode')?.value || '').trim();
+    const city = (document.getElementById('modal-address-city')?.value || '').trim();
+    const country = (document.getElementById('modal-address-country')?.value || 'Malaysia').trim();
+
+    // State comes from dropdown (Malaysia) or free text (other countries)
+    let state = '';
+    if (country === 'Malaysia') {
+        state = (document.getElementById('modal-address-state')?.value || '').trim();
+    } else {
+        state = (document.getElementById('modal-address-state-freetext')?.value || '').trim();
+    }
+
+    let parts = [];
+    if (street) parts.push(street);
+    let cityLine = '';
+    if (postcode && city) cityLine = `${postcode} ${city}`;
+    else if (postcode) cityLine = postcode;
+    else if (city) cityLine = city;
+    if (cityLine) parts.push(cityLine);
+    if (state) parts.push(state);
+    // Only include country if not Malaysia (default)
+    if (country && country !== 'Malaysia') parts.push(country);
+
+    const combined = parts.join(', ');
+    const hidden = document.getElementById('modal-address');
+    if (hidden) hidden.value = combined;
+    return combined;
+}
+
+/**
+ * Parse a combined address string into split fields.
+ * Tries to extract postcode (5 digits), state, and remaining street.
+ */
+function splitAddressToFields(address) {
+    if (!address) {
+        ['modal-address-street', 'modal-address-postcode', 'modal-address-city', 'modal-address-state-freetext'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        _setSearchableValue('modal-address-state', 'modal-address-state-search', '', MALAYSIAN_STATES);
+        _setSearchableValue('modal-address-country', 'modal-address-country-search', 'Malaysia', COUNTRY_LIST);
+        toggleCountryState('Malaysia');
+        return;
+    }
+
+    // Split by comma or newline
+    const segments = address.split(/[,\n]+/).map(s => s.trim()).filter(Boolean);
+
+    let street = '', postcode = '', city = '', state = '';
+
+    // State aliases for fuzzy matching
+    const stateAliases = {
+        'WILAYAH PERSEKUTUAN': 'Wilayah Persekutuan Kuala Lumpur',
+        'W.P.': 'Wilayah Persekutuan Kuala Lumpur',
+        'WP KUALA LUMPUR': 'Wilayah Persekutuan Kuala Lumpur',
+        'WP PUTRAJAYA': 'Wilayah Persekutuan Putrajaya',
+        'WP LABUAN': 'Wilayah Persekutuan Labuan',
+        'PULAU PINANG': 'Pulau Pinang',
+        'PENANG': 'Pulau Pinang',
+        'N. SEMBILAN': 'Negeri Sembilan',
+        'N.SEMBILAN': 'Negeri Sembilan',
+        'JOHOR BAHRU': 'Johor',
+        'JB': 'Johor',
+        'KL': 'Wilayah Persekutuan Kuala Lumpur',
+    };
+
+    // Try to find state (last segment matching a known state or alias)
+    for (let i = segments.length - 1; i >= 0; i--) {
+        const seg = segments[i].toUpperCase().trim();
+        // Check aliases first
+        const alias = Object.keys(stateAliases).find(a => seg.includes(a));
+        if (alias) {
+            state = stateAliases[alias];
+            segments.splice(i, 1);
+            break;
+        }
+        // Check exact state names
+        const matchedState = MALAYSIAN_STATES.find(s => seg.includes(s.toUpperCase()));
+        if (matchedState) {
+            state = matchedState;
+            segments.splice(i, 1);
+            break;
+        }
+    }
+
+    // Try to find postcode (5-digit number) in remaining segments
+    for (let i = 0; i < segments.length; i++) {
+        const match = segments[i].match(/\b(\d{5})\b/);
+        if (match) {
+            postcode = match[1];
+            // The rest of this segment is the city
+            const remainder = segments[i].replace(match[0], '').trim();
+            if (remainder) city = remainder;
+            segments.splice(i, 1);
+            break;
+        }
+    }
+
+    // Everything else is the street
+    street = segments.join(', ');
+
+    document.getElementById('modal-address-street').value = street;
+    document.getElementById('modal-address-postcode').value = postcode;
+    document.getElementById('modal-address-city').value = city;
+
+    // Determine country from address (check last segment or default to Malaysia)
+    let country = 'Malaysia';
+    if (segments.length > 0) {
+        // Check if any remaining segment looks like a country name
+        const lastSeg = segments[segments.length - 1].trim();
+        const matchedCountry = COUNTRY_LIST.find(c => c.toUpperCase() === lastSeg.toUpperCase());
+        if (matchedCountry) {
+            country = matchedCountry;
+            segments.pop();
+            // Recombine street without the country segment
+            street = segments.join(', ');
+            document.getElementById('modal-address-street').value = street;
+        }
+    }
+
+    // Set country and toggle state field (don't combine yet — state not set)
+    _setSearchableValue('modal-address-country', 'modal-address-country-search', country, COUNTRY_LIST);
+    toggleCountryState(country, true); // skipCombine=true
+
+    // Set state value based on country
+    if (country === 'Malaysia') {
+        _setSearchableValue('modal-address-state', 'modal-address-state-search', state, MALAYSIAN_STATES);
+    } else {
+        const freetext = document.getElementById('modal-address-state-freetext');
+        if (freetext) freetext.value = state;
+    }
+
+    // Now combine with all fields set
+    combineAddressFields();
+}
+
+/**
+ * Toggle state field between searchable dropdown (Malaysia) and free text (other countries).
+ */
+function toggleCountryState(country, skipCombine) {
+    const dropdownWrap = document.getElementById('state-dropdown-wrap');
+    const freetext = document.getElementById('modal-address-state-freetext');
+    if (!dropdownWrap || !freetext) return;
+
+    if (country === 'Malaysia') {
+        dropdownWrap.classList.remove('hidden');
+        freetext.classList.add('hidden');
+        freetext.value = '';
+    } else {
+        dropdownWrap.classList.add('hidden');
+        freetext.classList.remove('hidden');
+        // Clear the searchable state dropdown
+        _setSearchableValue('modal-address-state', 'modal-address-state-search', '', MALAYSIAN_STATES);
+    }
+    if (!skipCombine) combineAddressFields();
+}
 
 /**
  * Initialize a searchable dropdown.
@@ -209,6 +396,31 @@ document.addEventListener('DOMContentLoaded', function() {
         initSearchableDropdown('modal-nationality-search', 'modal-nationality-dropdown', 'modal-nationality',
             NATIONALITY_LIST, { allowCustom: true });
     }
+    // State searchable dropdown
+    const stateSearch = document.getElementById('modal-address-state-search');
+    if (stateSearch) {
+        initSearchableDropdown('modal-address-state-search', 'modal-address-state-dropdown', 'modal-address-state',
+            MALAYSIAN_STATES, { allowCustom: true, onChange: combineAddressFields });
+    }
+    // Country searchable dropdown
+    const countrySearch = document.getElementById('modal-address-country-search');
+    if (countrySearch) {
+        initSearchableDropdown('modal-address-country-search', 'modal-address-country-dropdown', 'modal-address-country',
+            COUNTRY_LIST, {
+                allowCustom: true,
+                onChange: function(val) {
+                    toggleCountryState(val);
+                }
+            });
+    }
+    // State free text input (for non-Malaysia) — combine on input
+    const stateFreetext = document.getElementById('modal-address-state-freetext');
+    if (stateFreetext) stateFreetext.addEventListener('input', combineAddressFields);
+    // Auto-combine address fields on change
+    ['modal-address-street', 'modal-address-postcode', 'modal-address-city'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', combineAddressFields);
+    });
 });
 
 // Apply dropdown filtering on initial page load + dedup change listeners
@@ -1059,6 +1271,7 @@ function openAddIdentityModal(presetRelationship) {
     document.getElementById('modal-nric-passport').value = '';
     _setSearchableValue('modal-nationality', 'modal-nationality-search', 'Malaysian', NATIONALITY_LIST);
     document.getElementById('modal-address').value = '';
+    splitAddressToFields('');
     document.getElementById('modal-passport-expiry').value = '';
     document.getElementById('passport-expiry-field').classList.add('hidden');
     document.getElementById('modal-dob').value = '';
@@ -1108,6 +1321,7 @@ function openEditIdentityModal(personId) {
     document.getElementById('modal-nric-passport').value = person.nric_passport || '';
     _setSearchableValue('modal-nationality', 'modal-nationality-search', person.nationality || 'Malaysian', NATIONALITY_LIST);
     document.getElementById('modal-address').value = person.address || '';
+    splitAddressToFields(person.address || '');
     document.getElementById('modal-dob').value = person.date_of_birth ? convertDateForInput(person.date_of_birth) : '';
     document.getElementById('modal-gender').value = person.gender || '';
     document.getElementById('modal-email').value = person.email || '';
@@ -1238,10 +1452,13 @@ function showAddressSuggestions() {
         btn.innerHTML = `<span class="font-semibold text-blue-700">${label}</span> <span class="text-blue-500">— ${displayAddr}</span>`;
         btn.onclick = function() {
             document.getElementById('modal-address').value = a.address;
-            // Highlight the address field briefly
-            const addrField = document.getElementById('modal-address');
-            addrField.classList.add('bg-green-50', 'border-green-400');
-            setTimeout(() => { addrField.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+            splitAddressToFields(a.address);
+            // Highlight the street field briefly
+            const streetField = document.getElementById('modal-address-street');
+            if (streetField) {
+                streetField.classList.add('bg-green-50', 'border-green-400');
+                setTimeout(() => { streetField.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+            }
         };
         list.appendChild(btn);
     });
@@ -1401,6 +1618,14 @@ async function saveIdentityGlobal() {
         return;
     }
 
+    // Validate email format
+    const emailVal = document.getElementById('modal-email').value.trim();
+    if (emailVal && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailVal)) {
+        showFieldError('modal-email', 'Invalid email format (e.g. name@example.com).');
+        document.getElementById('modal-email').scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+    }
+
     // Validate NRIC and DOB
     const dobValue = document.getElementById('modal-dob').value;
     const validation = validateNRICAndDOB(nricPassport, dobValue);
@@ -1454,6 +1679,9 @@ async function saveIdentityGlobal() {
 
     // Get document ID if a document was uploaded
     const documentId = document.getElementById('modal-document-id')?.value || '';
+
+    // Combine split address fields into single value
+    combineAddressFields();
 
     const data = {
         full_name: fullName,
@@ -1658,6 +1886,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!result.valid && result.field === 'dob') {
                     showFieldError('modal-dob', result.message);
                 }
+            }
+        });
+    }
+    // Validate email on blur
+    const emailField = document.getElementById('modal-email');
+    if (emailField) {
+        emailField.addEventListener('blur', function() {
+            clearFieldError('modal-email');
+            const v = this.value.trim();
+            if (v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+                showFieldError('modal-email', 'Invalid email format (e.g. name@example.com).');
             }
         });
     }

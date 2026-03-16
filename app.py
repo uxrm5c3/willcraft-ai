@@ -403,8 +403,18 @@ def upsert_person(client_id, full_name, nric_passport, address=None,
 
 
 def _refresh_session_person_registry(client_id):
-    """Refresh the session person registry from DB."""
-    persons = Person.query.filter_by(client_id=client_id).order_by(Person.full_name).all()
+    """Refresh the session person registry from DB.
+    Sort: Testator first, then by DOB ascending (oldest first), then by name."""
+    persons = Person.query.filter_by(client_id=client_id).all()
+    # Sort: Testator first, then by DOB (oldest first, None last), then name
+    def _sort_key(p):
+        is_testator = 0 if (p.relationship or '').lower() == 'testator' else 1
+        dob = p.date_of_birth or ''
+        # Normalize DOB to YYYY-MM-DD for sorting (handle DD-MM-YYYY format)
+        if dob and len(dob) == 10 and dob[2] == '-' and dob[5] == '-':
+            dob = f"{dob[6:10]}-{dob[3:5]}-{dob[0:2]}"
+        return (is_testator, dob if dob else '9999-99-99', p.full_name)
+    persons.sort(key=_sort_key)
     session['person_registry'] = [
         {'id': p.id, 'full_name': p.full_name, 'nric_passport': p.nric_passport,
          'address': p.address or '', 'date_of_birth': p.date_of_birth or '',
