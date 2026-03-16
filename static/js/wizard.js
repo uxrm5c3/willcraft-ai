@@ -1,4 +1,215 @@
-/* WillCraft AI - Wizard JavaScript (v20260316a) */
+/* WillCraft AI - Wizard JavaScript (v20260316b) */
+
+// ===========================================================================
+// Searchable Dropdown Component
+// ===========================================================================
+
+const RELATIONSHIP_LIST = [
+    { value: 'Testator', label: 'Testator (Will Maker)', group: '' },
+    { value: 'Spouse', label: 'Spouse', group: 'Immediate Family' },
+    { value: 'Husband', label: 'Husband', group: 'Immediate Family' },
+    { value: 'Wife', label: 'Wife', group: 'Immediate Family' },
+    { value: 'Son', label: 'Son', group: 'Immediate Family' },
+    { value: 'Daughter', label: 'Daughter', group: 'Immediate Family' },
+    { value: 'Father', label: 'Father', group: 'Parents' },
+    { value: 'Mother', label: 'Mother', group: 'Parents' },
+    { value: 'Brother', label: 'Brother', group: 'Siblings' },
+    { value: 'Sister', label: 'Sister', group: 'Siblings' },
+    { value: 'Grandson', label: 'Grandson', group: 'Grandchildren & Grandparents' },
+    { value: 'Granddaughter', label: 'Granddaughter', group: 'Grandchildren & Grandparents' },
+    { value: 'Grandfather', label: 'Grandfather', group: 'Grandchildren & Grandparents' },
+    { value: 'Grandmother', label: 'Grandmother', group: 'Grandchildren & Grandparents' },
+    { value: 'Father-in-law', label: 'Father-in-law', group: 'In-Laws' },
+    { value: 'Mother-in-law', label: 'Mother-in-law', group: 'In-Laws' },
+    { value: 'Son-in-law', label: 'Son-in-law', group: 'In-Laws' },
+    { value: 'Daughter-in-law', label: 'Daughter-in-law', group: 'In-Laws' },
+    { value: 'Brother-in-law', label: 'Brother-in-law', group: 'In-Laws' },
+    { value: 'Sister-in-law', label: 'Sister-in-law', group: 'In-Laws' },
+    { value: 'Stepson', label: 'Stepson', group: 'Step/Adopted' },
+    { value: 'Stepdaughter', label: 'Stepdaughter', group: 'Step/Adopted' },
+    { value: 'Adopted Son', label: 'Adopted Son', group: 'Step/Adopted' },
+    { value: 'Adopted Daughter', label: 'Adopted Daughter', group: 'Step/Adopted' },
+    { value: 'Uncle', label: 'Uncle', group: 'Extended Family' },
+    { value: 'Aunt', label: 'Aunt', group: 'Extended Family' },
+    { value: 'Nephew', label: 'Nephew', group: 'Extended Family' },
+    { value: 'Niece', label: 'Niece', group: 'Extended Family' },
+    { value: 'Cousin', label: 'Cousin', group: 'Extended Family' },
+    { value: 'Friend', label: 'Friend', group: 'Others' },
+    { value: 'Business Partner', label: 'Business Partner', group: 'Others' },
+    { value: 'Other', label: 'Other (specify below)', group: 'Others' },
+];
+
+const NATIONALITY_LIST = [
+    'Malaysian', 'Singaporean', 'Indonesian', 'Thai', 'Filipino',
+    'Vietnamese', 'Cambodian', 'Myanmar', 'Bruneian', 'Laotian',
+    'Chinese', 'Indian', 'Japanese', 'Korean', 'Taiwanese',
+    'Bangladeshi', 'Pakistani', 'Sri Lankan', 'Nepali',
+    'British', 'American', 'Canadian', 'Australian', 'New Zealander',
+    'German', 'French', 'Dutch', 'Italian', 'Spanish', 'Swiss',
+    'Saudi Arabian', 'Emirati', 'Qatari', 'Kuwaiti',
+    'South African', 'Nigerian', 'Egyptian',
+    'Brazilian', 'Mexican', 'Argentine',
+    'Russian', 'Turkish', 'Iranian',
+];
+
+/**
+ * Initialize a searchable dropdown.
+ * @param {string} searchInputId - ID of the text input for searching
+ * @param {string} dropdownId - ID of the dropdown container div
+ * @param {string} hiddenInputId - ID of the hidden input storing the selected value
+ * @param {Array} items - Array of items: either strings or {value, label, group} objects
+ * @param {object} opts - Options: { allowCustom: bool, onChange: fn }
+ */
+function initSearchableDropdown(searchInputId, dropdownId, hiddenInputId, items, opts = {}) {
+    const searchInput = document.getElementById(searchInputId);
+    const dropdown = document.getElementById(dropdownId);
+    const hiddenInput = document.getElementById(hiddenInputId);
+    if (!searchInput || !dropdown || !hiddenInput) return;
+
+    let highlightIdx = -1;
+
+    function renderDropdown(filter = '') {
+        dropdown.innerHTML = '';
+        const lf = filter.toLowerCase();
+        let lastGroup = '';
+        let idx = 0;
+        let hasMatch = false;
+
+        for (const item of items) {
+            const val = typeof item === 'string' ? item : item.value;
+            const label = typeof item === 'string' ? item : item.label;
+            const group = typeof item === 'string' ? '' : (item.group || '');
+
+            if (lf && !label.toLowerCase().includes(lf) && !val.toLowerCase().includes(lf)) continue;
+            hasMatch = true;
+
+            if (group && group !== lastGroup) {
+                const groupEl = document.createElement('div');
+                groupEl.className = 'px-3 py-1 text-xs font-semibold text-gray-400 bg-gray-50 sticky top-0';
+                groupEl.textContent = group;
+                dropdown.appendChild(groupEl);
+                lastGroup = group;
+            }
+
+            const optEl = document.createElement('div');
+            optEl.className = 'px-3 py-2 text-sm cursor-pointer hover:bg-primary-50 hover:text-primary-700 transition-colors';
+            optEl.dataset.value = val;
+            optEl.dataset.idx = idx;
+            optEl.textContent = label;
+            if (val === hiddenInput.value) {
+                optEl.classList.add('bg-primary-50', 'text-primary-700', 'font-medium');
+            }
+            optEl.addEventListener('mousedown', function(e) {
+                e.preventDefault(); // Prevent blur before click
+                selectItem(val, label);
+            });
+            dropdown.appendChild(optEl);
+            idx++;
+        }
+
+        if (!hasMatch && lf) {
+            if (opts.allowCustom) {
+                const customEl = document.createElement('div');
+                customEl.className = 'px-3 py-2 text-sm text-gray-500 italic';
+                customEl.textContent = `Use "${filter}" as custom value`;
+                customEl.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    selectItem(filter, filter);
+                });
+                dropdown.appendChild(customEl);
+            } else {
+                const noEl = document.createElement('div');
+                noEl.className = 'px-3 py-2 text-sm text-gray-400 italic';
+                noEl.textContent = 'No matches found';
+                dropdown.appendChild(noEl);
+            }
+        }
+
+        highlightIdx = -1;
+        dropdown.classList.remove('hidden');
+    }
+
+    function selectItem(value, label) {
+        hiddenInput.value = value;
+        searchInput.value = label.replace(' (specify below)', '');
+        dropdown.classList.add('hidden');
+        if (opts.onChange) opts.onChange(value);
+    }
+
+    function highlightItem(dir) {
+        const optEls = dropdown.querySelectorAll('[data-idx]');
+        if (optEls.length === 0) return;
+        highlightIdx += dir;
+        if (highlightIdx < 0) highlightIdx = optEls.length - 1;
+        if (highlightIdx >= optEls.length) highlightIdx = 0;
+        optEls.forEach((el, i) => {
+            el.classList.toggle('bg-primary-100', i === highlightIdx);
+        });
+        optEls[highlightIdx].scrollIntoView({ block: 'nearest' });
+    }
+
+    searchInput.addEventListener('focus', function() {
+        renderDropdown(this.value);
+    });
+
+    searchInput.addEventListener('input', function() {
+        renderDropdown(this.value);
+        if (opts.allowCustom) {
+            hiddenInput.value = this.value;
+        }
+    });
+
+    searchInput.addEventListener('blur', function() {
+        setTimeout(() => dropdown.classList.add('hidden'), 150);
+        // If allowCustom and user typed something, set it
+        if (opts.allowCustom && this.value.trim()) {
+            hiddenInput.value = this.value.trim();
+        }
+    });
+
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); highlightItem(1); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); highlightItem(-1); }
+        else if (e.key === 'Enter') {
+            e.preventDefault();
+            const optEls = dropdown.querySelectorAll('[data-idx]');
+            if (highlightIdx >= 0 && highlightIdx < optEls.length) {
+                const el = optEls[highlightIdx];
+                selectItem(el.dataset.value, el.textContent);
+            } else if (optEls.length === 1) {
+                selectItem(optEls[0].dataset.value, optEls[0].textContent);
+            } else if (opts.allowCustom && this.value.trim()) {
+                selectItem(this.value.trim(), this.value.trim());
+            }
+        } else if (e.key === 'Escape') {
+            dropdown.classList.add('hidden');
+        }
+    });
+
+    // Public API for setting value programmatically
+    searchInput._setSearchableValue = function(value) {
+        hiddenInput.value = value;
+        const match = items.find(i => (typeof i === 'string' ? i : i.value) === value);
+        searchInput.value = match ? (typeof match === 'string' ? match : match.label.replace(' (specify below)', '')) : value;
+    };
+}
+
+// Initialize searchable dropdowns when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    const relSearch = document.getElementById('modal-relationship-search');
+    if (relSearch) {
+        initSearchableDropdown('modal-relationship-search', 'modal-relationship-dropdown', 'modal-relationship',
+            RELATIONSHIP_LIST, {
+                allowCustom: false,
+                onChange: function(val) { toggleRelationshipOther(); }
+            });
+    }
+    const natSearch = document.getElementById('modal-nationality-search');
+    if (natSearch) {
+        initSearchableDropdown('modal-nationality-search', 'modal-nationality-dropdown', 'modal-nationality',
+            NATIONALITY_LIST, { allowCustom: true });
+    }
+});
 
 // Apply dropdown filtering on initial page load + dedup change listeners
 document.addEventListener('DOMContentLoaded', function() {
@@ -819,6 +1030,26 @@ const RELATIONSHIP_OPTIONS = [
     'Cousin', 'Friend', 'Business Partner', 'Other'
 ];
 
+/**
+ * Set a searchable dropdown's value programmatically.
+ * Updates both the hidden input and the visible search text.
+ */
+function _setSearchableValue(hiddenId, searchId, value, items) {
+    const hidden = document.getElementById(hiddenId);
+    const search = document.getElementById(searchId);
+    if (hidden) hidden.value = value || '';
+    if (search) {
+        if (!value) {
+            search.value = '';
+        } else {
+            const match = items.find(i => (typeof i === 'string' ? i : i.value) === value);
+            search.value = match
+                ? (typeof match === 'string' ? match : match.label.replace(' (specify below)', ''))
+                : value;
+        }
+    }
+}
+
 function openAddIdentityModal(presetRelationship) {
     const modal = document.getElementById('identity-modal');
     if (!modal) return;
@@ -826,7 +1057,7 @@ function openAddIdentityModal(presetRelationship) {
     document.getElementById('modal-person-id').value = '';
     document.getElementById('modal-full-name').value = '';
     document.getElementById('modal-nric-passport').value = '';
-    document.getElementById('modal-nationality').value = 'Malaysian';
+    _setSearchableValue('modal-nationality', 'modal-nationality-search', 'Malaysian', NATIONALITY_LIST);
     document.getElementById('modal-address').value = '';
     document.getElementById('modal-passport-expiry').value = '';
     document.getElementById('passport-expiry-field').classList.add('hidden');
@@ -849,18 +1080,15 @@ function openAddIdentityModal(presetRelationship) {
         saveBtn.textContent = 'Save Identity';
     }
     // Set relationship
-    const relSelect = document.getElementById('modal-relationship');
     const relOther = document.getElementById('modal-relationship-other');
-    if (relSelect) {
-        if (presetRelationship) {
-            relSelect.value = presetRelationship;
-        } else if (window._personRegistry && window._personRegistry.length === 0) {
-            relSelect.value = 'Testator';
-        } else {
-            relSelect.value = '';
-        }
-        toggleRelationshipOther();
+    if (presetRelationship) {
+        _setSearchableValue('modal-relationship', 'modal-relationship-search', presetRelationship, RELATIONSHIP_LIST);
+    } else if (window._personRegistry && window._personRegistry.length === 0) {
+        _setSearchableValue('modal-relationship', 'modal-relationship-search', 'Testator', RELATIONSHIP_LIST);
+    } else {
+        _setSearchableValue('modal-relationship', 'modal-relationship-search', '', RELATIONSHIP_LIST);
     }
+    toggleRelationshipOther();
     if (relOther) relOther.value = '';
     // Reset document preview
     hideDocumentPreview();
@@ -878,7 +1106,7 @@ function openEditIdentityModal(personId) {
     document.getElementById('modal-person-id').value = personId;
     document.getElementById('modal-full-name').value = person.full_name || '';
     document.getElementById('modal-nric-passport').value = person.nric_passport || '';
-    document.getElementById('modal-nationality').value = person.nationality || 'Malaysian';
+    _setSearchableValue('modal-nationality', 'modal-nationality-search', person.nationality || 'Malaysian', NATIONALITY_LIST);
     document.getElementById('modal-address').value = person.address || '';
     document.getElementById('modal-dob').value = person.date_of_birth ? convertDateForInput(person.date_of_birth) : '';
     document.getElementById('modal-gender').value = person.gender || '';
@@ -893,20 +1121,17 @@ function openEditIdentityModal(personId) {
         document.getElementById('modal-passport-expiry').value = '';
     }
     // Relationship
-    const relSelect = document.getElementById('modal-relationship');
     const relOther = document.getElementById('modal-relationship-other');
-    if (relSelect) {
-        const rel = person.relationship || '';
-        if (RELATIONSHIP_OPTIONS.includes(rel)) {
-            relSelect.value = rel;
-        } else if (rel) {
-            relSelect.value = 'Other';
-            if (relOther) relOther.value = rel;
-        } else {
-            relSelect.value = '';
-        }
-        toggleRelationshipOther();
+    const rel = person.relationship || '';
+    if (RELATIONSHIP_OPTIONS.includes(rel)) {
+        _setSearchableValue('modal-relationship', 'modal-relationship-search', rel, RELATIONSHIP_LIST);
+    } else if (rel) {
+        _setSearchableValue('modal-relationship', 'modal-relationship-search', 'Other', RELATIONSHIP_LIST);
+        if (relOther) relOther.value = rel;
+    } else {
+        _setSearchableValue('modal-relationship', 'modal-relationship-search', '', RELATIONSHIP_LIST);
     }
+    toggleRelationshipOther();
     document.getElementById('modal-nric-upload').value = '';
     document.getElementById('modal-nric-status').innerHTML = '';
     // Show document preview if identity has a linked document
@@ -1607,6 +1832,25 @@ async function uploadNRICForIdentity(inputOrFile) {
                     }
                 }
 
+                // Helper to set field value + sync searchable dropdown if applicable
+                function _applyFieldValue(f, scannedVal) {
+                    const el = document.getElementById(f.elId);
+                    if (!el) return;
+                    el.value = scannedVal;
+                    // Sync searchable dropdown search text
+                    if (f.key === 'nationality') {
+                        _setSearchableValue('modal-nationality', 'modal-nationality-search', scannedVal, NATIONALITY_LIST);
+                    }
+                    const searchEl = document.getElementById(f.elId + '-search');
+                    if (searchEl) {
+                        searchEl.classList.add('bg-green-50', 'border-green-400');
+                        setTimeout(() => { searchEl.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+                    } else {
+                        el.classList.add('bg-green-50', 'border-green-400');
+                        setTimeout(() => { el.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+                    }
+                }
+
                 if (conflicts.length > 0) {
                     // Show per-field conflict resolution dialog
                     showFieldConflictDialog(conflicts, (resolutions) => {
@@ -1621,14 +1865,10 @@ async function uploadNRICForIdentity(inputOrFile) {
                             // If this was a conflict, apply only if user chose 'scanned'
                             const resolution = resolutions[f.key];
                             if (resolution === 'scanned') {
-                                el.value = scannedVal;
-                                el.classList.add('bg-green-50', 'border-green-400');
-                                setTimeout(() => { el.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+                                _applyFieldValue(f, scannedVal);
                             } else if (!existingVal) {
                                 // No conflict — fill empty field
-                                el.value = scannedVal;
-                                el.classList.add('bg-green-50', 'border-green-400');
-                                setTimeout(() => { el.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+                                _applyFieldValue(f, scannedVal);
                             }
                             // else: resolution === 'existing' or default — keep existing
                         }
@@ -1643,9 +1883,7 @@ async function uploadNRICForIdentity(inputOrFile) {
                         let scannedVal = confirmed[f.key] || '';
                         if (!scannedVal) continue;
                         if (f.isDate) scannedVal = convertDateForInput(scannedVal) || scannedVal;
-                        const el = document.getElementById(f.elId);
-                        if (!el) continue;
-                        el.value = scannedVal;
+                        _applyFieldValue(f, scannedVal);
                     }
                     if (isPassport && confirmed.passport_expiry) {
                         document.getElementById('passport-expiry-field').classList.remove('hidden');
