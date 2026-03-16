@@ -1089,8 +1089,8 @@ def api_will_send_email(will_id):
 def index():
     """Landing page."""
     wills_query = Will.query
-    # Advisors can only see their own wills
-    if session.get('user_role') == 'advisor':
+    # Approvers see all wills; admin/advisor see only their own
+    if session.get('user_role') != 'approver':
         wills_query = wills_query.filter_by(created_by=session.get('user_id'))
     saved_wills = wills_query.order_by(Will.updated_at.desc()).all()
     return render_template('index.html', saved_wills=saved_wills)
@@ -1130,12 +1130,12 @@ def will_list():
     client_groups = []
     for c in all_clients:
         wills_query = Will.query.filter_by(client_id=c.id)
-        # Advisors can only see their own wills
-        if user_role == 'advisor':
+        # Approvers see all wills; admin/advisor see only their own
+        if user_role != 'approver':
             wills_query = wills_query.filter_by(created_by=user_id)
         wills = wills_query.order_by(Will.updated_at.desc()).all()
-        if user_role == 'advisor' and not wills:
-            continue  # Skip clients with no wills for this advisor
+        if user_role != 'approver' and not wills:
+            continue  # Skip clients with no wills for this user
         doc_count = Document.query.filter_by(client_id=c.id).count()
         # Count generated files on disk
         draft_count = 0
