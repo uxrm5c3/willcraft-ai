@@ -1438,39 +1438,46 @@ def api_ocr_nric():
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
     abs_path = os.path.join(UPLOAD_DIR, rel_path)
+    extracted = None
+    ocr_warning = None
     try:
         from ai.ocr import extract_nric_data
         extracted = extract_nric_data(abs_path)
     except Exception as e:
         app.logger.error(f'OCR NRIC error: {e}')
-        return jsonify({'ok': False, 'error': 'Could not scan the document. Please try again with a clearer image.'}), 500
-    # Address fallback: if OCR couldn't read address clearly (empty),
-    # check if the same NRIC already has an address on file and use that.
-    if not extracted.get('address') and extracted.get('nric_number'):
-        nric_norm = extracted['nric_number'].replace('-', '').replace(' ', '').upper()
-        existing_persons = Person.query.filter_by(client_id=client_id).all()
-        for p in existing_persons:
-            p_norm = (p.nric_passport or '').replace('-', '').replace(' ', '').upper()
-            if p_norm == nric_norm and p.address:
-                extracted['address'] = p.address
-                extracted['_address_from_existing'] = True
-                break
+        ocr_warning = 'Image unclear — could not scan automatically. File saved. Please fill in the details manually.'
 
-    # Remove internal confidence field (not needed in response)
-    extracted.pop('confidence', None)
+    if extracted:
+        # Address fallback: if OCR couldn't read address clearly (empty),
+        # check if the same NRIC already has an address on file and use that.
+        if not extracted.get('address') and extracted.get('nric_number'):
+            nric_norm = extracted['nric_number'].replace('-', '').replace(' ', '').upper()
+            existing_persons = Person.query.filter_by(client_id=client_id).all()
+            for p in existing_persons:
+                p_norm = (p.nric_passport or '').replace('-', '').replace(' ', '').upper()
+                if p_norm == nric_norm and p.address:
+                    extracted['address'] = p.address
+                    extracted['_address_from_existing'] = True
+                    break
+        # Remove internal confidence field (not needed in response)
+        extracted.pop('confidence', None)
 
+    # Always save Document record (file is saved regardless of OCR success)
     doc = Document(
         client_id=client_id, will_id=session.get('will_id'),
         filename=saved_name, original_filename=file.filename,
         file_path=rel_path, file_type=file.content_type,
         file_size=file_size, category='nric',
-        extracted_data=json.dumps(extracted),
+        extracted_data=json.dumps(extracted) if extracted else None,
     )
     db.session.add(doc)
     db.session.commit()
-    # NOTE: Do NOT auto-save person here. The user must review and
-    # explicitly click "Save Identity" to create/update the person record.
-    return jsonify({'ok': True, 'extracted': extracted, 'document_id': doc.id})
+    result = {'ok': True, 'document_id': doc.id}
+    if extracted:
+        result['extracted'] = extracted
+    if ocr_warning:
+        result['warning'] = ocr_warning
+    return jsonify(result)
 
 
 @app.route('/api/ocr/property', methods=['POST'])
@@ -1490,23 +1497,30 @@ def api_ocr_property():
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
     abs_path = os.path.join(UPLOAD_DIR, rel_path)
+    extracted = None
+    ocr_warning = None
     try:
         from ai.property_extractor import extract_property_data
         doc_type = request.form.get('doc_type', 'general')
         extracted = extract_property_data(abs_path, doc_type=doc_type)
     except Exception as e:
         app.logger.error(f'OCR property error: {e}')
-        return jsonify({'ok': False, 'error': 'Could not read the property document. Please try again with a clearer image.'}), 500
+        ocr_warning = 'Image unclear — could not scan automatically. File saved. Please fill in the details manually.'
     doc = Document(
         client_id=client_id, will_id=session.get('will_id'),
         filename=saved_name, original_filename=file.filename,
         file_path=rel_path, file_type=file.content_type,
         file_size=file_size, category='property',
-        extracted_data=json.dumps(extracted),
+        extracted_data=json.dumps(extracted) if extracted else None,
     )
     db.session.add(doc)
     db.session.commit()
-    return jsonify({'ok': True, 'extracted': extracted, 'document_id': doc.id})
+    result = {'ok': True, 'document_id': doc.id}
+    if extracted:
+        result['extracted'] = extracted
+    if ocr_warning:
+        result['warning'] = ocr_warning
+    return jsonify(result)
 
 
 @app.route('/api/ocr/asset', methods=['POST'])
@@ -1526,22 +1540,29 @@ def api_ocr_asset():
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
     abs_path = os.path.join(UPLOAD_DIR, rel_path)
+    extracted = None
+    ocr_warning = None
     try:
         from ai.asset_extractor import extract_asset_data
         extracted = extract_asset_data(abs_path)
     except Exception as e:
         app.logger.error(f'OCR asset error: {e}')
-        return jsonify({'ok': False, 'error': 'Could not read the financial document. Please try again with a clearer image.'}), 500
+        ocr_warning = 'Image unclear — could not scan automatically. File saved. Please fill in the details manually.'
     doc = Document(
         client_id=client_id, will_id=session.get('will_id'),
         filename=saved_name, original_filename=file.filename,
         file_path=rel_path, file_type=file.content_type,
         file_size=file_size, category='financial',
-        extracted_data=json.dumps(extracted),
+        extracted_data=json.dumps(extracted) if extracted else None,
     )
     db.session.add(doc)
     db.session.commit()
-    return jsonify({'ok': True, 'extracted': extracted, 'document_id': doc.id})
+    result = {'ok': True, 'document_id': doc.id}
+    if extracted:
+        result['extracted'] = extracted
+    if ocr_warning:
+        result['warning'] = ocr_warning
+    return jsonify(result)
 
 
 @app.route('/client/documents')

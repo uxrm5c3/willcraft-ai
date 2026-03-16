@@ -1,4 +1,4 @@
-/* WillCraft AI - Wizard JavaScript (v20260315b) */
+/* WillCraft AI - Wizard JavaScript (v20260316a) */
 
 // Apply dropdown filtering on initial page load + dedup change listeners
 document.addEventListener('DOMContentLoaded', function() {
@@ -788,6 +788,9 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
                 setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadAndExtractProperty(f, statusElId, giftIndex, docType), docType: 'property' });
+        } else if (data.ok && data.warning) {
+            // OCR failed but file was saved
+            if (statusEl) statusEl.innerHTML = `<span class="text-amber-600">⚠ ${data.warning}</span>`;
         } else {
             if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the property document. Please try a clearer image.</span>';
         }
@@ -1237,6 +1240,60 @@ function getPersonAge(person) {
 }
 
 /**
+ * Auto-populate Date of Birth and Gender from Malaysian NRIC number.
+ * Malaysian NRIC format: YYMMDD-SS-NNNN
+ * - First 6 digits = date of birth (YYMMDD)
+ * - Last digit: odd = Male, even = Female
+ */
+function autoPopulateFromNRIC(nricValue) {
+    const nric = nricValue.replace(/[-\s]/g, '');
+    if (!/^\d{12}$/.test(nric)) return; // Not a valid Malaysian NRIC
+
+    const dobField = document.getElementById('modal-dob');
+    const genderField = document.getElementById('modal-gender');
+
+    // Extract date of birth
+    const yy = parseInt(nric.substring(0, 2));
+    const mm = nric.substring(2, 4);
+    const dd = nric.substring(4, 6);
+    const month = parseInt(mm);
+    const day = parseInt(dd);
+
+    // Validate month and day
+    if (month < 1 || month > 12 || day < 1 || day > 31) return;
+
+    // Determine century: if YY > current year's last 2 digits + 5, assume 1900s
+    const currentYY = new Date().getFullYear() % 100;
+    const century = yy > (currentYY + 5) ? '19' : '20';
+    const fullYear = century + nric.substring(0, 2);
+
+    // Only auto-fill DOB if the field is empty (don't overwrite user/OCR data)
+    if (dobField && !dobField.value) {
+        dobField.value = `${fullYear}-${mm}-${dd}`;
+        dobField.classList.add('bg-green-50', 'border-green-400');
+        setTimeout(() => { dobField.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+    }
+
+    // Auto-fill gender from last digit: odd = Male, even = Female
+    const lastDigit = parseInt(nric.charAt(11));
+    if (genderField && !genderField.value) {
+        genderField.value = (lastDigit % 2 === 1) ? 'Male' : 'Female';
+        genderField.classList.add('bg-green-50', 'border-green-400');
+        setTimeout(() => { genderField.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+    }
+}
+
+// Attach NRIC auto-populate listener
+document.addEventListener('DOMContentLoaded', function() {
+    const nricField = document.getElementById('modal-nric-passport');
+    if (nricField) {
+        nricField.addEventListener('input', function() {
+            autoPopulateFromNRIC(this.value);
+        });
+    }
+});
+
+/**
  * Get the testator's person ID from the registry or session.
  */
 function getTestatorId() {
@@ -1403,6 +1460,79 @@ function openCameraForNRIC() {
     }, 'nric');
 }
 
+/**
+ * Show a per-field conflict resolution dialog when OCR data differs from existing form data.
+ * Default is "maintain" (keep existing manual data).
+ */
+function showFieldConflictDialog(conflicts, callback) {
+    // Build modal overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'field-conflict-modal';
+    overlay.className = 'fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4';
+    let rows = '';
+    for (const c of conflicts) {
+        const existingDisplay = c.label === 'Address'
+            ? c.existingVal.replace(/\n/g, ', ').substring(0, 60) + (c.existingVal.length > 60 ? '...' : '')
+            : c.existingVal;
+        const scannedDisplay = c.label === 'Address'
+            ? c.scannedVal.replace(/\n/g, ', ').substring(0, 60) + (c.scannedVal.length > 60 ? '...' : '')
+            : c.scannedVal;
+        rows += `
+        <div class="border border-gray-200 rounded-lg p-3 space-y-2">
+            <div class="text-sm font-semibold text-gray-700">${c.label}</div>
+            <label class="flex items-start gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                <input type="radio" name="conflict-${c.key}" value="existing" checked class="mt-1 text-primary-600 focus:ring-primary-500">
+                <div class="flex-1">
+                    <span class="text-xs font-medium text-gray-500">Keep existing:</span>
+                    <div class="text-sm text-gray-900">${existingDisplay}</div>
+                </div>
+            </label>
+            <label class="flex items-start gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                <input type="radio" name="conflict-${c.key}" value="scanned" class="mt-1 text-primary-600 focus:ring-primary-500">
+                <div class="flex-1">
+                    <span class="text-xs font-medium text-blue-500">Use scanned:</span>
+                    <div class="text-sm text-blue-700">${scannedDisplay}</div>
+                </div>
+            </label>
+        </div>`;
+    }
+    overlay.innerHTML = `
+    <div class="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[80vh] overflow-y-auto p-5">
+        <h3 class="text-lg font-bold text-gray-900 mb-1">Data Mismatch Found</h3>
+        <p class="text-sm text-gray-500 mb-4">The scanned document has different values. Choose which to keep for each field.</p>
+        <div class="space-y-3 mb-5">${rows}</div>
+        <div class="flex justify-end gap-3 pt-3 border-t border-gray-200">
+            <button type="button" id="conflict-apply-btn" class="px-5 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 text-sm">Apply</button>
+        </div>
+    </div>`;
+    document.body.appendChild(overlay);
+
+    document.getElementById('conflict-apply-btn').onclick = function() {
+        const resolutions = {};
+        for (const c of conflicts) {
+            const radio = document.querySelector(`input[name="conflict-${c.key}"]:checked`);
+            resolutions[c.key] = radio ? radio.value : 'existing';
+        }
+        overlay.remove();
+        callback(resolutions);
+    };
+}
+
+/**
+ * Common post-OCR actions: show document preview, check duplicates, show banners.
+ */
+function _finishOCRApply(data, file, confirmed, statusEl) {
+    if (data.document_id) {
+        showDocumentPreview(data.document_id, file.name || 'IC/Passport scan', file);
+    }
+    if (confirmed.nric_number) {
+        checkAndHandleDuplicate(confirmed.nric_number);
+    }
+    showUnsavedBanner();
+    showAddressSuggestions();
+    if (statusEl) statusEl.innerHTML = '';
+}
+
 async function uploadNRICForIdentity(inputOrFile) {
     let file;
     if (inputOrFile instanceof File) {
@@ -1428,7 +1558,7 @@ async function uploadNRICForIdentity(inputOrFile) {
     try {
         const resp = await fetch('/api/ocr/nric', { method: 'POST', body: formData });
         if (!resp.ok) {
-            let errMsg = 'Could not scan the document. Please try again with a clearer image.';
+            let errMsg = 'Upload failed. Please try again.';
             try { const errData = await resp.json(); if (errData.error) errMsg = errData.error; } catch(e) {}
             if (statusEl) statusEl.innerHTML = `<span class="text-red-600">❌ ${errMsg}</span>`;
             return;
@@ -1445,36 +1575,93 @@ async function uploadNRICForIdentity(inputOrFile) {
             delete extracted.doc_type;
 
             showOCRConfirmation(extracted, file, (confirmed) => {
-                // Apply confirmed data to identity modal fields
-                if (confirmed.full_name) document.getElementById('modal-full-name').value = confirmed.full_name;
-                if (confirmed.nric_number) document.getElementById('modal-nric-passport').value = confirmed.nric_number;
-                if (confirmed.address) document.getElementById('modal-address').value = confirmed.address;
-                if (confirmed.nationality) document.getElementById('modal-nationality').value = confirmed.nationality;
-                if (confirmed.gender) document.getElementById('modal-gender').value = confirmed.gender;
-                if (confirmed.date_of_birth) {
-                    const dateVal = convertDateForInput(confirmed.date_of_birth);
-                    if (dateVal) document.getElementById('modal-dob').value = dateVal;
+                // Map OCR fields to modal field IDs and labels
+                const fieldMap = [
+                    { key: 'full_name', elId: 'modal-full-name', label: 'Full Name' },
+                    { key: 'nric_number', elId: 'modal-nric-passport', label: 'NRIC / Passport' },
+                    { key: 'address', elId: 'modal-address', label: 'Address' },
+                    { key: 'nationality', elId: 'modal-nationality', label: 'Nationality' },
+                    { key: 'gender', elId: 'modal-gender', label: 'Gender' },
+                    { key: 'date_of_birth', elId: 'modal-dob', label: 'Date of Birth', isDate: true },
+                ];
+                if (isPassport) {
+                    fieldMap.push({ key: 'passport_expiry', elId: 'modal-passport-expiry', label: 'Passport Expiry', isDate: true });
                 }
-                if (isPassport && confirmed.passport_expiry) {
-                    document.getElementById('passport-expiry-field').classList.remove('hidden');
-                    const expiryVal = convertDateForInput(confirmed.passport_expiry);
-                    if (expiryVal) document.getElementById('modal-passport-expiry').value = expiryVal;
+
+                // Collect mismatches between existing form values and scanned data
+                const conflicts = [];
+                for (const f of fieldMap) {
+                    let scannedVal = confirmed[f.key] || '';
+                    if (!scannedVal) continue;
+                    if (f.isDate) scannedVal = convertDateForInput(scannedVal) || scannedVal;
+                    const el = document.getElementById(f.elId);
+                    if (!el) continue;
+                    const existingVal = el.value.trim();
+                    if (!existingVal) continue; // Empty field — no conflict, just fill
+                    // Normalize for comparison
+                    const normExisting = existingVal.toLowerCase().replace(/[-\s\/]/g, '');
+                    const normScanned = scannedVal.toLowerCase().replace(/[-\s\/]/g, '');
+                    if (normExisting !== normScanned) {
+                        conflicts.push({ ...f, existingVal, scannedVal });
+                    }
                 }
-                // Store document ID and show document preview
-                if (data.document_id) {
-                    showDocumentPreview(data.document_id, file.name || 'IC/Passport scan', file);
+
+                if (conflicts.length > 0) {
+                    // Show per-field conflict resolution dialog
+                    showFieldConflictDialog(conflicts, (resolutions) => {
+                        // Apply non-conflicting fields (empty fields get scanned value)
+                        for (const f of fieldMap) {
+                            let scannedVal = confirmed[f.key] || '';
+                            if (!scannedVal) continue;
+                            if (f.isDate) scannedVal = convertDateForInput(scannedVal) || scannedVal;
+                            const el = document.getElementById(f.elId);
+                            if (!el) continue;
+                            const existingVal = el.value.trim();
+                            // If this was a conflict, apply only if user chose 'scanned'
+                            const resolution = resolutions[f.key];
+                            if (resolution === 'scanned') {
+                                el.value = scannedVal;
+                                el.classList.add('bg-green-50', 'border-green-400');
+                                setTimeout(() => { el.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+                            } else if (!existingVal) {
+                                // No conflict — fill empty field
+                                el.value = scannedVal;
+                                el.classList.add('bg-green-50', 'border-green-400');
+                                setTimeout(() => { el.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+                            }
+                            // else: resolution === 'existing' or default — keep existing
+                        }
+                        if (isPassport && confirmed.passport_expiry) {
+                            document.getElementById('passport-expiry-field').classList.remove('hidden');
+                        }
+                        _finishOCRApply(data, file, confirmed, statusEl);
+                    });
+                } else {
+                    // No conflicts — apply all scanned data to empty fields directly
+                    for (const f of fieldMap) {
+                        let scannedVal = confirmed[f.key] || '';
+                        if (!scannedVal) continue;
+                        if (f.isDate) scannedVal = convertDateForInput(scannedVal) || scannedVal;
+                        const el = document.getElementById(f.elId);
+                        if (!el) continue;
+                        el.value = scannedVal;
+                    }
+                    if (isPassport && confirmed.passport_expiry) {
+                        document.getElementById('passport-expiry-field').classList.remove('hidden');
+                    }
+                    _finishOCRApply(data, file, confirmed, statusEl);
                 }
-                // Check for duplicate NRIC — switch to update mode if exists
-                if (confirmed.nric_number) {
-                    checkAndHandleDuplicate(confirmed.nric_number);
-                }
-                // Show unsaved banner + highlight save button
-                showUnsavedBanner();
-                // Show address suggestions if address is empty or low quality
-                showAddressSuggestions();
-                if (statusEl) statusEl.innerHTML = '';
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadNRICForIdentity(f), docType: 'nric' });
+        } else if (data.ok && data.warning) {
+            // OCR failed but file was saved — show preview and warning
+            if (data.document_id) {
+                showDocumentPreview(data.document_id, file.name || 'IC/Passport scan', file);
+            }
+            if (statusEl) statusEl.innerHTML = `<span class="text-amber-600">⚠ ${data.warning}</span>`;
+            // Show unsaved banner so user knows to fill fields manually
+            showUnsavedBanner();
+            showAddressSuggestions();
         } else {
             if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the document. Please try a clearer image.</span>';
         }
@@ -1508,7 +1695,7 @@ async function uploadAndExtractAsset(inputOrFile, statusElId, giftIndex) {
     try {
         const resp = await fetch('/api/ocr/asset', { method: 'POST', body: formData });
         if (!resp.ok) {
-            let errMsg = 'Could not read the financial document. Please try again with a clearer image.';
+            let errMsg = 'Upload failed. Please try again.';
             try { const errData = await resp.json(); if (errData.error) errMsg = errData.error; } catch(e) {}
             if (statusEl) statusEl.innerHTML = `<span class="text-red-600">❌ ${errMsg}</span>`;
             return;
@@ -1534,6 +1721,9 @@ async function uploadAndExtractAsset(inputOrFile, statusElId, giftIndex) {
                 setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadAndExtractAsset(f, statusElId, giftIndex), docType: 'financial' });
+        } else if (data.ok && data.warning) {
+            // OCR failed but file was saved
+            if (statusEl) statusEl.innerHTML = `<span class="text-amber-600">⚠ ${data.warning}</span>`;
         } else {
             if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the financial document. Please try a clearer image.</span>';
         }
