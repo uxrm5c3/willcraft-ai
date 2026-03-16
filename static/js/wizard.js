@@ -1234,8 +1234,8 @@ function showAddressSuggestions() {
         const label = a.relationship ? `${a.name} (${a.relationship})` : a.name;
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'w-full text-left px-3 py-2 border border-gray-200 rounded-lg hover:bg-primary-50 hover:border-primary-300 transition-colors text-xs';
-        btn.innerHTML = `<span class="font-medium text-gray-700">${label}</span><br><span class="text-gray-500">${displayAddr}</span>`;
+        btn.className = 'w-full text-left px-3 py-2 bg-white border border-blue-200 rounded-lg hover:bg-blue-100 hover:border-blue-400 transition-colors text-xs cursor-pointer';
+        btn.innerHTML = `<span class="font-semibold text-blue-700">${label}</span> <span class="text-blue-500">— ${displayAddr}</span>`;
         btn.onclick = function() {
             document.getElementById('modal-address').value = a.address;
             // Highlight the address field briefly
