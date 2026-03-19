@@ -2851,7 +2851,7 @@ def wizard_generate():
     save_will_to_db()
 
     # Save include_logo preference
-    include_logo = request.form.get('include_logo') == '1'
+    include_logo = '1' in request.form.getlist('include_logo')
     will_id = session.get('will_id')
     if will_id:
         wr = db.session.get(Will, will_id)

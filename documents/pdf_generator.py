@@ -199,7 +199,7 @@ def _build_signing_page_html(signing_text: str) -> str:
         <tr><td colspan="2" style="height:10pt;"></td></tr>
         <tr>
             <td class="sign-label">Date of this Will:</td>
-            <td class="sign-field"><span class="date-hint">(dd/mm/yyyy)</span></td>
+            <td class="sign-field" style="text-align:right;"><span class="date-hint">(dd/mm/yyyy)</span></td>
         </tr>
     </table>
 
