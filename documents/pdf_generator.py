@@ -345,8 +345,10 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     .page-footer .page-next::after {{
         content: counter(page, decimal);
     }}
-    /* Hide footer on signing page */
-    .signing-page .page-footer {{ display: none; }}
+    /* Main content wrapper */
+    .main-content {{
+        /* Footer is scoped inside this div, not on signing page */
+    }}
 
     /* === Body Styles === */
     body {{
@@ -417,22 +419,22 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     }}
 
     .sig-label {{
-        width: 40%;
+        width: 38%;
         font-size: 11pt;
         vertical-align: bottom;
-        padding: 2pt 0;
+        padding: 4pt 0;
         white-space: nowrap;
     }}
 
     .sig-field {{
-        width: 60%;
+        width: 62%;
         vertical-align: bottom;
-        padding: 2pt 0;
+        padding: 4pt 0;
     }}
 
     .sig-line {{
         border-bottom: 0.5pt solid #000;
-        min-height: 16pt;
+        min-height: 20pt;
         width: 100%;
     }}
 
@@ -464,23 +466,25 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 </style>
 </head>
 <body>
-<!-- Fixed footer matching Rockwills format -->
-<div class="page-footer">
-    <table style="width:100%; border-collapse:collapse; font-family:'Times New Roman',serif; font-size:8pt; margin-bottom:2pt;">
-        <tr>
-            <td style="text-align:left; padding:0 0 2pt 0;">Page| <span class="page-num"></span></td>
-        </tr>
-    </table>
-    <table class="sig-boxes">
-        <tr>
-            <td>Testator</td>
-            <td>Witness1</td>
-            <td>Witness2</td>
-        </tr>
-    </table>
+<!-- Main content pages (with signature footer) -->
+<div class="main-content">
+    <!-- Fixed footer: only renders on main content pages -->
+    <div class="page-footer">
+        <table style="width:100%; border-collapse:collapse; font-family:'Times New Roman',serif; font-size:8pt; margin-bottom:2pt;">
+            <tr>
+                <td style="text-align:left; padding:0 0 2pt 0;">Page| <span class="page-num"></span></td>
+            </tr>
+        </table>
+        <table class="sig-boxes">
+            <tr>
+                <td>Testator</td>
+                <td>Witness1</td>
+                <td>Witness2</td>
+            </tr>
+        </table>
+    </div>
+    {content_html}
 </div>
-
-{content_html}
 {signing_html}
 </body>
 </html>"""
