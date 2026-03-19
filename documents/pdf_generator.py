@@ -293,13 +293,6 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             border-bottom: 0.5pt solid #000;
         }}
 
-        /* Page counter at bottom-right only */
-        @bottom-right {{
-            content: "Page " counter(page);
-            font-family: 'Times New Roman', Times, serif;
-            font-size: 7pt;
-            color: #666;
-        }}
     }}
 
     /* Signing page: no signature footer */
@@ -318,12 +311,6 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             border-bottom: 0.5pt solid #000;
         }}
 
-        @bottom-right {{
-            content: "Page " counter(page);
-            font-family: 'Times New Roman', Times, serif;
-            font-size: 7pt;
-            color: #666;
-        }}
     }}
 
     /* Fixed footer: repeats on every page in WeasyPrint */
@@ -361,6 +348,10 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
         font-family: 'Times New Roman', Times, serif;
         font-size: 8pt;
         padding: 2pt 4pt;
+    }}
+    /* Page number in footer using CSS counter */
+    .page-footer .page-num::after {{
+        content: counter(page);
     }}
     /* Hide footer on signing page */
     .signing-page .page-footer {{ display: none; }}
@@ -481,13 +472,13 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 </style>
 </head>
 <body>
-<!-- Fixed footer: Page info line + signature boxes like Rockwills format -->
+<!-- Fixed footer: Page info line + signature boxes matching Rockwills format -->
 <div class="page-footer">
-    <table class="footer-top" style="width:100%; border-collapse:collapse;">
+    <table class="footer-top" style="width:100%; border-collapse:collapse; border-top:0.5pt solid #000;">
         <tr>
-            <td class="pg" style="width:33%"></td>
-            <td style="width:34%; text-align:center"></td>
-            <td class="cont" style="width:33%"></td>
+            <td class="pg" style="width:20%; text-align:left; font-size:8pt; padding:2pt 0;">Page| <span class="page-num"></span></td>
+            <td style="width:60%; text-align:center; font-size:8pt; padding:2pt 0;"></td>
+            <td class="cont" style="width:20%; text-align:right; font-size:8pt; padding:2pt 0;">Continued on next page</td>
         </tr>
     </table>
     <table class="sig-boxes">
