@@ -466,10 +466,9 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 <body>
 <!-- Fixed footer matching Rockwills format -->
 <div class="page-footer">
-    <table style="width:100%; border-collapse:collapse; font-family:'Times New Roman',serif; font-size:8pt; margin-bottom:0;">
+    <table style="width:100%; border-collapse:collapse; font-family:'Times New Roman',serif; font-size:8pt; margin-bottom:2pt;">
         <tr>
-            <td style="text-align:left; padding:1pt 0;">Page| <span class="page-num"></span></td>
-            <td style="text-align:right; padding:1pt 0;"></td>
+            <td style="text-align:left; padding:0 0 2pt 0;">Page| <span class="page-num"></span></td>
         </tr>
     </table>
     <table class="sig-boxes">
