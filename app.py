@@ -649,6 +649,7 @@ def build_will_data():
         residuary_estate=residuary_estate,
         testamentary_trust=testamentary_trust,
         other_matters=other_matters,
+        identities=session.get('person_registry', []),
     )
 
 

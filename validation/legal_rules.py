@@ -204,6 +204,33 @@ def validate_will_data(will_data) -> List[ValidationResult]:
                     field="residuary_estate"
                 ))
 
+    # Rule 16: Cross-check all names against identity registry for consistency
+    # Build identity name→NRIC lookup from identities
+    if hasattr(will_data, 'identities') and will_data.identities:
+        id_lookup = {p.get('full_name', '').upper(): p.get('nric_passport', '') for p in will_data.identities if p.get('full_name')}
+
+        # Check executors match identities
+        for ex in will_data.executors:
+            ex_upper = ex.full_name.upper()
+            if ex_upper in id_lookup and id_lookup[ex_upper] != ex.nric_passport:
+                results.append(ValidationResult(
+                    rule_id="EXECUTOR_NRIC_MISMATCH",
+                    severity="ERROR",
+                    message=f"Executor '{ex.full_name}' NRIC '{ex.nric_passport}' does not match identity registry '{id_lookup[ex_upper]}'. Update identity or re-select executor.",
+                    field="executors"
+                ))
+
+        # Check beneficiaries match identities
+        for b in will_data.beneficiaries:
+            b_upper = b.full_name.upper()
+            if b_upper in id_lookup and id_lookup[b_upper] != b.nric_passport_birthcert:
+                results.append(ValidationResult(
+                    rule_id="BENEFICIARY_NRIC_MISMATCH",
+                    severity="ERROR",
+                    message=f"Beneficiary '{b.full_name}' NRIC '{b.nric_passport_birthcert}' does not match identity registry '{id_lookup[b_upper]}'. Update identity or re-select beneficiary.",
+                    field="beneficiaries"
+                ))
+
     return results
 
 

@@ -35,3 +35,4 @@ class WillData(BaseModel):
     residuary_estate: ResiduaryEstate = ResiduaryEstate()
     testamentary_trust: Optional[TestamentaryTrust] = None
     other_matters: Optional[OtherMatters] = None
+    identities: Optional[List[dict]] = None  # Raw identity registry for cross-validation
