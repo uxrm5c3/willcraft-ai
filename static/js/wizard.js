@@ -1,4 +1,4 @@
-/* WillCraft AI - Wizard JavaScript (v20260319a) */
+/* WillCraft AI - Wizard JavaScript (v20260319b) */
 
 // ===========================================================================
 // Searchable Dropdown Component
@@ -466,7 +466,7 @@ async function saveDraft() {
     }
 }
 
-// Track unsaved changes and prompt before leaving
+// Track unsaved changes and auto-save before navigating away
 window._formDirty = false;
 document.addEventListener('DOMContentLoaded', function() {
     const form = document.querySelector('form[method="POST"]');
@@ -475,6 +475,19 @@ document.addEventListener('DOMContentLoaded', function() {
         form.addEventListener('change', function() { window._formDirty = true; });
         form.addEventListener('submit', function() { window._formDirty = false; });
     }
+
+    // Auto-save form when clicking navigation links (sidebar, back, step links)
+    document.addEventListener('click', function(e) {
+        const link = e.target.closest('a[href*="/wizard/step/"], a[href="/preview"], a[href="/"]');
+        if (!link || !window._formDirty || !form) return;
+        e.preventDefault();
+        const dest = link.href;
+        // Submit form data via AJAX to save, then navigate
+        const formData = new FormData(form);
+        formData.append('_save_draft', '1');
+        fetch(form.action || window.location.href, { method: 'POST', body: formData })
+            .finally(() => { window._formDirty = false; window.location.href = dest; });
+    });
 });
 window.addEventListener('beforeunload', function(e) {
     if (window._formDirty) {
