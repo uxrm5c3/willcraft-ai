@@ -2129,8 +2129,8 @@ function showFieldConflictDialog(conflicts, callback) {
     }
     overlay.innerHTML = `
     <div class="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[80vh] overflow-y-auto p-5">
-        <h3 class="text-lg font-bold text-gray-900 mb-1">Data Mismatch Found</h3>
-        <p class="text-sm text-gray-500 mb-4">The scanned document has different values. Choose which to keep for each field.</p>
+        <h3 class="text-lg font-bold text-gray-900 mb-1">Existing Data Found</h3>
+        <p class="text-sm text-gray-500 mb-4">Some fields already have data. By default, existing data is kept (OCR may be inaccurate). Select "Use scanned" only if the scan is correct.</p>
         <div class="space-y-3 mb-5">${rows}</div>
         <div class="flex justify-end gap-3 pt-3 border-t border-gray-200">
             <button type="button" id="conflict-apply-btn" class="px-5 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 text-sm">Apply</button>
@@ -2219,7 +2219,7 @@ async function uploadNRICForIdentity(inputOrFile) {
                     fieldMap.push({ key: 'passport_expiry', elId: 'modal-passport-expiry', label: 'Passport Expiry', isDate: true });
                 }
 
-                // Collect mismatches between existing form values and scanned data
+                // Collect ALL fields that already have data — always ask before overwriting
                 const conflicts = [];
                 for (const f of fieldMap) {
                     let scannedVal = confirmed[f.key] || '';
@@ -2229,12 +2229,13 @@ async function uploadNRICForIdentity(inputOrFile) {
                     if (!el) continue;
                     const existingVal = el.value.trim();
                     if (!existingVal) continue; // Empty field — no conflict, just fill
-                    // Normalize for comparison
+                    // Any non-empty field with scanned data = potential conflict, ask user
                     const normExisting = existingVal.toLowerCase().replace(/[-\s\/]/g, '');
                     const normScanned = scannedVal.toLowerCase().replace(/[-\s\/]/g, '');
                     if (normExisting !== normScanned) {
                         conflicts.push({ ...f, existingVal, scannedVal });
                     }
+                    // If values match, no need to ask — keep existing (no overwrite)
                 }
 
                 // Helper to set field value + sync searchable dropdown if applicable
@@ -2283,12 +2284,15 @@ async function uploadNRICForIdentity(inputOrFile) {
                         _finishOCRApply(data, file, confirmed, statusEl);
                     });
                 } else {
-                    // No conflicts — apply all scanned data to empty fields directly
+                    // No conflicts — only fill EMPTY fields (never overwrite existing data)
                     for (const f of fieldMap) {
                         let scannedVal = confirmed[f.key] || '';
                         if (!scannedVal) continue;
                         if (f.isDate) scannedVal = convertDateForInput(scannedVal) || scannedVal;
-                        _applyFieldValue(f, scannedVal);
+                        const el = document.getElementById(f.elId);
+                        if (el && !el.value.trim()) {
+                            _applyFieldValue(f, scannedVal);
+                        }
                     }
                     if (isPassport && confirmed.passport_expiry) {
                         document.getElementById('passport-expiry-field').classList.remove('hidden');
