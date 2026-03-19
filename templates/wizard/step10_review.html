@@ -425,6 +425,16 @@
         <p class="text-sm text-gray-500 mb-4">This will use Claude AI to draft your will. The process may take 30-60 seconds.</p>
 
         <form method="POST" action="/wizard/generate" class="inline-block">
+            {% if has_logo %}
+            <div class="flex items-center justify-center gap-2 mb-4">
+                <input type="hidden" name="include_logo" value="0">
+                <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-700">
+                    <input type="checkbox" name="include_logo" value="1" {% if include_logo %}checked{% endif %}
+                           class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
+                    Include firm logo in PDF header
+                </label>
+            </div>
+            {% endif %}
             <button type="submit" {% if has_errors %}disabled{% endif %}
                     class="w-full sm:w-auto px-8 sm:px-10 py-4 text-base sm:text-lg font-bold rounded-xl transition-colors shadow-lg
                            {% if has_errors %}bg-gray-300 text-gray-500 cursor-not-allowed{% else %}bg-primary-600 text-white hover:bg-primary-700 hover:shadow-xl{% endif %}">

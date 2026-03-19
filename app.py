@@ -193,6 +193,7 @@ with app.app_context():
         ("approval_remarks", "TEXT"),
         ("text_edited_by", "VARCHAR(36)"),
         ("text_edited_at", "DATETIME"),
+        ("include_logo", "BOOLEAN DEFAULT 1"),
     ]:
         try:
             with db.engine.connect() as conn:
@@ -1340,7 +1341,11 @@ def api_will_send_email(will_id):
 
     try:
         from documents.pdf_generator import generate_pdf
-        filepath = generate_pdf(will_text, safe_name, logo_path=_get_logo_path())
+        # Respect will's include_logo preference
+        logo = None
+        if will_record.include_logo:
+            logo = _get_logo_path()
+        filepath = generate_pdf(will_text, safe_name, logo_path=logo)
         with open(filepath, 'rb') as f:
             pdf_data = f.read()
     except Exception as e:
@@ -1421,6 +1426,22 @@ def api_will_save():
         return jsonify({'ok': True, 'will_id': will_record.id})
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/will/toggle-logo', methods=['POST'])
+@login_required
+def api_will_toggle_logo():
+    """Toggle include_logo flag on the current will."""
+    will_id = session.get('will_id')
+    if not will_id:
+        return jsonify({'ok': False, 'error': 'No will in session'}), 400
+    wr = db.session.get(Will, will_id)
+    if not wr:
+        return jsonify({'ok': False, 'error': 'Will not found'}), 404
+    data = request.get_json(silent=True) or {}
+    wr.include_logo = bool(data.get('include_logo', True))
+    db.session.commit()
+    return jsonify({'ok': True, 'include_logo': wr.include_logo})
 
 
 @app.route('/wills')
@@ -2763,6 +2784,17 @@ def wizard_step_review():
         'other_matters': session.get('step8_others', {}),
     }
 
+    # Check if a firm logo exists for this tenant
+    has_logo = _get_logo_path() is not None
+
+    # Get current include_logo setting from will record (default True)
+    include_logo = True
+    will_id = session.get('will_id')
+    if will_id:
+        wr = db.session.get(Will, will_id)
+        if wr and wr.include_logo is not None:
+            include_logo = wr.include_logo
+
     return render_template(
         'wizard/step10_review.html',
         current_step=10,
@@ -2774,6 +2806,8 @@ def wizard_step_review():
         validation_warnings=warnings,
         validation_infos=infos,
         has_errors=len(errors) > 0,
+        has_logo=has_logo,
+        include_logo=include_logo,
     )
 
 
@@ -2815,6 +2849,15 @@ def wizard_generate():
     session.modified = True
     mark_step_complete(10)
     save_will_to_db()
+
+    # Save include_logo preference
+    include_logo = request.form.get('include_logo') == '1'
+    will_id = session.get('will_id')
+    if will_id:
+        wr = db.session.get(Will, will_id)
+        if wr:
+            wr.include_logo = include_logo
+            db.session.commit()
 
     # Save version history
     will_id = session.get('will_id')
@@ -2929,6 +2972,8 @@ def preview():
         client_email=client_email,
         versions=versions,
         viewing_version=viewing_version,
+        has_logo=_get_logo_path() is not None,
+        include_logo=will_record.include_logo if will_record and will_record.include_logo is not None else True,
     )
 
 
@@ -2967,7 +3012,15 @@ def download(fmt):
         filepath = generate_docx(will_text, safe_name)
     elif fmt == 'pdf':
         from documents.pdf_generator import generate_pdf
-        filepath = generate_pdf(will_text, safe_name, logo_path=_get_logo_path())
+        # Check will's include_logo flag
+        logo = None
+        if will_id:
+            wr = db.session.get(Will, will_id)
+            if wr and wr.include_logo:
+                logo = _get_logo_path()
+        else:
+            logo = _get_logo_path()
+        filepath = generate_pdf(will_text, safe_name, logo_path=logo)
     else:
         flash('Unsupported download format.', 'error')
         return redirect(url_for('preview'))
@@ -3283,9 +3336,15 @@ def probate_step4(probate_id):
             'file_path': gf.file_path,
         })
 
+    # Build exhibit prefix from applicant initials
+    exec_data = ctx.get('executor')
+    exec_name = exec_data.full_name if exec_data and hasattr(exec_data, 'full_name') else ''
+    exhibit_prefix = ''.join(w[0] for w in exec_name.split() if w) if exec_name else 'APP'
+
     ctx['probate_step'] = 4
     ctx['recommendations'] = recommendations
     ctx['generated_forms'] = gen_list
+    ctx['exhibit_prefix'] = exhibit_prefix
     return render_template('probate/step4_review.html', **ctx)
 
 

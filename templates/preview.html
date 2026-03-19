@@ -41,7 +41,15 @@
             <!-- Download buttons (only for approver, or approved wills) -->
             {% set can_download = perms.get('canDownload') or (will_record and will_record.status == 'approved') %}
             {% if can_download %}
-            <div class="flex gap-2">
+            <div class="flex items-center gap-3">
+                {% if has_logo %}
+                <label class="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600" title="Include firm logo in PDF header">
+                    <input type="checkbox" id="logo-toggle" {% if include_logo %}checked{% endif %}
+                           class="w-3.5 h-3.5 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                           onchange="toggleLogo(this.checked)">
+                    Logo
+                </label>
+                {% endif %}
                 <a href="/download/docx"
                    class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm text-sm">
                     <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -372,6 +380,14 @@
 
             <!-- Download (if allowed) -->
             {% if can_download %}
+            {% if has_logo %}
+            <label class="flex items-center gap-1.5 cursor-pointer text-xs text-gray-600" title="Include firm logo in PDF header">
+                <input type="checkbox" id="logo-toggle-bottom" {% if include_logo %}checked{% endif %}
+                       class="w-3.5 h-3.5 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                       onchange="toggleLogo(this.checked)">
+                Logo
+            </label>
+            {% endif %}
             <a href="/download/docx"
                class="inline-flex items-center px-5 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors shadow-sm">
                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -611,6 +627,19 @@ async function sendWillEmail(willId) {
         btnText.textContent = 'Email to Client';
         btn.disabled = false;
     }
+}
+
+function toggleLogo(checked) {
+    // Sync all logo checkboxes on the page
+    document.querySelectorAll('#logo-toggle, #logo-toggle-bottom').forEach(function(cb) {
+        cb.checked = checked;
+    });
+    // Save preference to server
+    fetch('/api/will/toggle-logo', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({include_logo: checked})
+    });
 }
 </script>
 {% endblock %}

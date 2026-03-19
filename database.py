@@ -99,6 +99,7 @@ class Will(db.Model):
     # Approver edit tracking
     text_edited_by = db.Column(db.String(36), nullable=True)
     text_edited_at = db.Column(db.DateTime, nullable=True)
+    include_logo = db.Column(db.Boolean, default=True)  # Include firm logo in PDF header
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
