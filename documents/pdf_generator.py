@@ -329,30 +329,38 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     /* Fixed footer: repeats on every page in WeasyPrint */
     .page-footer {{
         position: fixed;
-        bottom: -3.5cm;
+        bottom: -3.8cm;
         left: 0;
         right: 0;
-        border-top: 0.5pt solid #999;
-        padding-top: 8pt;
     }}
-    .page-footer table {{
+    .page-footer .footer-top {{
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 8pt;
+        border-top: 0.5pt solid #000;
+        padding-top: 2pt;
+        margin-bottom: 0;
+    }}
+    .page-footer .footer-top td {{
+        padding: 2pt 0;
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 8pt;
+    }}
+    .page-footer .footer-top .pg {{ text-align: left; }}
+    .page-footer .footer-top .cont {{ text-align: right; }}
+    .page-footer .sig-boxes {{
         width: 100%;
         border-collapse: collapse;
+        margin-top: 0;
     }}
-    .page-footer td {{
+    .page-footer .sig-boxes td {{
+        width: 33.33%;
+        border: 0.5pt solid #000;
+        height: 28pt;
         text-align: center;
-        font-family: 'Times New Roman', Times, serif;
-        font-size: 7pt;
-        color: #666;
-        padding: 0 4pt;
         vertical-align: bottom;
-    }}
-    .page-footer .sig-line {{
-        display: block;
-        border-bottom: 0.5pt solid #999;
-        width: 80%;
-        margin: 0 auto 2pt auto;
-        height: 14pt;
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 8pt;
+        padding: 2pt 4pt;
     }}
     /* Hide footer on signing page */
     .signing-page .page-footer {{ display: none; }}
@@ -473,22 +481,20 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 </style>
 </head>
 <body>
-<!-- Fixed footer: Testator + Witness 1 + Witness 2 signature on every page -->
+<!-- Fixed footer: Page info line + signature boxes like Rockwills format -->
 <div class="page-footer">
-    <table>
+    <table class="footer-top" style="width:100%; border-collapse:collapse;">
         <tr>
-            <td>
-                <span class="sig-line"></span>
-                Testator
-            </td>
-            <td>
-                <span class="sig-line"></span>
-                Witness 1
-            </td>
-            <td>
-                <span class="sig-line"></span>
-                Witness 2
-            </td>
+            <td class="pg" style="width:33%"></td>
+            <td style="width:34%; text-align:center"></td>
+            <td class="cont" style="width:33%"></td>
+        </tr>
+    </table>
+    <table class="sig-boxes">
+        <tr>
+            <td>Testator</td>
+            <td>Witness1</td>
+            <td>Witness2</td>
         </tr>
     </table>
 </div>
