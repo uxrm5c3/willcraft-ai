@@ -935,15 +935,15 @@ def will_reject(will_id):
 
 
 @app.route('/api/will/<will_id>/edit-text', methods=['POST'])
-@role_required('approver')
+@login_required
 def api_will_edit_text(will_id):
-    """Save approver's edits to the will text and log the change."""
+    """Save edits to the will text and log the change."""
     will_record = db.session.get(Will, will_id)
     if not will_record:
         return jsonify({'ok': False, 'error': 'Will not found'}), 404
 
-    if will_record.status != 'pending_approval':
-        return jsonify({'ok': False, 'error': 'Will is not pending approval'}), 403
+    if not will_record.generated_will_text:
+        return jsonify({'ok': False, 'error': 'No generated will text to edit'}), 400
 
     data = request.get_json()
     if not data or 'text' not in data:
@@ -1026,6 +1026,53 @@ def api_will_edit_text(will_id):
         'summary': summary,
         'editor_name': editor_name,
     })
+
+
+# ---------------------------------------------------------------------------
+# AI Redraft (clean up edited will text)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/will/<will_id>/redraft', methods=['POST'])
+@login_required
+def api_will_redraft(will_id):
+    """Send edited will text to Claude AI for cleanup: renumber clauses, fix cross-references."""
+    will_record = db.session.get(Will, will_id)
+    if not will_record:
+        return jsonify({'ok': False, 'error': 'Will not found'}), 404
+
+    data = request.get_json()
+    if not data or 'text' not in data:
+        return jsonify({'ok': False, 'error': 'No text provided'}), 400
+
+    current_text = data['text'].strip()
+    if not current_text:
+        return jsonify({'ok': False, 'error': 'Will text is empty'}), 400
+
+    # Call Claude to clean up
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=os.environ.get('CLAUDE_MODEL', 'claude-sonnet-4-20250514'),
+            max_tokens=8000,
+            system="""You are a Malaysian will drafting assistant. Your task is to clean up an edited will document.
+Rules:
+- Renumber all clauses sequentially (1, 2, 3...)
+- Fix any cross-references to match new numbering (e.g. "clause 3 above" → correct clause number)
+- Fix grammar issues caused by clause removal or reordering
+- Preserve ALL remaining text exactly as written — do not add, rewrite, or remove any content
+- Keep the exact same formatting style (spacing, capitalization, structure)
+- Output ONLY the cleaned-up will text, nothing else — no preamble, no explanation""",
+            messages=[{
+                'role': 'user',
+                'content': f"Clean up this edited will document. Renumber clauses, fix cross-references, fix grammar from any removed clauses. Output only the will text:\n\n{current_text}"
+            }],
+        )
+        cleaned_text = response.content[0].text.strip()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'AI redraft failed: {str(e)}'}), 500
+
+    return jsonify({'ok': True, 'text': cleaned_text})
 
 
 # ---------------------------------------------------------------------------

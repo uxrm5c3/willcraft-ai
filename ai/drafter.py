@@ -239,7 +239,8 @@ def draft_will(will_data) -> str:
 Output ONLY the will document text - no explanatory notes, comments, or markdown formatting.
 
 IMPORTANT DRAFTING INSTRUCTIONS:
-- Follow the Rockwills Trustee Berhad professional standard format exactly
+- Follow the professional Malaysian will standard format exactly
+- Do NOT add any corporate trustee (e.g. Rockwills, Amanah Raya) as substitute executor unless explicitly provided in the data
 - Use section headings: "Revocation", "Appointment of Executor(s)", "Non Residuary Gift(s)", "Residuary Estate", "Declaration"
 - For bank accounts and properties to be sold, use the "The Moneys" pooling mechanism
 - Include EPF/insurance fallback clause if not specifically excluded
@@ -253,7 +254,7 @@ IMPORTANT DRAFTING INSTRUCTIONS:
 
 {format_will_data(will_data)}
 
-Draft the complete will now, following the Rockwills professional format and clause ordering specified in your instructions."""
+Draft the complete will now, following the professional format and clause ordering specified in your instructions."""
 
     message = client.messages.create(
         model=CLAUDE_MODEL,

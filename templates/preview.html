@@ -188,7 +188,7 @@
     {% endif %}
 
     <!-- Will Document -->
-    {% set is_approver_pending = will_record and will_record.status == 'pending_approval' and perms.get('canApprove') %}
+    {% set can_edit_will = will_record and not viewing_version and will_record.generated_will_text %}
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         <div class="bg-gray-50 border-b border-gray-200 px-6 py-3 flex items-center justify-between">
             <span class="text-sm font-medium text-gray-600">
@@ -207,27 +207,51 @@
                 {% else %}
                 <span class="text-xs text-gray-400">AI Draft</span>
                 {% endif %}
-            </div>
-        </div>
-        <div class="p-8 md:p-12">
-            {% if is_approver_pending %}
-            <textarea id="will-text-editor"
-                      class="will-text-content font-serif text-gray-800 leading-relaxed text-base w-full border border-gray-300 rounded-lg p-6 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                      style="min-height: 600px; white-space: pre-wrap; resize: vertical; line-height: 1.8;">{{ will_text }}</textarea>
-            <div class="flex items-center justify-between mt-4">
-                <div id="edit-status" class="text-sm text-gray-500"></div>
-                <button id="save-edits-btn" onclick="saveWillEdits()" disabled
-                        class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">
-                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                    </svg>
-                    Save Edits
+                {% if can_edit_will %}
+                <button id="toggle-edit-btn" onclick="toggleEditMode()"
+                        class="inline-flex items-center px-3 py-1 bg-amber-100 text-amber-700 text-xs font-semibold rounded-lg hover:bg-amber-200 transition-colors border border-amber-200">
+                    <svg class="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                    <span id="edit-toggle-label">Edit Will</span>
                 </button>
+                {% endif %}
             </div>
-            {% else %}
-            <div class="will-text-content font-serif text-gray-800 leading-relaxed whitespace-pre-wrap text-base">{{ will_text }}</div>
-            {% endif %}
         </div>
+
+        <!-- Read-only view -->
+        <div id="will-read-view" class="p-8 md:p-12">
+            <div class="will-text-content font-serif text-gray-800 leading-relaxed whitespace-pre-wrap text-base">{{ will_text }}</div>
+        </div>
+
+        <!-- Edit view (hidden by default) -->
+        {% if can_edit_will %}
+        <div id="will-edit-view" class="hidden">
+            <div class="p-4 bg-amber-50 border-b border-amber-200">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <p class="text-sm text-amber-700">
+                        <strong>Edit Mode:</strong> You can edit the will text directly. Use <strong>AI Clean Up</strong> after edits to fix clause numbering and cross-references.
+                    </p>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <button onclick="aiRedraft()" id="ai-redraft-btn"
+                                class="inline-flex items-center px-3 py-1.5 bg-purple-600 text-white text-xs font-semibold rounded-lg hover:bg-purple-700 transition-colors">
+                            <svg class="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            <span id="ai-redraft-label">AI Clean Up</span>
+                        </button>
+                        <button onclick="saveWillEdits()" id="save-edits-btn" disabled
+                                class="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-xs font-semibold rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                            <svg class="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            Save Changes
+                        </button>
+                    </div>
+                </div>
+                <div id="edit-status" class="text-xs mt-1"></div>
+            </div>
+            <div class="p-6">
+                <textarea id="will-text-editor"
+                          class="will-text-content font-serif text-gray-800 leading-relaxed text-base w-full border border-gray-300 rounded-lg p-6 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          style="min-height: 700px; white-space: pre-wrap; resize: vertical; line-height: 1.8;">{{ will_text }}</textarea>
+            </div>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Change Log (visible when edits exist) -->
@@ -365,23 +389,52 @@ function confirmRejectionPreview(form) {
     return true;
 }
 
-/* Approver will text editing */
-{% if is_approver_pending %}
+/* Edit mode toggle & will text editing */
+{% if can_edit_will %}
+var _editMode = false;
+var _originalText = '';
+
+function toggleEditMode() {
+    _editMode = !_editMode;
+    var readView = document.getElementById('will-read-view');
+    var editView = document.getElementById('will-edit-view');
+    var toggleLabel = document.getElementById('edit-toggle-label');
+    var toggleBtn = document.getElementById('toggle-edit-btn');
+
+    if (_editMode) {
+        readView.classList.add('hidden');
+        editView.classList.remove('hidden');
+        toggleLabel.textContent = 'View Mode';
+        toggleBtn.classList.remove('bg-amber-100', 'text-amber-700', 'border-amber-200');
+        toggleBtn.classList.add('bg-blue-100', 'text-blue-700', 'border-blue-200');
+        _originalText = document.getElementById('will-text-editor').value;
+    } else {
+        // Check for unsaved changes
+        var editor = document.getElementById('will-text-editor');
+        if (editor.value !== _originalText) {
+            if (!confirm('You have unsaved changes. Discard them?')) return;
+        }
+        readView.classList.remove('hidden');
+        editView.classList.add('hidden');
+        toggleLabel.textContent = 'Edit Will';
+        toggleBtn.classList.remove('bg-blue-100', 'text-blue-700', 'border-blue-200');
+        toggleBtn.classList.add('bg-amber-100', 'text-amber-700', 'border-amber-200');
+    }
+}
+
 (function() {
     var editor = document.getElementById('will-text-editor');
     var saveBtn = document.getElementById('save-edits-btn');
     var statusEl = document.getElementById('edit-status');
-    var originalText = editor.value;
 
     editor.addEventListener('input', function() {
-        var changed = editor.value !== originalText;
+        var changed = editor.value !== _originalText;
         saveBtn.disabled = !changed;
         if (changed) {
             statusEl.textContent = 'Unsaved changes';
-            statusEl.className = 'text-sm text-amber-600 font-medium';
+            statusEl.className = 'text-xs text-amber-600 font-medium';
         } else {
             statusEl.textContent = '';
-            statusEl.className = 'text-sm text-gray-500';
         }
     });
 })();
@@ -394,7 +447,7 @@ async function saveWillEdits() {
 
     saveBtn.disabled = true;
     statusEl.textContent = 'Saving...';
-    statusEl.className = 'text-sm text-gray-500';
+    statusEl.className = 'text-xs text-gray-500';
 
     try {
         var resp = await fetch('/api/will/' + willId + '/edit-text', {
@@ -405,10 +458,12 @@ async function saveWillEdits() {
         var data = await resp.json();
         if (data.ok) {
             statusEl.innerHTML = '<span class="text-emerald-600">✓ Saved at ' + data.edited_at + '</span> — ' + data.summary;
-            statusEl.className = 'text-sm font-medium';
-            originalText = editor.value;
+            statusEl.className = 'text-xs font-medium';
+            _originalText = editor.value;
+            // Update read-only view too
+            document.querySelector('#will-read-view .will-text-content').textContent = editor.value;
 
-            /* Add new entry to change log (or create the log section) */
+            /* Add new entry to change log */
             var logBody = document.getElementById('change-log-body');
             if (logBody) {
                 var entry = document.createElement('div');
@@ -419,14 +474,53 @@ async function saveWillEdits() {
             }
         } else {
             statusEl.textContent = 'Error: ' + (data.error || 'Save failed');
-            statusEl.className = 'text-sm text-red-600 font-medium';
+            statusEl.className = 'text-xs text-red-600 font-medium';
             saveBtn.disabled = false;
         }
     } catch (err) {
         statusEl.textContent = 'Network error. Please try again.';
-        statusEl.className = 'text-sm text-red-600 font-medium';
+        statusEl.className = 'text-xs text-red-600 font-medium';
         saveBtn.disabled = false;
     }
+}
+
+async function aiRedraft() {
+    var editor = document.getElementById('will-text-editor');
+    var btn = document.getElementById('ai-redraft-btn');
+    var label = document.getElementById('ai-redraft-label');
+    var statusEl = document.getElementById('edit-status');
+    var willId = '{{ will_record.id }}';
+
+    if (!confirm('AI will clean up clause numbering and cross-references. Continue?')) return;
+
+    btn.disabled = true;
+    label.textContent = 'Processing...';
+    statusEl.textContent = 'AI is cleaning up the will text...';
+    statusEl.className = 'text-xs text-purple-600 font-medium';
+
+    try {
+        var resp = await fetch('/api/will/' + willId + '/redraft', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: editor.value})
+        });
+        var data = await resp.json();
+        if (data.ok) {
+            editor.value = data.text;
+            statusEl.innerHTML = '<span class="text-purple-600">✓ AI cleanup complete.</span> Review the changes, then click <strong>Save Changes</strong>.';
+            statusEl.className = 'text-xs font-medium';
+            // Enable save button since text changed
+            document.getElementById('save-edits-btn').disabled = false;
+        } else {
+            statusEl.textContent = 'AI error: ' + (data.error || 'Redraft failed');
+            statusEl.className = 'text-xs text-red-600 font-medium';
+        }
+    } catch (err) {
+        statusEl.textContent = 'Network error. Please try again.';
+        statusEl.className = 'text-xs text-red-600 font-medium';
+    }
+    btn.disabled = false;
+    label.textContent = 'AI Clean Up';
 }
 {% endif %}
 
