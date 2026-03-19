@@ -2366,7 +2366,19 @@ async function scanDocumentOCR() {
             function _applyFieldValue(f, scannedVal) {
                 const el = document.getElementById(f.elId);
                 if (!el) return;
-                el.value = scannedVal;
+                // For select/dropdown elements, set both value and selectedIndex
+                if (el.tagName === 'SELECT') {
+                    for (let i = 0; i < el.options.length; i++) {
+                        if (el.options[i].value === scannedVal || el.options[i].text === scannedVal) {
+                            el.selectedIndex = i;
+                            break;
+                        }
+                    }
+                } else {
+                    el.value = scannedVal;
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
                 if (f.key === 'nationality') {
                     _setSearchableValue('modal-nationality', 'modal-nationality-search', scannedVal, NATIONALITY_LIST);
                 }
