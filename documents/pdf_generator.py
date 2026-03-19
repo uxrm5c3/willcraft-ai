@@ -52,23 +52,42 @@ def _split_signing_page(will_text: str):
     return will_text, ""
 
 
+def _is_numbered_clause(stripped: str) -> bool:
+    """Check if a line starts a numbered clause like '4. I direct...' or '10. Unless...'."""
+    if len(stripped) > 2 and stripped[0].isdigit():
+        dot_pos = stripped.find('.')
+        if 0 < dot_pos <= 3:
+            return True
+    return False
+
+
+_SECTION_HEADINGS = {
+    'Revocation', 'Appointment of Executor(s)', 'Appointment of Guardian(s)',
+    'Non Residuary Gift(s)', 'Residuary Estate', 'Declaration',
+    'Testamentary Trust', 'Guardian Allowance', 'Contemplation of Marriage',
+}
+
+
 def _build_content_html(text: str) -> str:
-    """Convert main will content (before signing page) into HTML paragraphs."""
+    """Convert main will content (before signing page) into HTML paragraphs.
+
+    Groups section headings with their first clause, and groups each numbered
+    clause with its continuation paragraphs to prevent page-break splits.
+    """
     escaped = html.escape(text)
     lines = escaped.split('\n')
-    html_lines = []
 
+    # First pass: classify each line
+    classified = []  # list of (type, html_str) tuples
     for line in lines:
         stripped = line.strip()
         if not stripped:
-            html_lines.append('<div class="spacer"></div>')
+            classified.append(('spacer', '<div class="spacer"></div>'))
             continue
 
-        # Skip the title lines (they're in the running header)
-        if 'LAST WILL AND TESTAMENT OF' in stripped.upper():
+        # Skip header/footer content
+        if 'LAST WILL AND TESTAMENT' in stripped.upper():
             continue
-
-        # Skip per-page footer content (already in running footer)
         if 'Continued on' in stripped and ('next page' in stripped.lower() or 'Page' in stripped):
             continue
         if stripped.startswith('Page|') or stripped.startswith('Page |'):
@@ -78,49 +97,87 @@ def _build_content_html(text: str) -> str:
         if stripped.replace('_', '').replace(' ', '').replace('|', '') == '':
             continue
 
-        # Detect the testator name line (all caps, short, right after title)
-        # We skip it since it's in the header
-        # But we need to keep it if it's part of the preamble
-
-        # Detect "THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK"
         if 'REST OF THE PAGE IS INTENTIONALLY LEFT BLANK' in stripped.upper():
-            html_lines.append(f'<p class="blank-notice">{stripped}</p>')
+            classified.append(('blank', f'<p class="blank-notice">{stripped}</p>'))
             continue
 
-        # Detect title-like headings (all uppercase, short)
+        is_section = stripped in _SECTION_HEADINGS
+        is_numbered = _is_numbered_clause(stripped)
         is_heading = (
-            stripped.isupper()
-            and len(stripped) < 80
-            and not stripped.startswith('(')
-            and not stripped.startswith('-')
+            stripped.isupper() and len(stripped) < 80
+            and not stripped.startswith('(') and not stripped.startswith('-')
         )
+        is_indented = line.startswith('    ') or line.startswith('\t')
 
-        # Detect clause headings: "1. REVOCATION" etc.
-        is_clause = False
-        if len(stripped) > 2 and stripped[0].isdigit():
-            dot_pos = stripped.find('.')
-            if 0 < dot_pos <= 3:
-                rest = stripped[dot_pos + 1:].strip()
-                if rest and rest.isupper():
-                    is_clause = True
-
-        # Detect section headings like "Revocation", "Appointment of Executor(s)"
-        is_section_heading = stripped in (
-            'Revocation', 'Appointment of Executor(s)', 'Appointment of Guardian(s)',
-            'Non Residuary Gift(s)', 'Residuary Estate', 'Declaration',
-            'Testamentary Trust', 'Guardian Allowance', 'Contemplation of Marriage',
-        )
-
-        if is_section_heading:
-            html_lines.append(f'<h3 class="section-heading">{stripped}</h3>')
+        if is_section:
+            classified.append(('section', f'<h3 class="section-heading">{stripped}</h3>'))
+        elif is_numbered and is_heading:
+            # Uppercase numbered heading like "1. REVOCATION"
+            classified.append(('clause-start', f'<p class="clause-heading">{stripped}</p>'))
         elif is_heading:
-            html_lines.append(f'<h2 class="will-heading">{stripped}</h2>')
-        elif is_clause:
-            html_lines.append(f'<p class="clause-heading">{stripped}</p>')
-        elif line.startswith('    ') or line.startswith('\t'):
-            html_lines.append(f'<p class="indented">{stripped}</p>')
+            classified.append(('heading', f'<h2 class="will-heading">{stripped}</h2>'))
+        elif is_numbered:
+            # Numbered clause like "4. I direct my Executor..."
+            classified.append(('clause-start', f'<p class="clause-start">{stripped}</p>'))
+        elif is_indented:
+            classified.append(('indented', f'<p class="indented">{stripped}</p>'))
         else:
-            html_lines.append(f'<p>{stripped}</p>')
+            classified.append(('text', f'<p>{stripped}</p>'))
+
+    # Second pass: group into clause blocks to prevent page-break splits
+    html_lines = []
+    i = 0
+    while i < len(classified):
+        typ, htm = classified[i]
+
+        if typ == 'section':
+            # Section heading: wrap with the next clause/content to keep together
+            group = [htm]
+            i += 1
+            # Skip spacers after section heading
+            while i < len(classified) and classified[i][0] == 'spacer':
+                group.append(classified[i][1])
+                i += 1
+            # Include the first clause block after the section heading
+            if i < len(classified) and classified[i][0] in ('clause-start', 'text', 'heading'):
+                group.append(classified[i][1])
+                i += 1
+                # Include continuation lines (non-numbered, non-heading, non-section)
+                while i < len(classified) and classified[i][0] in ('text', 'indented'):
+                    group.append(classified[i][1])
+                    i += 1
+            html_lines.append(f'<div class="section-group">\n' + '\n'.join(group) + '\n</div>')
+
+        elif typ == 'clause-start':
+            # Numbered clause: group with continuation paragraphs
+            group = [htm]
+            i += 1
+            # Collect continuation: text/indented lines and spacers followed by
+            # more text/indented (but not by a new clause or section)
+            while i < len(classified):
+                next_typ = classified[i][0]
+                if next_typ in ('text', 'indented'):
+                    group.append(classified[i][1])
+                    i += 1
+                elif next_typ == 'spacer':
+                    # Peek ahead: if next non-spacer is text/indented, include
+                    j = i + 1
+                    while j < len(classified) and classified[j][0] == 'spacer':
+                        j += 1
+                    if j < len(classified) and classified[j][0] in ('text', 'indented'):
+                        # Include spacers and continuation
+                        while i < j:
+                            group.append(classified[i][1])
+                            i += 1
+                    else:
+                        break
+                else:
+                    break
+            html_lines.append(f'<div class="clause-group">\n' + '\n'.join(group) + '\n</div>')
+
+        else:
+            html_lines.append(htm)
+            i += 1
 
     return '\n'.join(html_lines)
 
@@ -386,12 +443,33 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         margin: 18pt 0 6pt 0;
         font-family: 'Times New Roman', Times, serif;
         text-decoration: underline;
+        break-after: avoid;
+        page-break-after: avoid;
     }}
 
-    /* Numbered clause headings */
+    /* Section group: heading + first clause kept together */
+    .section-group {{
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }}
+
+    /* Clause group: numbered clause + continuation paragraphs kept together */
+    .clause-group {{
+        break-inside: avoid;
+        page-break-inside: avoid;
+    }}
+
+    /* Numbered clause headings (all-uppercase like "1. REVOCATION") */
     p.clause-heading {{
         font-weight: bold;
         margin-top: 14pt;
+        break-after: avoid;
+        page-break-after: avoid;
+    }}
+
+    /* Numbered clause start (regular case like "4. I direct...") */
+    p.clause-start {{
+        margin-top: 3pt;
     }}
 
     /* Indented sub-clauses */
@@ -402,7 +480,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     /* Regular paragraphs */
     p {{
         margin: 3pt 0;
-        orphans: 3;
+        orphans: 4;
         widows: 3;
     }}
 
@@ -417,6 +495,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         margin-top: 24pt;
         font-size: 10pt;
         letter-spacing: 0.5pt;
+        break-before: auto;
     }}
 
     /* === Signing Page Styles === */
