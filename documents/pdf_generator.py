@@ -320,20 +320,6 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
         left: 0;
         right: 0;
     }}
-    .page-footer .footer-top {{
-        font-family: 'Times New Roman', Times, serif;
-        font-size: 8pt;
-        border-top: 0.5pt solid #000;
-        padding-top: 2pt;
-        margin-bottom: 0;
-    }}
-    .page-footer .footer-top td {{
-        padding: 2pt 0;
-        font-family: 'Times New Roman', Times, serif;
-        font-size: 8pt;
-    }}
-    .page-footer .footer-top .pg {{ text-align: left; }}
-    .page-footer .footer-top .cont {{ text-align: right; }}
     .page-footer .sig-boxes {{
         width: 100%;
         border-collapse: collapse;
@@ -472,13 +458,12 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 </style>
 </head>
 <body>
-<!-- Fixed footer: Page info line + signature boxes matching Rockwills format -->
+<!-- Fixed footer matching Rockwills format -->
 <div class="page-footer">
-    <table class="footer-top" style="width:100%; border-collapse:collapse; border-top:0.5pt solid #000;">
+    <table style="width:100%; border-collapse:collapse; font-family:'Times New Roman',serif; font-size:8pt;">
         <tr>
-            <td class="pg" style="width:20%; text-align:left; font-size:8pt; padding:2pt 0;">Page| <span class="page-num"></span></td>
-            <td style="width:60%; text-align:center; font-size:8pt; padding:2pt 0;"></td>
-            <td class="cont" style="width:20%; text-align:right; font-size:8pt; padding:2pt 0;">Continued on next page</td>
+            <td style="text-align:left; padding:1pt 0; border-top:0.5pt solid #000;">Page| <span class="page-num"></span></td>
+            <td style="text-align:right; padding:1pt 0; border-top:0.5pt solid #000;">Continued on next page</td>
         </tr>
     </table>
     <table class="sig-boxes">
