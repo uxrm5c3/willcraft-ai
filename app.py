@@ -16,7 +16,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import FLASK_SECRET_KEY, ANTHROPIC_API_KEY, SQLALCHEMY_DATABASE_URI, DATA_DIR, UPLOAD_DIR, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
-from database import db, Client, Will, WillEditLog, Person, Document, User, ROLE_PERMS, ROLE_LABELS
+from database import db, Client, Will, WillEditLog, WillVersion, Person, Document, User, ROLE_PERMS, ROLE_LABELS
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -160,7 +160,7 @@ def inject_global_context():
     has_generated_will = False
     if session.get('will_id'):
         wr = db.session.get(Will, session['will_id'])
-        if wr and wr.generated_will_text:
+        if wr and (wr.generated_will_text or wr.status in ('generated', 'pending_approval', 'approved')):
             has_generated_will = True
     return {
         'testator_person_id': session.get('step1', {}).get('person_id', ''),
@@ -295,10 +295,13 @@ def save_will_to_db():
     will_record.step7_data = json.dumps(session.get('step7_trust', {}))
     will_record.step8_data = json.dumps(session.get('step8_others', {}))
     will_record.completed_steps = json.dumps(session.get('completed_steps', []))
-    will_record.generated_will_text = session.get('generated_will_text')
+    # Only update generated_will_text when explicitly present in session
+    # (it's popped after generation to keep cookie small — don't overwrite DB with None)
+    if 'generated_will_text' in session:
+        will_record.generated_will_text = session['generated_will_text']
+        if session['generated_will_text']:
+            will_record.status = 'generated'
     will_record.title = f"Will of {step1.get('full_name', 'Unknown')}"
-    if session.get('generated_will_text'):
-        will_record.status = 'generated'
 
     # Update client info from step1
     client = db.session.get(Client, client_id)
@@ -338,6 +341,9 @@ def load_will_to_session(will_record):
     session['step7_trust'] = json.loads(will_record.step7_data or '{}')
     session['step8_others'] = json.loads(will_record.step8_data or '{}')
     session['completed_steps'] = json.loads(will_record.completed_steps or '[]')
+    # Ensure step 10 is marked complete if will has been generated
+    if will_record.status in ('generated', 'pending_approval', 'approved') and 10 not in session['completed_steps']:
+        session['completed_steps'].append(10)
     # Don't load generated_will_text into session — it makes the cookie too large.
     # preview() and download() now read from DB directly.
     session.pop('generated_will_text', None)
@@ -1238,7 +1244,7 @@ def will_load(will_id):
     load_will_to_session(will_record)
     flash(f'Loaded: {will_record.title}', 'info')
     # If ?goto=preview and will has generated text, go directly to preview
-    if request.args.get('goto') == 'preview' and will_record.generated_will_text:
+    if request.args.get('goto') == 'preview' and (will_record.generated_will_text or will_record.status in ('generated', 'pending_approval', 'approved')):
         return redirect(url_for('preview'))
     return redirect(url_for('wizard_step_identities'))
 
@@ -2538,6 +2544,31 @@ def wizard_generate():
     session.modified = True
     mark_step_complete(10)
     save_will_to_db()
+
+    # Save version history
+    will_id = session.get('will_id')
+    if will_id:
+        # Determine version number
+        latest_version = WillVersion.query.filter_by(will_id=will_id).order_by(
+            WillVersion.version_number.desc()
+        ).first()
+        next_version = (latest_version.version_number + 1) if latest_version else 1
+        user_name = ''
+        if session.get('user_id'):
+            u = db.session.get(User, session['user_id'])
+            user_name = u.name if u else ''
+        note = 'Initial generation' if next_version == 1 else f'Re-generated (version {next_version})'
+        version = WillVersion(
+            will_id=will_id,
+            version_number=next_version,
+            will_text=will_text,
+            generated_by=session.get('user_id'),
+            generated_by_name=user_name,
+            note=note,
+        )
+        db.session.add(version)
+        db.session.commit()
+
     # Remove from session to keep cookie small
     session.pop('generated_will_text', None)
     session.modified = True
@@ -2553,10 +2584,28 @@ def preview():
     # Read will text from DB (not session) to avoid oversized cookies
     will_text = ''
     will_record = None
+    versions = []
+    viewing_version = None  # which version is being displayed
     if session.get('will_id'):
         will_record = db.session.get(Will, session['will_id'])
         if will_record:
-            will_text = will_record.generated_will_text or ''
+            # Load version history
+            versions = WillVersion.query.filter_by(will_id=will_record.id).order_by(
+                WillVersion.version_number.desc()
+            ).all()
+
+            # Check if a specific version is requested
+            ver_num = request.args.get('version', type=int)
+            if ver_num and versions:
+                for v in versions:
+                    if v.version_number == ver_num:
+                        will_text = v.will_text
+                        viewing_version = v
+                        break
+
+            # Default: show current (latest) will text
+            if not will_text:
+                will_text = will_record.generated_will_text or ''
     if not will_text:
         # Fallback to session for backward compat
         will_text = session.get('generated_will_text', '')
@@ -2590,6 +2639,8 @@ def preview():
         editor_name=editor_name,
         edit_logs=edit_logs,
         client_email=client_email,
+        versions=versions,
+        viewing_version=viewing_version,
     )
 
 

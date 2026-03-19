@@ -104,6 +104,7 @@ class Will(db.Model):
 
     documents = db.relationship('Document', backref='will', lazy=True)
     edit_logs = db.relationship('WillEditLog', backref='will', lazy=True, order_by='WillEditLog.edited_at.desc()')
+    versions = db.relationship('WillVersion', backref='will', lazy=True, order_by='WillVersion.version_number.desc()')
 
     # Relationships to User
     creator = db.relationship('User', foreign_keys=[created_by], backref='created_wills')
@@ -118,6 +119,19 @@ class WillEditLog(db.Model):
     edited_by_name = db.Column(db.String(100))
     edited_at = db.Column(db.DateTime, default=datetime.utcnow)
     summary = db.Column(db.Text)  # e.g. "3 lines changed, 1 line added"
+
+
+class WillVersion(db.Model):
+    """Stores each generated version of a will for history tracking."""
+    __tablename__ = 'will_versions'
+    id = db.Column(db.Integer, primary_key=True)
+    will_id = db.Column(db.String(36), db.ForeignKey('wills.id'), nullable=False)
+    version_number = db.Column(db.Integer, nullable=False, default=1)
+    will_text = db.Column(db.Text, nullable=False)
+    generated_by = db.Column(db.String(36), nullable=True)  # user_id who triggered generation
+    generated_by_name = db.Column(db.String(100))
+    note = db.Column(db.String(500), nullable=True)  # e.g. "Initial generation", "Re-generated after edits"
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class Person(db.Model):
