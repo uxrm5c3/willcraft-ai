@@ -606,6 +606,11 @@ def build_will_data():
                 allocations=allocations,
                 subject_to_trust=gd.get('subject_to_trust', False),
                 subject_to_guardian_allowance=gd.get('subject_to_guardian_allowance', False),
+                ownership_type=gd.get('ownership_type', 'sole'),
+                testator_share=gd.get('testator_share'),
+                encumbrance_status=gd.get('encumbrance_status', 'clean'),
+                debt_source=gd.get('debt_source'),
+                account_ownership=gd.get('account_ownership', 'individual'),
             ))
 
     # -- Section F: Residuary Estate ------------------------------------------

@@ -134,22 +134,21 @@ def format_will_data(will_data) -> str:
         gift_lines = []
         for i, g in enumerate(will_data.gifts, 1):
             gift_lines.append(f"  Gift {i} ({g.gift_type}): {g.get_formatted_description()}")
-            # Property-specific details
+            # Property-specific details (ownership & encumbrance on Gift model, not PropertyDetails)
             if g.gift_type == 'property' and g.property_details:
-                pd = g.property_details
-                own = pd.get('ownership_type', 'sole')
+                own = getattr(g, 'ownership_type', 'sole') or 'sole'
                 if own == 'joint':
-                    gift_lines.append(f"    Ownership: JOINT — testator's {pd.get('testator_share', '?')} undivided share")
-                enc = pd.get('encumbrance_status', 'clean')
+                    share = getattr(g, 'testator_share', '?') or '?'
+                    gift_lines.append(f"    Ownership: JOINT — testator's {share} undivided share")
+                enc = getattr(g, 'encumbrance_status', 'clean') or 'clean'
                 if enc == 'encumbered':
-                    debt_src = pd.get('debt_source', 'residuary')
+                    debt_src = getattr(g, 'debt_source', 'residuary') or 'residuary'
                     gift_lines.append(f"    Encumbrance: HAS LOAN — pay from {debt_src}")
                 else:
                     gift_lines.append(f"    Encumbrance: CLEAN — do NOT include charge/lien discharge clause")
-            # Financial-specific details
+            # Financial-specific details (account_ownership on Gift model)
             if g.gift_type == 'financial' and g.financial_details:
-                fd = g.financial_details
-                acc_own = fd.get('account_ownership', 'individual')
+                acc_own = getattr(g, 'account_ownership', 'individual') or 'individual'
                 if acc_own == 'joint':
                     gift_lines.append(f"    Account: JOINT ACCOUNT — use 'my share of the moneys in my joint account'")
             if g.subject_to_trust:

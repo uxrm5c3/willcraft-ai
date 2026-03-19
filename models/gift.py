@@ -85,6 +85,11 @@ class Gift(BaseModel):
     ownership_type: Literal["sole", "joint"] = "sole"
     testator_share: Optional[str] = None   # e.g., "1/2", "1/3", "equal share"
     joint_owners: Optional[str] = None     # name(s) of co-owner(s)
+    # Encumbrance (property)
+    encumbrance_status: Literal["clean", "encumbered"] = "clean"
+    debt_source: Optional[str] = None      # residuary, sale, insurance, specific
+    # Account ownership (financial)
+    account_ownership: Literal["individual", "joint"] = "individual"
 
     def _ownership_prefix(self) -> str:
         """Build ownership prefix for asset descriptions."""
