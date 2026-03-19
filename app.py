@@ -156,6 +156,12 @@ def inject_global_context():
     pending_count = 0
     if g.user and g.perms.get('canApprove'):
         pending_count = Will.query.filter_by(status='pending_approval').count()
+    # Check if current will has been generated
+    has_generated_will = False
+    if session.get('will_id'):
+        wr = db.session.get(Will, session['will_id'])
+        if wr and wr.generated_will_text:
+            has_generated_will = True
     return {
         'testator_person_id': session.get('step1', {}).get('person_id', ''),
         'current_user': g.user,
@@ -163,6 +169,7 @@ def inject_global_context():
         'tenant': g.tenant,
         'role_labels': ROLE_LABELS,
         'pending_approval_count': pending_count,
+        'has_generated_will': has_generated_will,
     }
 
 
@@ -1177,6 +1184,9 @@ def will_load(will_id):
         return redirect(url_for('index'))
     load_will_to_session(will_record)
     flash(f'Loaded: {will_record.title}', 'info')
+    # If ?goto=preview and will has generated text, go directly to preview
+    if request.args.get('goto') == 'preview' and will_record.generated_will_text:
+        return redirect(url_for('preview'))
     return redirect(url_for('wizard_step_identities'))
 
 
