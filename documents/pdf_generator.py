@@ -390,16 +390,16 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         font-family: 'Times New Roman', Times, serif;
         width: 100%;
     }}
-    .page-footer .footer-info {{
-        font-size: 8pt;
-        text-align: center;
-        padding: 0 0 2pt 0;
-    }}
-    .page-footer .footer-line {{
+    .page-footer .footer-top-line {{
         border-top: 0.5pt solid #000;
         height: 0;
         margin: 0;
         padding: 0;
+    }}
+    .page-footer .footer-info {{
+        font-size: 8pt;
+        text-align: left;
+        padding: 2pt 0 2pt 0;
     }}
     .page-footer .sig-boxes {{
         width: 100%;
@@ -554,8 +554,8 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
 
 <!-- Running footer: automatically placed into @bottom-center on each page -->
 <div class="page-footer">
-    <div class="footer-info">Page <span class="page-num"></span></div>
-    <div class="footer-line"></div>
+    <div class="footer-top-line"></div>
+    <div class="footer-info">Page| <span class="page-num"></span></div>
     <table class="sig-boxes">
         <tr>
             <td>Testator</td>
