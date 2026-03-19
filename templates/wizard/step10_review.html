@@ -238,9 +238,38 @@
             {% if gifts %}
             <div class="space-y-3">
                 {% for gift in gifts %}
-                <div class="text-sm border-b border-gray-100 pb-2 last:border-0 last:pb-0">
-                    <p class="font-medium text-gray-900">Gift {{ loop.index }}: {{ gift.get('asset_description', '-') }}</p>
-                    <p class="text-gray-500">To: {{ gift.get('beneficiary_name', '-') }}</p>
+                <div class="text-sm border-b border-gray-100 pb-3 last:border-0 last:pb-0">
+                    {% set gt = gift.get('gift_type', 'other') %}
+                    {% set pd = gift.get('property_details', {}) %}
+                    {% set fd = gift.get('financial_details', {}) %}
+                    <p class="font-medium text-gray-900 mb-1">
+                        Gift {{ loop.index }}:
+                        <span class="text-xs font-normal px-2 py-0.5 rounded-full
+                            {% if gt == 'property' %}bg-blue-100 text-blue-700{% elif gt == 'financial' %}bg-green-100 text-green-700{% else %}bg-gray-100 text-gray-600{% endif %}">
+                            {{ gt | capitalize }}
+                        </span>
+                        {% if pd.get('ownership_type') == 'joint' %}
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">Joint ({{ pd.get('testator_share', '?') }} share)</span>
+                        {% endif %}
+                        {% if pd.get('encumbrance_status') == 'encumbered' %}
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700">Encumbered</span>
+                        {% endif %}
+                    </p>
+                    {% if gt == 'property' %}
+                    <p class="text-gray-700">{{ pd.get('property_address', '-') }}</p>
+                    {% if pd.get('title_type') or pd.get('lot_number') %}
+                    <p class="text-gray-500 text-xs">{{ pd.get('title_type', '') }} {{ pd.get('title_number', '') }} {% if pd.get('lot_number') %}LOT {{ pd.get('lot_number') }}{% endif %} {% if pd.get('daerah') %}Daerah {{ pd.get('daerah') }}{% endif %}</p>
+                    {% endif %}
+                    {% elif gt == 'financial' %}
+                    <p class="text-gray-700">{{ fd.get('institution', '') }} {% if fd.get('account_number') %}({{ fd.get('account_number') }}){% endif %}</p>
+                    <p class="text-gray-500 text-xs">{{ fd.get('asset_type', '') }} {{ fd.get('description', '') }}{% if fd.get('account_ownership') == 'joint' %} [Joint Account]{% endif %}</p>
+                    {% else %}
+                    <p class="text-gray-700">{{ gift.get('description', '-') }}</p>
+                    {% endif %}
+                    {% set allocs = gift.get('allocations', []) %}
+                    {% if allocs %}
+                    <p class="text-gray-500 mt-1">To: {% for a in allocs %}{{ a.get('beneficiary_name', '?') }} ({{ a.get('share', '?') }}{% if a.get('role') == 'SB' %}, Substitute{% endif %}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
