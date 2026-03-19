@@ -252,11 +252,18 @@ def _calculate_share_total(beneficiaries) -> float:
 
 def _calculate_gift_share_total(allocations) -> float:
     """Calculate total share percentage for gift allocations."""
+    if not allocations:
+        return None  # No allocations = skip validation
+    # Single MB with empty share → assume 100%
+    if len(allocations) == 1 and not allocations[0].share.strip():
+        return 100.0
     total = 0.0
     for a in allocations:
         share = a.share.strip().replace("%", "")
+        if not share:
+            continue  # Skip empty shares
         if share.lower() == "equally":
-            return None
+            return None  # Can't sum "Equally"
         try:
             total += float(share)
         except ValueError:
