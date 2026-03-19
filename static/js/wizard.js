@@ -2269,17 +2269,59 @@ async function uploadNRICForIdentity(inputOrFile) {
     }
 
     const statusEl = document.getElementById('modal-nric-status');
-    if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Scanning document...</span>';
+    if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Uploading document...</span>';
 
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('category', 'nric');
 
     try {
-        const resp = await fetch('/api/ocr/nric', { method: 'POST', body: formData });
+        const resp = await fetch('/api/upload', { method: 'POST', body: formData });
         if (!resp.ok) {
             let errMsg = 'Upload failed. Please try again.';
             try { const errData = await resp.json(); if (errData.error) errMsg = errData.error; } catch(e) {}
             if (statusEl) statusEl.innerHTML = `<span class="text-red-600">❌ ${errMsg}</span>`;
+            return;
+        }
+        const data = await resp.json();
+        if (data.ok && data.document_id) {
+            showDocumentPreview(data.document_id, file.name || 'IC/Passport', file);
+            if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Document saved. Click <strong>🔍 Scan</strong> to extract data.</span>';
+        } else {
+            if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Upload failed. Please try again.</span>';
+        }
+    } catch (e) {
+        console.error('NRIC upload error:', e);
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Upload failed. Check your internet connection and try again.</span>';
+    }
+}
+
+/**
+ * Step 2: Scan an already-uploaded document with OCR and extract data.
+ * Called from the "🔍 Scan" button in the document preview area.
+ */
+async function scanDocumentOCR() {
+    const documentId = document.getElementById('modal-document-id').value;
+    if (!documentId) {
+        const statusEl = document.getElementById('modal-nric-status');
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">No document uploaded yet.</span>';
+        return;
+    }
+
+    const statusEl = document.getElementById('modal-nric-status');
+    if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Scanning document...</span>';
+
+    // Disable scan button during processing
+    const scanBtn = document.getElementById('btn-scan-ocr');
+    if (scanBtn) { scanBtn.disabled = true; scanBtn.classList.add('opacity-50'); }
+
+    try {
+        const resp = await fetch(`/api/ocr/nric/${documentId}`, { method: 'POST' });
+        if (!resp.ok) {
+            let errMsg = 'Could not scan the document. Please try again.';
+            try { const errData = await resp.json(); if (errData.error) errMsg = errData.error; } catch(e) {}
+            if (statusEl) statusEl.innerHTML = `<span class="text-red-600">❌ ${errMsg}</span>`;
+            if (scanBtn) { scanBtn.disabled = false; scanBtn.classList.remove('opacity-50'); }
             return;
         }
         const data = await resp.json();
@@ -2293,7 +2335,18 @@ async function uploadNRICForIdentity(inputOrFile) {
             }
             delete extracted.doc_type;
 
-            showOCRConfirmation(extracted, file, (confirmed) => {
+            // Get document image for preview in OCR modal
+            const previewImg = document.getElementById('doc-preview-img');
+            let imageFile = null;
+            if (previewImg && previewImg.src) {
+                try {
+                    const imgResp = await fetch(previewImg.src);
+                    const blob = await imgResp.blob();
+                    imageFile = new File([blob], 'document', { type: blob.type });
+                } catch(e) { /* ignore preview fetch error */ }
+            }
+
+            showOCRConfirmation(extracted, imageFile, (confirmed) => {
                 // Map OCR fields to modal field IDs and labels
                 const fieldMap = [
                     { key: 'full_name', elId: 'modal-full-name', label: 'Full Name' },
@@ -2316,22 +2369,18 @@ async function uploadNRICForIdentity(inputOrFile) {
                     const el = document.getElementById(f.elId);
                     if (!el) continue;
                     const existingVal = el.value.trim();
-                    if (!existingVal) continue; // Empty field — no conflict, just fill
-                    // Any non-empty field with scanned data = potential conflict, ask user
+                    if (!existingVal) continue;
                     const normExisting = existingVal.toLowerCase().replace(/[-\s\/]/g, '');
                     const normScanned = scannedVal.toLowerCase().replace(/[-\s\/]/g, '');
                     if (normExisting !== normScanned) {
                         conflicts.push({ ...f, existingVal, scannedVal });
                     }
-                    // If values match, no need to ask — keep existing (no overwrite)
                 }
 
-                // Helper to set field value + sync searchable dropdown if applicable
                 function _applyFieldValue(f, scannedVal) {
                     const el = document.getElementById(f.elId);
                     if (!el) return;
                     el.value = scannedVal;
-                    // Sync searchable dropdown search text
                     if (f.key === 'nationality') {
                         _setSearchableValue('modal-nationality', 'modal-nationality-search', scannedVal, NATIONALITY_LIST);
                     }
@@ -2346,9 +2395,7 @@ async function uploadNRICForIdentity(inputOrFile) {
                 }
 
                 if (conflicts.length > 0) {
-                    // Show per-field conflict resolution dialog
                     showFieldConflictDialog(conflicts, (resolutions) => {
-                        // Apply non-conflicting fields (empty fields get scanned value)
                         for (const f of fieldMap) {
                             let scannedVal = confirmed[f.key] || '';
                             if (!scannedVal) continue;
@@ -2356,23 +2403,22 @@ async function uploadNRICForIdentity(inputOrFile) {
                             const el = document.getElementById(f.elId);
                             if (!el) continue;
                             const existingVal = el.value.trim();
-                            // If this was a conflict, apply only if user chose 'scanned'
                             const resolution = resolutions[f.key];
                             if (resolution === 'scanned') {
                                 _applyFieldValue(f, scannedVal);
                             } else if (!existingVal) {
-                                // No conflict — fill empty field
                                 _applyFieldValue(f, scannedVal);
                             }
-                            // else: resolution === 'existing' or default — keep existing
                         }
                         if (isPassport && confirmed.passport_expiry) {
                             document.getElementById('passport-expiry-field').classList.remove('hidden');
                         }
-                        _finishOCRApply(data, file, confirmed, statusEl);
+                        if (confirmed.nric_number) checkAndHandleDuplicate(confirmed.nric_number);
+                        showUnsavedBanner();
+                        showAddressSuggestions();
+                        if (statusEl) statusEl.innerHTML = '';
                     });
                 } else {
-                    // No conflicts — only fill EMPTY fields (never overwrite existing data)
                     for (const f of fieldMap) {
                         let scannedVal = confirmed[f.key] || '';
                         if (!scannedVal) continue;
@@ -2385,25 +2431,23 @@ async function uploadNRICForIdentity(inputOrFile) {
                     if (isPassport && confirmed.passport_expiry) {
                         document.getElementById('passport-expiry-field').classList.remove('hidden');
                     }
-                    _finishOCRApply(data, file, confirmed, statusEl);
+                    if (confirmed.nric_number) checkAndHandleDuplicate(confirmed.nric_number);
+                    showUnsavedBanner();
+                    showAddressSuggestions();
+                    if (statusEl) statusEl.innerHTML = '';
                 }
-            }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
+            }, null, null,
             { callback: (f) => uploadNRICForIdentity(f), docType: 'nric' });
         } else if (data.ok && data.warning) {
-            // OCR failed but file was saved — show preview and warning
-            if (data.document_id) {
-                showDocumentPreview(data.document_id, file.name || 'IC/Passport scan', file);
-            }
             if (statusEl) statusEl.innerHTML = `<span class="text-amber-600">⚠ ${data.warning}</span>`;
-            // Show unsaved banner so user knows to fill fields manually
-            showUnsavedBanner();
-            showAddressSuggestions();
         } else {
             if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the document. Please try a clearer image.</span>';
         }
     } catch (e) {
-        console.error('NRIC upload error:', e);
-        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Upload failed. Check your internet connection and try again.</span>';
+        console.error('OCR scan error:', e);
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Scan failed. Please try again.</span>';
+    } finally {
+        if (scanBtn) { scanBtn.disabled = false; scanBtn.classList.remove('opacity-50'); }
     }
 }
 

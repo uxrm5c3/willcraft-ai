@@ -1830,6 +1830,49 @@ def api_ocr_nric():
     return jsonify(result)
 
 
+@app.route('/api/ocr/nric/<document_id>', methods=['POST'])
+@login_required
+def api_ocr_nric_scan(document_id):
+    """Run OCR on an already-uploaded NRIC/passport document."""
+    doc = db.session.get(Document, document_id)
+    if not doc:
+        return jsonify({'ok': False, 'error': 'Document not found'}), 404
+    abs_path = os.path.join(UPLOAD_DIR, doc.file_path)
+    if not os.path.isfile(abs_path):
+        return jsonify({'ok': False, 'error': 'File not found on disk'}), 404
+
+    client_id = doc.client_id or session.get('client_id')
+    extracted = None
+    ocr_warning = None
+    try:
+        from ai.ocr import extract_nric_data
+        extracted = extract_nric_data(abs_path)
+    except Exception as e:
+        app.logger.error(f'OCR NRIC scan error: {e}')
+        ocr_warning = 'Image unclear — could not scan automatically. Please fill in the details manually.'
+
+    if extracted:
+        if not extracted.get('address') and extracted.get('nric_number'):
+            nric_norm = extracted['nric_number'].replace('-', '').replace(' ', '').upper()
+            existing_persons = Person.query.filter_by(client_id=client_id).all()
+            for p in existing_persons:
+                p_norm = (p.nric_passport or '').replace('-', '').replace(' ', '').upper()
+                if p_norm == nric_norm and p.address:
+                    extracted['address'] = p.address
+                    extracted['_address_from_existing'] = True
+                    break
+        extracted.pop('confidence', None)
+        doc.extracted_data = json.dumps(extracted)
+        db.session.commit()
+
+    result = {'ok': True, 'document_id': doc.id}
+    if extracted:
+        result['extracted'] = extracted
+    if ocr_warning:
+        result['warning'] = ocr_warning
+    return jsonify(result)
+
+
 @app.route('/api/ocr/property', methods=['POST'])
 @login_required
 def api_ocr_property():
