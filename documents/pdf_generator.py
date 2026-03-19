@@ -137,78 +137,78 @@ def _build_signing_page_html(signing_text: str) -> str:
     <table class="sign-layout">
         <tr>
             <td class="sign-label">Signature of the Testator:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
-        <tr><td colspan="2" style="height:8pt;"></td></tr>
+        <tr><td colspan="2" style="height:10pt;"></td></tr>
         <tr>
             <td class="sign-label">Date of this Will:</td>
             <td class="sign-field"><span class="date-hint">(dd/mm/yyyy)</span></td>
         </tr>
     </table>
 
-    <div style="height:16pt;"></div>
+    <div style="height:20pt;"></div>
 
     <p class="attestation-clause">This Last Will and Testament was signed by the Testator in the presence of us both and attested by us in the presence of both Testator and of each other:</p>
 
-    <div style="height:12pt;"></div>
+    <div style="height:16pt;"></div>
 
     <!-- First Witness -->
     <table class="sign-layout">
         <tr>
             <td class="sign-label">Signature of First Witness:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
-        <tr><td colspan="2" style="height:4pt;"></td></tr>
+        <tr><td colspan="2" style="height:6pt;"></td></tr>
         <tr>
             <td class="sign-label">Full Name:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
         <tr>
             <td class="sign-label">NRIC / Passport No.:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
         <tr>
             <td class="sign-label">Address:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
         <tr>
             <td class="sign-label"></td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
         <tr>
             <td class="sign-label">Contact No.:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
     </table>
 
-    <div style="height:12pt;"></div>
+    <div style="height:16pt;"></div>
 
     <!-- Second Witness -->
     <table class="sign-layout">
         <tr>
             <td class="sign-label">Signature of Second Witness:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
-        <tr><td colspan="2" style="height:4pt;"></td></tr>
+        <tr><td colspan="2" style="height:6pt;"></td></tr>
         <tr>
             <td class="sign-label">Full Name:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
         <tr>
             <td class="sign-label">NRIC / Passport No.:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
         <tr>
             <td class="sign-label">Address:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
         <tr>
             <td class="sign-label"></td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
         <tr>
             <td class="sign-label">Contact No.:</td>
-            <td class="sign-field"></td>
+            <td class="sign-field">&nbsp;</td>
         </tr>
     </table>
 
@@ -260,9 +260,14 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             border-bottom: 0.5pt solid #000;
         }}
 
-        /* Running footer: placed via element(footer) */
+        /* Clear left/right so @bottom-center spans full width */
+        @bottom-left {{ content: none; }}
+        @bottom-right {{ content: none; }}
+
+        /* Running footer: placed via element() */
         @bottom-center {{
             content: element(pageFooter);
+            width: 100%;
         }}
     }}
 
@@ -283,9 +288,9 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
         }}
 
         /* No footer on signing page */
-        @bottom-center {{
-            content: "";
-        }}
+        @bottom-left {{ content: none; }}
+        @bottom-center {{ content: none; }}
+        @bottom-right {{ content: none; }}
     }}
 
     /* Running footer element — placed into @bottom-center via element() */
@@ -296,10 +301,12 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     }}
     .page-footer .footer-info {{
         font-size: 8pt;
-        padding: 0 0 1pt 0;
+        text-align: center;
+        padding: 0 0 2pt 0;
     }}
     .page-footer .footer-line {{
         border-top: 0.5pt solid #000;
+        height: 0;
         margin: 0;
         padding: 0;
     }}
@@ -310,7 +317,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     .page-footer .sig-boxes td {{
         width: 33.33%;
         border: 0.5pt solid #000;
-        height: 40pt;
+        height: 45pt;
         text-align: center;
         vertical-align: bottom;
         font-size: 8pt;
@@ -392,7 +399,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     .sign-layout td {{
         font-family: 'Times New Roman', Times, serif;
         font-size: 11pt;
-        padding: 3pt 0;
+        padding: 4pt 0;
         vertical-align: bottom;
     }}
     .sign-label {{
@@ -403,7 +410,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     .sign-field {{
         width: 65%;
         border-bottom: 0.5pt solid #000;
-        min-height: 18pt;
+        height: 20pt;
     }}
 
     .date-hint {{
@@ -428,7 +435,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 <body>
 <!-- Running footer: automatically placed into @bottom-center on each page -->
 <div class="page-footer">
-    <div class="footer-info">Page| <span class="page-num"></span></div>
+    <div class="footer-info">Page <span class="page-num"></span></div>
     <div class="footer-line"></div>
     <table class="sig-boxes">
         <tr>
