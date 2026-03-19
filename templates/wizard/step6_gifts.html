@@ -438,9 +438,9 @@ function _buildGiftBenOptions() {
     }
     return html;
 }
-const MALAYSIAN_STATES = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK','PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU','W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA'];
-const TITLE_TYPES = ['HAKMILIK','HSD','HSM','GRN','EMR','PM','PN','PAJAKAN','GERAN','Other'];
-const ASSET_TYPES = ['Savings Account','Current Account','Fixed Deposit','Investment Account','Unit Trust','Shares/Stocks','Insurance Policy','EPF','ASB/ASN','Tabung Haji','Vehicle','Jewellery','Other'];
+const GIFT_STATES = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK','PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU','W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA'];
+const GIFT_TITLE_TYPES = ['HAKMILIK','HSD','HSM','GRN','EMR','PM','PN','PAJAKAN','GERAN','Other'];
+const GIFT_ASSET_TYPES = ['Savings Account','Current Account','Fixed Deposit','Investment Account','Unit Trust','Shares/Stocks','Insurance Policy','EPF','ASB/ASN','Tabung Haji','Vehicle','Jewellery','Other'];
 
 {% set gifts = data.get('gifts', []) %}
 {% if not gifts %}{% set gifts = [{'gift_type': 'property', 'description': '', 'property_details': {}, 'financial_details': {}, 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}] %}{% endif %}
@@ -532,8 +532,8 @@ function updatePropertyPreview(giftIndex) {
 }
 
 function buildPropertyPanelHtml(idx) {
-    const titleOptions = TITLE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
-    const stateOptions = MALAYSIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
+    const titleOptions = GIFT_TITLE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
+    const stateOptions = GIFT_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
     return `
     <div id="property-panel-${idx}" class="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <h4 class="text-sm font-semibold text-blue-800 mb-3">Property Details</h4>
@@ -600,7 +600,7 @@ function buildPropertyPanelHtml(idx) {
 }
 
 function buildFinancialPanelHtml(idx) {
-    const typeOptions = ASSET_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
+    const typeOptions = GIFT_ASSET_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
     return `
     <div id="financial-panel-${idx}" class="hidden mb-4 p-4 bg-green-50 rounded-lg border border-green-200">
         <h4 class="text-sm font-semibold text-green-800 mb-3">Financial / Asset Details</h4>
