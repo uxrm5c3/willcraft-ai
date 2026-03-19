@@ -2183,6 +2183,23 @@ function openCameraForNRIC() {
  * Show a per-field conflict resolution dialog when OCR data differs from existing form data.
  * Default is "maintain" (keep existing manual data).
  */
+/**
+ * Highlight character-level differences between two strings.
+ * Differing characters in `str` (compared to `ref`) are wrapped in red italic spans.
+ */
+function _highlightDiff(str, ref) {
+    let result = '';
+    const maxLen = Math.max(str.length, ref.length);
+    for (let i = 0; i < str.length; i++) {
+        if (i >= ref.length || str[i] !== ref[i]) {
+            result += `<span class="text-red-600 font-bold italic">${str[i]}</span>`;
+        } else {
+            result += str[i];
+        }
+    }
+    return result;
+}
+
 function showFieldConflictDialog(conflicts, callback) {
     // Build modal overlay
     const overlay = document.createElement('div');
@@ -2190,35 +2207,33 @@ function showFieldConflictDialog(conflicts, callback) {
     overlay.className = 'fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4';
     let rows = '';
     for (const c of conflicts) {
-        const existingDisplay = c.label === 'Address'
+        const existingRaw = c.label === 'Address'
             ? c.existingVal.replace(/\n/g, ', ').substring(0, 60) + (c.existingVal.length > 60 ? '...' : '')
             : c.existingVal;
-        const scannedDisplay = c.label === 'Address'
+        const scannedRaw = c.label === 'Address'
             ? c.scannedVal.replace(/\n/g, ', ').substring(0, 60) + (c.scannedVal.length > 60 ? '...' : '')
             : c.scannedVal;
+        // Highlight differing characters in scanned value
+        const scannedHighlighted = _highlightDiff(scannedRaw, existingRaw);
         rows += `
-        <div class="border border-gray-200 rounded-lg p-3 space-y-2">
-            <div class="text-sm font-semibold text-gray-700">${c.label}</div>
-            <label class="flex items-start gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
-                <input type="radio" name="conflict-${c.key}" value="existing" checked class="mt-1 text-primary-600 focus:ring-primary-500">
-                <div class="flex-1">
-                    <span class="text-xs font-medium text-gray-500">Keep existing:</span>
-                    <div class="text-sm text-gray-900">${existingDisplay}</div>
-                </div>
+        <div class="border border-gray-200 rounded-lg p-3 space-y-1">
+            <div class="text-sm font-semibold text-gray-700 mb-2">Replace existing ${c.label}?</div>
+            <div class="text-sm text-gray-600 mb-2">Existing: <strong>${existingRaw}</strong></div>
+            <div class="text-sm text-gray-600 mb-3">Scanned: <strong>${scannedHighlighted}</strong></div>
+            <label class="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                <input type="radio" name="conflict-${c.key}" value="existing" checked class="text-primary-600 focus:ring-primary-500">
+                <span class="text-sm font-medium text-gray-700">Keep existing</span>
             </label>
-            <label class="flex items-start gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
-                <input type="radio" name="conflict-${c.key}" value="scanned" class="mt-1 text-primary-600 focus:ring-primary-500">
-                <div class="flex-1">
-                    <span class="text-xs font-medium text-blue-500">Use scanned:</span>
-                    <div class="text-sm text-blue-700">${scannedDisplay}</div>
-                </div>
+            <label class="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                <input type="radio" name="conflict-${c.key}" value="scanned" class="text-primary-600 focus:ring-primary-500">
+                <span class="text-sm font-medium text-gray-700">Update info</span>
             </label>
         </div>`;
     }
     overlay.innerHTML = `
     <div class="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[80vh] overflow-y-auto p-5">
         <h3 class="text-lg font-bold text-gray-900 mb-1">Existing Data Found</h3>
-        <p class="text-sm text-gray-500 mb-4">Some fields already have data. By default, existing data is kept (OCR may be inaccurate). Select "Use scanned" only if the scan is correct.</p>
+        <p class="text-sm text-gray-500 mb-4">Scanned data differs from existing. Differences are highlighted in <span class="text-red-600 font-bold italic">red</span>. Existing data is kept by default — OCR may be inaccurate.</p>
         <div class="space-y-3 mb-5">${rows}</div>
         <div class="flex justify-end gap-3 pt-3 border-t border-gray-200">
             <button type="button" id="conflict-apply-btn" class="px-5 py-2 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 text-sm">Apply</button>
