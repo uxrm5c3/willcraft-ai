@@ -200,8 +200,27 @@ with app.app_context():
                 conn.commit()
         except Exception:
             pass
-    # Create new tables (WillEditLog etc.) if they don't exist
+    # Create new tables (WillEditLog, Probate etc.) if they don't exist
     db.create_all()
+    # Migrate: add new probate columns if not exists
+    for col_def in [
+        ("probate_applications", "application_type", "VARCHAR(20) DEFAULT 'probate'"),
+        ("probate_applications", "deceased_name", "VARCHAR(200)"),
+        ("probate_applications", "deceased_nric", "VARCHAR(50)"),
+        ("probate_applications", "deceased_address", "TEXT"),
+        ("probate_applications", "applicant_name", "VARCHAR(200)"),
+        ("probate_applications", "applicant_nric", "VARCHAR(50)"),
+        ("probate_applications", "applicant_address", "TEXT"),
+        ("probate_applications", "applicant_relationship", "VARCHAR(100)"),
+        ("probate_applications", "assets_data", "TEXT DEFAULT '[]'"),
+        ("probate_applications", "beneficiaries_data", "TEXT DEFAULT '[]'"),
+    ]:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(db.text(f"ALTER TABLE {col_def[0]} ADD COLUMN {col_def[1]} {col_def[2]}"))
+                conn.commit()
+        except Exception:
+            pass
     # Seed default users if none exist — detect tenant from WILLCRAFT_DOMAIN env var
     try:
         if User.query.count() == 0:
@@ -223,37 +242,37 @@ with app.app_context():
             PROBATE_FORM_DEFAULTS = [
                 {'form_code': 'doc01', 'form_name': 'Originating Summons', 'form_name_malay': 'Saman Pemula',
                  'description': 'The main court application to start the probate process. This tells the court you want to be officially recognized as the executor of the will.',
-                 'file_path': 'data/probate_templates/doc01_saman_pemula.docx', 'category': 'core', 'sort_order': 1},
+                 'file_path': 'probate_templates/doc01_saman_pemula.docx', 'category': 'core', 'sort_order': 1},
                 {'form_code': 'doc02', 'form_name': 'Affidavit under Probate Act', 'form_name_malay': 'Afidavit Menurut Akta Probet',
                  'description': "The executor's sworn statement about the deceased person, their will, and their estate. Includes exhibit references for supporting documents.",
-                 'file_path': 'data/probate_templates/doc02_afidavit_probet.docx', 'category': 'core', 'sort_order': 2},
+                 'file_path': 'probate_templates/doc02_afidavit_probet.docx', 'category': 'core', 'sort_order': 2},
                 {'form_code': 'doc03', 'form_name': 'Oath of Administration', 'form_name_malay': 'Sumpah Pentadbiran',
                  'description': "The executor's oath promising to honestly and faithfully manage the deceased person's estate according to the law.",
-                 'file_path': 'data/probate_templates/doc03_sumpah_pentadbiran.docx', 'category': 'core', 'sort_order': 3},
+                 'file_path': 'probate_templates/doc03_sumpah_pentadbiran.docx', 'category': 'core', 'sort_order': 3},
                 {'form_code': 'doc04', 'form_name': 'Witness 1 Affidavit', 'form_name_malay': 'Afidavit Saksi 1',
                  'description': 'A sworn statement from the first person who witnessed the will being signed. Confirms they saw the testator sign the will.',
-                 'file_path': 'data/probate_templates/doc04_afidavit_saksi_1.docx', 'category': 'witness',
+                 'file_path': 'probate_templates/doc04_afidavit_saksi_1.docx', 'category': 'witness',
                  'requires_witnesses': True, 'sort_order': 4},
                 {'form_code': 'doc05', 'form_name': 'Witness 2 Affidavit', 'form_name_malay': 'Afidavit Saksi 2',
                  'description': 'A sworn statement from the second person who witnessed the will being signed.',
-                 'file_path': 'data/probate_templates/doc05_afidavit_saksi_2.docx', 'category': 'witness',
+                 'file_path': 'probate_templates/doc05_afidavit_saksi_2.docx', 'category': 'witness',
                  'requires_witnesses': True, 'sort_order': 5},
                 {'form_code': 'doc06', 'form_name': 'Assets & Liabilities Schedule', 'form_name_malay': 'Jadual Aset & Liabiliti',
                  'description': "A detailed list of everything the deceased person owned (houses, cars, bank accounts, investments) and any debts they owed.",
-                 'file_path': 'data/probate_templates/doc06_jadual_aset.docx', 'category': 'core', 'sort_order': 6},
+                 'file_path': 'probate_templates/doc06_jadual_aset.docx', 'category': 'core', 'sort_order': 6},
                 {'form_code': 'doc07', 'form_name': 'Beneficiary List', 'form_name_malay': 'Senarai Benefisiari',
                  'description': "A list of all people who will inherit from the deceased person's estate, including their names, ID numbers, and relationship.",
-                 'file_path': 'data/probate_templates/doc07_senarai_benefisiari.docx', 'category': 'core', 'sort_order': 7},
+                 'file_path': 'probate_templates/doc07_senarai_benefisiari.docx', 'category': 'core', 'sort_order': 7},
                 {'form_code': 'doc08', 'form_name': 'Notice of Solicitor Appointment', 'form_name_malay': 'Notis Perlantikan Peguamcara',
                  'description': 'A formal notice telling the court that a lawyer has been hired to handle this probate case.',
-                 'file_path': 'data/probate_templates/doc08_notis_peguamcara.docx', 'category': 'core', 'sort_order': 8},
+                 'file_path': 'probate_templates/doc08_notis_peguamcara.docx', 'category': 'core', 'sort_order': 8},
                 {'form_code': 'form14a', 'form_name': 'Land Transfer (Form 14A)', 'form_name_malay': 'Borang 14A - Pindah Milik',
                  'description': 'Transfers property (land/house) from the deceased to the beneficiary named in the will. One form is needed for each property.',
-                 'file_path': 'data/probate_templates/form14a_land_transfer.docx', 'category': 'property',
+                 'file_path': 'probate_templates/form14a_land_transfer.docx', 'category': 'property',
                  'requires_property': True, 'sort_order': 9},
                 {'form_code': 'form346', 'form_name': 'Personal Representative (Form 346)', 'form_name_malay': 'Borang 346 - Pendaftaran Wakil Diri',
                  'description': 'Registers the executor as the legal representative at the land office so they can handle property transfers.',
-                 'file_path': 'data/probate_templates/form346_personal_rep.doc', 'category': 'property',
+                 'file_path': 'probate_templates/form346_personal_rep.doc', 'category': 'property',
                  'requires_property': True, 'sort_order': 10},
             ]
             for tpl in PROBATE_FORM_DEFAULTS:
@@ -945,7 +964,7 @@ def will_approve(will_id):
         flash('Will not found.', 'error')
         return redirect(url_for('approval_list'))
 
-    if will_record.status != 'pending_approval':
+    if will_record.status not in ('pending_approval', 'generated'):
         flash('This will is not pending approval.', 'error')
         return redirect(url_for('approval_list'))
 
@@ -956,6 +975,9 @@ def will_approve(will_id):
     will_record.approval_remarks = remarks or None
     db.session.commit()
     flash(f'Will "{will_record.title}" approved.', 'success')
+    # If approving from preview page, redirect back there
+    if request.referrer and '/preview' in request.referrer:
+        return redirect(url_for('preview'))
     return redirect(url_for('approval_list'))
 
 
@@ -2947,18 +2969,44 @@ def _get_probate_context(probate_id):
     probate = db.session.get(ProbateApplication, probate_id)
     if not probate:
         return None, None, {}
-    will_record = db.session.get(Will, probate.will_id)
-    if not will_record:
-        return probate, None, {}
-    testator = json.loads(will_record.step1_data or '{}')
-    step2 = json.loads(will_record.step2_data or '{}')
-    executors = step2.get('executors', []) if isinstance(step2, dict) else step2
-    executor = executors[0] if executors else {}
+
+    is_la = probate.application_type == 'la'
+    will_record = db.session.get(Will, probate.will_id) if probate.will_id else None
+
+    if is_la:
+        # LA: deceased/applicant from probate fields
+        testator = {
+            'full_name': probate.deceased_name or '',
+            'nric_passport': probate.deceased_nric or '',
+            'residential_address': probate.deceased_address or '',
+        }
+        executor = {
+            'full_name': probate.applicant_name or '',
+            'nric_passport': probate.applicant_nric or '',
+            'address': probate.applicant_address or '',
+            'relationship': probate.applicant_relationship or '',
+        }
+        will_title = f'LA — {probate.deceased_name or "Unnamed"}'
+        client_name = probate.applicant_name or ''
+    else:
+        # Probate: from will data
+        if not will_record:
+            return probate, None, {'probate': probate, 'probate_id': probate_id,
+                                   'is_la': False, 'will_title': 'Unknown', 'client_name': '',
+                                   'testator': {}, 'executor': None}
+        testator = json.loads(will_record.step1_data or '{}')
+        step2 = json.loads(will_record.step2_data or '{}')
+        executors = step2.get('executors', []) if isinstance(step2, dict) else step2
+        executor = executors[0] if executors else {}
+        will_title = will_record.title
+        client_name = will_record.client.full_name if will_record.client else ''
+
     return probate, will_record, {
         'probate': probate,
         'probate_id': probate_id,
-        'will_title': will_record.title,
-        'client_name': will_record.client.full_name if will_record.client else '',
+        'is_la': is_la,
+        'will_title': will_title,
+        'client_name': client_name,
         'testator': testator,
         'executor': type('Obj', (), executor) if executor else None,
     }
@@ -2972,7 +3020,26 @@ def probate_list():
         flash('Access denied.', 'error')
         return redirect(url_for('index'))
     applications = ProbateApplication.query.order_by(ProbateApplication.created_at.desc()).all()
-    return render_template('probate/list.html', applications=applications)
+    approved_wills = Will.query.filter_by(status='approved').order_by(Will.approved_at.desc()).all()
+    return render_template('probate/list.html', applications=applications, approved_wills=approved_wills)
+
+
+@app.route('/probate/new-la')
+@login_required
+def probate_new_la():
+    """Create a new Letters of Administration application (no will)."""
+    role = session.get('user_role')
+    if role not in ('admin', 'approver'):
+        flash('Access denied.', 'error')
+        return redirect(url_for('index'))
+    probate = ProbateApplication(
+        application_type='la',
+        filing_year=str(datetime.now().year),
+        created_by=session.get('user_id'),
+    )
+    db.session.add(probate)
+    db.session.commit()
+    return redirect(f'/probate/{probate.id}/step/1')
 
 
 @app.route('/probate/new/<will_id>')
@@ -3016,6 +3083,15 @@ def probate_step1(probate_id):
         probate.time_of_death = request.form.get('time_of_death', '').strip()
         probate.place_of_death = request.form.get('place_of_death', '').strip()
         probate.estate_value_estimate = request.form.get('estate_value_estimate', '').strip()
+        # LA-specific fields
+        if probate.application_type == 'la':
+            probate.deceased_name = request.form.get('deceased_name', '').strip()
+            probate.deceased_nric = request.form.get('deceased_nric', '').strip()
+            probate.deceased_address = request.form.get('deceased_address', '').strip()
+            probate.applicant_name = request.form.get('applicant_name', '').strip()
+            probate.applicant_nric = request.form.get('applicant_nric', '').strip()
+            probate.applicant_address = request.form.get('applicant_address', '').strip()
+            probate.applicant_relationship = request.form.get('applicant_relationship', '').strip()
         probate.updated_at = datetime.utcnow()
         db.session.commit()
         return redirect(f'/probate/{probate_id}/step/2')
@@ -3088,7 +3164,7 @@ def probate_step4(probate_id):
         return redirect(url_for('probate_list'))
 
     from documents.probate_generator import recommend_forms
-    recommendations = recommend_forms(will_record)
+    recommendations = recommend_forms(will_record, probate)
 
     # Merge with template info
     templates = ProbateFormTemplate.query.order_by(ProbateFormTemplate.sort_order).all()
@@ -3136,8 +3212,12 @@ def probate_generate(probate_id):
     tpl_name_map = {t.form_code: t.form_name for t in templates}
 
     # Output directory
-    client = db.session.get(Client, probate.client_id)
-    folder = client.folder_name if client else 'unknown'
+    if probate.client_id:
+        client = db.session.get(Client, probate.client_id)
+        folder = client.folder_name if client else 'unknown'
+    else:
+        # LA without client — use probate ID as folder
+        folder = f'la_{probate.id[:8]}'
     output_dir = os.path.join(DATA_DIR, 'clients', folder, 'probate')
     os.makedirs(output_dir, exist_ok=True)
 
@@ -3258,13 +3338,13 @@ def admin_probate_template_upload(form_code):
         return redirect(url_for('admin_probate_templates'))
 
     # Save custom template
-    custom_dir = os.path.join(os.path.dirname(__file__), 'data', 'probate_templates', 'custom')
+    custom_dir = os.path.join(os.path.dirname(__file__), 'probate_templates', 'custom')
     os.makedirs(custom_dir, exist_ok=True)
     ext = file.filename.rsplit('.', 1)[-1].lower()
     custom_path = os.path.join(custom_dir, f'{form_code}.{ext}')
     file.save(custom_path)
 
-    tpl.file_path = f'data/probate_templates/custom/{form_code}.{ext}'
+    tpl.file_path = f'probate_templates/custom/{form_code}.{ext}'
     tpl.is_default = False
     tpl.updated_at = datetime.utcnow()
     db.session.commit()
@@ -3289,7 +3369,7 @@ def admin_probate_template_reset(form_code):
         'form14a': 'form14a_land_transfer.docx', 'form346': 'form346_personal_rep.doc',
     }
     default_file = default_files.get(form_code, f'{form_code}.docx')
-    tpl.file_path = f'data/probate_templates/{default_file}'
+    tpl.file_path = f'probate_templates/{default_file}'
     tpl.is_default = True
     tpl.updated_at = datetime.utcnow()
     db.session.commit()

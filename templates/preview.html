@@ -94,12 +94,51 @@
 
     {% if will_record and will_record.status == 'pending_approval' %}
     <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
-        <div class="flex items-start">
-            <svg class="w-5 h-5 text-amber-500 mt-0.5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
-            <p class="text-sm text-amber-700">
-                <strong>Awaiting Approval.</strong> This will has been submitted and is waiting for an Approver to review it.
-                Downloads are not available until approved.
-            </p>
+        <div class="flex items-start justify-between">
+            <div class="flex items-start">
+                <svg class="w-5 h-5 text-amber-500 mt-0.5 mr-2 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/></svg>
+                <p class="text-sm text-amber-700">
+                    <strong>Awaiting Approval.</strong> This will has been submitted and is waiting for review.
+                    Downloads are not available until approved.
+                </p>
+            </div>
+            {% if perms.get('canApprove') %}
+            <div class="flex items-center gap-2 ml-4 flex-shrink-0">
+                <form method="POST" action="/wills/{{ will_record.id }}/approve" onsubmit="return confirmApprovalPreview(this)">
+                    <input type="hidden" name="remarks" class="approval-remarks-input" value="">
+                    <button type="submit" class="px-4 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700">
+                        Approve
+                    </button>
+                </form>
+                <form method="POST" action="/wills/{{ will_record.id }}/reject" onsubmit="return confirmRejectionPreview(this)">
+                    <input type="hidden" name="remarks" class="rejection-remarks-input" value="">
+                    <button type="submit" class="px-4 py-1.5 bg-red-500 text-white text-xs font-bold rounded-lg hover:bg-red-600">
+                        Reject
+                    </button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if will_record and will_record.status == 'generated' and perms.get('canApprove') %}
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+        <div class="flex items-start justify-between">
+            <div class="flex items-start">
+                <svg class="w-5 h-5 text-blue-500 mt-0.5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                <p class="text-sm text-blue-700">
+                    <strong>Ready for review.</strong> You can approve this will directly or submit it through the approval workflow.
+                </p>
+            </div>
+            <div class="flex items-center gap-2 ml-4 flex-shrink-0">
+                <form method="POST" action="/wills/{{ will_record.id }}/approve" onsubmit="return confirmApprovalPreview(this)">
+                    <input type="hidden" name="remarks" class="approval-remarks-input" value="">
+                    <button type="submit" class="px-4 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700">
+                        Approve
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
     {% endif %}

@@ -83,20 +83,36 @@ def build_replacements(probate_app, will_record):
 
     Args:
         probate_app: ProbateApplication model instance
-        will_record: Will model instance
+        will_record: Will model instance (can be None for LA)
 
     Returns:
         Dict of {{PLACEHOLDER}} -> value
     """
-    # Parse will step data
-    testator = json.loads(will_record.step1_data or '{}')
-    step2 = json.loads(will_record.step2_data or '{}')
-    executors = step2.get('executors', []) if isinstance(step2, dict) else step2
-    beneficiaries = json.loads(will_record.step4_data or '[]')
-    gifts = json.loads(will_record.step5_data or '[]')
+    is_la = probate_app.application_type == 'la'
 
-    # Get primary executor (first one)
-    primary_exec = executors[0] if executors else {}
+    if is_la or not will_record:
+        # LA: deceased/applicant from probate fields
+        testator = {
+            'full_name': probate_app.deceased_name or '',
+            'nric_passport': probate_app.deceased_nric or '',
+            'residential_address': probate_app.deceased_address or '',
+        }
+        primary_exec = {
+            'full_name': probate_app.applicant_name or '',
+            'nric_passport': probate_app.applicant_nric or '',
+            'address': probate_app.applicant_address or '',
+            'relationship': probate_app.applicant_relationship or '',
+        }
+        beneficiaries = json.loads(probate_app.beneficiaries_data or '[]')
+        gifts = json.loads(probate_app.assets_data or '[]')
+    else:
+        # Probate: from will data
+        testator = json.loads(will_record.step1_data or '{}')
+        step2 = json.loads(will_record.step2_data or '{}')
+        executors = step2.get('executors', []) if isinstance(step2, dict) else step2
+        primary_exec = executors[0] if executors else {}
+        beneficiaries = json.loads(will_record.step4_data or '[]')
+        gifts = json.loads(will_record.step5_data or '[]')
 
     # Build applicant initials for exhibit references (e.g., TLL from TAN LI LI)
     applicant_name = primary_exec.get('full_name', probate_app.witness1_name or '')
@@ -209,39 +225,49 @@ def build_replacements(probate_app, will_record):
     return replacements
 
 
-def recommend_forms(will_record):
-    """Analyze will data and recommend which probate forms are needed.
+def recommend_forms(will_record, probate_app=None):
+    """Analyze will/probate data and recommend which forms are needed.
 
     Returns list of dicts: {form_code, recommended, reason}
     """
-    gifts = json.loads(will_record.step5_data or '[]')
-    has_property = any(g.get('gift_type') == 'property' for g in gifts)
+    is_la = probate_app and probate_app.application_type == 'la'
+
+    if is_la:
+        assets = json.loads(probate_app.assets_data or '[]')
+        has_property = any(a.get('asset_type') == 'property' for a in assets)
+    elif will_record:
+        gifts = json.loads(will_record.step5_data or '[]')
+        has_property = any(g.get('gift_type') == 'property' for g in gifts)
+    else:
+        has_property = False
 
     recommendations = [
         {
             'form_code': 'doc01',
             'recommended': True,
-            'reason': 'Required — the main court filing to start probate',
+            'reason': 'Required — the main court filing to start the application',
         },
         {
             'form_code': 'doc02',
             'recommended': True,
-            'reason': "Required — executor's sworn statement about the estate",
+            'reason': "Required — applicant's sworn statement about the estate",
         },
         {
             'form_code': 'doc03',
             'recommended': True,
-            'reason': "Required — executor's oath to manage the estate honestly",
+            'reason': "Required — applicant's oath to manage the estate honestly",
         },
         {
             'form_code': 'doc04',
-            'recommended': True,
-            'reason': 'Recommended — sworn statement from the first will witness',
+            'recommended': not is_la,
+            'reason': 'Not needed — no will witnesses for LA' if is_la
+                      else 'Recommended — sworn statement from the first will witness',
         },
         {
             'form_code': 'doc05',
-            'recommended': True,
-            'reason': 'Recommended — sworn statement from the second will witness',
+            'recommended': not is_la,
+            'reason': 'Not needed — no will witnesses for LA' if is_la
+                      else 'Recommended — sworn statement from the second will witness',
         },
         {
             'form_code': 'doc06',

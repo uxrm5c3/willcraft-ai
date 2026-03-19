@@ -177,12 +177,29 @@ class Document(db.Model):
 
 
 class ProbateApplication(db.Model):
-    """A probate application linked to an approved will."""
+    """A probate application linked to an approved will or standalone LA."""
     __tablename__ = 'probate_applications'
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    will_id = db.Column(db.String(36), db.ForeignKey('wills.id'), nullable=False)
-    client_id = db.Column(db.String(36), db.ForeignKey('clients.id'), nullable=False)
+    application_type = db.Column(db.String(20), default='probate')  # probate (with will) or la (letters of administration)
+    will_id = db.Column(db.String(36), db.ForeignKey('wills.id'), nullable=True)  # nullable for LA
+    client_id = db.Column(db.String(36), db.ForeignKey('clients.id'), nullable=True)  # nullable for LA
     status = db.Column(db.String(20), default='draft')  # draft, generated
+
+    # Deceased details (for LA — manual entry; for probate — from will)
+    deceased_name = db.Column(db.String(200), nullable=True)
+    deceased_nric = db.Column(db.String(50), nullable=True)
+    deceased_address = db.Column(db.Text, nullable=True)
+
+    # Applicant details (for LA — manual entry; for probate — from will executor)
+    applicant_name = db.Column(db.String(200), nullable=True)
+    applicant_nric = db.Column(db.String(50), nullable=True)
+    applicant_address = db.Column(db.Text, nullable=True)
+    applicant_relationship = db.Column(db.String(100), nullable=True)
+
+    # Assets (for LA — JSON array of asset dicts)
+    assets_data = db.Column(db.Text, default='[]')
+    # Beneficiaries (for LA — JSON array)
+    beneficiaries_data = db.Column(db.Text, default='[]')
 
     # Death details
     death_cert_number = db.Column(db.String(100), nullable=True)
