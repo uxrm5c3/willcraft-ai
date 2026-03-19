@@ -126,127 +126,94 @@ def _build_content_html(text: str) -> str:
 
 
 def _build_signing_page_html(signing_text: str) -> str:
-    """Build the attestation/signing page HTML with proper Rockwill layout."""
+    """Build the attestation/signing page HTML — 2-column layout matching professional will format."""
     if not signing_text.strip():
         return ""
 
     return """
 <div class="signing-page">
 
-    <table class="sig-table">
+    <!-- Testator Signature -->
+    <table class="sign-layout">
         <tr>
-            <td class="sig-label">Signature of the Testator:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">Signature of the Testator:</td>
+            <td class="sign-field"></td>
+        </tr>
+        <tr><td colspan="2" style="height:8pt;"></td></tr>
+        <tr>
+            <td class="sign-label">Date of this Will:</td>
+            <td class="sign-field"><span class="date-hint">(dd/mm/yyyy)</span></td>
         </tr>
     </table>
 
-    <div class="sig-spacer"></div>
-
-    <table class="sig-table">
-        <tr>
-            <td class="sig-label">Date of this Will:</td>
-            <td class="sig-field"><div class="sig-line"><span class="date-hint">(dd/mm/yyyy)</span></div></td>
-        </tr>
-    </table>
-
-    <div class="sig-spacer-large"></div>
+    <div style="height:16pt;"></div>
 
     <p class="attestation-clause">This Last Will and Testament was signed by the Testator in the presence of us both and attested by us in the presence of both Testator and of each other:</p>
 
-    <div class="sig-spacer"></div>
+    <div style="height:12pt;"></div>
 
     <!-- First Witness -->
-    <table class="sig-table">
+    <table class="sign-layout">
         <tr>
-            <td class="sig-label">Signature of First Witness:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">Signature of First Witness:</td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
+        <tr><td colspan="2" style="height:4pt;"></td></tr>
         <tr>
-            <td class="sig-label">First Witness Full Name:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">Full Name:</td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
         <tr>
-            <td class="sig-label">First Witness Identification:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">NRIC / Passport No.:</td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
         <tr>
-            <td class="sig-label">First Witness Address:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">Address:</td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
         <tr>
-            <td class="sig-label"></td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label"></td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
         <tr>
-            <td class="sig-label"></td>
-            <td class="sig-field"><div class="sig-line"></div></td>
-        </tr>
-    </table>
-    <table class="sig-table">
-        <tr>
-            <td class="sig-label">First Witness Contact Number:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">Contact No.:</td>
+            <td class="sign-field"></td>
         </tr>
     </table>
 
-    <div class="sig-spacer"></div>
+    <div style="height:12pt;"></div>
 
     <!-- Second Witness -->
-    <table class="sig-table">
+    <table class="sign-layout">
         <tr>
-            <td class="sig-label">Signature of Second Witness:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">Signature of Second Witness:</td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
+        <tr><td colspan="2" style="height:4pt;"></td></tr>
         <tr>
-            <td class="sig-label">Second Witness Full Name:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">Full Name:</td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
         <tr>
-            <td class="sig-label">Second Witness Identification:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">NRIC / Passport No.:</td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
         <tr>
-            <td class="sig-label">Second Witness Address:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">Address:</td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
         <tr>
-            <td class="sig-label"></td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label"></td>
+            <td class="sign-field"></td>
         </tr>
-    </table>
-    <table class="sig-table">
         <tr>
-            <td class="sig-label"></td>
-            <td class="sig-field"><div class="sig-line"></div></td>
-        </tr>
-    </table>
-    <table class="sig-table">
-        <tr>
-            <td class="sig-label">Second Witness Contact Number:</td>
-            <td class="sig-field"><div class="sig-line"></div></td>
+            <td class="sign-label">Contact No.:</td>
+            <td class="sign-field"></td>
         </tr>
     </table>
 
     <div class="end-marker">
-        <p>End of Document</p>
+        <p>- End of Document -</p>
     </div>
 
 </div>
@@ -325,10 +292,16 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     .page-footer {{
         position: running(pageFooter);
         font-family: 'Times New Roman', Times, serif;
+        width: 100%;
     }}
     .page-footer .footer-info {{
         font-size: 8pt;
-        padding: 0 0 2pt 0;
+        padding: 0 0 1pt 0;
+    }}
+    .page-footer .footer-line {{
+        border-top: 0.5pt solid #000;
+        margin: 0;
+        padding: 0;
     }}
     .page-footer .sig-boxes {{
         width: 100%;
@@ -342,6 +315,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
         vertical-align: bottom;
         font-size: 8pt;
         padding: 2pt 4pt;
+        font-family: 'Times New Roman', Times, serif;
     }}
     /* Page counter works inside running() elements */
     .page-footer .page-num::after {{
@@ -410,30 +384,26 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
         page-break-before: always;
     }}
 
-    .sig-table {{
+    /* Signing page: 2-column layout (labels left, fields right) */
+    .sign-layout {{
         width: 100%;
         border-collapse: collapse;
-        margin-bottom: 4pt;
     }}
-
-    .sig-label {{
-        width: 38%;
+    .sign-layout td {{
+        font-family: 'Times New Roman', Times, serif;
         font-size: 11pt;
+        padding: 3pt 0;
         vertical-align: bottom;
-        padding: 4pt 0;
+    }}
+    .sign-label {{
+        width: 35%;
+        text-align: left;
         white-space: nowrap;
     }}
-
-    .sig-field {{
-        width: 62%;
-        vertical-align: bottom;
-        padding: 4pt 0;
-    }}
-
-    .sig-line {{
+    .sign-field {{
+        width: 65%;
         border-bottom: 0.5pt solid #000;
-        min-height: 20pt;
-        width: 100%;
+        min-height: 18pt;
     }}
 
     .date-hint {{
@@ -441,22 +411,14 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
         color: #666;
     }}
 
-    .sig-spacer {{
-        height: 12pt;
-    }}
-
-    .sig-spacer-large {{
-        height: 20pt;
-    }}
-
     .attestation-clause {{
         font-size: 11pt;
-        line-height: 1.6;
+        line-height: 1.5;
         text-align: justify;
     }}
 
     .end-marker {{
-        margin-top: 24pt;
+        margin-top: 20pt;
         text-align: center;
         font-size: 10pt;
         font-weight: bold;
@@ -467,11 +429,12 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 <!-- Running footer: automatically placed into @bottom-center on each page -->
 <div class="page-footer">
     <div class="footer-info">Page| <span class="page-num"></span></div>
+    <div class="footer-line"></div>
     <table class="sig-boxes">
         <tr>
             <td>Testator</td>
-            <td>Witness1</td>
-            <td>Witness2</td>
+            <td>Witness 1</td>
+            <td>Witness 2</td>
         </tr>
     </table>
 </div>
