@@ -293,41 +293,41 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             border-bottom: 0.5pt solid #000;
         }}
 
-        /* Footer: Page N + Testator sig | Witness 1 sig | Witness 2 sig */
+        /* Footer: signature lines on top, labels + page number below */
         @bottom-left {{
-            content: "Page " counter(page) "\\A\\A__________________\\ATestator";
+            content: "__________________\\ATestator";
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
             color: #666;
             white-space: pre-wrap;
             text-align: center;
-            vertical-align: top;
-            padding-top: 6pt;
+            vertical-align: bottom;
             border-top: 0.5pt solid #999;
+            padding-top: 8pt;
         }}
 
         @bottom-center {{
-            content: "\\A\\A__________________\\AWitness 1";
+            content: "__________________\\AWitness 1";
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
             color: #666;
             white-space: pre-wrap;
             text-align: center;
-            vertical-align: top;
-            padding-top: 6pt;
+            vertical-align: bottom;
             border-top: 0.5pt solid #999;
+            padding-top: 8pt;
         }}
 
         @bottom-right {{
-            content: "\\A\\A__________________\\AWitness 2";
+            content: "__________________\\AWitness 2\\A\\APage " counter(page);
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
             color: #666;
             white-space: pre-wrap;
             text-align: center;
-            vertical-align: top;
-            padding-top: 6pt;
+            vertical-align: bottom;
             border-top: 0.5pt solid #999;
+            padding-top: 8pt;
         }}
     }}
 
