@@ -3,9 +3,9 @@
 Primary method: WeasyPrint (high-quality HTML-to-PDF).
 Fallback: builds a simple PDF using basic HTML if WeasyPrint is not installed.
 
-Follows Rockwills Trustee Berhad professional format:
+Professional Malaysian will format:
 - Running header: "LAST WILL AND TESTAMENT OF [TESTATOR NAME]" on every page
-- Running footer: Page number, Testator/Witness1/Witness2 signature spaces
+- Running footer: Page number + separate Testator/Witness 1/Witness 2 signature spaces
 - Proper signing/attestation page layout
 """
 
@@ -66,6 +66,16 @@ def _build_content_html(text: str) -> str:
 
         # Skip the title lines (they're in the running header)
         if 'LAST WILL AND TESTAMENT OF' in stripped.upper():
+            continue
+
+        # Skip per-page footer content (already in running footer)
+        if 'Continued on' in stripped and ('next page' in stripped.lower() or 'Page' in stripped):
+            continue
+        if stripped.startswith('Page|') or stripped.startswith('Page |'):
+            continue
+        if ('Testator' in stripped and 'Witness 1' in stripped and 'Witness 2' in stripped):
+            continue
+        if stripped.replace('_', '').replace(' ', '').replace('|', '') == '':
             continue
 
         # Detect the testator name line (all caps, short, right after title)
@@ -285,33 +295,52 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 
         /* Page number - bottom left */
         @bottom-left {{
-            content: "Page| " counter(page);
+            content: "Page " counter(page);
             font-family: 'Times New Roman', Times, serif;
             font-size: 8pt;
+            color: #666;
             vertical-align: top;
             padding-top: 10pt;
+            border-top: 0.5pt solid #999;
         }}
 
-        /* Testator signature space - bottom center-left area */
+        /* Testator signature space */
+        @bottom-center-left {{
+            content: "______________________\\ATestator";
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 7pt;
+            color: #666;
+            white-space: pre-wrap;
+            text-align: center;
+            vertical-align: top;
+            padding-top: 10pt;
+            border-top: 0.5pt solid #999;
+        }}
+
+        /* Witness 1 signature space */
         @bottom-center {{
-            content: "_______________\\ATestator";
+            content: "______________________\\AWitness 1";
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
+            color: #666;
             white-space: pre-wrap;
             text-align: center;
             vertical-align: top;
             padding-top: 10pt;
+            border-top: 0.5pt solid #999;
         }}
 
-        /* Witness and Continued text - bottom right */
+        /* Witness 2 signature space */
         @bottom-right {{
-            content: "Continued on next page\\A_______________\\AWitness 1 / Witness 2";
+            content: "______________________\\AWitness 2";
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
+            color: #666;
             white-space: pre-wrap;
             text-align: center;
             vertical-align: top;
             padding-top: 10pt;
+            border-top: 0.5pt solid #999;
         }}
     }}
 
@@ -332,20 +361,17 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
         }}
 
         @bottom-left {{
-            content: "Page| " counter(page);
+            content: "Page " counter(page);
             font-family: 'Times New Roman', Times, serif;
             font-size: 8pt;
+            color: #666;
             vertical-align: top;
             padding-top: 10pt;
         }}
 
-        @bottom-center {{
-            content: "";
-        }}
-
-        @bottom-right {{
-            content: "";
-        }}
+        @bottom-center-left {{ content: ""; }}
+        @bottom-center {{ content: ""; }}
+        @bottom-right {{ content: ""; }}
     }}
 
     /* === Body Styles === */

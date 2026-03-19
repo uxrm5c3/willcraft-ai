@@ -90,7 +90,7 @@ def _add_footer(doc):
     pPr_b.append(pBdr_b)
 
     # Single-row table: [Page N] [Testator sig] [Witness 1 sig] [Witness 2 sig]
-    table = footer.add_table(rows=1, cols=4)
+    table = footer.add_table(1, 4, Cm(14))
     table.autofit = False
 
     # Set table to full width and remove all borders
