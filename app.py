@@ -2923,6 +2923,381 @@ def wizard_new():
 
 
 # ---------------------------------------------------------------------------
+# Probate Application Module
+# ---------------------------------------------------------------------------
+
+MALAYSIAN_COURTS = [
+    'JOHOR BAHRU', 'KUALA LUMPUR', 'SHAH ALAM', 'PUTRAJAYA', 'GEORGE TOWN',
+    'IPOH', 'KUANTAN', 'KOTA BHARU', 'KUALA TERENGGANU', 'MELAKA',
+    'SEREMBAN', 'ALOR SETAR', 'KANGAR', 'KOTA KINABALU', 'KUCHING',
+    'MUAR', 'BATU PAHAT', 'SEGAMAT', 'KLANG', 'TAIPING',
+]
+
+MALAYSIAN_STATES = [
+    'JOHOR DARUL TAKZIM', 'SELANGOR DARUL EHSAN', 'WILAYAH PERSEKUTUAN KUALA LUMPUR',
+    'WILAYAH PERSEKUTUAN PUTRAJAYA', 'PULAU PINANG', 'PERAK DARUL RIDZUAN',
+    'PAHANG DARUL MAKMUR', 'KELANTAN DARUL NAIM', 'TERENGGANU DARUL IMAN',
+    'MELAKA', 'NEGERI SEMBILAN DARUL KHUSUS', 'KEDAH DARUL AMAN', 'PERLIS INDERA KAYANGAN',
+    'SABAH', 'SARAWAK',
+]
+
+
+def _get_probate_context(probate_id):
+    """Load probate app + will data for template context."""
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        return None, None, {}
+    will_record = db.session.get(Will, probate.will_id)
+    if not will_record:
+        return probate, None, {}
+    testator = json.loads(will_record.step1_data or '{}')
+    step2 = json.loads(will_record.step2_data or '{}')
+    executors = step2.get('executors', []) if isinstance(step2, dict) else step2
+    executor = executors[0] if executors else {}
+    return probate, will_record, {
+        'probate': probate,
+        'probate_id': probate_id,
+        'will_title': will_record.title,
+        'client_name': will_record.client.full_name if will_record.client else '',
+        'testator': testator,
+        'executor': type('Obj', (), executor) if executor else None,
+    }
+
+
+@app.route('/probate')
+@login_required
+def probate_list():
+    role = session.get('user_role')
+    if role not in ('admin', 'approver'):
+        flash('Access denied.', 'error')
+        return redirect(url_for('index'))
+    applications = ProbateApplication.query.order_by(ProbateApplication.created_at.desc()).all()
+    return render_template('probate/list.html', applications=applications)
+
+
+@app.route('/probate/new/<will_id>')
+@login_required
+def probate_new(will_id):
+    role = session.get('user_role')
+    if role not in ('admin', 'approver'):
+        flash('Access denied.', 'error')
+        return redirect(url_for('index'))
+    will_record = db.session.get(Will, will_id)
+    if not will_record:
+        flash('Will not found.', 'error')
+        return redirect(url_for('wills_list'))
+    # Check if probate already exists for this will
+    existing = ProbateApplication.query.filter_by(will_id=will_id).first()
+    if existing:
+        return redirect(f'/probate/{existing.id}/step/1')
+    # Create new probate application
+    probate = ProbateApplication(
+        will_id=will_id,
+        client_id=will_record.client_id,
+        filing_year=str(datetime.now().year),
+        created_by=session.get('user_id'),
+    )
+    db.session.add(probate)
+    db.session.commit()
+    return redirect(f'/probate/{probate.id}/step/1')
+
+
+@app.route('/probate/<probate_id>/step/1', methods=['GET', 'POST'])
+@login_required
+def probate_step1(probate_id):
+    probate, will_record, ctx = _get_probate_context(probate_id)
+    if not probate:
+        flash('Probate application not found.', 'error')
+        return redirect(url_for('probate_list'))
+
+    if request.method == 'POST':
+        probate.death_cert_number = request.form.get('death_cert_number', '').strip()
+        probate.date_of_death = request.form.get('date_of_death', '').strip()
+        probate.time_of_death = request.form.get('time_of_death', '').strip()
+        probate.place_of_death = request.form.get('place_of_death', '').strip()
+        probate.estate_value_estimate = request.form.get('estate_value_estimate', '').strip()
+        probate.updated_at = datetime.utcnow()
+        db.session.commit()
+        return redirect(f'/probate/{probate_id}/step/2')
+
+    ctx['probate_step'] = 1
+    return render_template('probate/step1_death.html', **ctx)
+
+
+@app.route('/probate/<probate_id>/step/2', methods=['GET', 'POST'])
+@login_required
+def probate_step2(probate_id):
+    probate, will_record, ctx = _get_probate_context(probate_id)
+    if not probate:
+        flash('Probate application not found.', 'error')
+        return redirect(url_for('probate_list'))
+
+    if request.method == 'POST':
+        probate.court_location = request.form.get('court_location', '').strip()
+        probate.court_state = request.form.get('court_state', '').strip()
+        probate.case_number = request.form.get('case_number', '').strip()
+        probate.filing_year = request.form.get('filing_year', '').strip()
+        probate.firm_name = request.form.get('firm_name', '').strip()
+        probate.firm_address = request.form.get('firm_address', '').strip()
+        probate.firm_phone = request.form.get('firm_phone', '').strip()
+        probate.firm_fax = request.form.get('firm_fax', '').strip()
+        probate.firm_reference = request.form.get('firm_reference', '').strip()
+        probate.lawyer_name = request.form.get('lawyer_name', '').strip()
+        probate.lawyer_nric = request.form.get('lawyer_nric', '').strip()
+        probate.lawyer_bar_number = request.form.get('lawyer_bar_number', '').strip()
+        probate.updated_at = datetime.utcnow()
+        db.session.commit()
+        return redirect(f'/probate/{probate_id}/step/3')
+
+    ctx['probate_step'] = 2
+    ctx['courts'] = MALAYSIAN_COURTS
+    ctx['states'] = MALAYSIAN_STATES
+    ctx['current_year'] = str(datetime.now().year)
+    return render_template('probate/step2_court.html', **ctx)
+
+
+@app.route('/probate/<probate_id>/step/3', methods=['GET', 'POST'])
+@login_required
+def probate_step3(probate_id):
+    probate, will_record, ctx = _get_probate_context(probate_id)
+    if not probate:
+        flash('Probate application not found.', 'error')
+        return redirect(url_for('probate_list'))
+
+    if request.method == 'POST':
+        probate.witness1_name = request.form.get('witness1_name', '').strip()
+        probate.witness1_nric = request.form.get('witness1_nric', '').strip()
+        probate.witness1_address = request.form.get('witness1_address', '').strip()
+        probate.witness2_name = request.form.get('witness2_name', '').strip()
+        probate.witness2_nric = request.form.get('witness2_nric', '').strip()
+        probate.witness2_address = request.form.get('witness2_address', '').strip()
+        probate.updated_at = datetime.utcnow()
+        db.session.commit()
+        return redirect(f'/probate/{probate_id}/step/4')
+
+    ctx['probate_step'] = 3
+    return render_template('probate/step3_witnesses.html', **ctx)
+
+
+@app.route('/probate/<probate_id>/step/4', methods=['GET'])
+@login_required
+def probate_step4(probate_id):
+    probate, will_record, ctx = _get_probate_context(probate_id)
+    if not probate:
+        flash('Probate application not found.', 'error')
+        return redirect(url_for('probate_list'))
+
+    from documents.probate_generator import recommend_forms
+    recommendations = recommend_forms(will_record)
+
+    # Merge with template info
+    templates = ProbateFormTemplate.query.order_by(ProbateFormTemplate.sort_order).all()
+    tpl_map = {t.form_code: t for t in templates}
+    for rec in recommendations:
+        tpl = tpl_map.get(rec['form_code'])
+        if tpl:
+            rec['form_name'] = tpl.form_name
+            rec['form_name_malay'] = tpl.form_name_malay
+            rec['description'] = tpl.description
+
+    # Check for previously generated forms
+    generated_forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
+    gen_list = []
+    for gf in generated_forms:
+        tpl = tpl_map.get(gf.form_code)
+        gen_list.append({
+            'form_code': gf.form_code,
+            'form_name': tpl.form_name if tpl else gf.form_code,
+            'file_path': gf.file_path,
+        })
+
+    ctx['probate_step'] = 4
+    ctx['recommendations'] = recommendations
+    ctx['generated_forms'] = gen_list
+    return render_template('probate/step4_review.html', **ctx)
+
+
+@app.route('/probate/<probate_id>/generate', methods=['POST'])
+@login_required
+def probate_generate(probate_id):
+    probate, will_record, ctx = _get_probate_context(probate_id)
+    if not probate:
+        flash('Probate application not found.', 'error')
+        return redirect(url_for('probate_list'))
+
+    selected_codes = request.form.getlist('forms')
+    if not selected_codes:
+        flash('Please select at least one form to generate.', 'error')
+        return redirect(f'/probate/{probate_id}/step/4')
+
+    # Build template paths map
+    templates = ProbateFormTemplate.query.all()
+    tpl_map = {t.form_code: os.path.join(os.path.dirname(__file__), t.file_path) for t in templates}
+    tpl_name_map = {t.form_code: t.form_name for t in templates}
+
+    # Output directory
+    client = db.session.get(Client, probate.client_id)
+    folder = client.folder_name if client else 'unknown'
+    output_dir = os.path.join(DATA_DIR, 'clients', folder, 'probate')
+    os.makedirs(output_dir, exist_ok=True)
+
+    from documents.probate_generator import generate_probate_forms
+    results = generate_probate_forms(probate, will_record, selected_codes, tpl_map, output_dir)
+
+    # Delete old generated forms for this probate
+    ProbateGeneratedForm.query.filter_by(probate_id=probate_id).delete()
+
+    # Save generated form records
+    for r in results:
+        gf = ProbateGeneratedForm(
+            probate_id=probate_id,
+            form_code=r['form_code'],
+            form_name=tpl_name_map.get(r['form_code'], r['form_code']),
+            file_path=r['file_path'],
+        )
+        db.session.add(gf)
+
+    probate.status = 'generated'
+    probate.selected_forms = json.dumps(selected_codes)
+    probate.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    flash(f'Successfully generated {len(results)} probate form(s).', 'success')
+    return redirect(f'/probate/{probate_id}/step/4')
+
+
+@app.route('/probate/<probate_id>/download/<form_code>')
+@login_required
+def probate_download(probate_id, form_code):
+    gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
+    if not gf or not os.path.exists(gf.file_path):
+        flash('Form not found.', 'error')
+        return redirect(f'/probate/{probate_id}/step/4')
+    return send_file(gf.file_path, as_attachment=True, download_name=os.path.basename(gf.file_path))
+
+
+@app.route('/probate/<probate_id>/download-all')
+@login_required
+def probate_download_all(probate_id):
+    forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
+    if not forms:
+        flash('No generated forms found.', 'error')
+        return redirect(f'/probate/{probate_id}/step/4')
+
+    from documents.probate_generator import create_zip
+    zip_path = os.path.join(tempfile.gettempdir(), f'probate_{probate_id[:8]}.zip')
+    form_files = [{'form_code': f.form_code, 'file_path': f.file_path} for f in forms]
+    create_zip(form_files, zip_path)
+    return send_file(zip_path, as_attachment=True, download_name=f'probate_forms_{probate_id[:8]}.zip')
+
+
+@app.route('/api/ocr/death-cert', methods=['POST'])
+@login_required
+def api_ocr_death_cert():
+    if 'file' not in request.files:
+        return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({'ok': False, 'error': 'No file selected'}), 400
+
+    from uploads import save_uploaded_file
+    client_id = session.get('client_id', 'temp')
+    try:
+        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, category='death_certificate')
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+    abs_path = os.path.join(DATA_DIR, rel_path)
+
+    from ai.ocr import extract_death_cert_data
+    try:
+        extracted = extract_death_cert_data(abs_path)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'OCR failed: {str(e)}'}), 500
+
+    if 'error' in extracted:
+        return jsonify({'ok': False, 'error': extracted['error'], 'extracted': extracted})
+
+    # Save document record
+    doc = Document(
+        client_id=client_id,
+        filename=saved_name,
+        original_filename=file.filename,
+        file_path=rel_path,
+        file_type=file.filename.rsplit('.', 1)[-1].lower(),
+        file_size=file_size,
+        category='death_certificate',
+        extracted_data=json.dumps(extracted),
+    )
+    db.session.add(doc)
+    db.session.commit()
+
+    return jsonify({'ok': True, 'document_id': doc.id, 'extracted': extracted})
+
+
+# Admin: Probate Template Management
+@app.route('/admin/probate-templates')
+@role_required('admin')
+def admin_probate_templates():
+    templates = ProbateFormTemplate.query.order_by(ProbateFormTemplate.sort_order).all()
+    flash_msg = request.args.get('msg')
+    return render_template('admin/probate_templates.html', templates=templates, flash_msg=flash_msg)
+
+
+@app.route('/admin/probate-templates/<form_code>/upload', methods=['POST'])
+@role_required('admin')
+def admin_probate_template_upload(form_code):
+    tpl = ProbateFormTemplate.query.filter_by(form_code=form_code).first()
+    if not tpl:
+        flash('Template not found.', 'error')
+        return redirect(url_for('admin_probate_templates'))
+
+    file = request.files.get('template')
+    if not file or not file.filename:
+        flash('No file selected.', 'error')
+        return redirect(url_for('admin_probate_templates'))
+
+    # Save custom template
+    custom_dir = os.path.join(os.path.dirname(__file__), 'data', 'probate_templates', 'custom')
+    os.makedirs(custom_dir, exist_ok=True)
+    ext = file.filename.rsplit('.', 1)[-1].lower()
+    custom_path = os.path.join(custom_dir, f'{form_code}.{ext}')
+    file.save(custom_path)
+
+    tpl.file_path = f'data/probate_templates/custom/{form_code}.{ext}'
+    tpl.is_default = False
+    tpl.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return redirect(url_for('admin_probate_templates', msg=f'Template for {tpl.form_name} updated.'))
+
+
+@app.route('/admin/probate-templates/<form_code>/reset', methods=['POST'])
+@role_required('admin')
+def admin_probate_template_reset(form_code):
+    tpl = ProbateFormTemplate.query.filter_by(form_code=form_code).first()
+    if not tpl:
+        flash('Template not found.', 'error')
+        return redirect(url_for('admin_probate_templates'))
+
+    # Map form_code back to default file
+    default_files = {
+        'doc01': 'doc01_saman_pemula.docx', 'doc02': 'doc02_afidavit_probet.docx',
+        'doc03': 'doc03_sumpah_pentadbiran.docx', 'doc04': 'doc04_afidavit_saksi_1.docx',
+        'doc05': 'doc05_afidavit_saksi_2.docx', 'doc06': 'doc06_jadual_aset.docx',
+        'doc07': 'doc07_senarai_benefisiari.docx', 'doc08': 'doc08_notis_peguamcara.docx',
+        'form14a': 'form14a_land_transfer.docx', 'form346': 'form346_personal_rep.doc',
+    }
+    default_file = default_files.get(form_code, f'{form_code}.docx')
+    tpl.file_path = f'data/probate_templates/{default_file}'
+    tpl.is_default = True
+    tpl.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return redirect(url_for('admin_probate_templates', msg=f'Template for {tpl.form_name} reset to default.'))
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 

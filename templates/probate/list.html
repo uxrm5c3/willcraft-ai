@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-6 sm:py-8">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-xl font-bold text-gray-800">Probate Applications</h1>
+            <p class="text-sm text-gray-500 mt-1">Manage probate court form submissions for approved wills.</p>
+        </div>
+    </div>
+
+    {% if applications %}
+    <div class="space-y-4">
+        {% for app in applications %}
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:border-primary-200 transition-colors">
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center gap-2 mb-1">
+                        <h3 class="text-sm font-bold text-gray-800">{{ app.will.title }}</h3>
+                        <span class="px-2 py-0.5 text-[10px] font-bold rounded-full
+                              {% if app.status == 'generated' %}bg-green-100 text-green-700
+                              {% else %}bg-amber-100 text-amber-700{% endif %}">
+                            {{ app.status | title }}
+                        </span>
+                    </div>
+                    <div class="text-xs text-gray-500 space-y-0.5">
+                        <div>Client: <span class="font-medium text-gray-700">{{ app.client.full_name }}</span></div>
+                        {% if app.date_of_death %}
+                        <div>Date of Death: <span class="font-medium text-gray-700">{{ app.date_of_death }}</span></div>
+                        {% endif %}
+                        {% if app.court_location %}
+                        <div>Court: <span class="font-medium text-gray-700">{{ app.court_location }}</span></div>
+                        {% endif %}
+                        <div>Created: <span class="text-gray-400">{{ app.created_at.strftime('%d %b %Y') }}</span>
+                             {% if app.creator %} by {{ app.creator.name }}{% endif %}</div>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    {% if app.status == 'generated' %}
+                    <a href="/probate/{{ app.id }}/step/4" class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700">
+                        Download Forms
+                    </a>
+                    {% endif %}
+                    <a href="/probate/{{ app.id }}/step/1" class="px-3 py-1.5 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">
+                        {% if app.status == 'draft' %}Continue{% else %}View{% endif %}
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <h3 class="text-sm font-semibold text-gray-500 mb-1">No Probate Applications Yet</h3>
+        <p class="text-xs text-gray-400">Start a probate application from an approved will's preview page.</p>
+    </div>
+    {% endif %}
+
+    {% if perms.get('canManageUsers') %}
+    <div class="mt-8">
+        <a href="/admin/probate-templates" class="text-xs text-gray-400 hover:text-primary-600">
+            Manage Form Templates
+        </a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

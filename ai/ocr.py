@@ -400,6 +400,153 @@ If you cannot read the address at all, return exactly: UNREADABLE"""
     return '\n'.join(lines)
 
 
+def extract_death_cert_data(image_path: str) -> dict:
+    """Extract data from a Malaysian death certificate (Sijil Kematian).
+
+    Returns dict with keys: death_cert_number, full_name, nric_number,
+    date_of_death, time_of_death, place_of_death, cause_of_death
+    """
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    with open(image_path, 'rb') as f:
+        image_data = base64.standard_b64encode(f.read()).decode('utf-8')
+
+    ext = image_path.rsplit('.', 1)[-1].lower()
+    if ext == 'pdf':
+        content_block = {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": image_data}
+        }
+    else:
+        media_type = {
+            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+            'png': 'image/png', 'gif': 'image/gif',
+        }.get(ext, 'image/jpeg')
+        content_block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": image_data}
+        }
+
+    message = client.messages.create(
+        model=CLAUDE_MODEL_FAST,
+        max_tokens=2048,
+        messages=[{
+            "role": "user",
+            "content": [
+                content_block,
+                {
+                    "type": "text",
+                    "text": """Read this Malaysian Death Certificate (Sijil Kematian / Perakuan Kematian) carefully.
+
+You MUST follow these steps IN ORDER. Do NOT skip any step.
+
+STEP 1 — IDENTIFY DOCUMENT:
+Look for "SIJIL KEMATIAN", "PERAKUAN KEMATIAN", or "DEATH CERTIFICATE" header.
+Confirm this is a death certificate.
+
+STEP 2 — READ THE CERTIFICATE NUMBER:
+Look for the registration/reference number. Spell each character:
+"Certificate number: [c1] [c2] [c3] ..."
+Then write the complete number.
+
+STEP 3 — READ THE DECEASED'S NAME:
+Look for "Nama Si Mati" or "Name of Deceased". Spell CHARACTER BY CHARACTER:
+"Name characters: [letter1] [letter2] ..."
+Then write the complete name.
+Watch for: I vs L, O vs 0, S vs 5, B vs 8, G vs C, U vs V.
+
+STEP 4 — READ THE DECEASED'S NRIC/IC NUMBER:
+Look for "No. Kad Pengenalan" or "IC Number". Spell EACH DIGIT:
+"IC digits: [d1] [d2] [d3] [d4] [d5] [d6] - [d7] [d8] - [d9] [d10] [d11] [d12]"
+Validate: first 6 digits = YYMMDD. Month must be 01-12. Day must be 01-31.
+
+STEP 5 — READ DATE OF DEATH:
+Look for "Tarikh Kematian" or "Date of Death".
+Read the date carefully: day, month, year.
+Format as DD-MM-YYYY.
+
+STEP 6 — READ TIME OF DEATH:
+Look for "Masa Kematian" or "Time of Death".
+Read hours and minutes. Note AM/PM if shown.
+
+STEP 7 — READ PLACE OF DEATH:
+Look for "Tempat Kematian" or "Place of Death".
+Read the full location — may be a hospital name, home address, or location.
+
+STEP 8 — READ CAUSE OF DEATH (if visible):
+Look for "Sebab Kematian" or "Cause of Death".
+Read whatever is written. May be in medical terminology.
+
+STEP 9 — OUTPUT THE FINAL JSON:
+After your analysis above, output ONLY this JSON block:
+
+```json
+{
+    "death_cert_number": "certificate/registration number",
+    "full_name": "EXACT NAME IN UPPERCASE",
+    "nric_number": "YYMMDD-SS-NNNN",
+    "date_of_death": "DD-MM-YYYY",
+    "time_of_death": "HH:MM AM/PM or HH:MM",
+    "place_of_death": "full location text",
+    "cause_of_death": "cause if readable"
+}
+```
+
+RULES:
+- full_name: UPPERCASE, exactly as printed
+- nric_number: 12 digits with dashes YYMMDD-SS-NNNN
+- date_of_death: DD-MM-YYYY format
+- time_of_death: as printed (e.g., "9.58 pagi" or "14:30")
+- place_of_death: full location
+- Return "" for any field you truly cannot read.
+
+IMPORTANT: The character-by-character reading is CRITICAL for accuracy. Do NOT skip it."""
+                }
+            ]
+        }]
+    )
+
+    response_text = message.content[0].text.strip()
+    json_str = _extract_json(response_text)
+    if not json_str:
+        return {"error": "Could not parse extraction results", "raw": response_text[:500]}
+
+    try:
+        result = json.loads(json_str)
+    except json.JSONDecodeError:
+        try:
+            fixed = re.sub(r'(?<!\\)\n', ' ', json_str)
+            result = json.loads(fixed)
+        except json.JSONDecodeError:
+            return {"error": "Could not parse extraction results", "raw": response_text[:500]}
+
+    # Post-processing: validate NRIC format
+    nric_num = result.get('nric_number', '').strip()
+    if nric_num:
+        digits_only = nric_num.replace('-', '')
+        if len(digits_only) == 12 and digits_only.isdigit():
+            result['nric_number'] = f"{digits_only[:6]}-{digits_only[6:8]}-{digits_only[8:]}"
+
+    # Validate date format
+    dod = result.get('date_of_death', '')
+    if dod:
+        # Try to normalize date format
+        dod = dod.strip()
+        # Accept various formats and normalize to DD-MM-YYYY
+        date_match = re.match(r'(\d{1,2})[/-](\d{1,2})[/-](\d{4})', dod)
+        if date_match:
+            dd, mm, yyyy = date_match.groups()
+            result['date_of_death'] = f"{int(dd):02d}-{int(mm):02d}-{yyyy}"
+
+    # Ensure all expected fields exist
+    for field in ('death_cert_number', 'full_name', 'nric_number', 'date_of_death',
+                  'time_of_death', 'place_of_death', 'cause_of_death'):
+        if field not in result:
+            result[field] = ''
+
+    return result
+
+
 def _extract_json(text: str) -> str:
     """Extract JSON object from text that may contain chain-of-thought reasoning.
 

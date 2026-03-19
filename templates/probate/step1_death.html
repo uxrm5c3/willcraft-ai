@@ -1,0 +1,132 @@
+{% extends "probate/layout.html" %}
+
+{% block step_content %}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+    <h2 class="text-lg font-bold text-gray-800 mb-1">Step 1: Death Certificate & Details</h2>
+    <p class="text-sm text-gray-500 mb-6">Upload the death certificate to auto-extract details. You can also enter information manually.</p>
+
+    <!-- Upload Section -->
+    <div class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <h3 class="text-sm font-semibold text-blue-800 mb-2">Upload Death Certificate (Optional)</h3>
+        <p class="text-xs text-blue-600 mb-3">Upload an image or PDF of the death certificate. AI will read and fill the form below. You can review and correct any errors.</p>
+        <div class="flex items-center gap-3">
+            <input type="file" id="death-cert-file" accept="image/*,.pdf"
+                   class="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-700">
+            <button onclick="ocrDeathCert()" id="ocr-btn" class="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50" disabled>
+                Scan & Extract
+            </button>
+            <span id="ocr-status" class="text-xs text-gray-500"></span>
+        </div>
+    </div>
+
+    <!-- OCR Confirmation Banner (hidden by default) -->
+    <div id="ocr-confirm-banner" class="hidden mb-6 p-4 bg-amber-50 border border-amber-300 rounded-lg">
+        <div class="flex items-center gap-2 mb-1">
+            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+            <span class="text-sm font-semibold text-amber-800">AI-extracted data below. Please verify before saving.</span>
+        </div>
+        <p class="text-xs text-amber-600">OCR may contain errors. Check each field carefully, especially names and ID numbers.</p>
+    </div>
+
+    <!-- Form -->
+    <form method="POST" action="/probate/{{ probate_id }}/step/1" id="death-form">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Death Certificate Number</label>
+                <input type="text" name="death_cert_number" value="{{ probate.death_cert_number or '' }}"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Date of Death <span class="text-red-500">*</span></label>
+                <input type="text" name="date_of_death" value="{{ probate.date_of_death or '' }}" required
+                       placeholder="DD-MM-YYYY"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Time of Death</label>
+                <input type="text" name="time_of_death" value="{{ probate.time_of_death or '' }}"
+                       placeholder="e.g., 9.58 pagi"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Estimated Estate Value</label>
+                <input type="text" name="estate_value_estimate" value="{{ probate.estate_value_estimate or '' }}"
+                       placeholder="e.g., Ringgit Malaysia Sepuluh Ribu (RM10,000)"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Place of Death <span class="text-red-500">*</span></label>
+                <input type="text" name="place_of_death" value="{{ probate.place_of_death or '' }}" required
+                       placeholder="Hospital name or full address"
+                       class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+        </div>
+
+        <!-- Deceased info (from will, read-only) -->
+        <div class="mt-6 p-4 bg-gray-50 rounded-lg">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Deceased Person (from Will)</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                <div><span class="text-gray-500">Name:</span> <span class="font-medium">{{ testator.full_name }}</span></div>
+                <div><span class="text-gray-500">NRIC:</span> <span class="font-medium">{{ testator.nric_passport }}</span></div>
+                <div><span class="text-gray-500">Address:</span> <span class="font-medium">{{ testator.residential_address }}</span></div>
+            </div>
+        </div>
+
+        <div class="flex justify-end mt-6">
+            <button type="submit" class="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
+                Save & Next
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+const fileInput = document.getElementById('death-cert-file');
+const ocrBtn = document.getElementById('ocr-btn');
+
+fileInput.addEventListener('change', () => {
+    ocrBtn.disabled = !fileInput.files.length;
+});
+
+async function ocrDeathCert() {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    ocrBtn.disabled = true;
+    document.getElementById('ocr-status').textContent = 'Scanning... please wait';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const resp = await fetch('/api/ocr/death-cert', { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (data.ok && data.extracted) {
+            const ex = data.extracted;
+            // Fill form fields with extracted data
+            const fields = {
+                'death_cert_number': ex.death_cert_number,
+                'date_of_death': ex.date_of_death,
+                'time_of_death': ex.time_of_death,
+                'place_of_death': ex.place_of_death,
+            };
+            for (const [name, value] of Object.entries(fields)) {
+                if (value) {
+                    const input = document.querySelector(`[name="${name}"]`);
+                    if (input) input.value = value;
+                }
+            }
+            document.getElementById('ocr-confirm-banner').classList.remove('hidden');
+            document.getElementById('ocr-status').textContent = 'Data extracted. Please verify below.';
+        } else {
+            document.getElementById('ocr-status').textContent = data.error || 'Could not extract data. Please enter manually.';
+        }
+    } catch (err) {
+        document.getElementById('ocr-status').textContent = 'Error: ' + err.message;
+    } finally {
+        ocrBtn.disabled = false;
+    }
+}
+</script>
+{% endblock %}
