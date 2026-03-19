@@ -469,7 +469,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     <table style="width:100%; border-collapse:collapse; font-family:'Times New Roman',serif; font-size:8pt; margin-bottom:0;">
         <tr>
             <td style="text-align:left; padding:1pt 0;">Page| <span class="page-num"></span></td>
-            <td style="text-align:right; padding:1pt 0;">Continued on Page <span class="page-next"></span></td>
+            <td style="text-align:right; padding:1pt 0;"></td>
         </tr>
     </table>
     <table class="sig-boxes">
