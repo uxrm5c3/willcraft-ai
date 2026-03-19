@@ -2615,7 +2615,11 @@ def preview():
         # Fallback to session for backward compat
         will_text = session.get('generated_will_text', '')
     if not will_text:
-        flash('No will has been generated yet. Please complete the wizard first.', 'warning')
+        # If will was previously generated but text was lost, direct to Step 10 to re-generate
+        if will_record and will_record.status in ('generated', 'pending_approval', 'approved'):
+            flash('The will text needs to be re-generated. Please click "Generate My Will" below.', 'warning')
+        else:
+            flash('No will has been generated yet. Please complete the wizard first.', 'warning')
         return redirect(url_for('wizard_step_review'))
 
     testator_name = session.get('step1', {}).get('full_name', 'Unknown')
