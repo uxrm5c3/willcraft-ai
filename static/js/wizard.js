@@ -2341,8 +2341,6 @@ async function scanDocumentOCR() {
         }
         const data = await resp.json();
         if (data.ok && data.extracted) {
-            if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">📋 Review extracted data...</span>';
-
             const extracted = data.extracted;
             const isPassport = (extracted.doc_type || '').toLowerCase() === 'passport';
             if (!isPassport) {
@@ -2350,109 +2348,89 @@ async function scanDocumentOCR() {
             }
             delete extracted.doc_type;
 
-            // Get document image for preview in OCR modal
-            const previewImg = document.getElementById('doc-preview-img');
-            let imageFile = null;
-            if (previewImg && previewImg.src) {
-                try {
-                    const imgResp = await fetch(previewImg.src);
-                    const blob = await imgResp.blob();
-                    imageFile = new File([blob], 'document', { type: blob.type });
-                } catch(e) { /* ignore preview fetch error */ }
+            // Map OCR fields to modal form fields
+            const fieldMap = [
+                { key: 'full_name', elId: 'modal-full-name', label: 'Full Name' },
+                { key: 'nric_number', elId: 'modal-nric-passport', label: 'NRIC / Passport' },
+                { key: 'address', elId: 'modal-address', label: 'Address' },
+                { key: 'nationality', elId: 'modal-nationality', label: 'Nationality' },
+                { key: 'gender', elId: 'modal-gender', label: 'Gender' },
+                { key: 'date_of_birth', elId: 'modal-dob', label: 'Date of Birth', isDate: true },
+            ];
+            if (isPassport) {
+                fieldMap.push({ key: 'passport_expiry', elId: 'modal-passport-expiry', label: 'Passport Expiry', isDate: true });
             }
 
-            showOCRConfirmation(extracted, imageFile, (confirmed) => {
-                // Map OCR fields to modal field IDs and labels
-                const fieldMap = [
-                    { key: 'full_name', elId: 'modal-full-name', label: 'Full Name' },
-                    { key: 'nric_number', elId: 'modal-nric-passport', label: 'NRIC / Passport' },
-                    { key: 'address', elId: 'modal-address', label: 'Address' },
-                    { key: 'nationality', elId: 'modal-nationality', label: 'Nationality' },
-                    { key: 'gender', elId: 'modal-gender', label: 'Gender' },
-                    { key: 'date_of_birth', elId: 'modal-dob', label: 'Date of Birth', isDate: true },
-                ];
-                if (isPassport) {
-                    fieldMap.push({ key: 'passport_expiry', elId: 'modal-passport-expiry', label: 'Passport Expiry', isDate: true });
+            // Compare each field: collect conflicts and auto-fill empty fields
+            const conflicts = [];
+            function _applyFieldValue(f, scannedVal) {
+                const el = document.getElementById(f.elId);
+                if (!el) return;
+                el.value = scannedVal;
+                if (f.key === 'nationality') {
+                    _setSearchableValue('modal-nationality', 'modal-nationality-search', scannedVal, NATIONALITY_LIST);
                 }
+                const searchEl = document.getElementById(f.elId + '-search');
+                if (searchEl) {
+                    searchEl.classList.add('bg-green-50', 'border-green-400');
+                    setTimeout(() => { searchEl.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+                } else {
+                    el.classList.add('bg-green-50', 'border-green-400');
+                    setTimeout(() => { el.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
+                }
+            }
 
-                // Collect ALL fields that already have data — always ask before overwriting
-                const conflicts = [];
-                for (const f of fieldMap) {
-                    let scannedVal = confirmed[f.key] || '';
-                    if (!scannedVal) continue;
-                    if (f.isDate) scannedVal = convertDateForInput(scannedVal) || scannedVal;
-                    const el = document.getElementById(f.elId);
-                    if (!el) continue;
-                    const existingVal = el.value.trim();
-                    if (!existingVal) continue;
+            let filledCount = 0;
+            for (const f of fieldMap) {
+                let scannedVal = extracted[f.key] || '';
+                if (!scannedVal) continue;
+                if (f.isDate) scannedVal = convertDateForInput(scannedVal) || scannedVal;
+                const el = document.getElementById(f.elId);
+                if (!el) continue;
+                const existingVal = el.value.trim();
+                if (!existingVal) {
+                    // Empty field — auto-fill silently
+                    _applyFieldValue(f, scannedVal);
+                    filledCount++;
+                } else {
+                    // Has existing data — check if different
                     const normExisting = existingVal.toLowerCase().replace(/[-\s\/]/g, '');
                     const normScanned = scannedVal.toLowerCase().replace(/[-\s\/]/g, '');
                     if (normExisting !== normScanned) {
                         conflicts.push({ ...f, existingVal, scannedVal });
                     }
+                    // If same, do nothing — keep existing
                 }
+            }
 
-                function _applyFieldValue(f, scannedVal) {
-                    const el = document.getElementById(f.elId);
-                    if (!el) return;
-                    el.value = scannedVal;
-                    if (f.key === 'nationality') {
-                        _setSearchableValue('modal-nationality', 'modal-nationality-search', scannedVal, NATIONALITY_LIST);
-                    }
-                    const searchEl = document.getElementById(f.elId + '-search');
-                    if (searchEl) {
-                        searchEl.classList.add('bg-green-50', 'border-green-400');
-                        setTimeout(() => { searchEl.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
-                    } else {
-                        el.classList.add('bg-green-50', 'border-green-400');
-                        setTimeout(() => { el.classList.remove('bg-green-50', 'border-green-400'); }, 2000);
-                    }
-                }
-
-                if (conflicts.length > 0) {
-                    showFieldConflictDialog(conflicts, (resolutions) => {
-                        for (const f of fieldMap) {
-                            let scannedVal = confirmed[f.key] || '';
-                            if (!scannedVal) continue;
-                            if (f.isDate) scannedVal = convertDateForInput(scannedVal) || scannedVal;
-                            const el = document.getElementById(f.elId);
-                            if (!el) continue;
-                            const existingVal = el.value.trim();
-                            const resolution = resolutions[f.key];
-                            if (resolution === 'scanned') {
-                                _applyFieldValue(f, scannedVal);
-                            } else if (!existingVal) {
-                                _applyFieldValue(f, scannedVal);
-                            }
-                        }
-                        if (isPassport && confirmed.passport_expiry) {
-                            document.getElementById('passport-expiry-field').classList.remove('hidden');
-                        }
-                        if (confirmed.nric_number) checkAndHandleDuplicate(confirmed.nric_number);
-                        showUnsavedBanner();
-                        showAddressSuggestions();
-                        if (statusEl) statusEl.innerHTML = '';
-                    });
-                } else {
-                    for (const f of fieldMap) {
-                        let scannedVal = confirmed[f.key] || '';
-                        if (!scannedVal) continue;
-                        if (f.isDate) scannedVal = convertDateForInput(scannedVal) || scannedVal;
-                        const el = document.getElementById(f.elId);
-                        if (el && !el.value.trim()) {
-                            _applyFieldValue(f, scannedVal);
+            if (conflicts.length > 0) {
+                if (statusEl) statusEl.innerHTML = '';
+                showFieldConflictDialog(conflicts, (resolutions) => {
+                    for (const c of conflicts) {
+                        if (resolutions[c.key] === 'scanned') {
+                            _applyFieldValue(c, c.scannedVal);
                         }
                     }
-                    if (isPassport && confirmed.passport_expiry) {
+                    if (isPassport && extracted.passport_expiry) {
                         document.getElementById('passport-expiry-field').classList.remove('hidden');
                     }
-                    if (confirmed.nric_number) checkAndHandleDuplicate(confirmed.nric_number);
+                    if (extracted.nric_number) checkAndHandleDuplicate(extracted.nric_number);
                     showUnsavedBanner();
                     showAddressSuggestions();
-                    if (statusEl) statusEl.innerHTML = '';
+                });
+            } else {
+                if (isPassport && extracted.passport_expiry) {
+                    document.getElementById('passport-expiry-field').classList.remove('hidden');
                 }
-            }, null, null,
-            { callback: (f) => uploadNRICForIdentity(f), docType: 'nric' });
+                if (extracted.nric_number) checkAndHandleDuplicate(extracted.nric_number);
+                if (filledCount > 0) {
+                    showUnsavedBanner();
+                    showAddressSuggestions();
+                    if (statusEl) statusEl.innerHTML = `<span class="text-green-600">✓ ${filledCount} field(s) filled from scan.</span>`;
+                } else {
+                    if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ All data matches existing. No changes needed.</span>';
+                }
+            }
         } else if (data.ok && data.warning) {
             if (statusEl) statusEl.innerHTML = `<span class="text-amber-600">⚠ ${data.warning}</span>`;
         } else {
