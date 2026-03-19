@@ -246,7 +246,7 @@
                 <h4 class="text-sm font-semibold text-gray-600 mb-2">Who receives this gift?</h4>
                 <p class="text-xs text-gray-400 mb-3">Select the beneficiary and their share. Shares for main beneficiaries must total 100%.</p>
                 <div class="allocations-container space-y-3" id="allocations-{{ loop.index0 }}">
-                    {% set allocations = gift.get('allocations', [{}]) %}
+                    {% set allocations = gift.get('allocations', [{}]) or [{}] %}
                     {% for alloc in allocations %}
                     <div class="allocation-entry bg-gray-50 rounded-lg p-3 border border-gray-200" data-alloc-index="{{ loop.index0 }}">
                         <div class="flex items-center justify-between mb-2">
