@@ -290,16 +290,23 @@ def draft_will_mock(will_data) -> str:
     primary_executors = [e for e in executors if e.role in ("Primary", "Joint")]
     substitute_executors = [e for e in executors if e.role == "Substitute"]
 
+    def _format_executor(e):
+        """Format an executor — individual or corporate."""
+        is_corp = getattr(e, 'is_corporate', False) or (hasattr(e, 'relationship') and e.relationship == 'Corporate Trustee')
+        if is_corp:
+            return f"{e.full_name.upper()} (Company No. {e.nric_passport}) of {e.address}"
+        return f"my {e.relationship.lower()} {e.full_name.upper()} {_fid(e)} of {e.address}"
+
     if len(primary_executors) >= 2:
         pe0, pe1 = primary_executors[0], primary_executors[1]
         exec_clause = f"""Appointment of Executor(s)
 
-2.  I appoint as my joint Executors my {pe0.relationship.lower()} {pe0.full_name.upper()} {_fid(pe0)} of {pe0.address} and my {pe1.relationship.lower()} {pe1.full_name.upper()} {_fid(pe1)} of {pe1.address}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall acts as my sole Executor."""
+2.  I appoint as my joint Executors {_format_executor(pe0)} and {_format_executor(pe1)}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall acts as my sole Executor."""
     elif primary_executors:
         pe0 = primary_executors[0]
         exec_clause = f"""Appointment of Executor(s)
 
-2.  I appoint as my sole Executor my {pe0.relationship.lower()} {pe0.full_name.upper()} {_fid(pe0)} of {pe0.address}."""
+2.  I appoint as my sole Executor {_format_executor(pe0)}."""
 
     next_clause = 3
     substitute_clause = ""

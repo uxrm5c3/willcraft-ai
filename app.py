@@ -953,17 +953,31 @@ def api_will_edit_text(will_id):
     if not new_text:
         return jsonify({'ok': False, 'error': 'Will text cannot be empty'}), 400
 
-    # Compute diff summary
+    # Compute diff summary with specific change details
     old_lines = (will_record.generated_will_text or '').splitlines()
     new_lines = new_text.splitlines()
     added = removed = changed = 0
+    change_details = []  # Specific descriptions of what changed
     for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old_lines, new_lines).get_opcodes():
         if tag == 'insert':
             added += (j2 - j1)
+            for line in new_lines[j1:j2]:
+                snippet = line.strip()[:80]
+                if snippet:
+                    change_details.append(f'+ "{snippet}"')
         elif tag == 'delete':
             removed += (i2 - i1)
+            for line in old_lines[i1:i2]:
+                snippet = line.strip()[:80]
+                if snippet:
+                    change_details.append(f'- "{snippet}"')
         elif tag == 'replace':
             changed += max(i2 - i1, j2 - j1)
+            # Show first replaced line
+            old_snippet = old_lines[i1].strip()[:60] if i1 < len(old_lines) else ''
+            new_snippet = new_lines[j1].strip()[:60] if j1 < len(new_lines) else ''
+            if old_snippet and new_snippet:
+                change_details.append(f'"{old_snippet}" → "{new_snippet}"')
     parts = []
     if changed:
         parts.append(f"{changed} line{'s' if changed != 1 else ''} changed")
@@ -972,6 +986,12 @@ def api_will_edit_text(will_id):
     if removed:
         parts.append(f"{removed} line{'s' if removed != 1 else ''} removed")
     summary = ', '.join(parts) or 'Minor formatting changes'
+    # Append first few change details for specificity
+    if change_details:
+        detail_str = '; '.join(change_details[:3])
+        if len(change_details) > 3:
+            detail_str += f' (+{len(change_details) - 3} more)'
+        summary += f' — {detail_str}'
 
     # Get editor name
     editor = db.session.get(User, session['user_id'])
@@ -1994,24 +2014,41 @@ def wizard_step_executors():
     count = int(request.form.get('executor_count', 1))
     executors = []
     for i in range(count):
-        person_id = request.form.get(f'exec_person_id_{i}', '').strip()
-        person = _get_person_from_registry(person_id)
-        if not person:
-            continue
+        exec_entry_type = request.form.get(f'exec_type_{i}', 'individual').strip()
         role = request.form.get(f'exec_role_{i}', 'Primary')
         if executor_type == 'joint':
             role = 'Joint'
         elif executor_type == 'single':
             role = 'Primary'
-        executors.append({
-            'person_id': person_id,
-            'full_name': person['full_name'],
-            'nric_passport': person['nric_passport'],
-            'address': person['address'],
-            'relationship': request.form.get(f'exec_relationship_{i}', '').strip(),
-            'role': role,
-            'nationality': person.get('nationality', 'Malaysian'),
-        })
+
+        if exec_entry_type == 'corporate':
+            corp_name = request.form.get(f'exec_corp_name_{i}', '').strip()
+            if corp_name:
+                executors.append({
+                    'is_corporate': True,
+                    'corp_name': corp_name,
+                    'corp_reg': request.form.get(f'exec_corp_reg_{i}', '').strip(),
+                    'corp_address': request.form.get(f'exec_corp_address_{i}', '').strip(),
+                    'full_name': corp_name,
+                    'nric_passport': request.form.get(f'exec_corp_reg_{i}', '').strip(),
+                    'address': request.form.get(f'exec_corp_address_{i}', '').strip(),
+                    'relationship': 'Corporate Trustee',
+                    'role': role,
+                })
+        else:
+            person_id = request.form.get(f'exec_person_id_{i}', '').strip()
+            person = _get_person_from_registry(person_id)
+            if not person:
+                continue
+            executors.append({
+                'person_id': person_id,
+                'full_name': person['full_name'],
+                'nric_passport': person['nric_passport'],
+                'address': person['address'],
+                'relationship': request.form.get(f'exec_relationship_{i}', '').strip(),
+                'role': role,
+                'nationality': person.get('nationality', 'Malaysian'),
+            })
 
     # Substitute executor(s) - supports individual persons or corporate trustees
     sub_exec_count = int(request.form.get('sub_executor_count', 1))

@@ -79,6 +79,7 @@
 
         <div id="executors-container">
             {% for exec in primary_executors %}
+            {% set exec_is_corp = exec.get('is_corporate', false) %}
             <div class="executor-entry border border-gray-200 rounded-lg p-5 mb-4" data-index="{{ loop.index0 }}">
                 <div class="flex justify-between items-center mb-4">
                     <h3 class="font-semibold text-gray-700">
@@ -89,40 +90,86 @@
                     {% endif %}
                 </div>
                 <input type="hidden" name="exec_role_{{ loop.index0 }}" value="{% if exec_type == 'single' %}Primary{% else %}Joint{% endif %}">
-                <div class="grid md:grid-cols-2 gap-4">
-                    <div class="md:col-span-2">
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
-                        <div class="flex gap-2">
-                            <select name="exec_person_id_{{ loop.index0 }}" required
-                                    onchange="validateExecutorAge(this); showIdentityInfo(this, 'exec-info-{{ loop.index0 }}')"
-                                    data-role="executor"
-                                    class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                                <option value="">-- Select an identity --</option>
-                                {% for person in persons %}
-                                <option value="{{ person.id }}"
-                                        data-name="{{ person.full_name }}"
-                                        data-nric="{{ person.nric_passport }}"
-                                        data-address="{{ person.address or '' }}"
-                                        data-relationship="{{ person.relationship or '' }}"
-                                        {% if exec.get('person_id') == person.id %}selected{% endif %}>
-                                    {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
-                                </option>
-                                {% endfor %}
-                            </select>
-                            <button type="button" onclick="openAddIdentityModal()"
-                                    class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
-                                + New
-                            </button>
+
+                <!-- Type toggle -->
+                <div class="flex gap-4 mb-3">
+                    <label class="flex items-center cursor-pointer">
+                        <input type="radio" name="exec_type_{{ loop.index0 }}" value="individual"
+                               {% if not exec_is_corp %}checked{% endif %}
+                               onchange="toggleExecType({{ loop.index0 }}, 'individual')"
+                               class="text-primary-600 mr-1.5">
+                        <span class="text-xs font-medium">Individual</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer">
+                        <input type="radio" name="exec_type_{{ loop.index0 }}" value="corporate"
+                               {% if exec_is_corp %}checked{% endif %}
+                               onchange="toggleExecType({{ loop.index0 }}, 'corporate')"
+                               class="text-primary-600 mr-1.5">
+                        <span class="text-xs font-medium">Corporate Trustee</span>
+                    </label>
+                </div>
+
+                <!-- Individual fields -->
+                <div id="exec-individual-{{ loop.index0 }}" class="{% if exec_is_corp %}hidden{% endif %}">
+                    <div class="grid md:grid-cols-2 gap-4">
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
+                            <div class="flex gap-2">
+                                <select name="exec_person_id_{{ loop.index0 }}"
+                                        onchange="validateExecutorAge(this); showIdentityInfo(this, 'exec-info-{{ loop.index0 }}')"
+                                        data-role="executor"
+                                        class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                                    <option value="">-- Select an identity --</option>
+                                    {% for person in persons %}
+                                    <option value="{{ person.id }}"
+                                            data-name="{{ person.full_name }}"
+                                            data-nric="{{ person.nric_passport }}"
+                                            data-address="{{ person.address or '' }}"
+                                            data-relationship="{{ person.relationship or '' }}"
+                                            {% if exec.get('person_id') == person.id %}selected{% endif %}>
+                                        {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                                <button type="button" onclick="openAddIdentityModal()"
+                                        class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
+                                    + New
+                                </button>
+                            </div>
+                            <div id="exec-info-{{ loop.index0 }}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not exec.get('person_id') %}hidden{% endif %}">
+                                {% if exec.get('person_id') %}{{ exec.full_name }} &middot; {{ exec.nric_passport }} &middot; {{ exec.address }}{% endif %}
+                            </div>
                         </div>
-                        <div id="exec-info-{{ loop.index0 }}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not exec.get('person_id') %}hidden{% endif %}">
-                            {% if exec.get('person_id') %}{{ exec.full_name }} &middot; {{ exec.nric_passport }} &middot; {{ exec.address }}{% endif %}
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator <span class="text-red-500">*</span></label>
+                            <input type="text" name="exec_relationship_{{ loop.index0 }}" value="{{ exec.get('relationship', '') }}"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                   placeholder="e.g., Spouse, Brother, Friend">
                         </div>
                     </div>
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator <span class="text-red-500">*</span></label>
-                        <input type="text" name="exec_relationship_{{ loop.index0 }}" value="{{ exec.get('relationship', '') }}" required
-                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                               placeholder="e.g., Spouse, Brother, Friend">
+                </div>
+
+                <!-- Corporate Trustee fields -->
+                <div id="exec-corporate-{{ loop.index0 }}" class="{% if not exec_is_corp %}hidden{% endif %}">
+                    <div class="grid md:grid-cols-2 gap-4">
+                        <div class="md:col-span-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Company Name <span class="text-red-500">*</span></label>
+                            <input type="text" name="exec_corp_name_{{ loop.index0 }}" value="{{ exec.get('corp_name', '') }}"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                   placeholder="e.g., Rockwills Trustee Berhad, Amanah Raya Berhad">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Company Registration No.</label>
+                            <input type="text" name="exec_corp_reg_{{ loop.index0 }}" value="{{ exec.get('corp_reg', '') }}"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                   placeholder="e.g., 199401006730 (289077-W)">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                            <input type="text" name="exec_corp_address_{{ loop.index0 }}" value="{{ exec.get('corp_address', '') }}"
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                                   placeholder="Registered office address">
+                        </div>
                     </div>
                 </div>
             </div>
@@ -534,6 +581,23 @@ function updateExecutorTypeLabels(type) {
     }
 }
 
+function toggleExecType(idx, type) {
+    var indiv = document.getElementById('exec-individual-' + idx);
+    var corp = document.getElementById('exec-corporate-' + idx);
+    if (type === 'corporate') {
+        if (indiv) indiv.classList.add('hidden');
+        if (corp) corp.classList.remove('hidden');
+        // Remove required from individual select when hidden
+        var sel = indiv ? indiv.querySelector('select[name^="exec_person_id_"]') : null;
+        if (sel) sel.removeAttribute('required');
+        var rel = indiv ? indiv.querySelector('input[name^="exec_relationship_"]') : null;
+        if (rel) rel.removeAttribute('required');
+    } else {
+        if (indiv) indiv.classList.remove('hidden');
+        if (corp) corp.classList.add('hidden');
+    }
+}
+
 function addExecutor() {
     if (executorCount >= 4) { alert('Maximum 4 executors allowed (PAA s.4(1)).'); return; }
     const container = document.getElementById('executors-container');
@@ -546,27 +610,63 @@ function addExecutor() {
             <button type="button" onclick="removeExecutor(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
         </div>
         <input type="hidden" name="exec_role_${idx}" value="Joint">
-        <div class="grid md:grid-cols-2 gap-4">
-            <div class="md:col-span-2">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
-                <div class="flex gap-2">
-                    <select name="exec_person_id_${idx}" required onchange="validateExecutorAge(this); showIdentityInfo(this, 'exec-info-${idx}')"
-                            data-role="executor"
-                            class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                        ${personOptions}
-                    </select>
-                    <button type="button" onclick="openAddIdentityModal()"
-                            class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
-                        + New
-                    </button>
+        <div class="flex gap-4 mb-3">
+            <label class="flex items-center cursor-pointer">
+                <input type="radio" name="exec_type_${idx}" value="individual" checked
+                       onchange="toggleExecType(${idx}, 'individual')" class="text-primary-600 mr-1.5">
+                <span class="text-xs font-medium">Individual</span>
+            </label>
+            <label class="flex items-center cursor-pointer">
+                <input type="radio" name="exec_type_${idx}" value="corporate"
+                       onchange="toggleExecType(${idx}, 'corporate')" class="text-primary-600 mr-1.5">
+                <span class="text-xs font-medium">Corporate Trustee</span>
+            </label>
+        </div>
+        <div id="exec-individual-${idx}">
+            <div class="grid md:grid-cols-2 gap-4">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Select Identity <span class="text-red-500">*</span></label>
+                    <div class="flex gap-2">
+                        <select name="exec_person_id_${idx}" required onchange="validateExecutorAge(this); showIdentityInfo(this, 'exec-info-${idx}')"
+                                data-role="executor"
+                                class="person-select flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                            ${personOptions}
+                        </select>
+                        <button type="button" onclick="openAddIdentityModal()"
+                                class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-sm font-medium whitespace-nowrap">
+                            + New
+                        </button>
+                    </div>
+                    <div id="exec-info-${idx}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
                 </div>
-                <div id="exec-info-${idx}" class="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator <span class="text-red-500">*</span></label>
+                    <input type="text" name="exec_relationship_${idx}" required
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="e.g., Spouse, Brother, Friend">
+                </div>
             </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Testator <span class="text-red-500">*</span></label>
-                <input type="text" name="exec_relationship_${idx}" required
-                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                       placeholder="e.g., Spouse, Brother, Friend">
+        </div>
+        <div id="exec-corporate-${idx}" class="hidden">
+            <div class="grid md:grid-cols-2 gap-4">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Company Name <span class="text-red-500">*</span></label>
+                    <input type="text" name="exec_corp_name_${idx}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="e.g., Rockwills Trustee Berhad">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Company Registration No.</label>
+                    <input type="text" name="exec_corp_reg_${idx}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="e.g., 199401006730 (289077-W)">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                    <input type="text" name="exec_corp_address_${idx}"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="Registered office address">
+                </div>
             </div>
         </div>
     </div>`;
