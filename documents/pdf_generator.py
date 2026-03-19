@@ -279,9 +279,9 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     /* === Page Setup === */
     @page {{
         size: A4;
-        margin: 3.5cm 3.18cm 4cm 3.18cm;
+        margin: 3.5cm 3.18cm 4.5cm 3.18cm;
 
-        /* Running header: testator name on every page */
+        /* Running header */
         @top-center {{
             content: "LAST WILL AND TESTAMENT OF\\A{escaped_testator}";
             font-family: 'Times New Roman', Times, serif;
@@ -293,45 +293,16 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             border-bottom: 0.5pt solid #000;
         }}
 
-        /* Footer: signature lines on top, labels + page number below */
-        @bottom-left {{
-            content: "__________________\\ATestator";
-            font-family: 'Times New Roman', Times, serif;
-            font-size: 7pt;
-            color: #666;
-            white-space: pre-wrap;
-            text-align: center;
-            vertical-align: bottom;
-            border-top: 0.5pt solid #999;
-            padding-top: 8pt;
-        }}
-
-        @bottom-center {{
-            content: "__________________\\AWitness 1";
-            font-family: 'Times New Roman', Times, serif;
-            font-size: 7pt;
-            color: #666;
-            white-space: pre-wrap;
-            text-align: center;
-            vertical-align: bottom;
-            border-top: 0.5pt solid #999;
-            padding-top: 8pt;
-        }}
-
+        /* Page counter at bottom-right only */
         @bottom-right {{
-            content: "__________________\\AWitness 2\\A\\APage " counter(page);
+            content: "Page " counter(page);
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
             color: #666;
-            white-space: pre-wrap;
-            text-align: center;
-            vertical-align: bottom;
-            border-top: 0.5pt solid #999;
-            padding-top: 8pt;
         }}
     }}
 
-    /* Signing page uses different footer */
+    /* Signing page: no signature footer */
     @page signing {{
         size: A4;
         margin: 3.5cm 3.18cm 2.54cm 3.18cm;
@@ -347,18 +318,44 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             border-bottom: 0.5pt solid #000;
         }}
 
-        @bottom-left {{
+        @bottom-right {{
             content: "Page " counter(page);
             font-family: 'Times New Roman', Times, serif;
-            font-size: 8pt;
+            font-size: 7pt;
             color: #666;
-            vertical-align: top;
-            padding-top: 10pt;
         }}
-
-        @bottom-center {{ content: ""; }}
-        @bottom-right {{ content: ""; }}
     }}
+
+    /* Fixed footer: repeats on every page in WeasyPrint */
+    .page-footer {{
+        position: fixed;
+        bottom: -3.5cm;
+        left: 0;
+        right: 0;
+        border-top: 0.5pt solid #999;
+        padding-top: 8pt;
+    }}
+    .page-footer table {{
+        width: 100%;
+        border-collapse: collapse;
+    }}
+    .page-footer td {{
+        text-align: center;
+        font-family: 'Times New Roman', Times, serif;
+        font-size: 7pt;
+        color: #666;
+        padding: 0 4pt;
+        vertical-align: bottom;
+    }}
+    .page-footer .sig-line {{
+        display: block;
+        border-bottom: 0.5pt solid #999;
+        width: 80%;
+        margin: 0 auto 2pt auto;
+        height: 14pt;
+    }}
+    /* Hide footer on signing page */
+    .signing-page .page-footer {{ display: none; }}
 
     /* === Body Styles === */
     body {{
@@ -476,6 +473,26 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 </style>
 </head>
 <body>
+<!-- Fixed footer: Testator + Witness 1 + Witness 2 signature on every page -->
+<div class="page-footer">
+    <table>
+        <tr>
+            <td>
+                <span class="sig-line"></span>
+                Testator
+            </td>
+            <td>
+                <span class="sig-line"></span>
+                Witness 1
+            </td>
+            <td>
+                <span class="sig-line"></span>
+                Witness 2
+            </td>
+        </tr>
+    </table>
+</div>
+
 {content_html}
 {signing_html}
 </body>
