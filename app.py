@@ -16,7 +16,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import FLASK_SECRET_KEY, ANTHROPIC_API_KEY, SQLALCHEMY_DATABASE_URI, DATA_DIR, UPLOAD_DIR, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
-from database import db, Client, Will, WillEditLog, WillVersion, Person, Document, User, ROLE_PERMS, ROLE_LABELS
+from database import db, Client, Will, WillEditLog, WillVersion, Person, Document, User, ROLE_PERMS, ROLE_LABELS, ProbateApplication, ProbateFormTemplate, ProbateGeneratedForm
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -216,6 +216,54 @@ with app.app_context():
     except Exception as e:
         db.session.rollback()
         print(f"[Auth] User seeding skipped (may already exist): {e}")
+
+    # Seed default probate form templates if table is empty
+    try:
+        if ProbateFormTemplate.query.count() == 0:
+            PROBATE_FORM_DEFAULTS = [
+                {'form_code': 'doc01', 'form_name': 'Originating Summons', 'form_name_malay': 'Saman Pemula',
+                 'description': 'The main court application to start the probate process. This tells the court you want to be officially recognized as the executor of the will.',
+                 'file_path': 'data/probate_templates/doc01_saman_pemula.docx', 'category': 'core', 'sort_order': 1},
+                {'form_code': 'doc02', 'form_name': 'Affidavit under Probate Act', 'form_name_malay': 'Afidavit Menurut Akta Probet',
+                 'description': "The executor's sworn statement about the deceased person, their will, and their estate. Includes exhibit references for supporting documents.",
+                 'file_path': 'data/probate_templates/doc02_afidavit_probet.docx', 'category': 'core', 'sort_order': 2},
+                {'form_code': 'doc03', 'form_name': 'Oath of Administration', 'form_name_malay': 'Sumpah Pentadbiran',
+                 'description': "The executor's oath promising to honestly and faithfully manage the deceased person's estate according to the law.",
+                 'file_path': 'data/probate_templates/doc03_sumpah_pentadbiran.docx', 'category': 'core', 'sort_order': 3},
+                {'form_code': 'doc04', 'form_name': 'Witness 1 Affidavit', 'form_name_malay': 'Afidavit Saksi 1',
+                 'description': 'A sworn statement from the first person who witnessed the will being signed. Confirms they saw the testator sign the will.',
+                 'file_path': 'data/probate_templates/doc04_afidavit_saksi_1.docx', 'category': 'witness',
+                 'requires_witnesses': True, 'sort_order': 4},
+                {'form_code': 'doc05', 'form_name': 'Witness 2 Affidavit', 'form_name_malay': 'Afidavit Saksi 2',
+                 'description': 'A sworn statement from the second person who witnessed the will being signed.',
+                 'file_path': 'data/probate_templates/doc05_afidavit_saksi_2.docx', 'category': 'witness',
+                 'requires_witnesses': True, 'sort_order': 5},
+                {'form_code': 'doc06', 'form_name': 'Assets & Liabilities Schedule', 'form_name_malay': 'Jadual Aset & Liabiliti',
+                 'description': "A detailed list of everything the deceased person owned (houses, cars, bank accounts, investments) and any debts they owed.",
+                 'file_path': 'data/probate_templates/doc06_jadual_aset.docx', 'category': 'core', 'sort_order': 6},
+                {'form_code': 'doc07', 'form_name': 'Beneficiary List', 'form_name_malay': 'Senarai Benefisiari',
+                 'description': "A list of all people who will inherit from the deceased person's estate, including their names, ID numbers, and relationship.",
+                 'file_path': 'data/probate_templates/doc07_senarai_benefisiari.docx', 'category': 'core', 'sort_order': 7},
+                {'form_code': 'doc08', 'form_name': 'Notice of Solicitor Appointment', 'form_name_malay': 'Notis Perlantikan Peguamcara',
+                 'description': 'A formal notice telling the court that a lawyer has been hired to handle this probate case.',
+                 'file_path': 'data/probate_templates/doc08_notis_peguamcara.docx', 'category': 'core', 'sort_order': 8},
+                {'form_code': 'form14a', 'form_name': 'Land Transfer (Form 14A)', 'form_name_malay': 'Borang 14A - Pindah Milik',
+                 'description': 'Transfers property (land/house) from the deceased to the beneficiary named in the will. One form is needed for each property.',
+                 'file_path': 'data/probate_templates/form14a_land_transfer.docx', 'category': 'property',
+                 'requires_property': True, 'sort_order': 9},
+                {'form_code': 'form346', 'form_name': 'Personal Representative (Form 346)', 'form_name_malay': 'Borang 346 - Pendaftaran Wakil Diri',
+                 'description': 'Registers the executor as the legal representative at the land office so they can handle property transfers.',
+                 'file_path': 'data/probate_templates/form346_personal_rep.doc', 'category': 'property',
+                 'requires_property': True, 'sort_order': 10},
+            ]
+            for tpl in PROBATE_FORM_DEFAULTS:
+                t = ProbateFormTemplate(**tpl)
+                db.session.add(t)
+            db.session.commit()
+            print(f"[Probate] Seeded {len(PROBATE_FORM_DEFAULTS)} default form templates.")
+    except Exception as e:
+        db.session.rollback()
+        print(f"[Probate] Template seeding skipped: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -2673,6 +2721,19 @@ def wizard_generate():
         )
         db.session.add(version)
         db.session.commit()
+
+    # If approver generated the will, auto-approve it (no submission step needed)
+    will_id = session.get('will_id')
+    if will_id:
+        user = db.session.get(User, session.get('user_id'))
+        if user and ROLE_PERMS.get(user.role, {}).get('canApprove'):
+            wr = db.session.get(Will, will_id)
+            if wr:
+                wr.status = 'approved'
+                wr.approved_by = user.id
+                wr.approved_at = datetime.utcnow()
+                wr.approval_remarks = 'Auto-approved (generated by approver)'
+                db.session.commit()
 
     # Remove from session to keep cookie small
     session.pop('generated_will_text', None)
