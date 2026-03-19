@@ -279,7 +279,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     /* === Page Setup === */
     @page {{
         size: A4;
-        margin: 3.5cm 3.18cm 4.5cm 3.18cm;
+        margin: 3.5cm 3.18cm 4.8cm 3.18cm;
 
         /* Running header */
         @top-center {{
@@ -293,9 +293,13 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             border-bottom: 0.5pt solid #000;
         }}
 
+        /* Running footer: placed via element(footer) */
+        @bottom-center {{
+            content: element(pageFooter);
+        }}
     }}
 
-    /* Signing page: no signature footer */
+    /* Signing page: NO footer boxes, smaller bottom margin */
     @page signing {{
         size: A4;
         margin: 3.5cm 3.18cm 2.54cm 3.18cm;
@@ -311,43 +315,37 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             border-bottom: 0.5pt solid #000;
         }}
 
+        /* No footer on signing page */
+        @bottom-center {{
+            content: "";
+        }}
     }}
 
-    /* Fixed footer: repeats on every page in WeasyPrint */
+    /* Running footer element — placed into @bottom-center via element() */
     .page-footer {{
-        position: fixed;
-        bottom: -3.8cm;
-        left: 0;
-        right: 0;
+        position: running(pageFooter);
+        font-family: 'Times New Roman', Times, serif;
+    }}
+    .page-footer .footer-info {{
+        font-size: 8pt;
+        padding: 0 0 2pt 0;
     }}
     .page-footer .sig-boxes {{
         width: 100%;
         border-collapse: collapse;
-        margin-top: 1pt;
     }}
     .page-footer .sig-boxes td {{
         width: 33.33%;
-        border-left: 0.5pt solid #000;
-        border-right: 0.5pt solid #000;
-        border-bottom: 0.5pt solid #000;
-        border-top: 0.5pt solid #000;
-        height: 45pt;
+        border: 0.5pt solid #000;
+        height: 40pt;
         text-align: center;
         vertical-align: bottom;
-        font-family: 'Times New Roman', Times, serif;
         font-size: 8pt;
         padding: 2pt 4pt;
     }}
-    /* Page number in footer using CSS counter */
+    /* Page counter works inside running() elements */
     .page-footer .page-num::after {{
         content: counter(page);
-    }}
-    .page-footer .page-next::after {{
-        content: counter(page, decimal);
-    }}
-    /* Main content wrapper */
-    .main-content {{
-        /* Footer is scoped inside this div, not on signing page */
     }}
 
     /* === Body Styles === */
@@ -466,25 +464,19 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 </style>
 </head>
 <body>
-<!-- Main content pages (with signature footer) -->
-<div class="main-content">
-    <!-- Fixed footer: only renders on main content pages -->
-    <div class="page-footer">
-        <table style="width:100%; border-collapse:collapse; font-family:'Times New Roman',serif; font-size:8pt; margin-bottom:2pt;">
-            <tr>
-                <td style="text-align:left; padding:0 0 2pt 0;">Page| <span class="page-num"></span></td>
-            </tr>
-        </table>
-        <table class="sig-boxes">
-            <tr>
-                <td>Testator</td>
-                <td>Witness1</td>
-                <td>Witness2</td>
-            </tr>
-        </table>
-    </div>
-    {content_html}
+<!-- Running footer: automatically placed into @bottom-center on each page -->
+<div class="page-footer">
+    <div class="footer-info">Page| <span class="page-num"></span></div>
+    <table class="sig-boxes">
+        <tr>
+            <td>Testator</td>
+            <td>Witness1</td>
+            <td>Witness2</td>
+        </tr>
+    </table>
 </div>
+
+{content_html}
 {signing_html}
 </body>
 </html>"""
