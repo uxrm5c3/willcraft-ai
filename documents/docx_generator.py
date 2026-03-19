@@ -1,9 +1,9 @@
 """Generate a Word document (.docx) from will text using python-docx.
 
-Follows Rockwills Trustee Berhad professional format:
+Professional Malaysian will format:
 - Running header: "LAST WILL AND TESTAMENT OF [TESTATOR NAME]" on every page
-- Running footer: Page number, Testator/Witness1/Witness2 signature spaces
-- Proper signing/attestation page layout
+- Running footer: Page number + Testator/Witness1/Witness2 signature spaces on every page
+- Proper signing/attestation page layout at the end
 """
 
 import os
@@ -73,17 +73,27 @@ def _add_header(doc, testator_name: str):
 
 
 def _add_footer(doc):
-    """Add running footer with page number and Testator/Witness signature spaces."""
+    """Add running footer with page number and Testator/Witness signature spaces.
+    Layout: Page N | ___Testator___ | ___Witness 1___ | ___Witness 2___
+    """
     section = doc.sections[0]
     footer = section.footer
     footer.is_linked_to_previous = False
 
-    # Create a table for the footer layout: 4 columns
-    # [Page| N] [___Testator] [___Witness1] [Continued.../___Witness2]
-    table = footer.add_table(rows=2, cols=4, width=Cm(14))
-    table.autofit = True
+    # Top border line above footer
+    border_para = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+    border_para.text = ""
+    border_para.paragraph_format.space_after = Pt(4)
+    border_para.paragraph_format.space_before = Pt(0)
+    pPr_b = border_para._element.get_or_add_pPr()
+    pBdr_b = parse_xml(f'<w:pBdr {nsdecls("w")}><w:top w:val="single" w:sz="4" w:space="1" w:color="999999"/></w:pBdr>')
+    pPr_b.append(pBdr_b)
 
-    # Set table borders to none
+    # Single-row table: [Page N] [Testator sig] [Witness 1 sig] [Witness 2 sig]
+    table = footer.add_table(rows=1, cols=4)
+    table.autofit = False
+
+    # Set table to full width and remove all borders
     tbl = table._element
     tblPr = tbl.find(qn('w:tblPr'))
     if tblPr is None:
@@ -100,51 +110,50 @@ def _add_footer(doc):
         '</w:tblBorders>'
     )
     tblPr.append(borders)
+    # Full width
+    tblW = parse_xml(f'<w:tblW {nsdecls("w")} w:w="5000" w:type="pct"/>')
+    tblPr.append(tblW)
 
-    # Row 1: Signature lines
-    # Col 0: empty (page number area)
-    cell_00 = table.cell(0, 0)
-    cell_00.text = ""
+    def _set_cell_width(cell, width_pct):
+        tc = cell._element
+        tcPr = tc.get_or_add_tcPr()
+        tcW = parse_xml(f'<w:tcW {nsdecls("w")} w:w="{width_pct}" w:type="pct"/>')
+        tcPr.append(tcW)
 
-    # Col 1: signature line for Testator
-    cell_01 = table.cell(0, 1)
-    p01 = cell_01.paragraphs[0]
-    p01.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run01 = p01.add_run("_______________")
-    run01.font.name = 'Times New Roman'
-    run01.font.size = Pt(7)
+    def _make_sig_cell(cell, label):
+        """Create a cell with signature line + label below."""
+        _set_cell_width(cell, 1250)  # 25% each
+        # Signature line
+        p1 = cell.paragraphs[0]
+        p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p1.paragraph_format.space_after = Pt(0)
+        p1.paragraph_format.space_before = Pt(0)
+        run1 = p1.add_run("______________________")
+        run1.font.name = 'Times New Roman'
+        run1.font.size = Pt(8)
+        run1.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+        # Label
+        p2 = cell.add_paragraph()
+        p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p2.paragraph_format.space_after = Pt(0)
+        p2.paragraph_format.space_before = Pt(1)
+        run2 = p2.add_run(label)
+        run2.font.name = 'Times New Roman'
+        run2.font.size = Pt(7)
+        run2.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
 
-    # Col 2: signature line for Witness 1
-    cell_02 = table.cell(0, 2)
-    p02 = cell_02.paragraphs[0]
-    p02.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run02 = p02.add_run("_______________")
-    run02.font.name = 'Times New Roman'
-    run02.font.size = Pt(7)
-
-    # Col 3: "Continued on next page" + signature line for Witness 2
-    cell_03 = table.cell(0, 3)
-    p03 = cell_03.paragraphs[0]
-    p03.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run03_a = p03.add_run("Continued on next page")
-    run03_a.font.name = 'Times New Roman'
-    run03_a.font.size = Pt(6)
-    p03b = cell_03.add_paragraph()
-    p03b.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run03_b = p03b.add_run("_______________")
-    run03_b.font.name = 'Times New Roman'
-    run03_b.font.size = Pt(7)
-
-    # Row 2: Labels
-    # Col 0: Page number
-    cell_10 = table.cell(1, 0)
-    p10 = cell_10.paragraphs[0]
-    p10.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    run_page = p10.add_run("Page| ")
+    # Col 0: Page number (narrower)
+    cell_0 = table.cell(0, 0)
+    _set_cell_width(cell_0, 1000)  # 20%
+    p0 = cell_0.paragraphs[0]
+    p0.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p0.paragraph_format.space_after = Pt(0)
+    p0.paragraph_format.space_before = Pt(6)
+    run_page = p0.add_run("Page ")
     run_page.font.name = 'Times New Roman'
-    run_page.font.size = Pt(7)
-
-    # Add page number field
+    run_page.font.size = Pt(8)
+    run_page.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+    # Page number field
     fldChar1 = parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="begin"/>')
     run_page._element.append(fldChar1)
     instrText = parse_xml(f'<w:instrText {nsdecls("w")} xml:space="preserve"> PAGE </w:instrText>')
@@ -152,29 +161,10 @@ def _add_footer(doc):
     fldChar2 = parse_xml(f'<w:fldChar {nsdecls("w")} w:fldCharType="end"/>')
     run_page._element.append(fldChar2)
 
-    # Col 1: "Testator" label
-    cell_11 = table.cell(1, 1)
-    p11 = cell_11.paragraphs[0]
-    p11.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run11 = p11.add_run("Testator")
-    run11.font.name = 'Times New Roman'
-    run11.font.size = Pt(7)
-
-    # Col 2: "Witness 1" label
-    cell_12 = table.cell(1, 2)
-    p12 = cell_12.paragraphs[0]
-    p12.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run12 = p12.add_run("Witness 1")
-    run12.font.name = 'Times New Roman'
-    run12.font.size = Pt(7)
-
-    # Col 3: "Witness 2" label
-    cell_13 = table.cell(1, 3)
-    p13 = cell_13.paragraphs[0]
-    p13.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run13 = p13.add_run("Witness 2")
-    run13.font.name = 'Times New Roman'
-    run13.font.size = Pt(7)
+    # Col 1-3: Signature spaces
+    _make_sig_cell(table.cell(0, 1), "Testator")
+    _make_sig_cell(table.cell(0, 2), "Witness 1")
+    _make_sig_cell(table.cell(0, 3), "Witness 2")
 
 
 def _add_signing_page(doc):
@@ -348,6 +338,18 @@ def generate_docx(will_text: str, filename_base: str = "Will") -> str:
 
         # Skip title lines (already in header)
         if 'LAST WILL AND TESTAMENT OF' in stripped.upper():
+            continue
+
+        # Skip per-page footer content (already in running footer)
+        if 'Continued on' in stripped and ('next page' in stripped.lower() or 'Page' in stripped):
+            continue
+        if stripped.startswith('Page|') or stripped.startswith('Page |'):
+            continue
+        # Skip lines that are just "Testator    Witness 1    Witness 2" footer patterns
+        if ('Testator' in stripped and 'Witness 1' in stripped and 'Witness 2' in stripped):
+            continue
+        # Skip lines of just underscores (signature lines in footer)
+        if stripped.replace('_', '').replace(' ', '').replace('|', '') == '':
             continue
 
         # Detect "THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK"

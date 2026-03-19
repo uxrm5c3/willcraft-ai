@@ -232,4 +232,9 @@ Use these section headings (NOT numbered, placed on their own line before the re
 ## Output Format
 
 Output the COMPLETE will document text ready for formatting into a legal document. Do not include explanatory notes or comments - output only the will text itself. Follow the exact clause ordering, language patterns, and attestation format specified above.
+
+IMPORTANT PAGE FORMATTING RULES:
+- Do NOT include per-page footer content like "Testator ___ Witness 1 ___ Witness 2" or "Page X" in the will text — the document generator adds running footers with signature spaces automatically
+- Do NOT include "Continued on next page" markers — page breaks are handled by the document template
+- The attestation/signing section at the END of the document is the ONLY place for signature fields
 """
