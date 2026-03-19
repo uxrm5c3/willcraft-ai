@@ -2085,14 +2085,49 @@ def wizard_step_gifts():
         # Parse structured property details
         property_details = {}
         if gift_type == 'property':
+            # Ownership type and share
+            ownership = request.form.get(f'gift_prop_ownership_{gi}', 'sole').strip()
+            share_select = request.form.get(f'gift_prop_share_{gi}', '').strip()
+            share_custom = request.form.get(f'gift_prop_share_custom_{gi}', '').strip()
+            testator_share = share_custom if share_select == 'other' else share_select
+
+            # Encumbrance
+            encumbrance = request.form.get(f'gift_prop_encumbrance_{gi}', 'clean').strip()
+            debt_source = request.form.get(f'gift_prop_debt_source_{gi}', 'residuary').strip() if encumbrance == 'encumbered' else ''
+
+            # Split address fields
+            prop_addr = request.form.get(f'gift_prop_address_{gi}', '').strip()
+            postcode = request.form.get(f'gift_prop_postcode_{gi}', '').strip()
+            city = request.form.get(f'gift_prop_city_{gi}', '').strip()
+            state = request.form.get(f'gift_prop_state_{gi}', '').strip()
+            country = request.form.get(f'gift_prop_country_{gi}', 'Malaysia').strip()
+
+            # Combine address for backward compat
+            full_addr_parts = [prop_addr]
+            if postcode or city:
+                full_addr_parts.append(f"{postcode} {city}".strip())
+            if state:
+                full_addr_parts.append(state)
+            if country and country != 'Malaysia':
+                full_addr_parts.append(country)
+            full_address = ', '.join(p for p in full_addr_parts if p)
+
             property_details = {
-                'property_address': request.form.get(f'gift_prop_address_{gi}', '').strip(),
+                'property_address': full_address or prop_addr,
                 'title_type': request.form.get(f'gift_prop_title_type_{gi}', '').strip(),
                 'title_number': request.form.get(f'gift_prop_title_number_{gi}', '').strip(),
                 'lot_number': request.form.get(f'gift_prop_lot_number_{gi}', '').strip(),
                 'bandar_pekan': request.form.get(f'gift_prop_bandar_{gi}', '').strip(),
                 'daerah': request.form.get(f'gift_prop_daerah_{gi}', '').strip(),
-                'negeri': request.form.get(f'gift_prop_negeri_{gi}', '').strip(),
+                'negeri': state or request.form.get(f'gift_prop_negeri_{gi}', '').strip(),
+                'state': state,
+                'postcode': postcode,
+                'city': city,
+                'country': country,
+                'ownership_type': ownership,
+                'testator_share': testator_share if ownership == 'joint' else '',
+                'encumbrance_status': encumbrance,
+                'debt_source': debt_source,
             }
             if not property_details['property_address']:
                 continue
@@ -2100,11 +2135,13 @@ def wizard_step_gifts():
         # Parse structured financial details
         financial_details = {}
         if gift_type == 'financial':
+            account_ownership = request.form.get(f'gift_fin_ownership_{gi}', 'individual').strip()
             financial_details = {
                 'institution': request.form.get(f'gift_fin_institution_{gi}', '').strip(),
                 'account_number': request.form.get(f'gift_fin_account_{gi}', '').strip(),
                 'asset_type': request.form.get(f'gift_fin_type_{gi}', '').strip(),
                 'description': request.form.get(f'gift_fin_desc_{gi}', '').strip(),
+                'account_ownership': account_ownership,
             }
             if not financial_details['institution'] and not financial_details['description']:
                 continue

@@ -93,14 +93,115 @@
                     </div>
                 </div>
 
+                <!-- Ownership Type -->
+                <div class="mb-3 p-3 bg-white rounded-lg border border-blue-200">
+                    <label class="block text-xs font-semibold text-gray-700 mb-2">Ownership</label>
+                    <div class="flex flex-wrap gap-4 mb-2">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="gift_prop_ownership_{{ loop.index0 }}" value="sole"
+                                   {% if pd.get('ownership_type', 'sole') == 'sole' %}checked{% endif %}
+                                   onchange="toggleOwnership({{ loop.index0 }}, 'sole')"
+                                   class="text-primary-600 mr-2">
+                            <span class="text-sm text-gray-700">Sole Owner</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="gift_prop_ownership_{{ loop.index0 }}" value="joint"
+                                   {% if pd.get('ownership_type') == 'joint' %}checked{% endif %}
+                                   onchange="toggleOwnership({{ loop.index0 }}, 'joint')"
+                                   class="text-primary-600 mr-2">
+                            <span class="text-sm text-gray-700">Joint / Shared Owner</span>
+                        </label>
+                    </div>
+                    <div id="joint-fields-{{ loop.index0 }}" class="{% if pd.get('ownership_type') != 'joint' %}hidden{% endif %} mt-2 pl-6 border-l-2 border-blue-300">
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-xs font-medium text-gray-500 mb-1">My Share</label>
+                                <select name="gift_prop_share_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                        onchange="updatePropertyPreview({{ loop.index0 }})">
+                                    <option value="">-- Select --</option>
+                                    {% for s in ['1/2', '1/3', '1/4', '2/3', '3/4'] %}
+                                    <option value="{{ s }}" {% if pd.get('testator_share') == s %}selected{% endif %}>{{ s }} undivided share</option>
+                                    {% endfor %}
+                                    <option value="other" {% if pd.get('testator_share') and pd.get('testator_share') not in ['1/2','1/3','1/4','2/3','3/4'] %}selected{% endif %}>Other</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-500 mb-1">Custom Share</label>
+                                <input type="text" name="gift_prop_share_custom_{{ loop.index0 }}"
+                                       value="{% if pd.get('testator_share') and pd.get('testator_share') not in ['1/2','1/3','1/4','2/3','3/4'] %}{{ pd.get('testator_share') }}{% endif %}"
+                                       class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                       placeholder="e.g., 1/5">
+                            </div>
+                        </div>
+                        <p class="text-xs text-blue-600 mt-1">Will wording: "my [share] undivided share and interest in the property..."</p>
+                    </div>
+                </div>
+
+                <!-- Encumbrance Status -->
+                <div class="mb-3 p-3 bg-white rounded-lg border border-blue-200">
+                    <label class="block text-xs font-semibold text-gray-700 mb-2">Encumbrance</label>
+                    <div class="flex flex-wrap gap-4 mb-2">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="gift_prop_encumbrance_{{ loop.index0 }}" value="clean"
+                                   {% if pd.get('encumbrance_status', 'clean') == 'clean' %}checked{% endif %}
+                                   onchange="toggleEncumbrance({{ loop.index0 }}, 'clean')"
+                                   class="text-primary-600 mr-2">
+                            <span class="text-sm text-gray-700">Clean (No Loan)</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="gift_prop_encumbrance_{{ loop.index0 }}" value="encumbered"
+                                   {% if pd.get('encumbrance_status') == 'encumbered' %}checked{% endif %}
+                                   onchange="toggleEncumbrance({{ loop.index0 }}, 'encumbered')"
+                                   class="text-primary-600 mr-2">
+                            <span class="text-sm text-gray-700">Has Loan / Encumbered</span>
+                        </label>
+                    </div>
+                    <div id="encumbrance-fields-{{ loop.index0 }}" class="{% if pd.get('encumbrance_status') != 'encumbered' %}hidden{% endif %} mt-2 pl-6 border-l-2 border-amber-300">
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Source of Funds to Pay Off Debt</label>
+                        <select name="gift_prop_debt_source_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
+                            <option value="residuary" {% if pd.get('debt_source', 'residuary') == 'residuary' %}selected{% endif %}>Residuary Estate (default)</option>
+                            <option value="sale" {% if pd.get('debt_source') == 'sale' %}selected{% endif %}>Sale of This Property</option>
+                            <option value="insurance" {% if pd.get('debt_source') == 'insurance' %}selected{% endif %}>Insurance Proceeds</option>
+                            <option value="other" {% if pd.get('debt_source') == 'other' %}selected{% endif %}>Other (specify in notes)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Property Address -->
                 <div class="mb-3">
                     <label class="block text-xs font-medium text-gray-600 mb-1">Property Address <span class="text-red-500">*</span></label>
-                    <textarea name="gift_prop_address_{{ loop.index0 }}" rows="2"
-                              class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                              placeholder="e.g., No. 11, JALAN BERLIAN, KIM TENG PARK, JOHOR BAHRU, JOHOR"
-                              oninput="updatePropertyPreview({{ loop.index0 }})">{{ pd.get('property_address', '') }}</textarea>
+                    <input type="text" name="gift_prop_address_{{ loop.index0 }}"
+                           value="{{ pd.get('property_address', '') }}"
+                           class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 mb-2"
+                           placeholder="e.g., No. 11, JALAN BERLIAN, KIM TENG PARK"
+                           oninput="updatePropertyPreview({{ loop.index0 }})">
+                    <div class="grid grid-cols-2 gap-2 mb-2">
+                        <input type="text" name="gift_prop_postcode_{{ loop.index0 }}" value="{{ pd.get('postcode', '') }}"
+                               class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="Postcode" maxlength="10" oninput="updatePropertyPreview({{ loop.index0 }})">
+                        <input type="text" name="gift_prop_city_{{ loop.index0 }}" value="{{ pd.get('city', '') }}"
+                               class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="City" oninput="updatePropertyPreview({{ loop.index0 }})">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <select name="gift_prop_state_{{ loop.index0 }}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                onchange="updatePropertyPreview({{ loop.index0 }})">
+                            <option value="">State</option>
+                            {% for state in ['JOHOR', 'KEDAH', 'KELANTAN', 'MELAKA', 'NEGERI SEMBILAN', 'PAHANG', 'PERAK', 'PERLIS', 'PULAU PINANG', 'SABAH', 'SARAWAK', 'SELANGOR', 'TERENGGANU', 'W.P. KUALA LUMPUR', 'W.P. LABUAN', 'W.P. PUTRAJAYA'] %}
+                            <option value="{{ state }}" {% if pd.get('state', pd.get('negeri', '')) == state %}selected{% endif %}>{{ state }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="gift_prop_country_{{ loop.index0 }}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                                onchange="updatePropertyPreview({{ loop.index0 }})">
+                            <option value="Malaysia" selected>Malaysia</option>
+                            <option value="Singapore" {% if pd.get('country') == 'Singapore' %}selected{% endif %}>Singapore</option>
+                            <option value="Other" {% if pd.get('country') and pd.get('country') not in ['Malaysia', 'Singapore', ''] %}selected{% endif %}>Other</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="grid md:grid-cols-3 gap-3 mb-3">
+
+                <!-- Title & Land Search Fields -->
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Title Type</label>
                         <select name="gift_prop_title_type_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
@@ -116,44 +217,30 @@
                         <input type="text" name="gift_prop_title_number_{{ loop.index0 }}"
                                value="{{ pd.get('title_number', '') }}"
                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                               placeholder="e.g., 27395"
-                               oninput="updatePropertyPreview({{ loop.index0 }})">
+                               placeholder="e.g., 27395" oninput="updatePropertyPreview({{ loop.index0 }})">
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">LOT Number</label>
                         <input type="text" name="gift_prop_lot_number_{{ loop.index0 }}"
                                value="{{ pd.get('lot_number', '') }}"
                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                               placeholder="e.g., 7119"
-                               oninput="updatePropertyPreview({{ loop.index0 }})">
+                               placeholder="e.g., 7119" oninput="updatePropertyPreview({{ loop.index0 }})">
                     </div>
                 </div>
-                <div class="grid md:grid-cols-3 gap-3 mb-3">
+                <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Bandar / Pekan</label>
                         <input type="text" name="gift_prop_bandar_{{ loop.index0 }}"
                                value="{{ pd.get('bandar_pekan', '') }}"
                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                               placeholder="e.g., JOHOR BAHRU"
-                               oninput="updatePropertyPreview({{ loop.index0 }})">
+                               placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview({{ loop.index0 }})">
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Daerah (District)</label>
                         <input type="text" name="gift_prop_daerah_{{ loop.index0 }}"
                                value="{{ pd.get('daerah', '') }}"
                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                               placeholder="e.g., JOHOR BAHRU"
-                               oninput="updatePropertyPreview({{ loop.index0 }})">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Negeri (State)</label>
-                        <select name="gift_prop_negeri_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                                onchange="updatePropertyPreview({{ loop.index0 }})">
-                            <option value="">-- Select --</option>
-                            {% for state in ['JOHOR', 'KEDAH', 'KELANTAN', 'MELAKA', 'NEGERI SEMBILAN', 'PAHANG', 'PERAK', 'PERLIS', 'PULAU PINANG', 'SABAH', 'SARAWAK', 'SELANGOR', 'TERENGGANU', 'W.P. KUALA LUMPUR', 'W.P. LABUAN', 'W.P. PUTRAJAYA'] %}
-                            <option value="{{ state }}" {% if pd.get('negeri', '') == state %}selected{% endif %}>{{ state }}</option>
-                            {% endfor %}
-                        </select>
+                               placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview({{ loop.index0 }})">
                     </div>
                 </div>
                 <!-- Live Preview -->
@@ -167,6 +254,26 @@
             {% set fd = gift.get('financial_details', {}) %}
             <div id="financial-panel-{{ loop.index0 }}" class="{% if gt != 'financial' %}hidden{% endif %} mb-4 p-4 bg-green-50 rounded-lg border border-green-200">
                 <h4 class="text-sm font-semibold text-green-800 mb-3">Financial / Asset Details</h4>
+
+                <!-- Account Ownership -->
+                <div class="mb-3 p-3 bg-white rounded-lg border border-green-200">
+                    <label class="block text-xs font-semibold text-gray-700 mb-2">Account Ownership</label>
+                    <div class="flex flex-wrap gap-4">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="gift_fin_ownership_{{ loop.index0 }}" value="individual"
+                                   {% if fd.get('account_ownership', 'individual') == 'individual' %}checked{% endif %}
+                                   class="text-primary-600 mr-2">
+                            <span class="text-sm text-gray-700">Individual Account</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="gift_fin_ownership_{{ loop.index0 }}" value="joint"
+                                   {% if fd.get('account_ownership') == 'joint' %}checked{% endif %}
+                                   class="text-primary-600 mr-2">
+                            <span class="text-sm text-gray-700">Joint Account</span>
+                        </label>
+                    </div>
+                    <p class="text-xs text-green-600 mt-1">Joint: "my share of the moneys in my joint account at..."</p>
+                </div>
 
                 <div class="mb-3 space-y-1">
                     <div class="flex flex-wrap items-center gap-2">
@@ -366,6 +473,17 @@ function switchGiftType(giftIndex, type) {
     document.getElementById('other-panel-' + giftIndex).classList.toggle('hidden', type !== 'other');
 }
 
+function toggleOwnership(giftIndex, type) {
+    const fields = document.getElementById('joint-fields-' + giftIndex);
+    if (fields) fields.classList.toggle('hidden', type !== 'joint');
+    updatePropertyPreview(giftIndex);
+}
+
+function toggleEncumbrance(giftIndex, type) {
+    const fields = document.getElementById('encumbrance-fields-' + giftIndex);
+    if (fields) fields.classList.toggle('hidden', type !== 'encumbered');
+}
+
 function updatePropertyPreview(giftIndex) {
     const addr = document.querySelector(`[name="gift_prop_address_${giftIndex}"]`)?.value || '';
     const titleType = document.querySelector(`[name="gift_prop_title_type_${giftIndex}"]`)?.value || '';
@@ -375,17 +493,38 @@ function updatePropertyPreview(giftIndex) {
     const daerah = document.querySelector(`[name="gift_prop_daerah_${giftIndex}"]`)?.value || '';
     const negeri = document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`)?.value || '';
 
+    // Get split address fields
+    const postcode = document.querySelector(`[name="gift_prop_postcode_${giftIndex}"]`)?.value || '';
+    const city = document.querySelector(`[name="gift_prop_city_${giftIndex}"]`)?.value || '';
+    const state = document.querySelector(`[name="gift_prop_state_${giftIndex}"]`)?.value || negeri;
+    const country = document.querySelector(`[name="gift_prop_country_${giftIndex}"]`)?.value || '';
+
+    // Get ownership info
+    const ownershipRadio = document.querySelector(`[name="gift_prop_ownership_${giftIndex}"]:checked`);
+    const isJoint = ownershipRadio && ownershipRadio.value === 'joint';
+    const shareSelect = document.querySelector(`[name="gift_prop_share_${giftIndex}"]`)?.value || '';
+    const shareCustom = document.querySelector(`[name="gift_prop_share_custom_${giftIndex}"]`)?.value || '';
+    const testatorShare = (shareSelect === 'other' ? shareCustom : shareSelect) || '';
+
     if (!addr) {
         document.getElementById('property-preview-' + giftIndex).textContent = '(Fill in property address to see preview)';
         return;
     }
-    let parts = ['my property known as ' + addr];
+    // Build address with split fields
+    let fullAddr = addr;
+    if (postcode || city) fullAddr += ', ' + [postcode, city].filter(Boolean).join(' ');
+    if (state) fullAddr += ', ' + state.toUpperCase();
+
+    let prefix = 'my property known as ';
+    if (isJoint && testatorShare) {
+        prefix = 'my ' + testatorShare + ' undivided share and interest in the property known as ';
+    }
+    let parts = [prefix + fullAddr];
     if (titleType && titleNum) parts.push('held under ' + titleType + ' No. ' + titleNum);
     if (lotNum) parts.push('LOT No. ' + lotNum);
     if (bandar) parts.push('BANDAR ' + bandar.toUpperCase());
     if (daerah) parts.push('DAERAH ' + daerah.toUpperCase());
-    if (negeri) parts.push('NEGERI ' + negeri.toUpperCase());
-    parts.push('MALAYSIA');
+    if (country && country !== 'Malaysia') parts.push(country.toUpperCase());
     document.getElementById('property-preview-' + giftIndex).textContent = parts.join(', ') + ';';
 }
 
