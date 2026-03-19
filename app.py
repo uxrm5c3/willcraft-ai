@@ -2536,10 +2536,12 @@ def wizard_generate():
     # Store generated will text in DB (not session — session cookie too large)
     session['generated_will_text'] = will_text  # temporary for save_will_to_db
     session.modified = True
+    mark_step_complete(10)
     save_will_to_db()
     # Remove from session to keep cookie small
     session.pop('generated_will_text', None)
     session.modified = True
+    flash('Will generated successfully! You can now view, edit, or download it.', 'info')
     return redirect(url_for('preview'))
 
 
