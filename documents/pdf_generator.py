@@ -220,11 +220,23 @@ def _build_signing_page_html(signing_text: str) -> str:
 """
 
 
-def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -> str:
+def _logo_to_data_uri(logo_path: str) -> str:
+    """Convert a logo file to a base64 data URI for embedding in HTML."""
+    import base64
+    ext = logo_path.rsplit('.', 1)[-1].lower()
+    mime = {'png': 'image/png', 'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+            'webp': 'image/webp'}.get(ext, 'image/png')
+    with open(logo_path, 'rb') as f:
+        data = base64.b64encode(f.read()).decode('ascii')
+    return f'data:{mime};base64,{data}'
+
+
+def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
+                       logo_path: str = None) -> str:
     """Convert plain-text will into styled HTML suitable for PDF rendering.
 
     Follows Rockwills Trustee Berhad professional format with:
-    - Running header with testator name on every page
+    - Running header with optional firm logo and testator name on every page
     - Running footer with page number and Testator/Witness signature spaces
     - Proper signing/attestation page layout
     """
@@ -237,6 +249,15 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     escaped_testator = html.escape(testator_name)
     escaped_title = html.escape(title)
 
+    # Build logo HTML if logo file exists
+    logo_html = ''
+    if logo_path and os.path.isfile(logo_path):
+        data_uri = _logo_to_data_uri(logo_path)
+        logo_html = f'<img src="{data_uri}" class="header-logo" alt="">'
+
+    # Adjust top margin when logo is present (needs more space)
+    top_margin = '4.2cm' if logo_html else '3.5cm'
+
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -246,19 +267,15 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     /* === Page Setup === */
     @page {{
         size: A4;
-        margin: 3.5cm 3.18cm 4.8cm 3.18cm;
+        margin: {top_margin} 3.18cm 4.8cm 3.18cm;
 
-        /* Running header */
+        /* Running header via element() */
+        @top-left {{ content: none; }}
         @top-center {{
-            content: "LAST WILL AND TESTAMENT OF\\A{escaped_testator}";
-            font-family: 'Times New Roman', Times, serif;
-            font-size: 9pt;
-            font-weight: bold;
-            white-space: pre-wrap;
-            text-align: center;
-            padding-bottom: 8pt;
-            border-bottom: 0.5pt solid #000;
+            content: element(pageHeader);
+            width: 100%;
         }}
+        @top-right {{ content: none; }}
 
         /* Clear left/right so @bottom-center spans full width */
         @bottom-left {{ content: none; }}
@@ -274,23 +291,40 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     /* Signing page: NO footer boxes, smaller bottom margin */
     @page signing {{
         size: A4;
-        margin: 3.5cm 3.18cm 2.54cm 3.18cm;
+        margin: {top_margin} 3.18cm 2.54cm 3.18cm;
 
+        @top-left {{ content: none; }}
         @top-center {{
-            content: "LAST WILL AND TESTAMENT OF\\A{escaped_testator}";
-            font-family: 'Times New Roman', Times, serif;
-            font-size: 9pt;
-            font-weight: bold;
-            white-space: pre-wrap;
-            text-align: center;
-            padding-bottom: 8pt;
-            border-bottom: 0.5pt solid #000;
+            content: element(pageHeader);
+            width: 100%;
         }}
+        @top-right {{ content: none; }}
 
         /* No footer on signing page */
         @bottom-left {{ content: none; }}
         @bottom-center {{ content: none; }}
         @bottom-right {{ content: none; }}
+    }}
+
+    /* Running header element — placed into @top-center via element() */
+    .page-header {{
+        position: running(pageHeader);
+        font-family: 'Times New Roman', Times, serif;
+        width: 100%;
+        text-align: center;
+        padding-bottom: 8pt;
+        border-bottom: 0.5pt solid #000;
+    }}
+    .page-header .header-logo {{
+        display: block;
+        max-height: 40pt;
+        max-width: 180pt;
+        margin: 0 auto 4pt auto;
+    }}
+    .page-header .header-text {{
+        font-size: 9pt;
+        font-weight: bold;
+        line-height: 1.4;
     }}
 
     /* Running footer element — placed into @bottom-center via element() */
@@ -433,6 +467,12 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 </style>
 </head>
 <body>
+<!-- Running header: automatically placed into @top-center on each page -->
+<div class="page-header">
+    {logo_html}
+    <div class="header-text">LAST WILL AND TESTAMENT OF<br>{escaped_testator}</div>
+</div>
+
 <!-- Running footer: automatically placed into @bottom-center on each page -->
 <div class="page-footer">
     <div class="footer-info">Page <span class="page-num"></span></div>
@@ -452,7 +492,8 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 </html>"""
 
 
-def generate_pdf(will_text: str, filename_base: str = "Will") -> str:
+def generate_pdf(will_text: str, filename_base: str = "Will",
+                 logo_path: str = None) -> str:
     """
     Generate a PDF from the will text.
 
@@ -462,13 +503,16 @@ def generate_pdf(will_text: str, filename_base: str = "Will") -> str:
     Args:
         will_text: The full will text to render.
         filename_base: Base name for the output file (without extension).
+        logo_path: Optional path to a firm logo image to embed in the header.
 
     Returns:
         Absolute path to the generated .pdf file.
     """
     tmp_dir = tempfile.mkdtemp()
     filepath = os.path.join(tmp_dir, f'{filename_base}_Will.pdf')
-    html_content = _will_text_to_html(will_text, title=f"{filename_base} - Last Will and Testament")
+    html_content = _will_text_to_html(
+        will_text, title=f"{filename_base} - Last Will and Testament",
+        logo_path=logo_path)
 
     try:
         from weasyprint import HTML

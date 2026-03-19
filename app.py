@@ -884,6 +884,102 @@ def admin_user_delete(user_id):
     return redirect(url_for('admin_users'))
 
 
+# ---------------------------------------------------------------------------
+# Admin: Firm Settings (logo upload)
+# ---------------------------------------------------------------------------
+
+def _logo_dir():
+    """Return the logos directory path, creating it if needed."""
+    d = os.path.join(DATA_DIR, 'logos')
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _get_logo_path():
+    """Return the absolute path to the current tenant's logo, or None."""
+    tenant = get_tenant()
+    domain = tenant.get('brand', 'default').lower()
+    logo_dir = _logo_dir()
+    for ext in ('png', 'jpg', 'jpeg', 'webp'):
+        p = os.path.join(logo_dir, f'{domain}_logo.{ext}')
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+@app.route('/admin/settings')
+@role_required('admin')
+def admin_settings():
+    """Firm settings page — logo upload etc."""
+    logo_path = _get_logo_path()
+    logo_url = url_for('admin_serve_logo') if logo_path else None
+    return render_template('admin/settings.html', logo_url=logo_url)
+
+
+@app.route('/admin/settings/logo')
+@login_required
+def admin_serve_logo():
+    """Serve the tenant's logo image."""
+    logo_path = _get_logo_path()
+    if not logo_path:
+        return '', 404
+    return send_file(logo_path)
+
+
+@app.route('/admin/settings/upload-logo', methods=['POST'])
+@role_required('admin')
+def admin_upload_logo():
+    """Handle firm logo upload."""
+    f = request.files.get('logo')
+    if not f or not f.filename:
+        flash('No file selected.', 'error')
+        return redirect(url_for('admin_settings'))
+
+    # Validate extension
+    ext = f.filename.rsplit('.', 1)[-1].lower() if '.' in f.filename else ''
+    if ext not in ('png', 'jpg', 'jpeg', 'webp'):
+        flash('Only PNG, JPG, or WebP images are allowed.', 'error')
+        return redirect(url_for('admin_settings'))
+
+    # Validate size (2MB)
+    f.seek(0, 2)
+    size = f.tell()
+    f.seek(0)
+    if size > 2 * 1024 * 1024:
+        flash('Logo file must be under 2MB.', 'error')
+        return redirect(url_for('admin_settings'))
+
+    # Remove any existing logo for this tenant
+    tenant = get_tenant()
+    domain = tenant.get('brand', 'default').lower()
+    logo_dir = _logo_dir()
+    for old_ext in ('png', 'jpg', 'jpeg', 'webp'):
+        old = os.path.join(logo_dir, f'{domain}_logo.{old_ext}')
+        if os.path.isfile(old):
+            os.remove(old)
+
+    # Save new logo
+    save_path = os.path.join(logo_dir, f'{domain}_logo.{ext}')
+    f.save(save_path)
+    flash('Firm logo uploaded successfully.', 'success')
+    return redirect(url_for('admin_settings'))
+
+
+@app.route('/admin/settings/remove-logo', methods=['POST'])
+@role_required('admin')
+def admin_remove_logo():
+    """Remove the firm logo."""
+    tenant = get_tenant()
+    domain = tenant.get('brand', 'default').lower()
+    logo_dir = _logo_dir()
+    for ext in ('png', 'jpg', 'jpeg', 'webp'):
+        p = os.path.join(logo_dir, f'{domain}_logo.{ext}')
+        if os.path.isfile(p):
+            os.remove(p)
+    flash('Logo removed.', 'success')
+    return redirect(url_for('admin_settings'))
+
+
 @app.route('/profile', methods=['GET', 'POST'])
 @login_required
 def profile():
@@ -1244,7 +1340,7 @@ def api_will_send_email(will_id):
 
     try:
         from documents.pdf_generator import generate_pdf
-        filepath = generate_pdf(will_text, safe_name)
+        filepath = generate_pdf(will_text, safe_name, logo_path=_get_logo_path())
         with open(filepath, 'rb') as f:
             pdf_data = f.read()
     except Exception as e:
@@ -2871,7 +2967,7 @@ def download(fmt):
         filepath = generate_docx(will_text, safe_name)
     elif fmt == 'pdf':
         from documents.pdf_generator import generate_pdf
-        filepath = generate_pdf(will_text, safe_name)
+        filepath = generate_pdf(will_text, safe_name, logo_path=_get_logo_path())
     else:
         flash('Unsupported download format.', 'error')
         return redirect(url_for('preview'))
