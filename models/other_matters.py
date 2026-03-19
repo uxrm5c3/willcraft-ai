@@ -18,5 +18,7 @@ class OtherMatters(BaseModel):
     unnamed_children_enabled: bool = False
     unnamed_children_spouse_name: Optional[str] = None
     unnamed_children_spouse_nric: Optional[str] = None
+    # Joint bank account surviving holder clause
+    joint_account_clause_enabled: bool = False
     # Additional instructions
     additional_instructions: Optional[str] = None

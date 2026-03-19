@@ -80,7 +80,8 @@ def format_will_data(will_data) -> str:
     if will_data.trustee_same_as_executor:
         sections.append("""
 ## TRUSTEES
-- Trustees: Same as Executors (Executors shall also act as Trustees)""")
+- Trustees: Same as Executors (Executors shall also act as Trustees)
+- INCLUDE the "Executor as Trustee" clause in the will""")
     elif will_data.trustees:
         trustee_lines = []
         for i, tr in enumerate(will_data.trustees, 1):
@@ -93,6 +94,11 @@ def format_will_data(will_data) -> str:
         sections.append(f"""
 ## TRUSTEES (SEPARATE FROM EXECUTORS)
 {chr(10).join(trustee_lines)}""")
+    else:
+        sections.append("""
+## TRUSTEES
+- NO TRUSTEE APPOINTED. Do NOT include the "Executor as Trustee" clause.
+- Do NOT use "my Trustee" language in the residuary estate clause. Use "my Executor" or plain language instead.""")
 
     # Section C: Guardians
     if will_data.guardians:
@@ -128,6 +134,24 @@ def format_will_data(will_data) -> str:
         gift_lines = []
         for i, g in enumerate(will_data.gifts, 1):
             gift_lines.append(f"  Gift {i} ({g.gift_type}): {g.get_formatted_description()}")
+            # Property-specific details
+            if g.gift_type == 'property' and g.property_details:
+                pd = g.property_details
+                own = pd.get('ownership_type', 'sole')
+                if own == 'joint':
+                    gift_lines.append(f"    Ownership: JOINT — testator's {pd.get('testator_share', '?')} undivided share")
+                enc = pd.get('encumbrance_status', 'clean')
+                if enc == 'encumbered':
+                    debt_src = pd.get('debt_source', 'residuary')
+                    gift_lines.append(f"    Encumbrance: HAS LOAN — pay from {debt_src}")
+                else:
+                    gift_lines.append(f"    Encumbrance: CLEAN — do NOT include charge/lien discharge clause")
+            # Financial-specific details
+            if g.gift_type == 'financial' and g.financial_details:
+                fd = g.financial_details
+                acc_own = fd.get('account_ownership', 'individual')
+                if acc_own == 'joint':
+                    gift_lines.append(f"    Account: JOINT ACCOUNT — use 'my share of the moneys in my joint account'")
             if g.subject_to_trust:
                 gift_lines.append(f"    (Subject to Testamentary Trust)")
             if g.subject_to_guardian_allowance:
@@ -193,6 +217,10 @@ def format_will_data(will_data) -> str:
             other_lines.append(f"  Exclusion: {om.exclusion_name} ({om.exclusion_relationship}) - Reason: {om.exclusion_reason}")
         if om.unnamed_children_enabled:
             other_lines.append(f"  Include unnamed children with spouse: {om.unnamed_children_spouse_name}")
+        if getattr(om, 'joint_account_clause_enabled', False):
+            other_lines.append("  Joint Account Clause: ENABLED — include the joint bank account surviving holder clause")
+        else:
+            other_lines.append("  Joint Account Clause: NOT enabled — do NOT include any joint bank account clause")
         if om.additional_instructions:
             other_lines.append(f"  Additional: {om.additional_instructions}")
 

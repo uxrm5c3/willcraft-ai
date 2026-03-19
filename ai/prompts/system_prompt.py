@@ -45,8 +45,9 @@ For JOINT executors:
 For a separate SUBSTITUTE executor clause:
 "3. With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Executor [SUBSTITUTE NAME/CORPORATE TRUSTEE]."
 
-### 4. EXECUTOR AS TRUSTEE
+### 4. EXECUTOR AS TRUSTEE (ONLY if trustee appointment is enabled in the data)
 "[N]. In this Will unless it is specifically stated to the contrary, my Executor(s) shall also act as my Trustee(s)."
+**IMPORTANT: SKIP this clause entirely if the data says trustee_same_as_executor is false or no trustee is appointed. Only include when the user has explicitly enabled trustee appointment.**
 
 ### 5. CONTEMPLATION OF MARRIAGE (if applicable)
 "I declare that this Will is made in contemplation of my marriage to [NAME] MALAYSIA NRIC No. [number] and that this Will shall not be revoked by such marriage."
@@ -61,8 +62,9 @@ Section heading: "Non Residuary Gift(s)"
 
 Draft the non-residuary gifts using these specific patterns depending on the type of gift:
 
-**Joint bank accounts** (always include if testator has bank accounts):
+**Joint bank accounts** (ONLY include if joint_account_clause_enabled is true in Other Matters):
 "[N]. I give the moneys standing to my credit in all my joint bank accounts to the respective joint account holder(s), if more than one in equal shares."
+**IMPORTANT: Do NOT include this clause unless the user explicitly enabled the joint account surviving holder clause in Step 9 Other Matters.**
 
 **Sole bank accounts — given directly to beneficiary with inline substitute**:
 "[N]. I give to my [relationship] [NAME] MALAYSIA NRIC No. [number] the moneys standing to my credit in all my bank accounts. If my [relationship] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] and my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] in equal shares or to the survivor of them if one of them does not survive me.
@@ -72,7 +74,7 @@ The expression 'all bank accounts' in this clause shall exclude any account whic
 **Sole bank accounts — pooled into "The Moneys"** (alternative approach when multiple assets are pooled):
 "[N]. I direct my Executor to transfer the moneys standing to my credit in all my bank accounts in Malaysia and in any foreign countries that are held under my sole name and those held under joint names (subject to the laws and regulations of the particular country) to form part of 'The Moneys' mentioned in Clause [X] below."
 
-**EPF fallback** (always include):
+**EPF fallback** (include only if EPF beneficiaries are specified in the data):
 "[N]. If the nomination(s) made by me in my Employees' Provident Fund do(es) not take effect for whatsoever reason, then I give the benefits of the nomination(s) to my [relationship] [NAME] MALAYSIA NRIC No. [number]."
 — Or if multiple beneficiaries: "...to my [rel] [NAME] NRIC No. [number] and my [rel] [NAME] NRIC No. [number] in equal shares or to the survivor of them if one of them does not survive me."
 — Or pool into The Moneys: "...then the benefits of the nomination(s) shall form part of 'The Moneys' mentioned in Clause [X] below."
@@ -102,20 +104,26 @@ Unless specifically stated to the contrary in this Will, I direct that any sums 
 ### 11. RESIDUARY ESTATE
 Section heading: "Residuary Estate"
 
-For SINGLE residuary beneficiary with substitute:
-"[N]. Unless specifically stated to the contrary in this Will, my Trustee(s) shall hold the rest of my estate on trust to retain or sell any part thereof and:
-(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
-(b) To give the residue ('my residuary estate') to my [relationship] [NAME] MALAYSIA NRIC No. [number].
-(c) But if [he/she] does not survive me, to divide the residue ('my residuary estate') equally between [substitute beneficiaries with NRIC]."
+**IMPORTANT RULES for Residuary Estate clause:**
+- Use "my Trustee(s) shall hold the rest of my estate on trust" ONLY when trustee is appointed (trustee_same_as_executor is true). Otherwise use "my Executor(s) shall hold the rest of my estate" without trust language.
+- Do NOT include sub-clause (a) about paying debts/funeral/executorship expenses — these are governed by law (PAA s.44) and do not need to be stated in the will unless user specifically requests it.
+- Do NOT include lien/charge discharge language in the residuary clause unless the user has encumbered properties — the charge discharge clause goes with each specific property gift, not the residuary.
 
-For MULTIPLE residuary beneficiaries with shares:
-"[N]. Unless specifically stated to the contrary in this Will, my Trustee(s) shall hold the rest of my estate on trust to retain or sell any part thereof and:
-(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
-(b) To divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated. If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares.
+For SINGLE residuary beneficiary (WITH trustee):
+"[N]. Unless specifically stated to the contrary in this Will, my Trustee shall hold the rest of my estate on trust to retain or sell any part thereof and to give the residue ('my residuary estate') to my [relationship] [NAME] MALAYSIA NRIC No. [number]."
+
+For SINGLE residuary beneficiary (WITHOUT trustee):
+"[N]. I give the rest of my estate ('my residuary estate') to my [relationship] [NAME] MALAYSIA NRIC No. [number]."
+
+For MULTIPLE residuary beneficiaries (WITH trustee):
+"[N]. Unless specifically stated to the contrary in this Will, my Trustee shall hold the rest of my estate on trust to retain or sell any part thereof and to divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated. If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio.
     (i) my [relationship] [NAME] MALAYSIA NRIC No. [number] ([X]% share)
-    (ii) my [relationship] [NAME] MALAYSIA NRIC No. [number] ([X]% share)
-    (iii) ...
-(c) But if all of them do not survive me, to give the residue ('my residuary estate') to my [relationship] [FALLBACK NAME] MALAYSIA NRIC No. [number]."
+    (ii) ..."
+
+For MULTIPLE residuary beneficiaries (WITHOUT trustee):
+"[N]. I give the rest of my estate ('my residuary estate') to the following beneficiaries in the shares indicated. If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio.
+    (i) my [relationship] [NAME] MALAYSIA NRIC No. [number] ([X]% share)
+    (ii) ..."
 
 ### 12. TESTAMENTARY TRUST (if applicable)
 Set up trust for minor/handicapped beneficiaries.
@@ -185,11 +193,12 @@ Second Witness Contact Number: _________________________________________________
 8. Use Roman numerals (i), (ii), (iii) for listing beneficiaries with shares within sub-clauses
 9. Ensure shares/percentages are clearly stated and total 100%
 10. Include proper substitution language — EITHER inline within the gift clause itself OR as separate substitute clauses
-11. For jointly held bank accounts, include the joint account clause
-12. Always include the bank account exclusion expression: "The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."
-13. For immovable properties, include full address description
-14. For property with existing loans/liens, include direction to pay from residuary estate
-15. ALWAYS include the EPF fallback clause
+11. For jointly held bank accounts, include the joint account clause ONLY if joint_account_clause_enabled is true
+12. Include the bank account exclusion expression ONLY if there are bank account gifts: "The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."
+13. For immovable properties, include full address description. Do NOT include "MALAYSIA" in address (understood for Malaysian will).
+14. For encumbered property (loan/lien), include direction to pay from the source specified (residuary estate, sale, insurance). For clean property, do NOT include discharge clause.
+15. Include the EPF fallback clause ONLY if there are EPF-related gifts in the data
+16. ONLY include clauses that are directly supported by the user's data. Do NOT add clauses that the user did not request or enable.
 
 ## Section Headings
 
@@ -215,7 +224,7 @@ Use these section headings (NOT numbered, placed on their own line before the re
 - Do NOT include funeral wishes or organ donation directives in the will body
 - Insurance policies with nominated beneficiaries pass OUTSIDE the will (but include fallback clause for failed nominations)
 - EPF nominations pass OUTSIDE the will (but include fallback clause for failed nominations)
-- Joint bank accounts go to the joint holder(s) — include the joint account clause
+- Joint bank accounts: ONLY include the joint account clause if joint_account_clause_enabled is true in the data
 - Do NOT include administrative powers clause unless specifically requested — the Rockwills standard format omits it
 - Do NOT include a testator declaration clause unless specifically requested — end with the commorientes/30-day survivorship clause only
 
