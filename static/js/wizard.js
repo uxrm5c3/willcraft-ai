@@ -1831,12 +1831,19 @@ async function saveIdentityGlobal() {
         else dob = dobRaw;
     }
 
-    const expiryRaw = document.getElementById('modal-passport-expiry').value;
+    // Only save passport expiry if non-Malaysian + Passport type selected
     let expiry = '';
-    if (expiryRaw) {
-        const parts = expiryRaw.split('-');
-        if (parts.length === 3 && parts[0].length === 4) expiry = `${parts[2]}-${parts[1]}-${parts[0]}`;
-        else expiry = expiryRaw;
+    const idTypeSelected = document.querySelector('input[name="modal-id-type"]:checked');
+    const isPassportType = idTypeSelected && idTypeSelected.value === 'passport';
+    const natVal = (document.getElementById('modal-nationality').value || '').trim().toLowerCase();
+    const isMalaysianNat = !natVal || natVal === 'malaysian';
+    if (!isMalaysianNat && isPassportType) {
+        const expiryRaw = document.getElementById('modal-passport-expiry').value;
+        if (expiryRaw) {
+            const parts = expiryRaw.split('-');
+            if (parts.length === 3 && parts[0].length === 4) expiry = `${parts[2]}-${parts[1]}-${parts[0]}`;
+            else expiry = expiryRaw;
+        }
     }
 
     // Get relationship
