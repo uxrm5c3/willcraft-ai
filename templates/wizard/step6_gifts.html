@@ -536,66 +536,61 @@ function buildPropertyPanelHtml(idx) {
     const stateOptions = MALAYSIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
     return `
     <div id="property-panel-${idx}" class="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
-        <h4 class="text-sm font-semibold text-blue-800 mb-3">Property Details (Malaysian Standard Format)</h4>
-        <div class="mb-3 flex flex-wrap gap-2">
-            <div class="flex items-center gap-1">
-                <label class="text-xs font-medium text-blue-600">Upload Title/Geran:</label>
+        <h4 class="text-sm font-semibold text-blue-800 mb-3">Property Details</h4>
+        <div class="mb-3 space-y-2">
+            <p class="text-xs font-semibold text-blue-700">📄 Upload Document:</p>
+            <div class="flex flex-wrap gap-2">
                 <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
                        onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'title')">
+                <button type="button" onclick="openCameraForProperty(${idx})" class="px-3 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200">📷 Take Photo</button>
+                <span id="prop-status-${idx}" class="text-xs"></span>
             </div>
-            <div class="flex items-center gap-1">
-                <label class="text-xs font-medium text-blue-600">Cukai Harta:</label>
-                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
-                       onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'cukai_harta')">
+            <div id="gift-docs-${idx}" class="hidden mt-2 space-y-1"></div>
+        </div>
+        <div class="mb-3 p-3 bg-white rounded-lg border border-blue-200">
+            <label class="block text-xs font-semibold text-gray-700 mb-2">Ownership</label>
+            <div class="flex flex-wrap gap-4 mb-2">
+                <label class="flex items-center cursor-pointer"><input type="radio" name="gift_prop_ownership_${idx}" value="sole" checked onchange="toggleOwnership(${idx},'sole')" class="text-primary-600 mr-2"><span class="text-sm text-gray-700">Sole Owner</span></label>
+                <label class="flex items-center cursor-pointer"><input type="radio" name="gift_prop_ownership_${idx}" value="joint" onchange="toggleOwnership(${idx},'joint')" class="text-primary-600 mr-2"><span class="text-sm text-gray-700">Joint / Shared Owner</span></label>
             </div>
-            <div class="flex items-center gap-1">
-                <label class="text-xs font-medium text-blue-600">Cukai Pintu:</label>
-                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
-                       onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'cukai_pintu')">
+            <div id="joint-fields-${idx}" class="hidden mt-2 pl-6 border-l-2 border-blue-300">
+                <div class="grid grid-cols-2 gap-2">
+                    <div><label class="block text-xs font-medium text-gray-500 mb-1">My Share</label><select name="gift_prop_share_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" onchange="updatePropertyPreview(${idx})"><option value="">-- Select --</option><option value="1/2">1/2 undivided share</option><option value="1/3">1/3 undivided share</option><option value="1/4">1/4 undivided share</option><option value="2/3">2/3 undivided share</option><option value="3/4">3/4 undivided share</option><option value="other">Other</option></select></div>
+                    <div><label class="block text-xs font-medium text-gray-500 mb-1">Custom Share</label><input type="text" name="gift_prop_share_custom_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., 1/5"></div>
+                </div>
             </div>
-            <div class="flex items-center gap-1">
-                <label class="text-xs font-medium text-blue-600">SPA:</label>
-                <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
-                       onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'spa')">
+        </div>
+        <div class="mb-3 p-3 bg-white rounded-lg border border-blue-200">
+            <label class="block text-xs font-semibold text-gray-700 mb-2">Encumbrance</label>
+            <div class="flex flex-wrap gap-4 mb-2">
+                <label class="flex items-center cursor-pointer"><input type="radio" name="gift_prop_encumbrance_${idx}" value="clean" checked onchange="toggleEncumbrance(${idx},'clean')" class="text-primary-600 mr-2"><span class="text-sm text-gray-700">Clean (No Loan)</span></label>
+                <label class="flex items-center cursor-pointer"><input type="radio" name="gift_prop_encumbrance_${idx}" value="encumbered" onchange="toggleEncumbrance(${idx},'encumbered')" class="text-primary-600 mr-2"><span class="text-sm text-gray-700">Has Loan / Encumbered</span></label>
             </div>
-            <span id="prop-status-${idx}" class="text-xs"></span>
+            <div id="encumbrance-fields-${idx}" class="hidden mt-2 pl-6 border-l-2 border-amber-300">
+                <label class="block text-xs font-medium text-gray-500 mb-1">Source of Funds to Pay Off Debt</label>
+                <select name="gift_prop_debt_source_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"><option value="residuary">Residuary Estate (default)</option><option value="sale">Sale of This Property</option><option value="insurance">Insurance Proceeds</option><option value="other">Other</option></select>
+            </div>
         </div>
         <div class="mb-3">
             <label class="block text-xs font-medium text-gray-600 mb-1">Property Address <span class="text-red-500">*</span></label>
-            <textarea name="gift_prop_address_${idx}" rows="2" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                      placeholder="e.g., No. 11, JALAN BERLIAN, KIM TENG PARK, JOHOR BAHRU, JOHOR" oninput="updatePropertyPreview(${idx})"></textarea>
-        </div>
-        <div class="grid md:grid-cols-3 gap-3 mb-3">
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Title Type</label>
-                <select name="gift_prop_title_type_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" onchange="updatePropertyPreview(${idx})">
-                    <option value="">-- Select --</option>${titleOptions}
-                </select>
+            <input type="text" name="gift_prop_address_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg mb-2" placeholder="e.g., No. 11, JALAN BERLIAN, KIM TENG PARK" oninput="updatePropertyPreview(${idx})">
+            <div class="grid grid-cols-2 gap-2 mb-2">
+                <input type="text" name="gift_prop_postcode_${idx}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="Postcode" maxlength="10" oninput="updatePropertyPreview(${idx})">
+                <input type="text" name="gift_prop_city_${idx}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="City" oninput="updatePropertyPreview(${idx})">
             </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Title Number</label>
-                <input type="text" name="gift_prop_title_number_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., 27395" oninput="updatePropertyPreview(${idx})">
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">LOT Number</label>
-                <input type="text" name="gift_prop_lot_number_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., 7119" oninput="updatePropertyPreview(${idx})">
+            <div class="grid grid-cols-2 gap-2">
+                <select name="gift_prop_state_${idx}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" onchange="updatePropertyPreview(${idx})"><option value="">State</option>${stateOptions}</select>
+                <select name="gift_prop_country_${idx}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" onchange="updatePropertyPreview(${idx})"><option value="Malaysia" selected>Malaysia</option><option value="Singapore">Singapore</option><option value="Other">Other</option></select>
             </div>
         </div>
-        <div class="grid md:grid-cols-3 gap-3 mb-3">
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Bandar / Pekan</label>
-                <input type="text" name="gift_prop_bandar_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})">
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Daerah (District)</label>
-                <input type="text" name="gift_prop_daerah_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})">
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Negeri (State)</label>
-                <select name="gift_prop_negeri_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" onchange="updatePropertyPreview(${idx})">
-                    <option value="">-- Select --</option>${stateOptions}
-                </select>
-            </div>
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Title Type</label><select name="gift_prop_title_type_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" onchange="updatePropertyPreview(${idx})"><option value="">-- Select --</option>${titleOptions}</select></div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Title Number</label><input type="text" name="gift_prop_title_number_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., 27395" oninput="updatePropertyPreview(${idx})"></div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">LOT Number</label><input type="text" name="gift_prop_lot_number_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., 7119" oninput="updatePropertyPreview(${idx})"></div>
+        </div>
+        <div class="grid grid-cols-2 gap-3 mb-3">
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Bandar / Pekan</label><input type="text" name="gift_prop_bandar_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})"></div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Daerah (District)</label><input type="text" name="gift_prop_daerah_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})"></div>
         </div>
         <div class="p-3 bg-white rounded border border-blue-300">
             <label class="block text-xs font-medium text-blue-700 mb-1">Preview (Will Format):</label>
@@ -609,33 +604,29 @@ function buildFinancialPanelHtml(idx) {
     return `
     <div id="financial-panel-${idx}" class="hidden mb-4 p-4 bg-green-50 rounded-lg border border-green-200">
         <h4 class="text-sm font-semibold text-green-800 mb-3">Financial / Asset Details</h4>
-        <div class="mb-3 flex items-center gap-2">
-            <label class="text-xs font-medium text-green-600">Upload Financial Doc:</label>
+        <div class="mb-3 p-3 bg-white rounded-lg border border-green-200">
+            <label class="block text-xs font-semibold text-gray-700 mb-2">Account Ownership</label>
+            <div class="flex flex-wrap gap-4">
+                <label class="flex items-center cursor-pointer"><input type="radio" name="gift_fin_ownership_${idx}" value="individual" checked class="text-primary-600 mr-2"><span class="text-sm text-gray-700">Individual Account</span></label>
+                <label class="flex items-center cursor-pointer"><input type="radio" name="gift_fin_ownership_${idx}" value="joint" class="text-primary-600 mr-2"><span class="text-sm text-gray-700">Joint Account</span></label>
+            </div>
+            <p class="text-xs text-green-600 mt-1">Joint: "my share of the moneys in my joint account at..."</p>
+            <p class="text-xs text-amber-600 mt-1">For surviving account holder clause, enable it in <a href="/wizard/step/9" class="underline font-medium">Step 9: Other Matters</a>.</p>
+        </div>
+        <div class="mb-3 flex flex-wrap items-center gap-2">
+            <label class="text-xs font-medium text-green-600">📄 Upload Financial Doc:</label>
             <input type="file" accept="image/*,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-green-200 file:text-green-800"
                    onchange="uploadAndExtractAsset(this, 'fin-status-${idx}', ${idx})">
+            <button type="button" onclick="openCameraForFinancial(${idx})" class="px-3 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200">📷 Take Photo</button>
             <span id="fin-status-${idx}" class="text-xs"></span>
         </div>
         <div class="grid md:grid-cols-2 gap-3 mb-3">
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Institution / Bank</label>
-                <input type="text" name="gift_fin_institution_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., Maybank, CIMB">
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Account Number</label>
-                <input type="text" name="gift_fin_account_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="e.g., 1234-5678-9012">
-            </div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Institution / Bank</label><input type="text" name="gift_fin_institution_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., Maybank, CIMB"></div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Account Number</label><input type="text" name="gift_fin_account_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., 1234-5678-9012"></div>
         </div>
         <div class="grid md:grid-cols-2 gap-3">
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Asset Type</label>
-                <select name="gift_fin_type_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
-                    <option value="">-- Select --</option>${typeOptions}
-                </select>
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Description</label>
-                <input type="text" name="gift_fin_desc_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="Additional details">
-            </div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Asset Type</label><select name="gift_fin_type_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"><option value="">-- Select --</option>${typeOptions}</select></div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Description</label><input type="text" name="gift_fin_desc_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="Additional details"></div>
         </div>
     </div>`;
 }
