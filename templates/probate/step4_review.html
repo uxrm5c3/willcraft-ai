@@ -82,6 +82,26 @@
 
     <!-- Form Selection -->
     <div class="mb-6">
+        <!-- Documents Required from Executor -->
+        <div class="p-4 bg-amber-50 border border-amber-200 rounded-lg mb-6">
+            <h3 class="text-sm font-semibold text-amber-800 mb-2 flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                Documents Required from Executor for Filing
+            </h3>
+            <p class="text-xs text-amber-600 mb-2">Ensure the executor provides these documents before filing:</p>
+            <ul class="text-xs text-gray-700 space-y-1.5">
+                <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">1.</span> Certified copy of <strong>Death Certificate</strong> (Sijil Kematian) — Exhibit {{ exhibit_prefix }}-1</li>
+                <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">2.</span> <strong>Schedule of Assets & Liabilities</strong> (Jadual Aset) — Exhibit {{ exhibit_prefix }}-2</li>
+                {% if not is_la %}
+                <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">3.</span> <strong>Original Will</strong> (certified true copy) — Exhibit {{ exhibit_prefix }}-3</li>
+                <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">4.</span> <strong>Beneficiary List</strong> — Exhibit {{ exhibit_prefix }}-4</li>
+                {% endif %}
+                <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">5.</span> Executor's <strong>NRIC</strong> (copy)</li>
+                <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">6.</span> <strong>Property title documents</strong> (Hakmilik) — if estate includes property</li>
+                <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">7.</span> Filing fee: <strong>RM60</strong> per Form 346 (land office registration)</li>
+            </ul>
+        </div>
+
         <h3 class="text-sm font-bold text-gray-800 mb-3">Select Forms to Generate</h3>
         <p class="text-xs text-gray-500 mb-4">The system has pre-selected forms based on the will data. You can uncheck forms you don't need.</p>
 

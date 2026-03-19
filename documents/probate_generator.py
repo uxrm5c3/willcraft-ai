@@ -151,10 +151,11 @@ def build_replacements(probate_app, will_record):
         '{{FIRM_FAX}}': probate_app.firm_fax or '',
         '{{FIRM_REFERENCE}}': probate_app.firm_reference or '',
 
-        # Lawyer
-        '{{LAWYER_NAME}}': probate_app.lawyer_name or '',
-        '{{LAWYER_NRIC}}': probate_app.lawyer_nric or '',
-        '{{LAWYER_BAR_NO}}': probate_app.lawyer_bar_number or '',
+        # Lawyer — in Doc 08 the "appointing person" is the APPLICANT, not the lawyer
+        # The lawyer name/NRIC only appears for physical attestation (Form 14A/346)
+        '{{LAWYER_NAME}}': primary_exec.get('full_name', ''),
+        '{{LAWYER_NRIC}}': primary_exec.get('nric_passport', ''),
+        '{{LAWYER_BAR_NO}}': '',
 
         # Witnesses
         '{{WITNESS1_NAME}}': probate_app.witness1_name or '',
@@ -183,9 +184,18 @@ def build_replacements(probate_app, will_record):
 
     # Build firm address lines for forms that use multi-line format
     if probate_app.firm_address:
-        addr_lines = probate_app.firm_address.split('\n')
+        # Handle both real newlines and literal \n from form input
+        addr_text = probate_app.firm_address.replace('\\n', '\n')
+        addr_lines = [l.strip() for l in addr_text.split('\n') if l.strip()]
         for i, line in enumerate(addr_lines[:4], 1):
-            replacements[f'{{{{FIRM_ADDRESS_LINE{i}}}}}'] = line.strip()
+            replacements[f'{{{{FIRM_ADDRESS_LINE{i}}}}}'] = line
+        # Also update the full address with proper formatting
+        replacements['{{FIRM_ADDRESS}}'] = ', '.join(addr_lines)
+    # Ensure all FIRM_ADDRESS_LINE placeholders have values (empty if not set)
+    for i in range(1, 5):
+        key = f'{{{{FIRM_ADDRESS_LINE{i}}}}}'
+        if key not in replacements:
+            replacements[key] = ''
 
     # Build beneficiary info
     if beneficiaries:
