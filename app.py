@@ -436,39 +436,52 @@ def _refresh_session_person_registry(client_id):
 
 
 def _propagate_identity_changes(person_id, new_name, new_nric, old_name=None):
-    """When an identity is updated, propagate name/NRIC changes across all step session data."""
-    if not old_name or old_name == new_name:
-        return  # No name change, skip
+    """When an identity is updated, propagate name/NRIC/relationship/address changes across all step session data."""
+    person_data = _get_person_from_registry(person_id) or {}
+    new_rel = person_data.get('relationship', '')
+    new_addr = person_data.get('address', '')
+    new_nationality = person_data.get('nationality', 'Malaysian')
+    has_name_change = old_name and old_name.upper() != new_name.upper()
 
+    # Always propagate by person_id (even without name change — catches relationship/address updates)
     # Step 1 (Testator)
     step1 = session.get('step1', {})
     if step1.get('person_id') == person_id:
         step1['full_name'] = new_name
         step1['nric_passport'] = new_nric
+        step1['residential_address'] = new_addr
+        step1['nationality'] = new_nationality
         session['step1'] = step1
 
     # Step 2 (Executors)
     for ex in session.get('step2_executors', []):
-        if ex.get('person_id') == person_id or ex.get('full_name', '').upper() == old_name.upper():
+        if ex.get('person_id') == person_id or (has_name_change and ex.get('full_name', '').upper() == old_name.upper()):
             ex['full_name'] = new_name
             ex['nric_passport'] = new_nric
+            ex['address'] = new_addr
+            ex['relationship'] = new_rel
+            if 'nationality' in ex:
+                ex['nationality'] = new_nationality
 
     # Step 4 (Beneficiaries)
     for ben in session.get('step4_beneficiaries', []):
-        if ben.get('person_id') == person_id or ben.get('full_name', '').upper() == old_name.upper():
+        if ben.get('person_id') == person_id or (has_name_change and ben.get('full_name', '').upper() == old_name.upper()):
             ben['full_name'] = new_name
             ben['nric_passport_birthcert'] = new_nric
+            ben['relationship'] = new_rel
+            if 'nationality' in ben:
+                ben['nationality'] = new_nationality
 
-    # Step 5 (Gift allocations)
+    # Step 5 (Gift allocations — match by name)
     for gift in session.get('step5_gifts', []):
         for alloc in gift.get('allocations', []):
-            if alloc.get('beneficiary_name', '').upper() == old_name.upper():
+            if has_name_change and alloc.get('beneficiary_name', '').upper() == old_name.upper():
                 alloc['beneficiary_name'] = new_name
 
     # Step 6 (Residuary estate)
     res = session.get('step6_residuary', {})
     for mb in res.get('main_beneficiaries', []):
-        if mb.get('person_id') == person_id or mb.get('beneficiary_name', '').upper() == old_name.upper():
+        if mb.get('person_id') == person_id or (has_name_change and mb.get('beneficiary_name', '').upper() == old_name.upper()):
             mb['beneficiary_name'] = new_name
 
     session.modified = True
