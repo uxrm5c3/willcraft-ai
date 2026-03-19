@@ -1246,6 +1246,10 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
         } else {
             if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the property document. Please try a clearer image.</span>';
         }
+        // Add document to preview list regardless of OCR success
+        if (data && data.ok) {
+            _addGiftDocPreview(giftIndex, file.name, data.document_url || '', docType || 'document');
+        }
     } catch (e) {
         console.error('Property upload error:', e);
         if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Upload failed. Check your internet connection and try again.</span>';
@@ -2375,8 +2379,39 @@ async function uploadAndExtractAsset(inputOrFile, statusElId, giftIndex) {
         } else {
             if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the financial document. Please try a clearer image.</span>';
         }
+        // Add document to preview list regardless of OCR success
+        if (data && data.ok) {
+            _addGiftDocPreview(giftIndex, file.name, data.document_url || '', 'financial');
+        }
     } catch (e) {
         console.error('Asset upload error:', e);
         if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Upload failed. Check your internet connection and try again.</span>';
     }
+}
+
+/**
+ * Add a document preview entry to the gift's document list.
+ */
+function _addGiftDocPreview(giftIndex, fileName, docUrl, docType) {
+    const container = document.getElementById('gift-docs-' + giftIndex);
+    if (!container) return;
+    container.classList.remove('hidden');
+
+    const docId = 'gift-doc-' + giftIndex + '-' + Date.now();
+    const typeLabel = docType === 'title' ? 'Title/Geran' :
+                      docType === 'cukai_harta' ? 'Cukai Harta' :
+                      docType === 'cukai_pintu' ? 'Cukai Pintu' :
+                      docType === 'spa' ? 'SPA' :
+                      docType === 'financial' ? 'Financial Doc' : 'Document';
+    const isImage = /\.(jpg|jpeg|png|gif|webp|heic|heif)$/i.test(fileName);
+
+    const html = `
+    <div id="${docId}" class="flex items-center gap-2 p-2 bg-white border border-gray-200 rounded-lg text-xs">
+        <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium flex-shrink-0">${typeLabel}</span>
+        <span class="text-gray-600 truncate flex-1" title="${fileName}">${fileName}</span>
+        ${docUrl ? `<button type="button" onclick="window.open('${docUrl}', '_blank')" class="px-2 py-0.5 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium flex-shrink-0">View</button>` : ''}
+        <button type="button" onclick="document.getElementById('${docId}').remove(); var c=document.getElementById('gift-docs-${giftIndex}'); if(c && !c.children.length) c.classList.add('hidden');"
+                class="px-2 py-0.5 bg-red-50 text-red-600 rounded hover:bg-red-100 font-medium flex-shrink-0">Remove</button>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', html);
 }
