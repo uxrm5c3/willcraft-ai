@@ -1781,6 +1781,8 @@ def wizard_step_identities():
         return redirect(url_for('wizard_step_identities'))
     mark_step_complete(1)
     save_will_to_db()
+    if request.form.get('_save_draft'):
+        return jsonify({'ok': True, 'step': 1})
     return redirect(url_for('wizard_step_testator'))
 
 
@@ -1839,6 +1841,8 @@ def wizard_step_testator():
     session.modified = True
     mark_step_complete(2)
     save_will_to_db()
+    if request.form.get('_save_draft'):
+        return jsonify({'ok': True, 'step': 2})
     return redirect(url_for('wizard_step_executors'))
 
 
@@ -1950,6 +1954,8 @@ def wizard_step_executors():
     session.modified = True
     mark_step_complete(3)
     save_will_to_db()
+    if request.form.get('_save_draft'):
+        return jsonify({'ok': True, 'step': 3})
     return redirect(url_for('wizard_step_guardians'))
 
 
@@ -2009,6 +2015,8 @@ def wizard_step_guardians():
     session.modified = True
     mark_step_complete(4)
     save_will_to_db()
+    if request.form.get('_save_draft'):
+        return jsonify({'ok': True, 'step': 4})
     return redirect(url_for('wizard_step_beneficiaries'))
 
 
@@ -2048,6 +2056,8 @@ def wizard_step_beneficiaries():
     session.modified = True
     mark_step_complete(5)
     save_will_to_db()
+    if request.form.get('_save_draft'):
+        return jsonify({'ok': True, 'step': 5})
     return redirect(url_for('wizard_step_gifts'))
 
 
@@ -2132,6 +2142,8 @@ def wizard_step_gifts():
     session.modified = True
     mark_step_complete(6)
     save_will_to_db()
+    if request.form.get('_save_draft'):
+        return jsonify({'ok': True, 'step': 6})
     return redirect(url_for('wizard_step_residuary'))
 
 
@@ -2208,6 +2220,8 @@ def wizard_step_residuary():
     session.modified = True
     mark_step_complete(7)
     save_will_to_db()
+    if request.form.get('_save_draft'):
+        return jsonify({'ok': True, 'step': 7})
     return redirect(url_for('wizard_step_trust'))
 
 
@@ -2273,6 +2287,8 @@ def wizard_step_trust():
     session.modified = True
     mark_step_complete(8)
     save_will_to_db()
+    if request.form.get('_save_draft'):
+        return jsonify({'ok': True, 'step': 8})
     return redirect(url_for('wizard_step_others'))
 
 
@@ -2323,6 +2339,8 @@ def wizard_step_others():
     session.modified = True
     mark_step_complete(9)
     save_will_to_db()
+    if request.form.get('_save_draft'):
+        return jsonify({'ok': True, 'step': 9})
     return redirect(url_for('wizard_step_review'))
 
 

@@ -1,4 +1,4 @@
-/* WillCraft AI - Wizard JavaScript (v20260317c) */
+/* WillCraft AI - Wizard JavaScript (v20260319a) */
 
 // ===========================================================================
 // Searchable Dropdown Component
@@ -443,16 +443,45 @@ async function saveDraft() {
     if (statusEl) statusEl.textContent = 'Saving...';
     if (statusMobile) statusMobile.textContent = 'Saving...';
     try {
+        // First, submit current step's form data to save it to session
+        const form = document.querySelector('form[method="POST"]');
+        if (form) {
+            const formData = new FormData(form);
+            formData.append('_save_draft', '1'); // Flag to indicate draft save (no redirect)
+            await fetch(form.action || window.location.href, {
+                method: 'POST',
+                body: formData,
+            });
+        }
+        // Then save the session to DB
         const resp = await fetch('/api/will/save', { method: 'POST' });
         const data = await resp.json();
-        const msg = data.ok ? 'Saved!' : 'Error saving.';
+        const msg = data.ok ? 'Draft saved!' : 'Error saving.';
         if (statusEl) { statusEl.textContent = msg; setTimeout(() => { statusEl.textContent = ''; }, 3000); }
         if (statusMobile) { statusMobile.textContent = msg; setTimeout(() => { statusMobile.textContent = ''; }, 3000); }
+        window._formDirty = false;
     } catch (e) {
         if (statusEl) statusEl.textContent = 'Save failed.';
         if (statusMobile) statusMobile.textContent = 'Save failed.';
     }
 }
+
+// Track unsaved changes and prompt before leaving
+window._formDirty = false;
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.querySelector('form[method="POST"]');
+    if (form) {
+        form.addEventListener('input', function() { window._formDirty = true; });
+        form.addEventListener('change', function() { window._formDirty = true; });
+        form.addEventListener('submit', function() { window._formDirty = false; });
+    }
+});
+window.addEventListener('beforeunload', function(e) {
+    if (window._formDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+    }
+});
 
 // Helper to set form field value
 function setFieldValue(fieldName, value) {
