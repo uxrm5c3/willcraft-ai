@@ -355,7 +355,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     .page-footer .sig-boxes td {{
         width: 33.33%;
         border: 0.5pt solid #000;
-        height: 28pt;
+        height: 45pt;
         text-align: center;
         vertical-align: bottom;
         font-family: 'Times New Roman', Times, serif;
