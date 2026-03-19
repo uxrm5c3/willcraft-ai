@@ -435,6 +435,45 @@ def _refresh_session_person_registry(client_id):
     session.modified = True
 
 
+def _propagate_identity_changes(person_id, new_name, new_nric, old_name=None):
+    """When an identity is updated, propagate name/NRIC changes across all step session data."""
+    if not old_name or old_name == new_name:
+        return  # No name change, skip
+
+    # Step 1 (Testator)
+    step1 = session.get('step1', {})
+    if step1.get('person_id') == person_id:
+        step1['full_name'] = new_name
+        step1['nric_passport'] = new_nric
+        session['step1'] = step1
+
+    # Step 2 (Executors)
+    for ex in session.get('step2_executors', []):
+        if ex.get('person_id') == person_id or ex.get('full_name', '').upper() == old_name.upper():
+            ex['full_name'] = new_name
+            ex['nric_passport'] = new_nric
+
+    # Step 4 (Beneficiaries)
+    for ben in session.get('step4_beneficiaries', []):
+        if ben.get('person_id') == person_id or ben.get('full_name', '').upper() == old_name.upper():
+            ben['full_name'] = new_name
+            ben['nric_passport_birthcert'] = new_nric
+
+    # Step 5 (Gift allocations)
+    for gift in session.get('step5_gifts', []):
+        for alloc in gift.get('allocations', []):
+            if alloc.get('beneficiary_name', '').upper() == old_name.upper():
+                alloc['beneficiary_name'] = new_name
+
+    # Step 6 (Residuary estate)
+    res = session.get('step6_residuary', {})
+    for mb in res.get('main_beneficiaries', []):
+        if mb.get('person_id') == person_id or mb.get('beneficiary_name', '').upper() == old_name.upper():
+            mb['beneficiary_name'] = new_name
+
+    session.modified = True
+
+
 def _get_person_from_registry(person_id):
     """Look up a person from session['person_registry'] by ID."""
     for p in session.get('person_registry', []):
@@ -1306,6 +1345,7 @@ def api_persons_update(person_id):
     if not person:
         return jsonify({'ok': False, 'error': 'Person not found'}), 404
     data = request.get_json() or {}
+    old_name = person.full_name  # Capture before update
     if data.get('full_name'):
         person.full_name = data['full_name'].strip().upper()
     if data.get('nric_passport'):
@@ -1335,6 +1375,8 @@ def api_persons_update(person_id):
         app.logger.error(f'Failed to update identity: {e}')
         return jsonify({'ok': False, 'error': f'Failed to update: {str(e)}'}), 500
     _refresh_session_person_registry(person.client_id)
+    _propagate_identity_changes(person.id, person.full_name, person.nric_passport, old_name)
+    save_will_to_db()  # Persist propagated changes
     return jsonify({'ok': True, 'person': {
         'id': person.id, 'full_name': person.full_name,
         'nric_passport': person.nric_passport, 'address': person.address or '',
