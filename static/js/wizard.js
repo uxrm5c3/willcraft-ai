@@ -1379,6 +1379,56 @@ function _setSearchableValue(hiddenId, searchId, value, items) {
     }
 }
 
+/**
+ * Update ID type UI based on nationality and ID type radio selection.
+ * Malaysian: hide ID type row, show "NRIC No." label, hide passport expiry.
+ * Non-Malaysian: show ID type row with "Identification No." (default) or "Passport".
+ *   - Identification No: hide passport expiry
+ *   - Passport: show passport expiry
+ */
+function updateIdTypeUI() {
+    const nationality = (document.getElementById('modal-nationality').value || '').trim();
+    const isMalaysian = !nationality || nationality.toLowerCase() === 'malaysian';
+    const idTypeRow = document.getElementById('modal-id-type-row');
+    const label = document.getElementById('modal-nric-label');
+    const expiryField = document.getElementById('passport-expiry-field');
+
+    if (isMalaysian) {
+        idTypeRow.classList.add('hidden');
+        label.innerHTML = 'NRIC No. <span class="text-red-500">*</span>';
+        expiryField.classList.add('hidden');
+    } else {
+        idTypeRow.classList.remove('hidden');
+        const selectedType = document.querySelector('input[name="modal-id-type"]:checked');
+        const isPassport = selectedType && selectedType.value === 'passport';
+        if (isPassport) {
+            label.innerHTML = 'Passport No. <span class="text-red-500">*</span>';
+            expiryField.classList.remove('hidden');
+        } else {
+            label.innerHTML = 'Identification No. <span class="text-red-500">*</span>';
+            expiryField.classList.add('hidden');
+        }
+    }
+}
+
+// Watch for nationality changes via MutationObserver on the hidden input
+document.addEventListener('DOMContentLoaded', function() {
+    const natInput = document.getElementById('modal-nationality');
+    if (natInput) {
+        // Use MutationObserver since hidden input value changes don't fire events
+        const observer = new MutationObserver(function() { updateIdTypeUI(); });
+        observer.observe(natInput, { attributes: true, attributeFilter: ['value'] });
+        // Also listen for programmatic value changes via a polling check
+        let lastNat = natInput.value;
+        setInterval(function() {
+            if (natInput.value !== lastNat) {
+                lastNat = natInput.value;
+                updateIdTypeUI();
+            }
+        }, 300);
+    }
+});
+
 function openAddIdentityModal(presetRelationship) {
     const modal = document.getElementById('identity-modal');
     if (!modal) return;
@@ -1387,6 +1437,10 @@ function openAddIdentityModal(presetRelationship) {
     document.getElementById('modal-full-name').value = '';
     document.getElementById('modal-nric-passport').value = '';
     _setSearchableValue('modal-nationality', 'modal-nationality-search', 'Malaysian', NATIONALITY_LIST);
+    // Reset ID type to default
+    const idRadio = document.querySelector('input[name="modal-id-type"][value="id"]');
+    if (idRadio) idRadio.checked = true;
+    updateIdTypeUI();
     document.getElementById('modal-address').value = '';
     splitAddressToFields('');
     document.getElementById('modal-passport-expiry').value = '';
@@ -1443,14 +1497,20 @@ function openEditIdentityModal(personId) {
     document.getElementById('modal-gender').value = person.gender || '';
     document.getElementById('modal-email').value = person.email || '';
     document.getElementById('modal-phone').value = person.phone || '';
-    // Passport expiry
-    if (person.passport_expiry) {
-        document.getElementById('passport-expiry-field').classList.remove('hidden');
+    // ID type and passport expiry
+    const isMalaysian = !person.nationality || person.nationality.toLowerCase() === 'malaysian';
+    if (!isMalaysian && person.passport_expiry) {
+        // Has passport expiry → select Passport radio
+        const passRadio = document.querySelector('input[name="modal-id-type"][value="passport"]');
+        if (passRadio) passRadio.checked = true;
         document.getElementById('modal-passport-expiry').value = convertDateForInput(person.passport_expiry);
     } else {
-        document.getElementById('passport-expiry-field').classList.add('hidden');
+        // Default to Identification No
+        const idRadio = document.querySelector('input[name="modal-id-type"][value="id"]');
+        if (idRadio) idRadio.checked = true;
         document.getElementById('modal-passport-expiry').value = '';
     }
+    updateIdTypeUI();
     // Relationship
     const relOther = document.getElementById('modal-relationship-other');
     const rel = person.relationship || '';

@@ -232,7 +232,21 @@
                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport No. <span class="text-red-500">*</span></label>
+                    <label id="modal-nric-label" class="block text-sm font-medium text-gray-700 mb-1">NRIC No. <span class="text-red-500">*</span></label>
+                    <div id="modal-id-type-row" class="hidden flex gap-2 mb-1.5">
+                        <label class="flex items-center gap-1.5 cursor-pointer text-sm">
+                            <input type="radio" name="modal-id-type" value="id" checked
+                                   class="text-primary-600 focus:ring-primary-500"
+                                   onchange="updateIdTypeUI()">
+                            Identification No.
+                        </label>
+                        <label class="flex items-center gap-1.5 cursor-pointer text-sm">
+                            <input type="radio" name="modal-id-type" value="passport"
+                                   class="text-primary-600 focus:ring-primary-500"
+                                   onchange="updateIdTypeUI()">
+                            Passport
+                        </label>
+                    </div>
                     <input type="text" id="modal-nric-passport" required
                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                 </div>
