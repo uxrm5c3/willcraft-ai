@@ -199,8 +199,8 @@ def validate_will_data(will_data) -> List[ValidationResult]:
             if rb.beneficiary_name.upper() not in beneficiary_names:
                 results.append(ValidationResult(
                     rule_id="RESIDUARY_XREF",
-                    severity="ERROR",
-                    message=f"Residuary beneficiary '{rb.beneficiary_name}' is not in the beneficiaries list (Section D).",
+                    severity="WARNING",
+                    message=f"Residuary beneficiary '{rb.beneficiary_name}' is not in the beneficiaries list (Step 5). This is allowed but please verify.",
                     field="residuary_estate"
                 ))
 
