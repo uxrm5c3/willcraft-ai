@@ -2013,22 +2013,38 @@ def wizard_step_executors():
             'nationality': person.get('nationality', 'Malaysian'),
         })
 
-    # Substitute executor(s) - now supports multiple joint substitutes
+    # Substitute executor(s) - supports individual persons or corporate trustees
     sub_exec_count = int(request.form.get('sub_executor_count', 1))
     for i in range(sub_exec_count):
-        sub_exec_pid = request.form.get(f'sub_exec_person_id_{i}', '').strip()
-        if sub_exec_pid:
-            sub_person = _get_person_from_registry(sub_exec_pid)
-            if sub_person:
+        sub_type = request.form.get(f'sub_exec_type_{i}', 'individual').strip()
+        if sub_type == 'corporate':
+            corp_name = request.form.get(f'sub_exec_corp_name_{i}', '').strip()
+            if corp_name:
                 executors.append({
-                    'person_id': sub_exec_pid,
-                    'full_name': sub_person['full_name'],
-                    'nric_passport': sub_person['nric_passport'],
-                    'address': sub_person['address'],
-                    'relationship': request.form.get(f'sub_exec_relationship_{i}', '').strip(),
+                    'is_corporate': True,
+                    'corp_name': corp_name,
+                    'corp_reg': request.form.get(f'sub_exec_corp_reg_{i}', '').strip(),
+                    'corp_address': request.form.get(f'sub_exec_corp_address_{i}', '').strip(),
+                    'full_name': corp_name,  # for display compatibility
+                    'nric_passport': request.form.get(f'sub_exec_corp_reg_{i}', '').strip(),
+                    'address': request.form.get(f'sub_exec_corp_address_{i}', '').strip(),
+                    'relationship': 'Corporate Trustee',
                     'role': 'Substitute',
-                    'nationality': sub_person.get('nationality', 'Malaysian'),
                 })
+        else:
+            sub_exec_pid = request.form.get(f'sub_exec_person_id_{i}', '').strip()
+            if sub_exec_pid:
+                sub_person = _get_person_from_registry(sub_exec_pid)
+                if sub_person:
+                    executors.append({
+                        'person_id': sub_exec_pid,
+                        'full_name': sub_person['full_name'],
+                        'nric_passport': sub_person['nric_passport'],
+                        'address': sub_person['address'],
+                        'relationship': request.form.get(f'sub_exec_relationship_{i}', '').strip(),
+                        'role': 'Substitute',
+                        'nationality': sub_person.get('nationality', 'Malaysian'),
+                    })
 
     session['step2_executors'] = executors
     session['step3_executor_type'] = executor_type

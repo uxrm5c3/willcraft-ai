@@ -70,8 +70,12 @@ def format_will_data(will_data) -> str:
     if will_data.executors:
         exec_lines = []
         for i, e in enumerate(will_data.executors, 1):
-            id_str = format_id_for_will(e.nric_passport, getattr(e, 'nationality', 'Malaysian'))
-            exec_lines.append(f"  {i}. {e.full_name} ({id_str}), {e.address}, Relationship: {e.relationship}, Role: {e.role}")
+            is_corp = getattr(e, 'is_corporate', False) or (hasattr(e, 'relationship') and e.relationship == 'Corporate Trustee')
+            if is_corp:
+                exec_lines.append(f"  {i}. {e.full_name} (Company No. {e.nric_passport}), {e.address}, Type: CORPORATE TRUSTEE, Role: {e.role}")
+            else:
+                id_str = format_id_for_will(e.nric_passport, getattr(e, 'nationality', 'Malaysian'))
+                exec_lines.append(f"  {i}. {e.full_name} ({id_str}), {e.address}, Relationship: {e.relationship}, Role: {e.role}")
         sections.append(f"""
 ## EXECUTORS
 {chr(10).join(exec_lines)}""")
@@ -300,18 +304,22 @@ def draft_will_mock(will_data) -> str:
     next_clause = 3
     substitute_clause = ""
     if substitute_executors:
+        def _format_sub_exec(s):
+            """Format a substitute executor — individual or corporate."""
+            is_corp = getattr(s, 'is_corporate', False) or (hasattr(s, 'relationship') and s.relationship == 'Corporate Trustee')
+            if is_corp:
+                return f"{s.full_name.upper()} (Company No. {s.nric_passport}) of {s.address}"
+            return f"my {s.relationship.lower()} {s.full_name.upper()} {_fid(s)} of {s.address}"
+
         if len(substitute_executors) >= 2:
-            # Joint substitute executors
-            sub_names = " and ".join(
-                f"my {s.relationship.lower()} {s.full_name.upper()} {_fid(s)} of {s.address}"
-                for s in substitute_executors
-            )
+            sub_names = " and ".join(_format_sub_exec(s) for s in substitute_executors)
             substitute_clause = f"""
 {next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my joint Substitute Executors {sub_names}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Substitute Executor named herein shall act as my sole Executor."""
         else:
             sub = substitute_executors[0]
+            sub_text = _format_sub_exec(sub)
             substitute_clause = f"""
-{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Substitute Executor my {sub.relationship.lower()} {sub.full_name.upper()} {_fid(sub)} of {sub.address}."""
+{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Substitute Executor {sub_text}."""
         next_clause += 1
 
     # Trustee clause

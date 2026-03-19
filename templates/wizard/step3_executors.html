@@ -154,6 +154,7 @@
             {% set sub_execs = substitute_executors if substitute_executors else [{}] %}
             <div id="sub-executors-container">
                 {% for sub_exec in sub_execs %}
+                {% set is_corp = sub_exec.get('is_corporate', false) %}
                 <div class="sub-executor-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="{{ loop.index0 }}">
                     <div class="flex justify-between items-center mb-3">
                         <h5 class="font-medium text-gray-600 text-sm">Substitute Executor {{ loop.index }}</h5>
@@ -161,39 +162,85 @@
                         <button type="button" onclick="removeSubExecutor(this)" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
                         {% endif %}
                     </div>
-                    <div class="grid md:grid-cols-2 gap-3">
-                        <div class="md:col-span-2">
-                            <div class="flex gap-2">
-                                <select name="sub_exec_person_id_{{ loop.index0 }}"
-                                        onchange="validateExecutorAge(this); showIdentityInfo(this, 'sub-exec-info-{{ loop.index0 }}')"
-                                        data-role="executor"
-                                        class="person-select flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm">
-                                    <option value="">-- Select identity (optional) --</option>
-                                    {% for person in persons %}
-                                    <option value="{{ person.id }}"
-                                            data-name="{{ person.full_name }}"
-                                            data-nric="{{ person.nric_passport }}"
-                                            data-address="{{ person.address or '' }}"
-                                            data-relationship="{{ person.relationship or '' }}"
-                                            {% if sub_exec.get('person_id') == person.id %}selected{% endif %}>
-                                        {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
-                                    </option>
-                                    {% endfor %}
-                                </select>
-                                <button type="button" onclick="openAddIdentityModal()"
-                                        class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-xs font-medium whitespace-nowrap">
-                                    + New
-                                </button>
+
+                    <!-- Type toggle: Individual / Corporate Trustee -->
+                    <div class="flex gap-4 mb-3">
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="sub_exec_type_{{ loop.index0 }}" value="individual"
+                                   {% if not is_corp %}checked{% endif %}
+                                   onchange="toggleSubExecType({{ loop.index0 }}, 'individual')"
+                                   class="text-primary-600 mr-1.5">
+                            <span class="text-xs font-medium">Individual</span>
+                        </label>
+                        <label class="flex items-center cursor-pointer">
+                            <input type="radio" name="sub_exec_type_{{ loop.index0 }}" value="corporate"
+                                   {% if is_corp %}checked{% endif %}
+                                   onchange="toggleSubExecType({{ loop.index0 }}, 'corporate')"
+                                   class="text-primary-600 mr-1.5">
+                            <span class="text-xs font-medium">Corporate Trustee</span>
+                        </label>
+                    </div>
+
+                    <!-- Individual fields -->
+                    <div id="sub-exec-individual-{{ loop.index0 }}" class="{% if is_corp %}hidden{% endif %}">
+                        <div class="grid md:grid-cols-2 gap-3">
+                            <div class="md:col-span-2">
+                                <div class="flex gap-2">
+                                    <select name="sub_exec_person_id_{{ loop.index0 }}"
+                                            onchange="validateExecutorAge(this); showIdentityInfo(this, 'sub-exec-info-{{ loop.index0 }}')"
+                                            data-role="executor"
+                                            class="person-select flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm">
+                                        <option value="">-- Select identity (optional) --</option>
+                                        {% for person in persons %}
+                                        <option value="{{ person.id }}"
+                                                data-name="{{ person.full_name }}"
+                                                data-nric="{{ person.nric_passport }}"
+                                                data-address="{{ person.address or '' }}"
+                                                data-relationship="{{ person.relationship or '' }}"
+                                                {% if sub_exec.get('person_id') == person.id %}selected{% endif %}>
+                                            {{ person.full_name }} ({{ person.nric_passport }}){% if person.relationship %} [{{ person.relationship }}]{% endif %}
+                                        </option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="button" onclick="openAddIdentityModal()"
+                                            class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-xs font-medium whitespace-nowrap">
+                                        + New
+                                    </button>
+                                </div>
+                                <div id="sub-exec-info-{{ loop.index0 }}" class="mt-1 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not sub_exec.get('person_id') %}hidden{% endif %}">
+                                    {% if sub_exec.get('person_id') %}{{ sub_exec.full_name }} &middot; {{ sub_exec.nric_passport }} &middot; {{ sub_exec.address }}{% endif %}
+                                </div>
                             </div>
-                            <div id="sub-exec-info-{{ loop.index0 }}" class="mt-1 bg-gray-50 rounded p-2 text-xs text-gray-500 {% if not sub_exec.get('person_id') %}hidden{% endif %}">
-                                {% if sub_exec.get('person_id') %}{{ sub_exec.full_name }} &middot; {{ sub_exec.nric_passport }} &middot; {{ sub_exec.address }}{% endif %}
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                                <input type="text" name="sub_exec_relationship_{{ loop.index0 }}" value="{{ sub_exec.get('relationship', '') }}"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                                       placeholder="e.g., Brother, Friend">
                             </div>
                         </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-700 mb-1">Relationship to Testator</label>
-                            <input type="text" name="sub_exec_relationship_{{ loop.index0 }}" value="{{ sub_exec.get('relationship', '') }}"
-                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
-                                   placeholder="e.g., Brother, Friend">
+                    </div>
+
+                    <!-- Corporate Trustee fields -->
+                    <div id="sub-exec-corporate-{{ loop.index0 }}" class="{% if not is_corp %}hidden{% endif %}">
+                        <div class="grid md:grid-cols-2 gap-3">
+                            <div class="md:col-span-2">
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Company Name</label>
+                                <input type="text" name="sub_exec_corp_name_{{ loop.index0 }}" value="{{ sub_exec.get('corp_name', '') }}"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                                       placeholder="e.g., Rockwills Trustee Berhad">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Company Registration No.</label>
+                                <input type="text" name="sub_exec_corp_reg_{{ loop.index0 }}" value="{{ sub_exec.get('corp_reg', '') }}"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                                       placeholder="e.g., 199401006730 (289077-W)">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium text-gray-700 mb-1">Address</label>
+                                <input type="text" name="sub_exec_corp_address_{{ loop.index0 }}" value="{{ sub_exec.get('corp_address', '') }}"
+                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                                       placeholder="Registered address">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -539,6 +586,18 @@ function removeExecutor(btn) {
 }
 
 // ── Substitute Executors (joint) ──
+function toggleSubExecType(idx, type) {
+    var indiv = document.getElementById('sub-exec-individual-' + idx);
+    var corp = document.getElementById('sub-exec-corporate-' + idx);
+    if (type === 'corporate') {
+        if (indiv) indiv.classList.add('hidden');
+        if (corp) corp.classList.remove('hidden');
+    } else {
+        if (indiv) indiv.classList.remove('hidden');
+        if (corp) corp.classList.add('hidden');
+    }
+}
+
 function addSubExecutor() {
     if (subExecutorCount >= 4) { alert('Maximum 4 substitute executors allowed.'); return; }
     const container = document.getElementById('sub-executors-container');
@@ -550,27 +609,63 @@ function addSubExecutor() {
             <h5 class="font-medium text-gray-600 text-sm">Substitute Executor ${idx + 1}</h5>
             <button type="button" onclick="removeSubExecutor(this)" class="text-red-500 hover:text-red-700 text-xs">Remove</button>
         </div>
-        <div class="grid md:grid-cols-2 gap-3">
-            <div class="md:col-span-2">
-                <div class="flex gap-2">
-                    <select name="sub_exec_person_id_${idx}"
-                            onchange="validateExecutorAge(this); showIdentityInfo(this, 'sub-exec-info-${idx}')"
-                            data-role="executor"
-                            class="person-select flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm">
-                        ${personOptions}
-                    </select>
-                    <button type="button" onclick="openAddIdentityModal()"
-                            class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-xs font-medium whitespace-nowrap">
-                        + New
-                    </button>
+        <div class="flex gap-4 mb-3">
+            <label class="flex items-center cursor-pointer">
+                <input type="radio" name="sub_exec_type_${idx}" value="individual" checked
+                       onchange="toggleSubExecType(${idx}, 'individual')" class="text-primary-600 mr-1.5">
+                <span class="text-xs font-medium">Individual</span>
+            </label>
+            <label class="flex items-center cursor-pointer">
+                <input type="radio" name="sub_exec_type_${idx}" value="corporate"
+                       onchange="toggleSubExecType(${idx}, 'corporate')" class="text-primary-600 mr-1.5">
+                <span class="text-xs font-medium">Corporate Trustee</span>
+            </label>
+        </div>
+        <div id="sub-exec-individual-${idx}">
+            <div class="grid md:grid-cols-2 gap-3">
+                <div class="md:col-span-2">
+                    <div class="flex gap-2">
+                        <select name="sub_exec_person_id_${idx}"
+                                onchange="validateExecutorAge(this); showIdentityInfo(this, 'sub-exec-info-${idx}')"
+                                data-role="executor"
+                                class="person-select flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm">
+                            ${personOptions}
+                        </select>
+                        <button type="button" onclick="openAddIdentityModal()"
+                                class="px-3 py-2 bg-primary-100 text-primary-700 rounded-lg hover:bg-primary-200 text-xs font-medium whitespace-nowrap">
+                            + New
+                        </button>
+                    </div>
+                    <div id="sub-exec-info-${idx}" class="mt-1 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
                 </div>
-                <div id="sub-exec-info-${idx}" class="mt-1 bg-gray-50 rounded p-2 text-xs text-gray-500 hidden"></div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Relationship to Testator</label>
+                    <input type="text" name="sub_exec_relationship_${idx}"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                           placeholder="e.g., Brother, Friend">
+                </div>
             </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-700 mb-1">Relationship to Testator</label>
-                <input type="text" name="sub_exec_relationship_${idx}"
-                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
-                       placeholder="e.g., Brother, Friend">
+        </div>
+        <div id="sub-exec-corporate-${idx}" class="hidden">
+            <div class="grid md:grid-cols-2 gap-3">
+                <div class="md:col-span-2">
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Company Name</label>
+                    <input type="text" name="sub_exec_corp_name_${idx}"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                           placeholder="e.g., Rockwills Trustee Berhad">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Company Registration No.</label>
+                    <input type="text" name="sub_exec_corp_reg_${idx}"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                           placeholder="e.g., 199401006730 (289077-W)">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-700 mb-1">Address</label>
+                    <input type="text" name="sub_exec_corp_address_${idx}"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                           placeholder="Registered address">
+                </div>
             </div>
         </div>
     </div>`;

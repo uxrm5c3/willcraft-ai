@@ -170,7 +170,92 @@ class Document(db.Model):
     file_path = db.Column(db.String(500), nullable=False)
     file_type = db.Column(db.String(50))
     file_size = db.Column(db.Integer)
-    category = db.Column(db.String(50))  # nric, property, financial, will
+    category = db.Column(db.String(50))  # nric, property, financial, will, death_certificate
     description = db.Column(db.String(500), nullable=True)
     extracted_data = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ProbateApplication(db.Model):
+    """A probate application linked to an approved will."""
+    __tablename__ = 'probate_applications'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    will_id = db.Column(db.String(36), db.ForeignKey('wills.id'), nullable=False)
+    client_id = db.Column(db.String(36), db.ForeignKey('clients.id'), nullable=False)
+    status = db.Column(db.String(20), default='draft')  # draft, generated
+
+    # Death details
+    death_cert_number = db.Column(db.String(100), nullable=True)
+    date_of_death = db.Column(db.String(20), nullable=True)
+    time_of_death = db.Column(db.String(20), nullable=True)
+    place_of_death = db.Column(db.String(500), nullable=True)
+    death_cert_document_id = db.Column(db.String(36), nullable=True)
+    estate_value_estimate = db.Column(db.String(100), nullable=True)
+
+    # Court details
+    court_location = db.Column(db.String(200), nullable=True)
+    court_state = db.Column(db.String(200), nullable=True)
+    case_number = db.Column(db.String(100), nullable=True)
+    filing_year = db.Column(db.String(10), nullable=True)
+
+    # Law firm details
+    firm_name = db.Column(db.String(300), nullable=True)
+    firm_address = db.Column(db.Text, nullable=True)
+    firm_phone = db.Column(db.String(50), nullable=True)
+    firm_fax = db.Column(db.String(50), nullable=True)
+    firm_reference = db.Column(db.String(100), nullable=True)
+
+    # Lawyer details
+    lawyer_name = db.Column(db.String(200), nullable=True)
+    lawyer_nric = db.Column(db.String(50), nullable=True)
+    lawyer_bar_number = db.Column(db.String(50), nullable=True)
+
+    # Will witnesses
+    witness1_name = db.Column(db.String(200), nullable=True)
+    witness1_nric = db.Column(db.String(50), nullable=True)
+    witness1_address = db.Column(db.Text, nullable=True)
+    witness2_name = db.Column(db.String(200), nullable=True)
+    witness2_nric = db.Column(db.String(50), nullable=True)
+    witness2_address = db.Column(db.Text, nullable=True)
+
+    # Selected forms (JSON array of form codes)
+    selected_forms = db.Column(db.Text, default='[]')
+    # Consolidated form data (JSON)
+    form_data_json = db.Column(db.Text, default='{}')
+
+    created_by = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    will = db.relationship('Will', backref='probate_applications')
+    client = db.relationship('Client', backref='probate_applications')
+    generated_forms = db.relationship('ProbateGeneratedForm', backref='probate_application', lazy=True)
+    creator = db.relationship('User', foreign_keys=[created_by])
+
+
+class ProbateFormTemplate(db.Model):
+    """Template for a probate court form."""
+    __tablename__ = 'probate_form_templates'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    form_code = db.Column(db.String(20), nullable=False, unique=True)
+    form_name = db.Column(db.String(200), nullable=False)
+    form_name_malay = db.Column(db.String(200), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    file_path = db.Column(db.String(500), nullable=False)
+    is_default = db.Column(db.Boolean, default=True)
+    category = db.Column(db.String(20), default='core')  # core, witness, property
+    requires_property = db.Column(db.Boolean, default=False)
+    requires_witnesses = db.Column(db.Boolean, default=False)
+    sort_order = db.Column(db.Integer, default=0)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ProbateGeneratedForm(db.Model):
+    """A generated probate form document."""
+    __tablename__ = 'probate_generated_forms'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    probate_id = db.Column(db.String(36), db.ForeignKey('probate_applications.id'), nullable=False)
+    form_code = db.Column(db.String(20), nullable=False)
+    form_name = db.Column(db.String(200), nullable=True)
+    file_path = db.Column(db.String(500), nullable=False)
+    generated_at = db.Column(db.DateTime, default=datetime.utcnow)
