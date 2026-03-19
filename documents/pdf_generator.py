@@ -323,11 +323,14 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     .page-footer .sig-boxes {{
         width: 100%;
         border-collapse: collapse;
-        margin-top: 0;
+        margin-top: 1pt;
     }}
     .page-footer .sig-boxes td {{
         width: 33.33%;
-        border: 0.5pt solid #000;
+        border-left: 0.5pt solid #000;
+        border-right: 0.5pt solid #000;
+        border-bottom: 0.5pt solid #000;
+        border-top: 0.5pt solid #000;
         height: 45pt;
         text-align: center;
         vertical-align: bottom;
@@ -338,6 +341,9 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
     /* Page number in footer using CSS counter */
     .page-footer .page-num::after {{
         content: counter(page);
+    }}
+    .page-footer .page-next::after {{
+        content: counter(page, decimal);
     }}
     /* Hide footer on signing page */
     .signing-page .page-footer {{ display: none; }}
@@ -460,10 +466,10 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
 <body>
 <!-- Fixed footer matching Rockwills format -->
 <div class="page-footer">
-    <table style="width:100%; border-collapse:collapse; font-family:'Times New Roman',serif; font-size:8pt;">
+    <table style="width:100%; border-collapse:collapse; font-family:'Times New Roman',serif; font-size:8pt; margin-bottom:0;">
         <tr>
-            <td style="text-align:left; padding:1pt 0; border-top:0.5pt solid #000;">Page| <span class="page-num"></span></td>
-            <td style="text-align:right; padding:1pt 0; border-top:0.5pt solid #000;">Continued on next page</td>
+            <td style="text-align:left; padding:1pt 0;">Page| <span class="page-num"></span></td>
+            <td style="text-align:right; padding:1pt 0;">Continued on Page <span class="page-next"></span></td>
         </tr>
     </table>
     <table class="sig-boxes">
