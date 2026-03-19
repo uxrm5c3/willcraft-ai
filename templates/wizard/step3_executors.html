@@ -215,10 +215,11 @@
             <h3 class="text-lg font-semibold text-gray-800">Trustee(s)</h3>
             <span class="px-2 py-0.5 bg-amber-50 text-amber-600 text-xs font-semibold rounded-full">Required for minor beneficiaries</span>
         </div>
-        <p class="text-sm text-gray-500 mb-4">Trustees manage assets held in trust for minor or vulnerable beneficiaries. Under the Probate and Administration Act 1959, trustee appointment is compulsory when any beneficiary is under 18.</p>
+        <p class="text-sm text-gray-500 mb-2">Trustees manage assets held in trust for minor or vulnerable beneficiaries. Under the Probate and Administration Act 1959, trustee appointment is compulsory when any beneficiary is under 18.</p>
+        <p class="text-sm text-amber-600 mb-4 font-medium">Only tick this if you have minor beneficiaries (under 18). If all beneficiaries are adults, you may skip this.</p>
 
         {% set trustee_data = data.get('trustee_data', {}) %}
-        {% set trustee_same = trustee_data.get('same_as_executor', true) %}
+        {% set trustee_same = trustee_data.get('same_as_executor', false) %}
 
         <!-- Same as Executor Toggle -->
         <div class="mb-4 p-4 border border-gray-200 rounded-lg bg-gray-50">
@@ -229,7 +230,7 @@
                        onchange="toggleTrusteeSection(!this.checked)">
                 <div>
                     <span class="text-sm font-semibold text-gray-700">Appoint same person(s) as Executor(s) as Trustee(s)</span>
-                    <p class="text-xs text-gray-500 mt-0.5">The executor(s) above will also serve as trustee(s). This is the most common arrangement.</p>
+                    <p class="text-xs text-gray-500 mt-0.5">Tick this if any beneficiary is a minor. The executor(s) above will also serve as trustee(s).</p>
                 </div>
             </label>
         </div>

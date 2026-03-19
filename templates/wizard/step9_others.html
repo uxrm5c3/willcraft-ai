@@ -127,6 +127,24 @@
             </div>
         </div>
 
+        <!-- Joint Bank Account Clause -->
+        <div class="border border-gray-200 rounded-lg p-5 mb-4">
+            <label class="flex items-start">
+                <input type="checkbox" name="joint_account_clause_enabled" value="1" {% if other.get('joint_account_clause_enabled') %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-3 mt-0.5"
+                       onchange="toggleSection('joint-account-section', this.checked)">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Joint Bank Account — Surviving Account Holder Clause</span>
+                    <p class="text-xs text-gray-500 mt-1">If the testator holds joint bank accounts, insert a clause that if the surviving account holder is entitled to the balance by right of survivorship, the testator's share as specified in this will shall only take effect if the right of survivorship does not apply.</p>
+                </div>
+            </label>
+            <div id="joint-account-section" class="mt-4 ml-7 {% if not other.get('joint_account_clause_enabled') %}hidden{% endif %}">
+                <div class="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                    <p class="text-xs text-blue-700 italic">Will wording: "In the event that any moneys standing to my credit in any joint account do not form part of my estate by reason of the right of survivorship, then the provisions in this Will relating to such moneys shall be of no effect."</p>
+                </div>
+            </div>
+        </div>
+
         <!-- Additional Instructions -->
         <div>
             <h4 class="text-sm font-semibold text-gray-700 mb-2">Additional Instructions</h4>

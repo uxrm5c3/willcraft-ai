@@ -1869,7 +1869,7 @@ def wizard_step_executors():
             data={
                 'executors': session.get('step2_executors', [{}]),
                 'executor_type': session.get('step3_executor_type', 'single'),
-                'trustee_data': session.get('step3_trustees', {'same_as_executor': True, 'trustees': [{}]}),
+                'trustee_data': session.get('step3_trustees', {'same_as_executor': False, 'trustees': [{}]}),
             },
             persons=session.get('person_registry', []),
             beneficiaries=session.get('step4_beneficiaries', []),
@@ -2377,6 +2377,9 @@ def wizard_step_others():
     if om_data['unnamed_children_enabled']:
         om_data['unnamed_children_spouse_name'] = request.form.get('unnamed_children_spouse_name', '').strip() or None
         om_data['unnamed_children_spouse_nric'] = request.form.get('unnamed_children_spouse_nric', '').strip() or None
+
+    # Joint bank account clause
+    om_data['joint_account_clause_enabled'] = bool(request.form.get('joint_account_clause_enabled'))
 
     additional = request.form.get('additional_instructions', '').strip()
     if additional:
