@@ -357,10 +357,13 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         }}
         @top-right {{ content: none; }}
 
-        /* No footer on signing page */
+        /* Signing page footer: page number + line only, no signature boxes */
         @bottom-left {{ content: none; }}
-        @bottom-center {{ content: none; }}
         @bottom-right {{ content: none; }}
+        @bottom-center {{
+            content: element(signingFooter);
+            width: 100%;
+        }}
     }}
 
     /* Running header element — placed into @top-center via element() */
@@ -417,6 +420,27 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     }}
     /* Page counter works inside running() elements */
     .page-footer .page-num::after {{
+        content: counter(page);
+    }}
+
+    /* Signing page footer: page number + line only, no signature boxes */
+    .signing-footer {{
+        position: running(signingFooter);
+        font-family: 'Times New Roman', Times, serif;
+        width: 100%;
+    }}
+    .signing-footer .footer-top-line {{
+        border-top: 0.5pt solid #000;
+        height: 0;
+        margin: 0;
+        padding: 0;
+    }}
+    .signing-footer .footer-info {{
+        font-size: 8pt;
+        text-align: left;
+        padding: 2pt 0 2pt 0;
+    }}
+    .signing-footer .page-num::after {{
         content: counter(page);
     }}
 
@@ -563,6 +587,12 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
             <td>Witness 2</td>
         </tr>
     </table>
+</div>
+
+<!-- Signing page footer: page number only, no signature boxes -->
+<div class="signing-footer">
+    <div class="footer-top-line"></div>
+    <div class="footer-info">Page| <span class="page-num"></span></div>
 </div>
 
 {content_html}
