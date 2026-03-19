@@ -293,53 +293,40 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             border-bottom: 0.5pt solid #000;
         }}
 
-        /* Page number - bottom left */
+        /* Footer: Page N + Testator sig | Witness 1 sig | Witness 2 sig */
         @bottom-left {{
-            content: "Page " counter(page);
-            font-family: 'Times New Roman', Times, serif;
-            font-size: 8pt;
-            color: #666;
-            vertical-align: top;
-            padding-top: 10pt;
-            border-top: 0.5pt solid #999;
-        }}
-
-        /* Testator signature space */
-        @bottom-center-left {{
-            content: "______________________\\ATestator";
+            content: "Page " counter(page) "\\A\\A__________________\\ATestator";
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
             color: #666;
             white-space: pre-wrap;
             text-align: center;
             vertical-align: top;
-            padding-top: 10pt;
+            padding-top: 6pt;
             border-top: 0.5pt solid #999;
         }}
 
-        /* Witness 1 signature space */
         @bottom-center {{
-            content: "______________________\\AWitness 1";
+            content: "\\A\\A__________________\\AWitness 1";
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
             color: #666;
             white-space: pre-wrap;
             text-align: center;
             vertical-align: top;
-            padding-top: 10pt;
+            padding-top: 6pt;
             border-top: 0.5pt solid #999;
         }}
 
-        /* Witness 2 signature space */
         @bottom-right {{
-            content: "______________________\\AWitness 2";
+            content: "\\A\\A__________________\\AWitness 2";
             font-family: 'Times New Roman', Times, serif;
             font-size: 7pt;
             color: #666;
             white-space: pre-wrap;
             text-align: center;
             vertical-align: top;
-            padding-top: 10pt;
+            padding-top: 6pt;
             border-top: 0.5pt solid #999;
         }}
     }}
@@ -369,7 +356,6 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament") -
             padding-top: 10pt;
         }}
 
-        @bottom-center-left {{ content: ""; }}
         @bottom-center {{ content: ""; }}
         @bottom-right {{ content: ""; }}
     }}
