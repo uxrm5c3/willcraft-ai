@@ -1028,11 +1028,13 @@ function formatFieldLabel(key) {
     return OCR_FIELD_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
-function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retryArgs, retryCameraInfo) {
+function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retryArgs, retryCameraInfo, existingData) {
     _ocrPendingData = extracted;
     _ocrPendingCallback = callback;
     _ocrRetryInputEl = retryInputEl;
     _ocrRetryCamera = retryCameraInfo || null;
+
+    const existing = existingData || {};
 
     const previewImg = document.getElementById('ocr-preview-img');
     if (imageFile && imageFile.type && imageFile.type.startsWith('image/')) {
@@ -1066,13 +1068,36 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
     for (const [key, value] of Object.entries(extracted)) {
         if (key === 'error' || key === 'raw' || key === 'assets') continue;
         const label = formatFieldLabel(key);
-        const isEmpty = !value || value.toString().trim() === '';
-        const bc = isEmpty ? 'border-amber-300 bg-amber-50' : 'border-gray-300';
+        const ocrVal = (value||'').toString().trim();
+        const existVal = (existing[key]||'').toString().trim();
+        const hasConflict = existVal !== '' && ocrVal !== '' && existVal !== ocrVal;
+        const isEmpty = !ocrVal;
         const isAddress = key.toLowerCase().includes('address');
-        const displayValue = (value||'').toString().replace(/"/g,'&quot;');
-        if (isAddress) {
-            // Address comes as multi-line from server (line1\nline2\nline3)
-            // Real newlines display correctly in textarea
+
+        if (hasConflict) {
+            // Show conflict UI with radio buttons — default "Keep original"
+            const existDisplay = existVal.replace(/"/g,'&quot;');
+            const ocrDisplay = ocrVal.replace(/"/g,'&quot;');
+            container.innerHTML += `<div class="flex flex-col gap-1 p-3 border border-amber-300 bg-amber-50 rounded-lg">
+                <label class="text-sm font-semibold text-amber-800">${label} — different from existing</label>
+                <label class="flex items-start gap-2 cursor-pointer text-sm p-1.5 rounded hover:bg-amber-100">
+                    <input type="radio" name="ocr-choice-${key}" value="keep" checked
+                           class="mt-0.5 text-primary-600 focus:ring-primary-500">
+                    <span><span class="font-medium text-gray-700">Keep original:</span>
+                    <span class="text-gray-900">${isAddress ? existDisplay.replace(/\n/g, ', ') : existDisplay}</span></span>
+                </label>
+                <label class="flex items-start gap-2 cursor-pointer text-sm p-1.5 rounded hover:bg-amber-100">
+                    <input type="radio" name="ocr-choice-${key}" value="scanned"
+                           class="mt-0.5 text-primary-600 focus:ring-primary-500">
+                    <span><span class="font-medium text-gray-700">Use scanned:</span>
+                    <span class="text-gray-900">${isAddress ? ocrDisplay.replace(/\n/g, ', ') : ocrDisplay}</span></span>
+                </label>
+                <input type="hidden" name="ocr-field-${key}" value="${existDisplay}">
+                <input type="hidden" name="ocr-existing-${key}" value="${existDisplay}">
+                <input type="hidden" name="ocr-scanned-${key}" value="${ocrDisplay}">
+            </div>`;
+        } else if (isAddress) {
+            const bc = isEmpty ? 'border-amber-300 bg-amber-50' : 'border-gray-300';
             let textareaValue = (value||'').toString();
             container.innerHTML += `<div class="flex flex-col gap-1">
                 <label class="text-sm font-medium text-gray-700">${label}</label>
@@ -1080,6 +1105,8 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
                        class="w-full px-3 py-1.5 border ${bc} rounded-lg text-sm focus:ring-2 focus:ring-primary-500">${textareaValue}</textarea>
             </div>`;
         } else {
+            const bc = isEmpty ? 'border-amber-300 bg-amber-50' : 'border-gray-300';
+            const displayValue = (value||'').toString().replace(/"/g,'&quot;');
             container.innerHTML += `<div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
                 <label class="text-sm font-medium text-gray-700 sm:w-40 shrink-0">${label}</label>
                 <input name="ocr-field-${key}" value="${displayValue}"
@@ -1103,16 +1130,35 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
 }
 
 function applyOCRData() {
-    const fields = document.querySelectorAll('#ocr-fields-container input, #ocr-fields-container textarea');
+    const container = document.getElementById('ocr-fields-container');
     const data = {};
     const assetData = {};
+
+    // Handle conflict fields — check which radio the user selected
+    const choiceRadios = container.querySelectorAll('input[type="radio"][name^="ocr-choice-"]:checked');
+    choiceRadios.forEach(r => {
+        const key = r.name.replace('ocr-choice-', '');
+        if (r.value === 'keep') {
+            data[key] = container.querySelector(`[name="ocr-existing-${key}"]`).value;
+        } else {
+            data[key] = container.querySelector(`[name="ocr-scanned-${key}"]`).value;
+        }
+    });
+
+    // Handle normal (non-conflict) fields
+    const fields = container.querySelectorAll('input[name^="ocr-field-"], textarea[name^="ocr-field-"]');
     fields.forEach(f => {
+        if (f.type === 'hidden') return; // skip hidden inputs used by conflict UI
         if (f.name.startsWith('ocr-field-asset_')) {
             assetData[f.name.replace('ocr-field-asset_', '')] = f.value;
         } else if (f.name.startsWith('ocr-field-')) {
-            data[f.name.replace('ocr-field-', '')] = f.value;
+            const key = f.name.replace('ocr-field-', '');
+            if (!(key in data)) { // don't overwrite conflict-resolved values
+                data[key] = f.value;
+            }
         }
     });
+
     if (Object.keys(assetData).length > 0) data.assets = [assetData];
     if (_ocrPendingCallback) _ocrPendingCallback(data);
     closeOCRModal();
@@ -1172,23 +1218,48 @@ async function uploadAndExtractNRIC(inputOrFile, statusElId, fieldMapping) {
         if (data.ok && data.extracted) {
             if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">📋 Review extracted data...</span>';
 
+            // Collect existing form values to detect conflicts
+            const existingData = {};
+            const _gv = (name) => { const el = document.querySelector(`[name="${name}"]`); return el ? el.value.trim() : ''; };
+            if (fieldMapping.name) existingData.full_name = _gv(fieldMapping.name);
+            if (fieldMapping.nric) existingData.nric_number = _gv(fieldMapping.nric);
+            if (fieldMapping.address) existingData.address = _gv(fieldMapping.address);
+            if (fieldMapping.dob) {
+                const dobVal = _gv(fieldMapping.dob);
+                // Convert YYYY-MM-DD back to DD-MM-YYYY for comparison
+                if (dobVal && dobVal.includes('-') && dobVal.split('-')[0].length === 4) {
+                    const p = dobVal.split('-');
+                    existingData.date_of_birth = `${p[2]}-${p[1]}-${p[0]}`;
+                } else {
+                    existingData.date_of_birth = dobVal;
+                }
+            }
+            if (fieldMapping.gender) existingData.gender = _gv(fieldMapping.gender);
+            if (fieldMapping.nationality) existingData.nationality = _gv(fieldMapping.nationality);
+
             showOCRConfirmation(data.extracted, file, (confirmed) => {
-                if (fieldMapping.name && confirmed.full_name) setValueIfEmpty(fieldMapping.name, confirmed.full_name);
-                if (fieldMapping.nric && confirmed.nric_number) setValueIfEmpty(fieldMapping.nric, confirmed.nric_number);
-                if (fieldMapping.address && confirmed.address) setValueIfEmpty(fieldMapping.address, confirmed.address);
+                // User already chose keep/replace in modal — apply values directly
+                const _setField = (name, val) => {
+                    const el = document.querySelector(`[name="${name}"]`);
+                    if (el && val) { el.value = val; el.classList.add('bg-yellow-50'); }
+                };
+                if (fieldMapping.name && confirmed.full_name) _setField(fieldMapping.name, confirmed.full_name);
+                if (fieldMapping.nric && confirmed.nric_number) _setField(fieldMapping.nric, confirmed.nric_number);
+                if (fieldMapping.address && confirmed.address) _setField(fieldMapping.address, confirmed.address);
                 if (fieldMapping.dob && confirmed.date_of_birth) {
                     const d = convertDateForInput(confirmed.date_of_birth);
-                    if (d) setValueIfEmpty(fieldMapping.dob, d);
+                    if (d) _setField(fieldMapping.dob, d);
                 }
                 if (fieldMapping.gender && confirmed.gender) {
                     const g = document.querySelector(`[name="${fieldMapping.gender}"]`);
                     if (g) { g.value = confirmed.gender; g.classList.add('bg-yellow-50'); }
                 }
-                if (fieldMapping.nationality && confirmed.nationality) setValueIfEmpty(fieldMapping.nationality, confirmed.nationality);
+                if (fieldMapping.nationality && confirmed.nationality) _setField(fieldMapping.nationality, confirmed.nationality);
                 if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Data applied!</span>';
                 setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
-            { callback: (f) => uploadAndExtractNRIC(f, statusElId, fieldMapping), docType: 'nric' });
+            { callback: (f) => uploadAndExtractNRIC(f, statusElId, fieldMapping), docType: 'nric' },
+            existingData);
         } else {
             if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the document. Please try a clearer image.</span>';
         }
