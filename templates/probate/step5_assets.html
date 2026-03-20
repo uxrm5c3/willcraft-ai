@@ -41,12 +41,24 @@
             <button type="button" id="add-vehicle-btn" onclick="addAsset('vehicle')" class="mt-2 w-full px-3 py-2 border-2 border-dashed border-gray-300 text-gray-500 text-xs font-medium rounded-lg hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50 transition-colors">+ Add Vehicle</button>
         </div>
 
+        <!-- Investment Accounts -->
+        <div class="mb-6">
+            <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-3">
+                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+                Investment Accounts (Akaun Pelaburan)
+                <span class="text-xs text-gray-400 font-normal">— CDS, unit trust, shares, ASB, etc.</span>
+            </h3>
+            <div id="investment-list" class="space-y-3"></div>
+            <div id="investment-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No investment accounts added yet.</div>
+            <button type="button" id="add-investment-btn" onclick="addAsset('investment')" class="mt-2 w-full px-3 py-2 border-2 border-dashed border-gray-300 text-gray-500 text-xs font-medium rounded-lg hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50 transition-colors">+ Add Investment</button>
+        </div>
+
         <!-- Other Assets -->
         <div class="mb-6">
             <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-3">
                 <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
                 Other Assets (Aset Lain)
-                <span class="text-xs text-gray-400 font-normal">— Insurance, EPF, shares, jewellery, etc.</span>
+                <span class="text-xs text-gray-400 font-normal">— Insurance, EPF, jewellery, etc.</span>
             </h3>
             <div id="other-list" class="space-y-3"></div>
             <div id="other-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No other assets added yet.</div>
@@ -134,6 +146,12 @@ const FIELD_DEFS = {
         { key: 'chassis_number', label: 'Chassis Number' },
         { key: 'value', label: 'Estimated Value (RM)' },
     ],
+    investment: [
+        { key: 'institution', label: 'Institution / Broker' },
+        { key: 'account_number', label: 'Account Number' },
+        { key: 'description', label: 'Description' },
+        { key: 'value', label: 'Estimated Value (RM)' },
+    ],
     other: [
         { key: 'description', label: 'Description' },
         { key: 'value', label: 'Estimated Value (RM)' },
@@ -159,14 +177,14 @@ function charDiffHtml(existing, scanned) {
 }
 
 /* ── Scan button label ── */
-const SCAN_LABELS = { property: 'Scan Title', bank: 'Scan Statement', vehicle: 'Scan Reg Card', other: 'Scan Doc', liability: 'Scan Doc' };
+const SCAN_LABELS = { property: 'Scan Title', bank: 'Scan Statement', vehicle: 'Scan Reg Card', investment: 'Scan Statement', other: 'Scan Doc', liability: 'Scan Doc' };
 
 /* ── Render asset card ── */
 function assetFormHtml(type, idx, data) {
     data = data || {};
     const borderColor = type === 'liability' ? 'border-red-200' : 'border-gray-200';
     const labelColor = type === 'liability' ? 'text-red-500' : 'text-gray-500';
-    const typeLabel = { property: 'Property', bank: 'Account', vehicle: 'Vehicle', other: 'Asset', liability: 'Liability' }[type];
+    const typeLabel = { property: 'Property', bank: 'Account', vehicle: 'Vehicle', investment: 'Investment', other: 'Asset', liability: 'Liability' }[type];
     const scanLabel = SCAN_LABELS[type];
     const docId = data._doc_id || '';
     const docName = data._doc_name || '';
@@ -229,13 +247,31 @@ function assetFormHtml(type, idx, data) {
                 <input type="text" data-field="chassis_number" value="${data.chassis_number||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="Optional"></div>
             <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
                 <input type="text" data-field="value" value="${data.value||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 30,000"></div>`;
+    } else if (type === 'investment') {
+        fieldsHtml = `
+            <div><label class="block text-xs text-gray-500 mb-0.5">Type</label>
+                <select data-field="sub_type" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+                    <option value="cds" ${data.sub_type==='cds'?'selected':''}>CDS Account (Shares)</option>
+                    <option value="unit_trust" ${data.sub_type==='unit_trust'?'selected':''}>Unit Trust / Mutual Fund</option>
+                    <option value="asb" ${data.sub_type==='asb'?'selected':''}>ASB / Amanah Saham</option>
+                    <option value="fixed_deposit" ${data.sub_type==='fixed_deposit'?'selected':''}>Fixed Deposit</option>
+                    <option value="bonds" ${data.sub_type==='bonds'?'selected':''}>Bonds / Sukuk</option>
+                    <option value="other_investment" ${data.sub_type==='other_investment'||!data.sub_type?'selected':''}>Other Investment</option>
+                </select></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Institution / Broker</label>
+                <input type="text" data-field="institution" value="${data.institution||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Bursa Malaysia / Maybank / CIMB"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Account Number</label>
+                <input type="text" data-field="account_number" value="${data.account_number||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., CDS account no. or fund account no."></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Description</label>
+                <input type="text" data-field="description" value="${data.description||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 1000 units Maybank shares"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
+                <input type="text" data-field="value" value="${data.value||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 50,000"></div>`;
     } else if (type === 'other') {
         fieldsHtml = `
             <div><label class="block text-xs text-gray-500 mb-0.5">Type</label>
                 <select data-field="sub_type" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
                     <option value="epf" ${data.sub_type==='epf'?'selected':''}>EPF / KWSP</option>
                     <option value="insurance" ${data.sub_type==='insurance'?'selected':''}>Insurance Policy</option>
-                    <option value="shares" ${data.sub_type==='shares'?'selected':''}>Shares / Unit Trust</option>
                     <option value="jewellery" ${data.sub_type==='jewellery'?'selected':''}>Jewellery</option>
                     <option value="other" ${data.sub_type==='other'||!data.sub_type?'selected':''}>Other</option>
                 </select></div>
@@ -277,6 +313,7 @@ const REQUIRED_FIELDS = {
     property: ['description'],
     bank: ['bank_name'],
     vehicle: ['description'],
+    investment: ['institution'],
     other: ['description'],
     liability: ['description'],
 };
@@ -302,7 +339,7 @@ function isLastItemComplete(type) {
 }
 
 function updateAddButtons() {
-    const types = ['property', 'bank', 'vehicle', 'other', 'liability'];
+    const types = ['property', 'bank', 'vehicle', 'investment', 'other', 'liability'];
     types.forEach(type => {
         const btn = document.getElementById('add-' + type + '-btn');
         if (!btn) return;
@@ -325,7 +362,7 @@ function autosaveDebounced() {
 }
 
 function renderAssets() {
-    const types = ['property', 'bank', 'vehicle', 'other', 'liability'];
+    const types = ['property', 'bank', 'vehicle', 'investment', 'other', 'liability'];
     types.forEach(type => {
         const list = document.getElementById(type + '-list');
         const empty = document.getElementById(type + '-empty');
@@ -381,7 +418,7 @@ function removeDoc(type, idx) {
 }
 
 function collectAssetData() {
-    const types = ['property', 'bank', 'vehicle', 'other', 'liability'];
+    const types = ['property', 'bank', 'vehicle', 'investment', 'other', 'liability'];
     const result = [];
     types.forEach(type => {
         const cards = document.querySelectorAll(`[data-type="${type}"]`);
