@@ -1770,6 +1770,26 @@ def api_document_delete(doc_id):
     return jsonify({'ok': True})
 
 
+@app.route('/api/documents/<doc_id>/translate', methods=['POST'])
+@login_required
+def api_document_translate(doc_id):
+    """Translate a document image from Bahasa Malaysia to English."""
+    doc = db.session.get(Document, doc_id)
+    if not doc:
+        return jsonify({'ok': False, 'error': 'Document not found'}), 404
+    from config import UPLOAD_DIR
+    abs_path = os.path.join(UPLOAD_DIR, doc.file_path)
+    if not os.path.isfile(abs_path):
+        return jsonify({'ok': False, 'error': 'File not found on disk'}), 404
+    try:
+        from ai.ocr import translate_document
+        translation = translate_document(abs_path)
+        return jsonify({'ok': True, 'translation': translation})
+    except Exception as e:
+        app.logger.error(f'Document translate error: {e}')
+        return jsonify({'ok': False, 'error': 'Translation failed. Please try again.'}), 500
+
+
 # -- OCR Extraction API -------------------------------------------------------
 
 @app.route('/api/ocr/nric', methods=['POST'])
@@ -2481,6 +2501,7 @@ def wizard_step_gifts():
             completed_steps=get_completed_steps(),
             data={'gifts': session.get('step5_gifts', [])},
             beneficiaries=session.get('step4_beneficiaries', []),
+            persons=session.get('person_registry', []),
         )
 
     # POST -- parse gifts with nested allocations and structured details

@@ -589,3 +589,66 @@ def _extract_json(text: str) -> str:
         return match.group(0)
 
     return None
+
+
+def translate_document(image_path: str) -> str:
+    """Translate a Bahasa Malaysia document image to English using Claude Vision.
+
+    Returns the English translation as plain text.
+    """
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    with open(image_path, 'rb') as f:
+        image_data = base64.standard_b64encode(f.read()).decode('utf-8')
+
+    ext = image_path.rsplit('.', 1)[-1].lower()
+    if ext == 'pdf':
+        content_block = {
+            "type": "document",
+            "source": {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": image_data,
+            }
+        }
+    else:
+        media_type = {
+            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+            'png': 'image/png', 'gif': 'image/gif',
+        }.get(ext, 'image/jpeg')
+        content_block = {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": image_data,
+            }
+        }
+
+    message = client.messages.create(
+        model=CLAUDE_MODEL_FAST,
+        max_tokens=4096,
+        messages=[{
+            "role": "user",
+            "content": [
+                content_block,
+                {
+                    "type": "text",
+                    "text": """Read this document image carefully.
+
+This is a Malaysian legal/official document likely written in Bahasa Malaysia (Malay language).
+
+Please:
+1. Read ALL text visible in the document
+2. Translate the entire content from Bahasa Malaysia to English
+3. Preserve the document structure (headings, sections, numbered items, tables)
+4. Keep proper nouns (names, places, addresses) as-is — do not translate them
+5. If a document contains both Malay and English text, keep the English parts unchanged
+
+Format the translation clearly with proper line breaks and sections.
+If the document is already in English, just reproduce the text content."""
+                }
+            ]
+        }]
+    )
+    return message.content[0].text

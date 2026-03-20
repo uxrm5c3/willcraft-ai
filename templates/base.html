@@ -262,13 +262,31 @@
     <div id="document-viewer" class="fixed inset-0 bg-black/95 z-[80] hidden flex flex-col items-center justify-center" onclick="if(event.target===this)closeDocumentViewer()">
         <div class="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/80 to-transparent z-10">
             <span id="doc-viewer-title" class="text-white text-sm font-medium truncate mr-4"></span>
-            <button onclick="closeDocumentViewer()" class="text-white hover:text-gray-300 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
+            <div class="flex items-center gap-2">
+                <button id="doc-translate-btn" onclick="translateDocument()" class="text-white hover:text-blue-300 px-3 py-1.5 text-xs font-medium bg-blue-600/80 rounded-lg hover:bg-blue-600 transition-colors flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg>
+                    Translate
+                </button>
+                <button onclick="closeDocumentViewer()" class="text-white hover:text-gray-300 p-2 min-w-[44px] min-h-[44px] flex items-center justify-center">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
         </div>
         <div class="flex-1 flex items-center justify-center p-4 w-full overflow-auto">
             <img id="doc-viewer-img" src="" alt="Document" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl">
             <iframe id="doc-viewer-pdf" src="" class="hidden w-full h-full rounded-lg" style="max-width:800px;"></iframe>
+        </div>
+        <!-- Translation overlay -->
+        <div id="doc-translate-overlay" class="hidden absolute inset-0 z-20 flex items-center justify-center bg-black/80" onclick="if(event.target===this)closeTranslation()">
+            <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full mx-4 max-h-[85vh] flex flex-col">
+                <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+                    <h3 class="font-semibold text-gray-800">English Translation</h3>
+                    <button onclick="closeTranslation()" class="text-gray-400 hover:text-gray-600 p-1">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+                <div id="doc-translate-content" class="flex-1 overflow-y-auto px-4 py-3 text-sm text-gray-700 whitespace-pre-wrap"></div>
+            </div>
         </div>
     </div>
 

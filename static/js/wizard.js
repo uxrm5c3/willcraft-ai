@@ -657,9 +657,13 @@ function hideDocumentPreview() {
 /**
  * Open the full-screen document viewer lightbox.
  */
+let _currentDocumentId = null; // Track current document for translate
+
 function viewDocument() {
     const docId = document.getElementById('modal-document-id')?.value;
     if (!docId) return;
+
+    _currentDocumentId = docId;
 
     const viewer = document.getElementById('document-viewer');
     if (!viewer) return;
@@ -699,6 +703,8 @@ function viewDocument() {
 function viewDocumentById(documentId, filename) {
     if (!documentId) return;
 
+    _currentDocumentId = documentId;
+
     const viewer = document.getElementById('document-viewer');
     if (!viewer) return;
 
@@ -730,11 +736,45 @@ function closeDocumentViewer() {
     const viewer = document.getElementById('document-viewer');
     if (viewer) viewer.classList.add('hidden');
     document.body.style.overflow = '';
+    _currentDocumentId = null;
+    closeTranslation();
     // Clear sources to stop any loading
     const imgEl = document.getElementById('doc-viewer-img');
     const pdfEl = document.getElementById('doc-viewer-pdf');
     if (imgEl) imgEl.src = '';
     if (pdfEl) { pdfEl.src = ''; pdfEl.classList.add('hidden'); }
+}
+
+function translateDocument() {
+    if (!_currentDocumentId) return;
+    const btn = document.getElementById('doc-translate-btn');
+    const overlay = document.getElementById('doc-translate-overlay');
+    const content = document.getElementById('doc-translate-content');
+    if (!overlay || !content) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Translating...';
+
+    fetch(`/api/documents/${_currentDocumentId}/translate`, { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.ok) {
+                content.textContent = data.translation;
+                overlay.classList.remove('hidden');
+            } else {
+                alert(data.error || 'Translation failed');
+            }
+        })
+        .catch(() => alert('Translation failed. Please try again.'))
+        .finally(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg> Translate';
+        });
+}
+
+function closeTranslation() {
+    const overlay = document.getElementById('doc-translate-overlay');
+    if (overlay) overlay.classList.add('hidden');
 }
 
 /**
