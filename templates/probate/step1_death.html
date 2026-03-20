@@ -19,44 +19,6 @@
         </div>
     </div>
 
-    <!-- OCR Confirmation Banner (hidden by default) -->
-    <div id="ocr-confirm-banner" class="hidden mb-6 p-4 bg-amber-50 border border-amber-300 rounded-lg">
-        <div class="flex items-center justify-between mb-1">
-            <div class="flex items-center gap-2">
-                <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
-                <span class="text-sm font-semibold text-amber-800">AI-extracted data below. Please verify before saving.</span>
-            </div>
-            <button type="button" id="view-cert-btn" onclick="viewDeathCert()" class="px-3 py-1 bg-amber-600 text-white text-xs font-medium rounded-lg hover:bg-amber-700 flex items-center gap-1">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-                View Certificate
-            </button>
-        </div>
-        <p class="text-xs text-amber-600">OCR may contain errors. Check each field carefully, especially names and ID numbers.</p>
-    </div>
-
-    <!-- Side-by-side viewer modal (hidden by default) -->
-    <div id="cert-viewer-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col">
-            <div class="flex items-center justify-between p-4 border-b">
-                <h3 class="text-sm font-bold text-gray-800">Verify Extracted Data Against Certificate</h3>
-                <button onclick="closeCertViewer()" class="text-gray-400 hover:text-gray-600">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                </button>
-            </div>
-            <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 overflow-hidden">
-                <!-- Left: Certificate image/PDF -->
-                <div class="border-r overflow-auto bg-gray-100 p-2 flex items-start justify-center">
-                    <iframe id="cert-iframe" class="w-full h-full min-h-[500px] rounded" style="border:none;"></iframe>
-                </div>
-                <!-- Right: Extracted data summary -->
-                <div class="overflow-auto p-4">
-                    <h4 class="text-xs font-semibold text-gray-500 uppercase mb-3">Extracted Fields</h4>
-                    <div id="cert-extracted-fields" class="space-y-3"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <!-- Form -->
     <form method="POST" action="/probate/{{ probate_id }}/step/1" id="death-form">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -163,6 +125,36 @@
     </form>
 </div>
 
+<!-- OCR Verification Modal -->
+<div id="ocr-verify-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+        <div class="flex items-center justify-between p-4 border-b">
+            <h3 class="text-sm font-bold text-gray-800">Verify Scanned Death Certificate</h3>
+            <button onclick="closeOcrModal()" class="text-gray-400 hover:text-gray-600">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 overflow-hidden">
+            <!-- Left: Certificate image/PDF -->
+            <div class="border-r overflow-auto bg-gray-100 p-2 flex items-start justify-center">
+                <iframe id="ocr-doc-iframe" class="w-full h-full min-h-[400px] rounded" style="border:none;"></iframe>
+            </div>
+            <!-- Right: Field comparison -->
+            <div class="overflow-auto p-4">
+                <div id="ocr-fields-compare" class="space-y-4"></div>
+                <div class="mt-4 pt-4 border-t flex justify-end gap-2">
+                    <button onclick="closeOcrModal()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium border border-gray-300 rounded-lg">Cancel</button>
+                    <button onclick="applyOcrChoices()" class="px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.diff-char-mismatch { color: #dc2626; font-style: italic; font-weight: 600; text-decoration: underline; }
+</style>
+
 <script>
 const fileInput = document.getElementById('death-cert-file');
 const ocrBtn = document.getElementById('ocr-btn');
@@ -173,6 +165,110 @@ fileInput.addEventListener('change', () => {
     ocrBtn.disabled = !fileInput.files.length;
 });
 
+/* ── Character-level diff ── */
+function charDiffHtml(existing, scanned) {
+    const maxLen = Math.max(existing.length, scanned.length);
+    let existingHtml = '', scannedHtml = '';
+    for (let i = 0; i < maxLen; i++) {
+        const eChar = existing[i] || '';
+        const sChar = scanned[i] || '';
+        if (eChar === sChar) {
+            existingHtml += escHtml(eChar);
+            scannedHtml += escHtml(sChar);
+        } else {
+            if (eChar) existingHtml += '<span class="diff-char-mismatch">' + escHtml(eChar) + '</span>';
+            if (sChar) scannedHtml += '<span class="diff-char-mismatch">' + escHtml(sChar) + '</span>';
+        }
+    }
+    return { existingHtml, scannedHtml };
+}
+
+function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── Build comparison fields ── */
+function buildCompareFields(extracted) {
+    const fields = [
+        { key: 'death_cert_number', formName: 'death_cert_number', label: 'Death Certificate Number' },
+        { key: 'date_of_death', formName: 'date_of_death', label: 'Date of Death' },
+        { key: 'time_of_death', formName: 'time_of_death', label: 'Time of Death' },
+        { key: 'place_of_death', formName: 'place_of_death', label: 'Place of Death' },
+        { key: 'full_name', formName: 'deceased_name', label: 'Deceased Full Name' },
+        { key: 'nric_number', formName: 'deceased_nric', label: 'Deceased NRIC' },
+    ];
+
+    const container = document.getElementById('ocr-fields-compare');
+    container.innerHTML = '';
+    let hasAnyData = false;
+
+    fields.forEach(f => {
+        const el = document.querySelector('[name="' + f.formName + '"]');
+        if (!el) return; // field not on page (e.g. deceased_name only for LA)
+        const existing = (el.value || '').trim();
+        const scanned = (extracted[f.key] || '').trim();
+        if (!scanned) return;
+        hasAnyData = true;
+
+        const norm = (s) => s.toUpperCase().replace(/\s+/g, ' ');
+        const isMatch = existing && norm(existing) === norm(scanned);
+
+        const div = document.createElement('div');
+        div.className = 'p-3 rounded-lg border ' + (isMatch ? 'bg-green-50 border-green-200' : (!existing ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'));
+
+        if (!existing) {
+            div.innerHTML = `
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-semibold text-gray-600 uppercase">${f.label}</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">New</span>
+                </div>
+                <div class="text-sm text-gray-800 font-medium">${escHtml(scanned)}</div>
+                <input type="hidden" class="ocr-choice" data-field="${f.formName}" data-action="update" value="${escHtml(scanned)}">
+            `;
+        } else if (isMatch) {
+            div.innerHTML = `
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-semibold text-gray-600 uppercase">${f.label}</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">&#10003; Match</span>
+                </div>
+                <div class="text-sm text-gray-800 font-medium">${escHtml(existing)}</div>
+                <input type="hidden" class="ocr-choice" data-field="${f.formName}" data-action="keep">
+            `;
+        } else {
+            const diff = charDiffHtml(existing, scanned);
+            const fieldId = 'ocr-choice-' + f.formName.replace(/[^a-z0-9]/gi, '_');
+            div.innerHTML = `
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-gray-600 uppercase">${f.label}</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Mismatch</span>
+                </div>
+                <div class="space-y-2">
+                    <label class="flex items-start gap-2 p-2 rounded cursor-pointer hover:bg-amber-100 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                        <input type="radio" name="${fieldId}" class="ocr-radio mt-1" data-field="${f.formName}" data-action="keep" checked>
+                        <div>
+                            <div class="text-xs text-gray-500 mb-0.5">Keep existing <span class="text-xs text-gray-400">(default)</span></div>
+                            <div class="text-sm font-medium font-mono">${diff.existingHtml}</div>
+                        </div>
+                    </label>
+                    <label class="flex items-start gap-2 p-2 rounded cursor-pointer hover:bg-amber-100 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                        <input type="radio" name="${fieldId}" class="ocr-radio" data-field="${f.formName}" data-action="update" data-value="${escHtml(scanned)}">
+                        <div>
+                            <div class="text-xs text-gray-500 mb-0.5">Use scanned</div>
+                            <div class="text-sm font-medium font-mono">${diff.scannedHtml}</div>
+                        </div>
+                    </label>
+                </div>
+            `;
+        }
+        container.appendChild(div);
+    });
+
+    if (!hasAnyData) {
+        container.innerHTML = '<p class="text-sm text-gray-500">OCR could not extract any data. Please fill in the fields manually.</p>';
+    }
+}
+
+/* ── Scan Death Certificate ── */
 async function ocrDeathCert() {
     const file = fileInput.files[0];
     if (!file) return;
@@ -188,24 +284,16 @@ async function ocrDeathCert() {
         const data = await resp.json();
 
         if (data.ok && data.extracted) {
-            const ex = data.extracted;
             ocrDocumentId = data.document_id;
-            ocrExtractedData = ex;
-            // Fill form fields with extracted data
-            const fields = {
-                'death_cert_number': ex.death_cert_number,
-                'date_of_death': ex.date_of_death,
-                'time_of_death': ex.time_of_death,
-                'place_of_death': ex.place_of_death,
-            };
-            for (const [name, value] of Object.entries(fields)) {
-                if (value) {
-                    const input = document.querySelector(`[name="${name}"]`);
-                    if (input) input.value = value;
-                }
-            }
-            document.getElementById('ocr-confirm-banner').classList.remove('hidden');
-            document.getElementById('ocr-status').innerHTML = '<span class="text-green-600 font-medium">&#10003; ' + file.name + '</span> — Data extracted. Please verify below.';
+            ocrExtractedData = data.extracted;
+
+            // Show verification modal
+            document.getElementById('ocr-doc-iframe').src = '/api/documents/' + data.document_id;
+            buildCompareFields(data.extracted);
+            document.getElementById('ocr-verify-modal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+
+            document.getElementById('ocr-status').innerHTML = '<span class="text-green-600 font-medium">&#10003; ' + file.name + '</span>';
         } else {
             document.getElementById('ocr-status').textContent = data.error || 'Could not extract data. Please enter manually.';
         }
@@ -216,43 +304,28 @@ async function ocrDeathCert() {
     }
 }
 
-function viewDeathCert() {
-    if (!ocrDocumentId) return;
-    const modal = document.getElementById('cert-viewer-modal');
-    const iframe = document.getElementById('cert-iframe');
-    iframe.src = '/api/documents/' + ocrDocumentId;
-
-    // Build extracted fields summary
-    const fieldsDiv = document.getElementById('cert-extracted-fields');
-    const fieldLabels = {
-        'death_cert_number': 'Death Certificate Number',
-        'full_name': 'Full Name',
-        'nric_number': 'NRIC Number',
-        'date_of_death': 'Date of Death',
-        'time_of_death': 'Time of Death',
-        'place_of_death': 'Place of Death',
-    };
-    let html = '';
-    for (const [key, label] of Object.entries(fieldLabels)) {
-        const val = ocrExtractedData[key] || '—';
-        html += `<div class="p-2 bg-gray-50 rounded-lg">
-            <div class="text-xs text-gray-500 mb-0.5">${label}</div>
-            <div class="text-sm font-medium text-gray-800">${val}</div>
-        </div>`;
-    }
-    fieldsDiv.innerHTML = html;
-    modal.classList.remove('hidden');
-    document.body.style.overflow = 'hidden';
+/* ── Apply choices ── */
+function applyOcrChoices() {
+    document.querySelectorAll('.ocr-choice').forEach(el => {
+        if (el.dataset.action === 'update') {
+            const field = document.querySelector('[name="' + el.dataset.field + '"]');
+            if (field) field.value = el.value;
+        }
+    });
+    document.querySelectorAll('.ocr-radio:checked').forEach(el => {
+        if (el.dataset.action === 'update') {
+            const field = document.querySelector('[name="' + el.dataset.field + '"]');
+            if (field) field.value = el.dataset.value;
+        }
+    });
+    closeOcrModal();
 }
 
-function closeCertViewer() {
-    document.getElementById('cert-viewer-modal').classList.add('hidden');
+function closeOcrModal() {
+    document.getElementById('ocr-verify-modal').classList.add('hidden');
     document.body.style.overflow = '';
 }
 
-// Close modal on Escape key
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeCertViewer();
-});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOcrModal(); });
 </script>
 {% endblock %}

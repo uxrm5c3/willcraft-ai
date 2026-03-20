@@ -105,7 +105,148 @@
     {% endif %}
 </div>
 
+<!-- OCR Verification Modal -->
+<div id="ocr-verify-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+        <div class="flex items-center justify-between p-4 border-b">
+            <h3 class="text-sm font-bold text-gray-800" id="ocr-modal-title">Verify Scanned IC</h3>
+            <button onclick="closeOcrModal()" class="text-gray-400 hover:text-gray-600">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 overflow-hidden">
+            <!-- Left: IC image -->
+            <div class="border-r overflow-auto bg-gray-100 p-2 flex items-start justify-center">
+                <iframe id="ocr-ic-iframe" class="w-full h-full min-h-[400px] rounded" style="border:none;"></iframe>
+            </div>
+            <!-- Right: Field comparison -->
+            <div class="overflow-auto p-4">
+                <div id="ocr-fields-compare" class="space-y-4"></div>
+                <div class="mt-4 pt-4 border-t flex justify-end gap-2">
+                    <button onclick="closeOcrModal()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium border border-gray-300 rounded-lg">Cancel</button>
+                    <button onclick="applyOcrChoices()" class="px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.diff-char-mismatch { color: #dc2626; font-style: italic; font-weight: 600; text-decoration: underline; }
+</style>
+
 <script>
+let pendingOcr = { witnessNum: null, docId: null, extracted: null };
+
+/* ── Character-level diff ── */
+function charDiffHtml(existing, scanned) {
+    // Pad shorter string so we can compare index by index
+    const maxLen = Math.max(existing.length, scanned.length);
+    let existingHtml = '', scannedHtml = '';
+    for (let i = 0; i < maxLen; i++) {
+        const eChar = existing[i] || '';
+        const sChar = scanned[i] || '';
+        if (eChar === sChar) {
+            existingHtml += escHtml(eChar);
+            scannedHtml += escHtml(sChar);
+        } else {
+            if (eChar) existingHtml += '<span class="diff-char-mismatch">' + escHtml(eChar) + '</span>';
+            if (sChar) scannedHtml += '<span class="diff-char-mismatch">' + escHtml(sChar) + '</span>';
+        }
+    }
+    return { existingHtml, scannedHtml };
+}
+
+function escHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── Build comparison UI ── */
+function buildCompareFields(witnessNum, extracted) {
+    const prefix = 'witness' + witnessNum + '_';
+    const fields = [
+        { key: 'full_name', formName: prefix + 'name', label: 'Full Name' },
+        { key: 'nric_number', formName: prefix + 'nric', label: 'NRIC' },
+        { key: 'address', formName: prefix + 'address', label: 'Address' },
+    ];
+
+    const container = document.getElementById('ocr-fields-compare');
+    container.innerHTML = '';
+
+    let allMatch = true;
+    let hasAnyData = false;
+
+    fields.forEach(f => {
+        const el = document.querySelector('[name="' + f.formName + '"]');
+        const existing = (el ? (el.value || '').trim() : '');
+        const scanned = (extracted[f.key] || '').trim();
+
+        if (!scanned) return; // OCR didn't find this field
+        hasAnyData = true;
+
+        const norm = (s) => s.toUpperCase().replace(/\s+/g, ' ');
+        const isMatch = norm(existing) === norm(scanned);
+
+        const div = document.createElement('div');
+        div.className = 'p-3 rounded-lg border ' + (isMatch ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200');
+
+        if (!existing) {
+            // No existing value — just show scanned as new
+            div.innerHTML = `
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-semibold text-gray-600 uppercase">${f.label}</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">New</span>
+                </div>
+                <div class="text-sm text-gray-800 font-medium">${escHtml(scanned)}</div>
+                <input type="hidden" class="ocr-choice" data-field="${f.formName}" data-action="update" value="${escHtml(scanned)}">
+            `;
+        } else if (isMatch) {
+            // Match
+            div.innerHTML = `
+                <div class="flex items-center justify-between mb-1">
+                    <span class="text-xs font-semibold text-gray-600 uppercase">${f.label}</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">&#10003; Match</span>
+                </div>
+                <div class="text-sm text-gray-800 font-medium">${escHtml(existing)}</div>
+                <input type="hidden" class="ocr-choice" data-field="${f.formName}" data-action="keep">
+            `;
+        } else {
+            // Mismatch — show char-level diff
+            allMatch = false;
+            const diff = charDiffHtml(existing, scanned);
+            const fieldId = 'ocr-choice-' + f.formName.replace(/[^a-z0-9]/gi, '_');
+            div.innerHTML = `
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-gray-600 uppercase">${f.label}</span>
+                    <span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Mismatch</span>
+                </div>
+                <div class="space-y-2">
+                    <label class="flex items-start gap-2 p-2 rounded cursor-pointer hover:bg-amber-100 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                        <input type="radio" name="${fieldId}" class="ocr-radio mt-1" data-field="${f.formName}" data-action="keep" checked>
+                        <div>
+                            <div class="text-xs text-gray-500 mb-0.5">Keep existing <span class="text-xs text-gray-400">(default)</span></div>
+                            <div class="text-sm font-medium font-mono">${diff.existingHtml}</div>
+                        </div>
+                    </label>
+                    <label class="flex items-start gap-2 p-2 rounded cursor-pointer hover:bg-amber-100 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                        <input type="radio" name="${fieldId}" class="ocr-radio" data-field="${f.formName}" data-action="update" data-value="${escHtml(scanned)}">
+                        <div>
+                            <div class="text-xs text-gray-500 mb-0.5">Use scanned</div>
+                            <div class="text-sm font-medium font-mono">${diff.scannedHtml}</div>
+                        </div>
+                    </label>
+                </div>
+            `;
+        }
+        container.appendChild(div);
+    });
+
+    if (!hasAnyData) {
+        container.innerHTML = '<p class="text-sm text-gray-500">OCR could not extract any data. Please fill in the fields manually.</p>';
+    }
+}
+
+/* ── Scan IC ── */
 async function scanIC(witnessNum, fileInput) {
     const file = fileInput.files[0];
     if (!file) return;
@@ -121,17 +262,15 @@ async function scanIC(witnessNum, fileInput) {
         const data = await resp.json();
 
         if (data.ok && data.extracted) {
-            const ex = data.extracted;
-            const prefix = 'witness' + witnessNum + '_';
-            if (ex.full_name) {
-                document.querySelector('[name="' + prefix + 'name"]').value = ex.full_name;
-            }
-            if (ex.nric_number) {
-                document.querySelector('[name="' + prefix + 'nric"]').value = ex.nric_number;
-            }
-            if (ex.address) {
-                document.querySelector('[name="' + prefix + 'address"]').value = ex.address;
-            }
+            pendingOcr = { witnessNum, docId: data.document_id, extracted: data.extracted };
+
+            // Show verification modal
+            document.getElementById('ocr-modal-title').textContent = 'Verify Scanned IC — Witness ' + witnessNum;
+            document.getElementById('ocr-ic-iframe').src = '/api/documents/' + data.document_id;
+            buildCompareFields(witnessNum, data.extracted);
+            document.getElementById('ocr-verify-modal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+
             statusEl.innerHTML = '<span class="text-green-600">&#10003; ' + file.name + '</span>';
         } else {
             statusEl.innerHTML = '<span class="text-amber-600">' + (data.error || data.warning || 'Could not read IC. Please fill manually.') + '</span>';
@@ -140,5 +279,31 @@ async function scanIC(witnessNum, fileInput) {
         statusEl.innerHTML = '<span class="text-red-600">Error: ' + err.message + '</span>';
     }
 }
+
+/* ── Apply choices ── */
+function applyOcrChoices() {
+    // Process hidden inputs (new/match fields — auto-apply new ones)
+    document.querySelectorAll('.ocr-choice').forEach(el => {
+        if (el.dataset.action === 'update') {
+            const field = document.querySelector('[name="' + el.dataset.field + '"]');
+            if (field) field.value = el.value;
+        }
+    });
+    // Process radio buttons (mismatch fields)
+    document.querySelectorAll('.ocr-radio:checked').forEach(el => {
+        if (el.dataset.action === 'update') {
+            const field = document.querySelector('[name="' + el.dataset.field + '"]');
+            if (field) field.value = el.dataset.value;
+        }
+    });
+    closeOcrModal();
+}
+
+function closeOcrModal() {
+    document.getElementById('ocr-verify-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOcrModal(); });
 </script>
 {% endblock %}
