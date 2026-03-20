@@ -1433,12 +1433,17 @@ function copySubstitutesFrom(targetGiftIdx, sourceIdx) {
         const sourcePanel = document.getElementById('sub-specific-' + sourceIdx);
         const targetPanel = document.getElementById('sub-specific-' + targetGiftIdx);
         if (sourcePanel && targetPanel) {
-            // For each MB in target, copy subs from the corresponding source MB (or first source MB)
+            // For each MB in target, find matching source MB by name
             const targetGroups = targetPanel.querySelectorAll('.sub-group');
             const sourceGroups = sourcePanel.querySelectorAll('.sub-group');
             targetGroups.forEach((tgtGroup, mbIdx) => {
-                // Use source group at same index, or the first one
-                const srcGroup = sourceGroups[mbIdx] || sourceGroups[0];
+                // Match by beneficiary name, fall back to same index
+                const tgtName = tgtGroup.dataset.mbName || '';
+                let srcGroup = null;
+                if (tgtName) {
+                    sourceGroups.forEach(sg => { if (sg.dataset.mbName === tgtName) srcGroup = sg; });
+                }
+                if (!srcGroup) srcGroup = sourceGroups[mbIdx] || sourceGroups[0];
                 if (!srcGroup) return;
                 srcGroup.querySelectorAll('.sub-entry').forEach(srcEntry => {
                     const srcSel = srcEntry.querySelector('select');
@@ -1514,9 +1519,19 @@ function copyDistributionFrom(targetGiftIdx, sourceIdx) {
         const sourcePanel = document.getElementById('sub-specific-' + sourceIdx);
         const targetPanel = document.getElementById('sub-specific-' + targetGiftIdx);
         if (sourcePanel && targetPanel) {
-            sourcePanel.querySelectorAll('.sub-group').forEach((srcGroup, mbIdx) => {
-                const tgtGroup = targetPanel.querySelectorAll('.sub-group')[mbIdx];
+            const srcGroupsAll = sourcePanel.querySelectorAll('.sub-group');
+            const tgtGroupsAll = targetPanel.querySelectorAll('.sub-group');
+            srcGroupsAll.forEach((srcGroup, srcIdx) => {
+                // Match target group by beneficiary name, fall back to same index
+                const srcName = srcGroup.dataset.mbName || '';
+                let tgtGroup = null;
+                if (srcName) {
+                    tgtGroupsAll.forEach(tg => { if (tg.dataset.mbName === srcName) tgtGroup = tg; });
+                }
+                if (!tgtGroup) tgtGroup = tgtGroupsAll[srcIdx];
                 if (!tgtGroup) return;
+                // Find target group's positional index for addSubstitute
+                const mbIdx = Array.from(tgtGroupsAll).indexOf(tgtGroup);
                 srcGroup.querySelectorAll('.sub-entry').forEach(srcEntry => {
                     const srcSel = srcEntry.querySelector('select');
                     const srcShare = srcEntry.querySelector('input[type="text"]');
