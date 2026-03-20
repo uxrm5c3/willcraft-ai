@@ -128,11 +128,65 @@ FORM_FIELDS = {
 }
 
 
+def _estimate_line_len(text):
+    """Estimate the visual length of text in approximate character widths.
+
+    Tabs count as 8 chars (default tab stop ~0.5 inch ≈ 5-6 chars at 11pt).
+    """
+    length = 0
+    for ch in text:
+        if ch == '\t':
+            length += 8
+        else:
+            length += 1
+    return length
+
+
+def _trim_leading_whitespace(text, max_len=60):
+    """If text is too long for one line, reduce leading tabs/spaces to fit.
+
+    Uses conservative max_len=60 to account for bold text and tab stops.
+    Preserves at least one tab for indented lines. Returns trimmed text.
+    """
+    est = _estimate_line_len(text)
+    if est <= max_len:
+        return text
+
+    # Find where the actual content starts (after leading whitespace)
+    content_start = 0
+    for j, ch in enumerate(text):
+        if ch not in (' ', '\t'):
+            content_start = j
+            break
+
+    if content_start == 0:
+        return text  # No leading whitespace to trim
+
+    leading = text[:content_start]
+    content = text[content_start:]
+    content_len = _estimate_line_len(content)
+
+    # Calculate how much leading space we can afford
+    available = max_len - content_len
+    if available < 0:
+        available = 0
+
+    # Rebuild leading whitespace: use tabs (each ~8 chars) to fill available space
+    if available >= 8:
+        new_leading = '\t' * (available // 8)
+    elif available >= 1:
+        new_leading = ' ' * available
+    else:
+        new_leading = ''
+
+    return new_leading + content
+
+
 def replace_in_paragraph(paragraph, replacements):
     """Replace placeholders in a paragraph, handling split runs.
 
-    For long lines (e.g. name + NRIC + PEMOHON, JURAT signing lines),
-    automatically reduces font size to keep text on one line.
+    After replacement, trims leading whitespace if the line would be too
+    long (e.g. tabs pushing a name off the right edge).
     """
     full_text = ''.join(run.text for run in paragraph.runs)
     if not full_text or '{{' not in full_text:
@@ -144,6 +198,9 @@ def replace_in_paragraph(paragraph, replacements):
             new_text = new_text.replace(placeholder, str(value) if value else '')
 
     if new_text != full_text and paragraph.runs:
+        # Smart adjustment: trim leading whitespace if line is too long
+        new_text = _trim_leading_whitespace(new_text)
+
         # Keep first run's formatting, clear others
         paragraph.runs[0].text = new_text
         for run in paragraph.runs[1:]:
