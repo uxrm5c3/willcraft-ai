@@ -3950,37 +3950,104 @@ def probate_step5(probate_id):
                 prop_missing.append(f'Property {i+1}: Description missing')
     prop_ok = has_property and not prop_missing
 
+    # Build detail data for each checklist item
+    _testator = ctx.get('testator') or {}
+    death_details = [
+        ('Deceased Name', _testator.get('full_name', '')),
+        ('NRIC', _testator.get('nric_passport', '')),
+        ('Date of Death', probate.date_of_death or ''),
+        ('Time of Death', probate.time_of_death or ''),
+        ('Place of Death', probate.place_of_death or ''),
+        ('Death Cert No.', probate.death_cert_number or ''),
+        ('Estate Value', probate.estate_value_estimate or ''),
+    ]
+
+    assets_details = []
+    for a in assets_list:
+        atype = a.get('asset_type', '')
+        if atype == 'property':
+            assets_details.append(('Property', f"{a.get('description', '')} — Title: {a.get('title_number', 'N/A')}"))
+        elif atype == 'bank':
+            assets_details.append(('Bank', f"{a.get('bank_name', '')} — Acc: {a.get('account_number', '')} — RM {a.get('value', '')}"))
+        elif atype == 'vehicle':
+            assets_details.append(('Vehicle', f"{a.get('description', '')} — {a.get('reg_number', '')}"))
+        elif atype == 'other':
+            assets_details.append(('Other', f"{a.get('description', '')} — RM {a.get('value', '')}"))
+        elif atype == 'liability':
+            assets_details.append(('Liability', f"{a.get('description', '')} — RM {a.get('value', '')}"))
+    if not assets_details:
+        assets_details.append(('', 'No assets entered'))
+
+    will_details = []
+    if will_record:
+        will_details.append(('Will Title', will_record.title or ''))
+        will_details.append(('Status', will_record.status or ''))
+        will_details.append(('Approved', will_record.approved_at.strftime('%d %b %Y') if will_record.approved_at else 'N/A'))
+    else:
+        will_details.append(('', 'No approved will linked'))
+
+    ben_details = []
+    for b in beneficiaries:
+        bname = b.get('beneficiary_name', b.get('full_name', b.get('name', '')))
+        brel = b.get('relationship', '')
+        bshare = b.get('share', '')
+        ben_details.append((bname, f"{brel} — {bshare}%" if bshare else brel))
+    if not ben_details:
+        ben_details.append(('', 'No beneficiaries in will'))
+
+    exec_details = [
+        ('Name', exec_data.full_name if exec_data and hasattr(exec_data, 'full_name') else ''),
+        ('NRIC', exec_nric),
+        ('Relationship', exec_data.relationship if exec_data and hasattr(exec_data, 'relationship') else ''),
+        ('Address', exec_data.address if exec_data and hasattr(exec_data, 'address') else ''),
+    ]
+
+    prop_details = []
+    for p in property_assets:
+        prop_details.append(('Description', p.get('description', '')))
+        prop_details.append(('Title No.', p.get('title_number', '')))
+        prop_details.append(('Lot No.', p.get('lot_number', '')))
+        prop_details.append(('Mukim', p.get('mukim', '')))
+    if not prop_details:
+        prop_details.append(('', 'No property in estate'))
+
     filing_checklist = [
         {'key': 'death_cert', 'label': '<strong>Death Certificate</strong> — date, place, cert number',
          'exhibit': f'{exhibit_prefix}-1',
          'complete': death_info_ok,
          'missing': death_missing,
          'warnings': death_warnings,
+         'details': death_details,
          'checked': manual_checks.get('death_cert', death_info_ok)},
         {'key': 'assets_schedule', 'label': '<strong>Schedule of Assets &amp; Liabilities</strong>',
          'exhibit': f'{exhibit_prefix}-2',
          'complete': assets_ok,
          'missing': assets_missing,
+         'details': assets_details,
          'checked': manual_checks.get('assets_schedule', assets_ok)},
         {'key': 'original_will', 'label': '<strong>Original Will</strong> (certified true copy)',
          'exhibit': f'{exhibit_prefix}-3',
          'complete': will_ok,
          'missing': will_missing,
+         'details': will_details,
          'checked': manual_checks.get('original_will', will_ok)},
         {'key': 'beneficiary_list', 'label': '<strong>Beneficiary List</strong>',
          'exhibit': f'{exhibit_prefix}-4',
          'complete': ben_ok,
          'missing': ben_missing,
+         'details': ben_details,
          'checked': manual_checks.get('beneficiary_list', ben_ok)},
         {'key': 'executor_nric', 'label': 'Executor NRIC &amp; details',
          'exhibit': None,
          'complete': exec_ok,
          'missing': exec_missing,
+         'details': exec_details,
          'checked': manual_checks.get('executor_nric', exec_ok)},
         {'key': 'property_titles', 'label': '<strong>Property title documents</strong> (Hakmilik)',
          'exhibit': None, 'conditional': True, 'condition_met': has_property,
          'complete': prop_ok,
          'missing': prop_missing,
+         'details': prop_details,
          'checked': manual_checks.get('property_titles', prop_ok)},
     ]
 

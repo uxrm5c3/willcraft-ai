@@ -154,38 +154,57 @@
         <div class="space-y-1.5">
             {% for item in filing_checklist %}
             {% if not item.get('conditional') or item.get('condition_met') %}
-            <label class="flex items-start gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors
-                          {% if item.complete %}bg-green-50 border-green-200{% else %}bg-white border-gray-200 hover:bg-gray-50{% endif %}"
-                   id="checklist-row-{{ item.key }}">
-                <input type="checkbox" class="checklist-box w-4 h-4 mt-0.5 text-green-600 rounded border-gray-300 focus:ring-green-500"
-                       data-key="{{ item.key }}" {% if item.checked %}checked{% endif %}
-                       onchange="updateChecklist()">
-                <div class="flex-1 text-xs">
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <span class="{% if item.complete %}text-green-800{% else %}text-gray-700{% endif %}">
-                            {{ loop.index }}. {{ item.label | safe }}
-                        </span>
-                        {% if item.exhibit %}
-                        <span class="text-gray-400">— Exhibit {{ item.exhibit }}</span>
+            <div class="rounded-lg border transition-colors
+                        {% if item.complete %}bg-green-50 border-green-200{% else %}bg-white border-gray-200{% endif %}"
+                 id="checklist-row-{{ item.key }}">
+                <label class="flex items-start gap-3 p-2.5 cursor-pointer">
+                    <input type="checkbox" class="checklist-box w-4 h-4 mt-0.5 text-green-600 rounded border-gray-300 focus:ring-green-500"
+                           data-key="{{ item.key }}" {% if item.checked %}checked{% endif %}
+                           onchange="updateChecklist()">
+                    <div class="flex-1 text-xs">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="{% if item.complete %}text-green-800{% else %}text-gray-700{% endif %} font-medium">
+                                {{ loop.index }}. {{ item.label | safe }}
+                            </span>
+                            {% if item.exhibit %}
+                            <span class="text-gray-400 text-[10px]">Exhibit {{ item.exhibit }}</span>
+                            {% endif %}
+                            {% if item.complete %}
+                            <span class="checklist-badge px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded">Complete</span>
+                            {% elif item.missing %}
+                            <span class="checklist-badge px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded">Incomplete</span>
+                            {% endif %}
+                        </div>
+                        {% if item.missing %}
+                        <div class="mt-1 text-[10px] text-red-500">
+                            Missing: {{ item.missing | join(', ') }}
+                        </div>
                         {% endif %}
-                        {% if item.complete %}
-                        <span class="checklist-badge px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded">Complete</span>
-                        {% else %}
-                        <span class="checklist-badge px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded">Incomplete</span>
+                        {% if item.get('warnings') %}
+                        <div class="mt-1 text-[10px] text-amber-500">
+                            {{ item.warnings | join(', ') }}
+                        </div>
                         {% endif %}
                     </div>
-                    {% if item.missing %}
-                    <div class="mt-1 text-[10px] text-red-500">
-                        Missing: {{ item.missing | join(', ') }}
+                </label>
+                {% if item.get('details') %}
+                <details class="px-2.5 pb-2.5 ml-7">
+                    <summary class="text-[11px] text-primary-600 cursor-pointer hover:text-primary-800 font-medium select-none">
+                        View details
+                    </summary>
+                    <div class="mt-1.5 space-y-0.5 text-[10px]">
+                        {% for label, value in item.details %}
+                        <div class="flex gap-2">
+                            {% if label %}
+                            <span class="text-gray-500 min-w-[80px] shrink-0">{{ label }}:</span>
+                            {% endif %}
+                            <span class="{% if value %}text-gray-700{% else %}text-red-400 italic{% endif %}">{{ value or 'Not set' }}</span>
+                        </div>
+                        {% endfor %}
                     </div>
-                    {% endif %}
-                    {% if item.get('warnings') %}
-                    <div class="mt-1 text-[10px] text-amber-500">
-                        {{ item.warnings | join(', ') }}
-                    </div>
-                    {% endif %}
-                </div>
-            </label>
+                </details>
+                {% endif %}
+            </div>
             {% endif %}
             {% endfor %}
         </div>
@@ -471,17 +490,15 @@ function updateChecklist() {
         total++;
         if (box.checked) checked++;
         // Update row styling
-        const row = box.closest('label');
-        if (box.checked) {
-            row.classList.remove('bg-white', 'border-gray-200');
-            row.classList.add('bg-green-50', 'border-green-200');
-            const badge = row.querySelector('span:last-child');
-            if (badge) { badge.className = 'px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded shrink-0'; badge.textContent = 'Received'; }
-        } else {
-            row.classList.remove('bg-green-50', 'border-green-200');
-            row.classList.add('bg-white', 'border-gray-200');
-            const badge = row.querySelector('span:last-child');
-            if (badge) { badge.className = 'px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded shrink-0'; badge.textContent = 'Missing'; }
+        const row = document.getElementById('checklist-row-' + box.dataset.key);
+        if (row) {
+            if (box.checked) {
+                row.classList.remove('bg-white', 'border-gray-200');
+                row.classList.add('bg-green-50', 'border-green-200');
+            } else {
+                row.classList.remove('bg-green-50', 'border-green-200');
+                row.classList.add('bg-white', 'border-gray-200');
+            }
         }
     });
 
