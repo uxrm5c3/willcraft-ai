@@ -18,7 +18,7 @@
                 <p class="text-sm text-gray-500">
                     Category: <span class="text-primary-600">{{ doc.category }}</span>
                     &middot; Size: {{ "%.1f"|format(doc.file_size / 1024) }} KB
-                    &middot; Uploaded: {{ doc.created_at.strftime('%d %b %Y, %I:%M %p') }}
+                    &middot; Uploaded: {{ doc.created_at|myt }}
                 </p>
             </div>
             <div class="flex gap-2">

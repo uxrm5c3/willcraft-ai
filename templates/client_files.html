@@ -49,7 +49,7 @@
                     <p class="text-sm text-gray-500">
                         Status: <span class="{% if will.status == 'generated' %}text-green-600{% elif will.status == 'finalized' %}text-blue-600{% else %}text-amber-600{% endif %} font-medium">{{ will.status }}</span>
                         &middot; Created: {{ will.created_at.strftime('%d %b %Y') }}
-                        &middot; Updated: {{ will.updated_at.strftime('%d %b %Y, %I:%M %p') }}
+                        &middot; Updated: {{ will.updated_at|myt }}
                     </p>
                 </div>
                 <div class="flex gap-2">
@@ -149,7 +149,7 @@
                                 <p class="font-medium text-gray-900">{{ doc.original_filename }}</p>
                                 <p class="text-sm text-gray-500">
                                     {{ "%.1f"|format(doc.file_size / 1024) }} KB
-                                    &middot; Uploaded: {{ doc.created_at.strftime('%d %b %Y, %I:%M %p') }}
+                                    &middot; Uploaded: {{ doc.created_at|myt }}
                                     {% if doc.description %}&middot; {{ doc.description }}{% endif %}
                                 </p>
                             </div>

@@ -84,7 +84,7 @@
                 <p class="font-medium text-gray-900">{{ will.title }}</p>
                 <p class="text-sm text-gray-500">
                     Status: <span class="{% if will.status == 'generated' %}text-green-600{% else %}text-amber-600{% endif %}">{{ will.status }}</span>
-                    &middot; Last updated: {{ will.updated_at.strftime('%d %b %Y, %I:%M %p') }}
+                    &middot; Last updated: {{ will.updated_at|myt }}
                 </p>
             </div>
             <div class="flex gap-2">

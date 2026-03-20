@@ -101,7 +101,7 @@
                                     {% else %}
                                     <span class="inline-flex items-center px-1.5 py-0.5 bg-gray-100 text-gray-600 text-xs font-semibold rounded">Draft</span>
                                     {% endif %}
-                                    <span>{{ will.updated_at.strftime('%d %b %Y, %I:%M %p') }}</span>
+                                    <span>{{ will.updated_at|myt }}</span>
                                 </div>
                             </div>
                         </div>

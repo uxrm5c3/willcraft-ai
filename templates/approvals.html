@@ -35,7 +35,7 @@
                             </p>
                             {% endif %}
                             {% if will.submitted_at %}
-                            <p>Submitted: {{ will.submitted_at.strftime('%d %b %Y, %I:%M %p') }}</p>
+                            <p>Submitted: {{ will.submitted_at|myt }}</p>
                             {% endif %}
                         </div>
                     </div>

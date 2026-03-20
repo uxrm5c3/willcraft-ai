@@ -31,6 +31,16 @@ db.init_app(app)
 # Jinja2 filters
 # ---------------------------------------------------------------------------
 from fractions import Fraction
+from datetime import timezone, timedelta
+
+MYT = timezone(timedelta(hours=8))
+
+@app.template_filter('myt')
+def myt_filter(dt, fmt='%d %b %Y, %I:%M %p'):
+    """Convert UTC datetime to Malaysia Time (UTC+8) and format."""
+    if not dt:
+        return ''
+    return dt.replace(tzinfo=timezone.utc).astimezone(MYT).strftime(fmt)
 
 @app.template_filter('to_fraction')
 def to_fraction_filter(value):

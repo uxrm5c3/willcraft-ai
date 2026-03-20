@@ -112,7 +112,7 @@
                 <p class="text-sm text-emerald-600 mt-1">{{ will_record.approval_remarks }}</p>
                 {% endif %}
                 {% if will_record.approved_at %}
-                <p class="text-xs text-emerald-400 mt-1">Approved on {{ will_record.approved_at.strftime('%d %b %Y, %I:%M %p') }}</p>
+                <p class="text-xs text-emerald-400 mt-1">Approved on {{ will_record.approved_at|myt }}</p>
                 {% endif %}
             </div>
         </div>
@@ -195,7 +195,7 @@
                     <p class="text-xs text-blue-500 mt-0.5">
                         {{ viewing_version.note or '' }}
                         {% if viewing_version.generated_by_name %} · by {{ viewing_version.generated_by_name }}{% endif %}
-                        · {{ viewing_version.created_at.strftime('%d %b %Y, %I:%M %p') }}
+                        · {{ viewing_version.created_at|myt }}
                     </p>
                 </div>
             </div>
@@ -232,7 +232,7 @@
                         </div>
                         <p class="text-xs text-gray-400 mt-0.5">
                             {% if v.generated_by_name %}{{ v.generated_by_name }} · {% endif %}
-                            {{ v.created_at.strftime('%d %b %Y, %I:%M %p') }}
+                            {{ v.created_at|myt }}
                         </p>
                     </div>
                 </div>
@@ -343,7 +343,7 @@
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2 flex-wrap">
                         <span class="text-sm font-semibold text-gray-800">{{ log.edited_by_name }}</span>
-                        <span class="text-xs text-gray-400">{{ log.edited_at.strftime('%d %b %Y, %I:%M %p') }}</span>
+                        <span class="text-xs text-gray-400">{{ log.edited_at|myt }}</span>
                     </div>
                     <p class="text-sm text-gray-500 mt-0.5">{{ log.summary }}</p>
                 </div>
