@@ -9,6 +9,125 @@ from datetime import datetime
 from docx import Document
 
 
+# Per-form field mapping: which fields each form requires and where the data comes from.
+# Used to show users what information will be filled in each form.
+FORM_FIELDS = {
+    'doc01': {
+        'name': 'Originating Summons (Saman Pemula)',
+        'fields': [
+            ('Deceased name & NRIC', 'Will — Testator'),
+            ('Deceased address', 'Will — Testator'),
+            ('Date of death', 'Step 1 — Death Certificate'),
+            ('Place of death', 'Step 1 — Death Certificate'),
+            ('Applicant (Executor) name & NRIC', 'Will — Executor'),
+            ('Applicant address', 'Will — Executor'),
+            ('Court location', 'Step 2 — Court Info'),
+            ('Case number', 'Step 2 — Court Info'),
+            ('Firm name & address', 'Step 2 — Law Firm'),
+            ('Firm reference', 'Step 2 — Law Firm'),
+        ],
+    },
+    'doc02': {
+        'name': 'Affidavit under Probate Act',
+        'fields': [
+            ('Deceased name & NRIC', 'Will — Testator'),
+            ('Deceased address', 'Will — Testator'),
+            ('Date of death', 'Step 1 — Death Certificate'),
+            ('Time of death', 'Step 1 — Death Certificate'),
+            ('Place of death', 'Step 1 — Death Certificate'),
+            ('Death certificate number', 'Step 1 — Death Certificate'),
+            ('Applicant name & NRIC', 'Will — Executor'),
+            ('Applicant relationship', 'Will — Executor'),
+            ('Estate value', 'Step 1 — Estate Value'),
+            ('Exhibit references', 'Auto-generated'),
+        ],
+    },
+    'doc03': {
+        'name': 'Oath of Administration',
+        'fields': [
+            ('Deceased name & NRIC', 'Will — Testator'),
+            ('Date of death', 'Step 1 — Death Certificate'),
+            ('Place of death', 'Step 1 — Death Certificate'),
+            ('Applicant name & NRIC', 'Will — Executor'),
+            ('Applicant address', 'Will — Executor'),
+            ('Court location & case number', 'Step 2 — Court Info'),
+        ],
+    },
+    'doc04': {
+        'name': 'Witness 1 Affidavit',
+        'fields': [
+            ('Witness 1 name & NRIC', 'Step 3 — Witnesses'),
+            ('Witness 1 address', 'Step 3 — Witnesses'),
+            ('Deceased name', 'Will — Testator'),
+            ('Date of death', 'Step 1 — Death Certificate'),
+            ('Court location & case number', 'Step 2 — Court Info'),
+        ],
+    },
+    'doc05': {
+        'name': 'Witness 2 Affidavit',
+        'fields': [
+            ('Witness 2 name & NRIC', 'Step 3 — Witnesses'),
+            ('Witness 2 address', 'Step 3 — Witnesses'),
+            ('Deceased name', 'Will — Testator'),
+            ('Date of death', 'Step 1 — Death Certificate'),
+            ('Court location & case number', 'Step 2 — Court Info'),
+        ],
+    },
+    'doc06': {
+        'name': 'Assets & Liabilities Schedule',
+        'fields': [
+            ('Deceased name & NRIC', 'Will — Testator'),
+            ('Properties (title, lot, mukim, address)', 'Step 4 — Assets'),
+            ('Bank accounts (bank, account no., value)', 'Step 4 — Assets'),
+            ('Vehicles (desc, reg no., engine, chassis)', 'Step 4 — Assets'),
+            ('Other assets (description, value)', 'Step 4 — Assets'),
+            ('Liabilities (description, value)', 'Step 4 — Assets'),
+        ],
+    },
+    'doc07': {
+        'name': 'Beneficiary List',
+        'fields': [
+            ('Deceased name & NRIC', 'Will — Testator'),
+            ('Beneficiary names & NRIC', 'Will — Beneficiaries'),
+            ('Beneficiary relationships', 'Will — Beneficiaries'),
+            ('Court location & case number', 'Step 2 — Court Info'),
+        ],
+    },
+    'doc08': {
+        'name': 'Notice of Solicitor Appointment',
+        'fields': [
+            ('Deceased name', 'Will — Testator'),
+            ('Applicant (Executor) name & NRIC', 'Will — Executor'),
+            ('Court location & case number', 'Step 2 — Court Info'),
+            ('Firm name & address', 'Step 2 — Law Firm'),
+            ('Firm phone & fax', 'Step 2 — Law Firm'),
+            ('Firm reference', 'Step 2 — Law Firm'),
+        ],
+    },
+    'form14a': {
+        'name': 'Land Transfer (Form 14A)',
+        'fields': [
+            ('Property title number', 'Step 4 — Assets (Property)'),
+            ('Property lot number', 'Step 4 — Assets (Property)'),
+            ('Property mukim', 'Step 4 — Assets (Property)'),
+            ('Deceased name & NRIC', 'Will — Testator'),
+            ('Applicant name & NRIC', 'Will — Executor'),
+            ('Court location & case number', 'Step 2 — Court Info'),
+        ],
+    },
+    'form346': {
+        'name': 'Personal Representative (Form 346)',
+        'fields': [
+            ('Property title number', 'Step 4 — Assets (Property)'),
+            ('Property lot number', 'Step 4 — Assets (Property)'),
+            ('Deceased name & NRIC', 'Will — Testator'),
+            ('Applicant name & NRIC', 'Will — Executor'),
+            ('Court case number', 'Step 2 — Court Info'),
+        ],
+    },
+}
+
+
 def replace_in_paragraph(paragraph, replacements):
     """Replace placeholders in a paragraph, handling split runs."""
     full_text = ''.join(run.text for run in paragraph.runs)

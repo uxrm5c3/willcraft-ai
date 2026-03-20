@@ -3783,10 +3783,10 @@ def probate_step5(probate_id):
         flash('Probate application not found.', 'error')
         return redirect(url_for('probate_list'))
 
-    from documents.probate_generator import recommend_forms
+    from documents.probate_generator import recommend_forms, FORM_FIELDS
     recommendations = recommend_forms(will_record, probate)
 
-    # Merge with template info
+    # Merge with template info and field mapping
     templates = ProbateFormTemplate.query.order_by(ProbateFormTemplate.sort_order).all()
     tpl_map = {t.form_code: t for t in templates}
     for rec in recommendations:
@@ -3795,6 +3795,8 @@ def probate_step5(probate_id):
             rec['form_name'] = tpl.form_name
             rec['form_name_malay'] = tpl.form_name_malay
             rec['description'] = tpl.description
+        ff = FORM_FIELDS.get(rec['form_code'])
+        rec['fields'] = ff['fields'] if ff else []
 
     # Check for previously generated forms
     generated_forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
@@ -4250,6 +4252,22 @@ def admin_probate_template_reset(form_code):
     db.session.commit()
 
     return redirect(url_for('admin_probate_templates', msg=f'Template for {tpl.form_name} reset to default.'))
+
+
+@app.route('/probate/template/<form_code>/view')
+@login_required
+def probate_template_view(form_code):
+    """Serve the blank template file for viewing/download."""
+    tpl = ProbateFormTemplate.query.filter_by(form_code=form_code).first()
+    if not tpl:
+        flash('Template not found.', 'error')
+        return redirect(url_for('probate_list'))
+    template_path = os.path.join(os.path.dirname(__file__), tpl.file_path)
+    if not os.path.exists(template_path):
+        flash('Template file not found on disk.', 'error')
+        return redirect(url_for('probate_list'))
+    return send_file(template_path, as_attachment=True,
+                     download_name=f'{form_code}_template.docx')
 
 
 # ---------------------------------------------------------------------------
