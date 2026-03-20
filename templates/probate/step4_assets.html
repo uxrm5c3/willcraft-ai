@@ -356,7 +356,7 @@ function collectAssetData() {
 
 /* ── Scan document per asset ── */
 async function scanAssetDoc(type, idx, fileInput) {
-    const file = fileInput.files[0];
+    let file = fileInput.files[0];
     if (!file) return;
 
     const allowed = ['jpg','jpeg','png','pdf'];
