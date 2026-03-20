@@ -1129,19 +1129,23 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
             // Show conflict UI with radio buttons — default "Keep original"
             const existDisplay = existVal.replace(/"/g,'&quot;');
             const ocrDisplay = ocrVal.replace(/"/g,'&quot;');
+            const existText = isAddress ? existDisplay.replace(/\n/g, ', ') : existDisplay;
+            const ocrText = isAddress ? ocrDisplay.replace(/\n/g, ', ') : ocrDisplay;
+            // Highlight character-level differences in the scanned value
+            const ocrHighlighted = typeof _highlightDiff === 'function' ? _highlightDiff(ocrText, existText) : ocrText;
             container.innerHTML += `<div class="flex flex-col gap-1 p-3 border border-amber-300 bg-amber-50 rounded-lg">
                 <label class="text-sm font-semibold text-amber-800">${label} — different from existing</label>
                 <label class="flex items-start gap-2 cursor-pointer text-sm p-1.5 rounded hover:bg-amber-100">
                     <input type="radio" name="ocr-choice-${key}" value="keep" checked
                            class="mt-0.5 text-primary-600 focus:ring-primary-500">
                     <span><span class="font-medium text-gray-700">Keep original:</span>
-                    <span class="text-gray-900">${isAddress ? existDisplay.replace(/\n/g, ', ') : existDisplay}</span></span>
+                    <span class="text-gray-900">${existText}</span></span>
                 </label>
                 <label class="flex items-start gap-2 cursor-pointer text-sm p-1.5 rounded hover:bg-amber-100">
                     <input type="radio" name="ocr-choice-${key}" value="scanned"
                            class="mt-0.5 text-primary-600 focus:ring-primary-500">
                     <span><span class="font-medium text-gray-700">Use scanned:</span>
-                    <span class="text-gray-900">${isAddress ? ocrDisplay.replace(/\n/g, ', ') : ocrDisplay}</span></span>
+                    <span class="text-gray-900">${ocrHighlighted}</span></span>
                 </label>
                 <input type="hidden" name="ocr-field-${key}" value="${existDisplay}">
                 <input type="hidden" name="ocr-existing-${key}" value="${existDisplay}">
@@ -1354,6 +1358,17 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
         if (data.ok && data.extracted) {
             if (statusEl) statusEl.innerHTML = '<span class="text-blue-600">📋 Review extracted data...</span>';
 
+            // Gather existing property data from form fields for conflict detection
+            const existingPropertyData = {
+                property_address: document.querySelector(`[name="gift_prop_address_${giftIndex}"]`)?.value || '',
+                title_type: document.querySelector(`[name="gift_prop_title_type_${giftIndex}"]`)?.value || '',
+                title_number: document.querySelector(`[name="gift_prop_title_number_${giftIndex}"]`)?.value || '',
+                lot_number: document.querySelector(`[name="gift_prop_lot_number_${giftIndex}"]`)?.value || '',
+                bandar_pekan: document.querySelector(`[name="gift_prop_bandar_${giftIndex}"]`)?.value || '',
+                daerah: document.querySelector(`[name="gift_prop_daerah_${giftIndex}"]`)?.value || '',
+                negeri: document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`)?.value || '',
+            };
+
             showOCRConfirmation(data.extracted, file, (confirmed) => {
                 if (confirmed.property_address) setFieldValue(`gift_prop_address_${giftIndex}`, confirmed.property_address);
                 if (confirmed.title_type) {
@@ -1374,7 +1389,8 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
                 if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Property data applied!</span>';
                 setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
-            { callback: (f) => uploadAndExtractProperty(f, statusElId, giftIndex, docType), docType: 'property' });
+            { callback: (f) => uploadAndExtractProperty(f, statusElId, giftIndex, docType), docType: 'property' },
+            existingPropertyData);
         } else if (data.ok && data.warning) {
             // OCR failed but file was saved
             if (statusEl) statusEl.innerHTML = `<span class="text-amber-600">⚠ ${data.warning}</span>`;
