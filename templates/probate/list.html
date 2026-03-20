@@ -37,69 +37,65 @@
     <div class="space-y-3">
         {% for app in applications %}
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:border-primary-200 transition-colors">
-            <div class="flex items-start justify-between">
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 mb-1 flex-wrap">
-                        <span class="px-1.5 py-0.5 text-[10px] font-bold rounded
-                              {% if app.application_type == 'la' %}bg-purple-100 text-purple-700{% else %}bg-blue-100 text-blue-700{% endif %}">
-                            {{ 'LA' if app.application_type == 'la' else 'Probate' }}
-                        </span>
-                        <h3 class="text-sm font-bold text-gray-800">
-                            {% if app.deceased_name %}
-                                {{ app.deceased_name }}
-                            {% elif app.application_type == 'la' %}
-                                Unnamed (Letters of Administration)
-                            {% else %}
-                                {{ app.will.title if app.will else 'Unknown Will' }}
-                            {% endif %}
-                        </h3>
-                        <span class="px-2 py-0.5 text-[10px] font-bold rounded-full
-                              {% if app.status == 'generated' %}bg-green-100 text-green-700
-                              {% else %}bg-amber-100 text-amber-700{% endif %}">
-                            {{ app.status | title }}
-                        </span>
-                    </div>
-                    <div class="text-xs text-gray-500 space-y-0.5">
-                        {% if app.deceased_nric %}
-                        <div>IC: <span class="font-medium text-gray-700">{{ app.deceased_nric }}</span></div>
-                        {% endif %}
-                        {% if app.client %}
-                        <div>Client: <span class="font-medium text-gray-700">{{ app.client.full_name }}</span></div>
-                        {% endif %}
-                        {% if app.applicant_name %}
-                        <div>Applicant: <span class="font-medium text-gray-700">{{ app.applicant_name }}</span></div>
-                        {% endif %}
-                        {% if app.date_of_death %}
-                        <div>Date of Death: <span class="font-medium text-gray-700">{{ app.date_of_death }}</span></div>
-                        {% endif %}
-                        {% if app.court_location %}
-                        <div>Court: <span class="font-medium text-gray-700">{{ app.court_location }}</span></div>
-                        {% endif %}
-                        {% if app.case_number %}
-                        <div>Case No: <span class="font-medium text-gray-700">{{ app.case_number }}</span></div>
-                        {% endif %}
-                        <div>Created: <span class="text-gray-400">{{ app.created_at.strftime('%d %b %Y') }}</span>
-                             {% if app.creator %} by {{ app.creator.name }}{% endif %}</div>
-                    </div>
-                </div>
-                <div class="flex items-center gap-2 shrink-0 ml-3">
-                    {% if app.status == 'generated' %}
-                    <a href="/probate/{{ app.id }}/download-all" class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 no-underline" title="Download all generated forms as ZIP">
-                        Download All
-                    </a>
-                    <a href="/probate/{{ app.id }}/step/6" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 no-underline" title="View and download individual forms">
-                        View Forms
-                    </a>
+            <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <span class="px-1.5 py-0.5 text-[10px] font-bold rounded
+                      {% if app.application_type == 'la' %}bg-purple-100 text-purple-700{% else %}bg-blue-100 text-blue-700{% endif %}">
+                    {{ 'LA' if app.application_type == 'la' else 'Probate' }}
+                </span>
+                <h3 class="text-sm font-bold text-gray-800">
+                    {% if app.deceased_name %}
+                        {{ app.deceased_name }}
+                    {% elif app.application_type == 'la' %}
+                        Unnamed (Letters of Administration)
+                    {% else %}
+                        {{ app.will.title if app.will else 'Unknown Will' }}
                     {% endif %}
-                    <a href="/probate/{{ app.id }}/step/1" class="px-3 py-1.5 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700 no-underline">
-                        {% if app.status == 'draft' %}Continue{% else %}Edit{% endif %}
-                    </a>
-                    <form method="POST" action="/probate/{{ app.id }}/delete" onsubmit="return confirm('Delete this probate application? This cannot be undone.')" class="inline">
-                        <button type="submit" class="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-medium rounded-lg hover:bg-red-200" title="Delete application">
-                            Delete
-                        </button>
-                    </form>
-                </div>
+                </h3>
+                <span class="px-2 py-0.5 text-[10px] font-bold rounded-full
+                      {% if app.status == 'generated' %}bg-green-100 text-green-700
+                      {% else %}bg-amber-100 text-amber-700{% endif %}">
+                    {{ app.status | title }}
+                </span>
+            </div>
+            <div class="text-xs text-gray-500 space-y-0.5 mb-3">
+                {% if app.deceased_nric %}
+                <div>IC: <span class="font-medium text-gray-700">{{ app.deceased_nric }}</span></div>
+                {% endif %}
+                {% if app.client %}
+                <div>Client: <span class="font-medium text-gray-700">{{ app.client.full_name }}</span></div>
+                {% endif %}
+                {% if app.applicant_name %}
+                <div>Applicant: <span class="font-medium text-gray-700">{{ app.applicant_name }}</span></div>
+                {% endif %}
+                {% if app.date_of_death %}
+                <div>Date of Death: <span class="font-medium text-gray-700">{{ app.date_of_death }}</span></div>
+                {% endif %}
+                {% if app.court_location %}
+                <div>Court: <span class="font-medium text-gray-700">{{ app.court_location }}</span></div>
+                {% endif %}
+                {% if app.case_number %}
+                <div>Case No: <span class="font-medium text-gray-700">{{ app.case_number }}</span></div>
+                {% endif %}
+                <div>Created: <span class="text-gray-400">{{ app.created_at.strftime('%d %b %Y') }}</span>
+                     {% if app.creator %} by {{ app.creator.name }}{% endif %}</div>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                {% if app.status == 'generated' %}
+                <a href="/probate/{{ app.id }}/download-all" class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 no-underline" title="Download all generated forms as ZIP">
+                    Download All
+                </a>
+                <a href="/probate/{{ app.id }}/step/6" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 no-underline" title="View and download individual forms">
+                    View Forms
+                </a>
+                {% endif %}
+                <a href="/probate/{{ app.id }}/step/1" class="px-3 py-1.5 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700 no-underline">
+                    {% if app.status == 'draft' %}Continue{% else %}Edit{% endif %}
+                </a>
+                <form method="POST" action="/probate/{{ app.id }}/delete" onsubmit="return confirm('Delete this probate application? This cannot be undone.')" class="inline">
+                    <button type="submit" class="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-medium rounded-lg hover:bg-red-200" title="Delete application">
+                        Delete
+                    </button>
+                </form>
             </div>
         </div>
         {% endfor %}

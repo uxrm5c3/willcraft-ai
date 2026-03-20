@@ -758,6 +758,7 @@ def create_zip(form_files, zip_path, as_pdf=False):
         zip_path on success
     """
     os.makedirs(os.path.dirname(zip_path), exist_ok=True)
+    now = datetime.now().timetuple()[:6]  # (year, month, day, hour, minute, second)
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         for f in form_files:
             fpath = f['file_path']
@@ -769,9 +770,13 @@ def create_zip(form_files, zip_path, as_pdf=False):
             if as_pdf and fpath.lower().endswith(('.docx', '.doc')):
                 pdf_path = convert_to_pdf(fpath)
                 if pdf_path and os.path.exists(pdf_path):
-                    zf.write(pdf_path, f'{safe_name}.pdf')
+                    data = open(pdf_path, 'rb').read()
+                    info = zipfile.ZipInfo(f'{safe_name}.pdf', date_time=now)
+                    zf.writestr(info, data)
                     continue
             # Fallback: add original file
             ext = os.path.splitext(fpath)[1] or '.docx'
-            zf.write(fpath, f'{safe_name}{ext}')
+            data = open(fpath, 'rb').read()
+            info = zipfile.ZipInfo(f'{safe_name}{ext}', date_time=now)
+            zf.writestr(info, data)
     return zip_path

@@ -19,8 +19,7 @@
         </div>
     </div>
 
-    <!-- Will Upload Section (for LA or external wills) -->
-    {% if is_la %}
+    <!-- Will Upload Section -->
     <div class="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
         <h3 class="text-sm font-semibold text-green-800 mb-2">Upload Will Document (Optional)</h3>
         <p class="text-xs text-green-600 mb-3">Upload a will PDF or image. AI will extract testator, executor, witnesses, beneficiaries and assets to auto-fill subsequent steps. <span class="text-gray-400">(Accepted: JPG, PNG, PDF)</span></p>
@@ -39,7 +38,6 @@
             <p class="text-[10px] text-gray-400 mt-2">This data will auto-fill the form below and subsequent steps (witnesses, beneficiaries).</p>
         </div>
     </div>
-    {% endif %}
 
     <!-- Form -->
     <form method="POST" action="/probate/{{ probate_id }}/step/1" id="death-form">
@@ -365,7 +363,6 @@ function closeOcrModal() {
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOcrModal(); });
 
 /* ── Will Document OCR ── */
-{% if is_la %}
 const willFileInput = document.getElementById('will-doc-file');
 const willOcrBtn = document.getElementById('will-ocr-btn');
 if (willFileInput) {
@@ -464,6 +461,5 @@ function applyWillExtractedData(ext) {
     contentDiv.innerHTML = html || '<span class="text-gray-400">No data extracted</span>';
     summaryDiv.classList.remove('hidden');
 }
-{% endif %}
 </script>
 {% endblock %}

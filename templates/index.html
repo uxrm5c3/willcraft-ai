@@ -87,14 +87,14 @@
                     &middot; Last updated: {{ will.updated_at|myt }}
                 </p>
             </div>
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-2">
                 {% if will.status in ('generated', 'pending_approval', 'approved') %}
-                <a href="/wills/{{ will.id }}/load?goto=preview" class="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1">
+                <a href="/wills/{{ will.id }}/load?goto=preview" class="px-3 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1 no-underline">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                     View Will
                 </a>
                 {% endif %}
-                <a href="/wills/{{ will.id }}/load" class="px-3 py-1.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">Edit</a>
+                <a href="/wills/{{ will.id }}/load" class="px-3 py-1.5 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors no-underline">Edit</a>
                 <form method="POST" action="/wills/{{ will.id }}/delete" class="inline" onsubmit="return confirm('Delete this will draft?')">
                     <button type="submit" class="px-3 py-1.5 text-red-600 text-sm hover:bg-red-50 rounded-lg border border-red-200">Delete</button>
                 </form>
