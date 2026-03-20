@@ -187,28 +187,12 @@
                 {% endif %}
             </div>
 
-            <!-- Skip: Choose type and start -->
+            <!-- Skip: Start without will (always probate type) -->
             <div id="skip-section" class="hidden">
-                <p class="text-sm text-gray-500 mb-3">Choose the application type, then enter details manually or upload a will PDF in Step 1.</p>
-                <div class="flex gap-3 mb-3">
-                    <label class="flex items-center gap-2 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer flex-1">
-                        <input type="radio" name="skip_type" value="probate" checked class="w-4 h-4 text-primary-600">
-                        <div>
-                            <div class="text-sm font-medium">Grant of Probate</div>
-                            <div class="text-xs text-gray-400">Has a will (external)</div>
-                        </div>
-                    </label>
-                    <label class="flex items-center gap-2 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer flex-1">
-                        <input type="radio" name="skip_type" value="la" class="w-4 h-4 text-purple-600">
-                        <div>
-                            <div class="text-sm font-medium">Letters of Administration</div>
-                            <div class="text-xs text-gray-400">No will exists</div>
-                        </div>
-                    </label>
-                </div>
-                <button onclick="startSkip()" class="w-full px-4 py-2 bg-amber-600 text-white text-sm font-semibold rounded-lg hover:bg-amber-700">
-                    Start Application
-                </button>
+                <p class="text-sm text-gray-500 mb-3">Start a probate application without linking to a WillCraft will. You can upload the will PDF for OCR extraction or enter all details manually in Step 1.</p>
+                <a href="/probate/new-probate" class="block w-full px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700 text-center no-underline">
+                    Start Probate Application
+                </a>
             </div>
         </div>
     </div>
@@ -241,10 +225,6 @@ function selectAppType(type) {
     }
 }
 
-function startSkip() {
-    const type = document.querySelector('input[name="skip_type"]:checked').value;
-    window.location.href = '/probate/new-' + type;
-}
 
 function filterWills(query) {
     const items = document.querySelectorAll('.will-item');
