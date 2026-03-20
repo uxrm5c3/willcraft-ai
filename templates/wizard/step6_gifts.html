@@ -343,15 +343,10 @@
                            class="rounded border-gray-300 text-primary-600 mr-2">
                     <span class="text-sm text-gray-700">Subject to Testamentary Trust</span>
                 </label>
-                <label class="flex items-center">
-                    <input type="checkbox" name="gift_guardian_allowance_{{ loop.index0 }}" value="1"
-                           {% if gift.get('subject_to_guardian_allowance') %}checked{% endif %}
-                           class="rounded border-gray-300 text-primary-600 mr-2">
-                    <span class="text-sm text-gray-700">Subject to Guardian Allowance</span>
-                </label>
                 <label class="flex items-center gift-sell-option {% if gift.get('gift_type', 'property') != 'property' %}hidden{% endif %}" data-gift-index="{{ loop.index0 }}">
                     <input type="checkbox" name="gift_sell_property_{{ loop.index0 }}" value="1"
                            {% if gift.get('sell_property') %}checked{% endif %}
+                           onchange="updatePropertyPreview({{ loop.index0 }})"
                            class="rounded border-gray-300 text-primary-600 mr-2">
                     <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
                 </label>
@@ -598,9 +593,23 @@ function updatePropertyPreview(giftIndex) {
     if (postcode || city) fullAddr += ', ' + [postcode, city].filter(Boolean).join(' ');
     if (state) fullAddr += ', ' + state.toUpperCase();
 
-    let prefix = 'my property known as ';
-    if (isJoint && testatorShare) {
-        prefix = 'my ' + testatorShare + ' undivided share and interest in the property known as ';
+    // Check if sell directive is checked
+    const sellCheckbox = document.querySelector(`[name="gift_sell_property_${giftIndex}"]`);
+    const isSell = sellCheckbox && sellCheckbox.checked;
+
+    let prefix;
+    if (isSell) {
+        if (isJoint && testatorShare) {
+            prefix = 'I direct my Executor to sell my ' + testatorShare + ' undivided share and interest in the property known as ';
+        } else {
+            prefix = 'I direct my Executor to sell my property known as ';
+        }
+    } else {
+        if (isJoint && testatorShare) {
+            prefix = 'my ' + testatorShare + ' undivided share and interest in the property known as ';
+        } else {
+            prefix = 'my property known as ';
+        }
     }
     let parts = [prefix + fullAddr];
     if (titleType && titleNum) parts.push('held under ' + titleType + ' No. ' + titleNum);
@@ -608,7 +617,11 @@ function updatePropertyPreview(giftIndex) {
     if (bandar) parts.push('BANDAR ' + bandar.toUpperCase());
     if (daerah) parts.push('DAERAH ' + daerah.toUpperCase());
     if (country && country !== 'Malaysia') parts.push(country.toUpperCase());
-    document.getElementById('property-preview-' + giftIndex).textContent = parts.join(', ') + ';';
+
+    let suffix = ';';
+    if (isSell) suffix = ' and distribute the nett proceeds of the sale to the beneficiaries named below in the shares indicated.';
+
+    document.getElementById('property-preview-' + giftIndex).textContent = parts.join(', ') + suffix;
 }
 
 function buildPropertyPanelHtml(idx) {
@@ -749,12 +762,8 @@ function addGift() {
                 <input type="checkbox" name="gift_trust_${idx}" value="1" class="rounded border-gray-300 text-primary-600 mr-2">
                 <span class="text-sm text-gray-700">Subject to Testamentary Trust</span>
             </label>
-            <label class="flex items-center">
-                <input type="checkbox" name="gift_guardian_allowance_${idx}" value="1" class="rounded border-gray-300 text-primary-600 mr-2">
-                <span class="text-sm text-gray-700">Subject to Guardian Allowance</span>
-            </label>
             <label class="flex items-center gift-sell-option" data-gift-index="${idx}">
-                <input type="checkbox" name="gift_sell_property_${idx}" value="1" class="rounded border-gray-300 text-primary-600 mr-2">
+                <input type="checkbox" name="gift_sell_property_${idx}" value="1" onchange="updatePropertyPreview(${idx})" class="rounded border-gray-300 text-primary-600 mr-2">
                 <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
             </label>
         </div>
