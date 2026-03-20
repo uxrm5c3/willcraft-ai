@@ -800,12 +800,13 @@ There may be 1-3 executors.
 
 STEP 4 — READ WITNESSES:
 Look for signatures at the end, "witnessed by", "saksi". For each witness:
-- Full name, NRIC (if shown)
+- Full name, NRIC (if shown), address (if shown)
 Usually 2 witnesses.
 
 STEP 5 — READ BENEFICIARIES:
 Look for people receiving gifts/bequests. For each beneficiary:
-- Full name, NRIC (if shown), relationship to testator
+- Full name, NRIC or foreign ID (if shown), relationship to testator
+- Address (if mentioned anywhere in the will for this person)
 - What they receive (if mentioned near their name)
 
 STEP 6 — READ ASSETS MENTIONED:
@@ -831,10 +832,10 @@ After your analysis above, output ONLY this JSON block:
         {"full_name": "NAME", "nric_number": "YYMMDD-SS-NNNN", "relationship": "relationship", "address": "address"}
     ],
     "witnesses": [
-        {"full_name": "NAME", "nric_number": "YYMMDD-SS-NNNN"}
+        {"full_name": "NAME", "nric_number": "YYMMDD-SS-NNNN", "address": "address if found"}
     ],
     "beneficiaries": [
-        {"full_name": "NAME", "nric_number": "YYMMDD-SS-NNNN", "relationship": "relationship"}
+        {"full_name": "NAME", "nric_number": "YYMMDD-SS-NNNN or foreign ID", "relationship": "relationship", "address": "address if found"}
     ],
     "assets": [
         {"type": "property|bank|vehicle|other", "description": "description of the asset"}

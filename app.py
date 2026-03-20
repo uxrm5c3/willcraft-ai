@@ -3809,9 +3809,13 @@ def probate_step1(probate_id):
                     if len(witnesses) >= 1:
                         probate.witness1_name = witnesses[0].get('full_name', '')
                         probate.witness1_nric = witnesses[0].get('nric_number', '')
+                        if witnesses[0].get('address'):
+                            probate.witness1_address = witnesses[0]['address']
                     if len(witnesses) >= 2:
                         probate.witness2_name = witnesses[1].get('full_name', '')
                         probate.witness2_nric = witnesses[1].get('nric_number', '')
+                        if witnesses[1].get('address'):
+                            probate.witness2_address = witnesses[1]['address']
                 # Pre-populate beneficiaries from extracted will data
                 bens = ext.get('beneficiaries', [])
                 existing_bens = json.loads(probate.beneficiaries_data or '[]')
@@ -3822,7 +3826,7 @@ def probate_step1(probate_id):
                             'full_name': b.get('full_name', ''),
                             'nric_passport': b.get('nric_number', ''),
                             'relationship': b.get('relationship', ''),
-                            'address': '',
+                            'address': b.get('address', ''),
                         })
                     probate.beneficiaries_data = json.dumps(ben_list)
                 # Pre-populate assets from extracted will data
