@@ -184,7 +184,14 @@ class ProbateApplication(db.Model):
     application_type = db.Column(db.String(20), default='probate')  # probate (with will) or la (letters of administration)
     will_id = db.Column(db.String(36), db.ForeignKey('wills.id'), nullable=True)  # nullable for LA
     client_id = db.Column(db.String(36), db.ForeignKey('clients.id'), nullable=True)  # nullable for LA
-    status = db.Column(db.String(20), default='draft')  # draft, generated
+    status = db.Column(db.String(20), default='draft')  # draft, generated, pending_approval, approved, rejected
+
+    # Approval workflow
+    submitted_by = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
+    submitted_at = db.Column(db.DateTime, nullable=True)
+    approved_by = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
+    approved_at = db.Column(db.DateTime, nullable=True)
+    approval_notes = db.Column(db.Text, nullable=True)
 
     # Deceased details (for LA — manual entry; for probate — from will)
     deceased_name = db.Column(db.String(200), nullable=True)
@@ -250,6 +257,8 @@ class ProbateApplication(db.Model):
     client = db.relationship('Client', backref='probate_applications')
     generated_forms = db.relationship('ProbateGeneratedForm', backref='probate_application', lazy=True)
     creator = db.relationship('User', foreign_keys=[created_by])
+    submitter = db.relationship('User', foreign_keys=[submitted_by])
+    approver = db.relationship('User', foreign_keys=[approved_by])
 
 
 class ProbateFormTemplate(db.Model):

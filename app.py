@@ -4422,6 +4422,70 @@ def probate_generate(probate_id):
     return redirect(f'/probate/{probate_id}/step/6')
 
 
+@app.route('/probate/<probate_id>/submit-approval', methods=['POST'])
+@login_required
+def probate_submit_approval(probate_id):
+    """Submit generated forms for approver review."""
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        flash('Application not found.', 'error')
+        return redirect(url_for('probate_list'))
+    if probate.status not in ('generated', 'rejected'):
+        flash('Forms must be generated before submitting for approval.', 'error')
+        return redirect(f'/probate/{probate_id}/step/6')
+    probate.status = 'pending_approval'
+    probate.submitted_by = session.get('user_id')
+    probate.submitted_at = datetime.utcnow()
+    probate.approval_notes = None  # Clear previous rejection notes
+    db.session.commit()
+    flash('Forms submitted for approval.', 'success')
+    return redirect(f'/probate/{probate_id}/step/6')
+
+
+@app.route('/probate/<probate_id>/approve', methods=['POST'])
+@login_required
+def probate_approve(probate_id):
+    """Approve probate forms (approver only)."""
+    role = session.get('user_role')
+    if role not in ('admin', 'approver'):
+        flash('Access denied.', 'error')
+        return redirect(url_for('probate_list'))
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        flash('Application not found.', 'error')
+        return redirect(url_for('probate_list'))
+    notes = request.form.get('approval_notes', '').strip()
+    probate.status = 'approved'
+    probate.approved_by = session.get('user_id')
+    probate.approved_at = datetime.utcnow()
+    probate.approval_notes = notes or None
+    db.session.commit()
+    flash(f'Probate forms for {probate.deceased_name or "estate"} approved.', 'success')
+    return redirect(f'/probate/{probate_id}/step/6')
+
+
+@app.route('/probate/<probate_id>/reject', methods=['POST'])
+@login_required
+def probate_reject(probate_id):
+    """Request changes on probate forms (approver only)."""
+    role = session.get('user_role')
+    if role not in ('admin', 'approver'):
+        flash('Access denied.', 'error')
+        return redirect(url_for('probate_list'))
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        flash('Application not found.', 'error')
+        return redirect(url_for('probate_list'))
+    notes = request.form.get('approval_notes', '').strip()
+    probate.status = 'rejected'
+    probate.approved_by = session.get('user_id')
+    probate.approved_at = datetime.utcnow()
+    probate.approval_notes = notes or 'Changes requested'
+    db.session.commit()
+    flash(f'Changes requested for {probate.deceased_name or "estate"}.', 'info')
+    return redirect(f'/probate/{probate_id}/step/6')
+
+
 @app.route('/probate/<probate_id>/preview/<form_code>')
 @login_required
 def probate_preview(probate_id, form_code):
