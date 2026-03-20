@@ -574,7 +574,9 @@ function validateFile(file) {
     }
     const ext = (file.name || '').split('.').pop().toLowerCase();
     if (!OCR_ALLOWED_EXTS.includes(ext)) {
-        return { valid: false, error: `Unsupported file format: .${ext}\n\nAccepted formats: JPG, PNG, PDF` };
+        const msg = `Unsupported file format: .${ext}\n\nAccepted formats: JPG, PNG, PDF`;
+        alert(msg);
+        return { valid: false, error: msg };
     }
     return { valid: true };
 }
