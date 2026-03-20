@@ -1448,6 +1448,79 @@ def api_will_toggle_logo():
     return jsonify({'ok': True, 'include_logo': wr.include_logo})
 
 
+@app.route('/api/will/delete-generated', methods=['POST'])
+@login_required
+def api_will_delete_generated():
+    """Delete the generated will text (not the will record itself)."""
+    will_id = session.get('will_id')
+    if not will_id:
+        return jsonify({'ok': False, 'error': 'No will in session'}), 400
+    wr = db.session.get(Will, will_id)
+    if not wr:
+        return jsonify({'ok': False, 'error': 'Will not found'}), 404
+    wr.generated_will_text = None
+    wr.status = 'draft'
+    wr.submitted_by = None
+    wr.submitted_at = None
+    wr.approved_by = None
+    wr.approved_at = None
+    wr.approval_remarks = None
+    session.pop('generated_will_text', None)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/feedback', methods=['POST'])
+@login_required
+def api_feedback():
+    """Send feedback/issue report to support@lifa.com.my."""
+    client_name = request.form.get('client_name', '').strip()
+    description = request.form.get('description', '').strip()
+    if not description:
+        return jsonify({'ok': False, 'error': 'Description is required'}), 400
+
+    user = session.get('user', {})
+    user_name = user.get('name', 'Unknown')
+    user_email = user.get('email', 'Unknown')
+    tenant = get_tenant()
+    tenant_host = tenant.get('host', 'unknown')
+
+    subject = f"[WillCraft] Issue Report — {client_name or 'No client'}"
+    body_html = f"""
+    <h3>Issue Report from WillCraft AI</h3>
+    <p><strong>Client Name:</strong> {client_name}</p>
+    <p><strong>Reported by:</strong> {user_name} ({user_email})</p>
+    <p><strong>Site:</strong> {tenant_host}</p>
+    <hr>
+    <p><strong>Problem Description:</strong></p>
+    <p style="white-space: pre-wrap;">{description}</p>
+    """
+
+    attachments = []
+    screenshot = request.files.get('screenshot')
+    if screenshot and screenshot.filename:
+        att_data = screenshot.read()
+        attachments.append({
+            'filename': screenshot.filename,
+            'data': att_data,
+            'mime': screenshot.content_type or 'image/png',
+        })
+
+    try:
+        send_will_email(
+            to_email='support@lifa.com.my',
+            subject=subject,
+            body_html=body_html,
+            attachments=attachments,
+            tenant=tenant,
+        )
+        return jsonify({'ok': True})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/wills')
 @login_required
 def will_list():
