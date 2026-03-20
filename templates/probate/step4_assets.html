@@ -74,13 +74,15 @@
             <div id="liability-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No liabilities added.</div>
         </div>
 
-        <div class="flex justify-between mt-6">
-            <a href="/probate/{{ probate_id }}/step/3" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
-            <button type="submit" class="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
-                Save & Next
-            </button>
-        </div>
     </form>
+</div>
+
+<!-- Sticky Save & Next bar -->
+<div class="sticky bottom-0 bg-white border-t border-gray-200 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] px-6 py-3 -mx-4 sm:-mx-6 mt-4 flex justify-between items-center z-10">
+    <a href="/probate/{{ probate_id }}/step/3" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
+    <button type="submit" form="assets-form" class="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
+        Save & Next
+    </button>
 </div>
 
 <!-- OCR Verification Modal -->
