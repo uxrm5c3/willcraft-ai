@@ -3,7 +3,7 @@
 {% block step_content %}
 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
     <h2 class="text-lg font-bold text-gray-800 mb-1">Step 4: Schedule of Assets & Liabilities</h2>
-    <p class="text-sm text-gray-500 mb-6">List all assets and liabilities of the deceased. This will auto-fill the Assets & Liabilities Schedule (Exhibit {{ exhibit_prefix }}-2).</p>
+    <p class="text-sm text-gray-500 mb-6">List all assets and liabilities of the deceased. Scan documents to auto-fill details. This will auto-fill the Assets & Liabilities Schedule (Exhibit {{ exhibit_prefix }}-2).</p>
 
     <form method="POST" action="/probate/{{ probate_id }}/step/4" id="assets-form">
         <input type="hidden" name="assets_json" id="assets-json-input">
@@ -74,23 +74,6 @@
             <div id="liability-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No liabilities added.</div>
         </div>
 
-        <!-- Supporting Documents Upload -->
-        <div class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <h3 class="text-sm font-semibold text-blue-800 mb-2 flex items-center gap-2">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
-                Supporting Documents (Optional)
-            </h3>
-            <p class="text-xs text-blue-600 mb-3">Upload property title documents (Hakmilik), bank statements, or vehicle registration cards as reference.</p>
-            <div class="flex items-center gap-3">
-                <input type="file" id="support-doc-file" accept="image/*,.pdf" multiple
-                       class="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-700">
-                <button type="button" onclick="uploadSupportDoc()" id="upload-doc-btn" class="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50" disabled>
-                    Upload
-                </button>
-            </div>
-            <div id="uploaded-docs" class="mt-2 space-y-1"></div>
-        </div>
-
         <div class="flex justify-between mt-6">
             <a href="/probate/{{ probate_id }}/step/3" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
             <button type="submit" class="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
@@ -100,113 +83,195 @@
     </form>
 </div>
 
+<!-- OCR Verification Modal -->
+<div id="ocr-verify-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+        <div class="flex items-center justify-between p-4 border-b">
+            <h3 class="text-sm font-bold text-gray-800" id="ocr-modal-title">Verify Scanned Document</h3>
+            <button onclick="closeOcrModal()" class="text-gray-400 hover:text-gray-600">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 overflow-hidden">
+            <div class="border-r overflow-auto bg-gray-100 p-2 flex items-start justify-center">
+                <iframe id="ocr-doc-iframe" class="w-full h-full min-h-[400px] rounded" style="border:none;"></iframe>
+            </div>
+            <div class="overflow-auto p-4">
+                <div id="ocr-fields-compare" class="space-y-4"></div>
+                <div class="mt-4 pt-4 border-t flex justify-end gap-2">
+                    <button onclick="closeOcrModal()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium border border-gray-300 rounded-lg">Cancel</button>
+                    <button onclick="applyOcrChoices()" class="px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">Confirm</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.diff-char-mismatch { color: #dc2626; font-style: italic; font-weight: 600; text-decoration: underline; }
+</style>
+
 <script>
-/* ── Asset data store ── */
 let assets = {{ assets_json | safe }};
+let pendingOcr = { type: null, idx: null, docId: null, extracted: null };
 
-/* ── Templates for each asset type ── */
-function assetFormHtml(type, idx, data) {
-    data = data || {};
-    const rmBtn = `<button type="button" onclick="removeAsset('${type}', ${idx})" class="text-red-400 hover:text-red-600 ml-2" title="Remove"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>`;
+/* ── Field definitions per asset type ── */
+const FIELD_DEFS = {
+    property: [
+        { key: 'description', label: 'Description / Address' },
+        { key: 'title_number', label: 'Title Number (Hakmilik)' },
+        { key: 'lot_number', label: 'Lot Number' },
+        { key: 'mukim', label: 'Mukim / District' },
+        { key: 'value', label: 'Estimated Value (RM)' },
+    ],
+    bank: [
+        { key: 'bank_name', label: 'Bank Name' },
+        { key: 'account_number', label: 'Account Number' },
+        { key: 'value', label: 'Estimated Balance (RM)' },
+    ],
+    vehicle: [
+        { key: 'description', label: 'Make / Model' },
+        { key: 'reg_number', label: 'Registration Number' },
+        { key: 'engine_number', label: 'Engine Number' },
+        { key: 'chassis_number', label: 'Chassis Number' },
+        { key: 'value', label: 'Estimated Value (RM)' },
+    ],
+    other: [
+        { key: 'description', label: 'Description' },
+        { key: 'value', label: 'Estimated Value (RM)' },
+    ],
+    liability: [
+        { key: 'description', label: 'Description' },
+        { key: 'value', label: 'Amount Owed (RM)' },
+    ],
+};
 
-    if (type === 'property') {
-        return `<div class="p-3 bg-white border border-gray-200 rounded-lg" data-type="${type}" data-idx="${idx}">
-            <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-gray-500">Property ${idx + 1}</span>${rmBtn}
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div class="md:col-span-2"><label class="block text-xs text-gray-500 mb-0.5">Description / Address</label>
-                    <textarea data-field="description" rows="2" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., No. 12, Jalan Mewah 1, Taman Mewah, 81200 Johor Bahru">${data.description || ''}</textarea></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Title Number (Hakmilik)</label>
-                    <input type="text" data-field="title_number" value="${data.title_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., H.S.(D) 12345"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Lot Number</label>
-                    <input type="text" data-field="lot_number" value="${data.lot_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Lot 1234"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Mukim / District</label>
-                    <input type="text" data-field="mukim" value="${data.mukim || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Mukim Plentong"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
-                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 500,000"></div>
-            </div>
-        </div>`;
+/* ── Helpers ── */
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function charDiffHtml(existing, scanned) {
+    const maxLen = Math.max(existing.length, scanned.length);
+    let eH = '', sH = '';
+    for (let i = 0; i < maxLen; i++) {
+        const e = existing[i] || '', s = scanned[i] || '';
+        if (e === s) { eH += escHtml(e); sH += escHtml(s); }
+        else { if (e) eH += '<span class="diff-char-mismatch">'+escHtml(e)+'</span>'; if (s) sH += '<span class="diff-char-mismatch">'+escHtml(s)+'</span>'; }
     }
-    if (type === 'bank') {
-        return `<div class="p-3 bg-white border border-gray-200 rounded-lg" data-type="${type}" data-idx="${idx}">
-            <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-gray-500">Account ${idx + 1}</span>${rmBtn}
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div><label class="block text-xs text-gray-500 mb-0.5">Bank Name</label>
-                    <input type="text" data-field="bank_name" value="${data.bank_name || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Maybank"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Account Number</label>
-                    <input type="text" data-field="account_number" value="${data.account_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 1234-5678-9012"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Balance (RM)</label>
-                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 50,000"></div>
-            </div>
-        </div>`;
-    }
-    if (type === 'vehicle') {
-        return `<div class="p-3 bg-white border border-gray-200 rounded-lg" data-type="${type}" data-idx="${idx}">
-            <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-gray-500">Vehicle ${idx + 1}</span>${rmBtn}
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div><label class="block text-xs text-gray-500 mb-0.5">Description (Make/Model)</label>
-                    <input type="text" data-field="description" value="${data.description || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Toyota Vios 2020"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Registration Number</label>
-                    <input type="text" data-field="reg_number" value="${data.reg_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., JQK 1234"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Engine Number</label>
-                    <input type="text" data-field="engine_number" value="${data.engine_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="Optional"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Chassis Number</label>
-                    <input type="text" data-field="chassis_number" value="${data.chassis_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="Optional"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
-                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 30,000"></div>
-            </div>
-        </div>`;
-    }
-    if (type === 'other') {
-        return `<div class="p-3 bg-white border border-gray-200 rounded-lg" data-type="${type}" data-idx="${idx}">
-            <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-gray-500">Asset ${idx + 1}</span>${rmBtn}
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div><label class="block text-xs text-gray-500 mb-0.5">Type</label>
-                    <select data-field="sub_type" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
-                        <option value="epf" ${data.sub_type==='epf'?'selected':''}>EPF / KWSP</option>
-                        <option value="insurance" ${data.sub_type==='insurance'?'selected':''}>Insurance Policy</option>
-                        <option value="shares" ${data.sub_type==='shares'?'selected':''}>Shares / Unit Trust</option>
-                        <option value="jewellery" ${data.sub_type==='jewellery'?'selected':''}>Jewellery</option>
-                        <option value="other" ${data.sub_type==='other'||!data.sub_type?'selected':''}>Other</option>
-                    </select></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Description</label>
-                    <input type="text" data-field="description" value="${data.description || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Policy No. ABC123"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
-                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 10,000"></div>
-            </div>
-        </div>`;
-    }
-    if (type === 'liability') {
-        return `<div class="p-3 bg-white border border-red-200 rounded-lg" data-type="${type}" data-idx="${idx}">
-            <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-red-500">Liability ${idx + 1}</span>${rmBtn}
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div><label class="block text-xs text-gray-500 mb-0.5">Type</label>
-                    <select data-field="sub_type" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
-                        <option value="mortgage" ${data.sub_type==='mortgage'?'selected':''}>Housing Loan / Mortgage</option>
-                        <option value="car_loan" ${data.sub_type==='car_loan'?'selected':''}>Car Loan</option>
-                        <option value="personal_loan" ${data.sub_type==='personal_loan'?'selected':''}>Personal Loan</option>
-                        <option value="credit_card" ${data.sub_type==='credit_card'?'selected':''}>Credit Card</option>
-                        <option value="other" ${data.sub_type==='other'||!data.sub_type?'selected':''}>Other</option>
-                    </select></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Description</label>
-                    <input type="text" data-field="description" value="${data.description || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Maybank housing loan"></div>
-                <div><label class="block text-xs text-gray-500 mb-0.5">Amount Owed (RM)</label>
-                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 200,000"></div>
-            </div>
-        </div>`;
-    }
+    return { existingHtml: eH, scannedHtml: sH };
 }
 
-/* ── Render all assets ── */
+/* ── Scan button label ── */
+const SCAN_LABELS = { property: 'Scan Title', bank: 'Scan Statement', vehicle: 'Scan Reg Card', other: 'Scan Doc', liability: 'Scan Doc' };
+
+/* ── Render asset card ── */
+function assetFormHtml(type, idx, data) {
+    data = data || {};
+    const borderColor = type === 'liability' ? 'border-red-200' : 'border-gray-200';
+    const labelColor = type === 'liability' ? 'text-red-500' : 'text-gray-500';
+    const typeLabel = { property: 'Property', bank: 'Account', vehicle: 'Vehicle', other: 'Asset', liability: 'Liability' }[type];
+    const scanLabel = SCAN_LABELS[type];
+    const docId = data._doc_id || '';
+    const docName = data._doc_name || '';
+
+    let actionBtns = `
+        <div class="flex items-center gap-1">
+            <label class="px-2 py-1 bg-blue-600 text-white text-[10px] font-medium rounded hover:bg-blue-700 cursor-pointer flex items-center gap-1">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                ${scanLabel}
+                <input type="file" accept="image/*,.pdf" onchange="scanAssetDoc('${type}', ${idx}, this)" class="hidden">
+            </label>`;
+    if (docId) {
+        actionBtns += `
+            <button type="button" onclick="viewAssetDoc('${docId}')" class="px-2 py-1 bg-gray-500 text-white text-[10px] font-medium rounded hover:bg-gray-600" title="View scanned document">View</button>`;
+    }
+    actionBtns += `
+            <button type="button" onclick="removeAsset('${type}', ${idx})" class="px-2 py-1 bg-red-500 text-white text-[10px] font-medium rounded hover:bg-red-600" title="Delete">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+        </div>`;
+
+    let docBadge = '';
+    if (docName) {
+        docBadge = `<span class="text-[10px] text-green-600 flex items-center gap-1"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4"/></svg>${escHtml(docName)}</span>`;
+    }
+
+    let fieldsHtml = '';
+    if (type === 'property') {
+        fieldsHtml = `
+            <div class="md:col-span-2"><label class="block text-xs text-gray-500 mb-0.5">Description / Address</label>
+                <textarea data-field="description" rows="2" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., No. 12, Jalan Mewah 1, Taman Mewah, 81200 Johor Bahru">${data.description||''}</textarea></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Title Number (Hakmilik)</label>
+                <input type="text" data-field="title_number" value="${data.title_number||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., H.S.(D) 12345"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Lot Number</label>
+                <input type="text" data-field="lot_number" value="${data.lot_number||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Lot 1234"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Mukim / District</label>
+                <input type="text" data-field="mukim" value="${data.mukim||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Mukim Plentong"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
+                <input type="text" data-field="value" value="${data.value||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 500,000"></div>`;
+    } else if (type === 'bank') {
+        fieldsHtml = `
+            <div><label class="block text-xs text-gray-500 mb-0.5">Bank Name</label>
+                <input type="text" data-field="bank_name" value="${data.bank_name||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Maybank"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Account Number</label>
+                <input type="text" data-field="account_number" value="${data.account_number||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 1234-5678-9012"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Balance (RM)</label>
+                <input type="text" data-field="value" value="${data.value||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 50,000"></div>`;
+    } else if (type === 'vehicle') {
+        fieldsHtml = `
+            <div><label class="block text-xs text-gray-500 mb-0.5">Description (Make/Model)</label>
+                <input type="text" data-field="description" value="${data.description||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Toyota Vios 2020"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Registration Number</label>
+                <input type="text" data-field="reg_number" value="${data.reg_number||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., JQK 1234"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Engine Number</label>
+                <input type="text" data-field="engine_number" value="${data.engine_number||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="Optional"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Chassis Number</label>
+                <input type="text" data-field="chassis_number" value="${data.chassis_number||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="Optional"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
+                <input type="text" data-field="value" value="${data.value||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 30,000"></div>`;
+    } else if (type === 'other') {
+        fieldsHtml = `
+            <div><label class="block text-xs text-gray-500 mb-0.5">Type</label>
+                <select data-field="sub_type" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+                    <option value="epf" ${data.sub_type==='epf'?'selected':''}>EPF / KWSP</option>
+                    <option value="insurance" ${data.sub_type==='insurance'?'selected':''}>Insurance Policy</option>
+                    <option value="shares" ${data.sub_type==='shares'?'selected':''}>Shares / Unit Trust</option>
+                    <option value="jewellery" ${data.sub_type==='jewellery'?'selected':''}>Jewellery</option>
+                    <option value="other" ${data.sub_type==='other'||!data.sub_type?'selected':''}>Other</option>
+                </select></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Description</label>
+                <input type="text" data-field="description" value="${data.description||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Policy No. ABC123"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
+                <input type="text" data-field="value" value="${data.value||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 10,000"></div>`;
+    } else if (type === 'liability') {
+        fieldsHtml = `
+            <div><label class="block text-xs text-gray-500 mb-0.5">Type</label>
+                <select data-field="sub_type" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+                    <option value="mortgage" ${data.sub_type==='mortgage'?'selected':''}>Housing Loan / Mortgage</option>
+                    <option value="car_loan" ${data.sub_type==='car_loan'?'selected':''}>Car Loan</option>
+                    <option value="personal_loan" ${data.sub_type==='personal_loan'?'selected':''}>Personal Loan</option>
+                    <option value="credit_card" ${data.sub_type==='credit_card'?'selected':''}>Credit Card</option>
+                    <option value="other" ${data.sub_type==='other'||!data.sub_type?'selected':''}>Other</option>
+                </select></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Description</label>
+                <input type="text" data-field="description" value="${data.description||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Maybank housing loan"></div>
+            <div><label class="block text-xs text-gray-500 mb-0.5">Amount Owed (RM)</label>
+                <input type="text" data-field="value" value="${data.value||''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 200,000"></div>`;
+    }
+
+    return `<div class="p-3 bg-white border ${borderColor} rounded-lg" data-type="${type}" data-idx="${idx}">
+        <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2">
+                <span class="text-xs font-semibold ${labelColor}">${typeLabel} ${idx+1}</span>
+                ${docBadge}
+            </div>
+            ${actionBtns}
+        </div>
+        <span id="scan-status-${type}-${idx}" class="text-[10px] text-gray-400 block mb-2" style="display:none;"></span>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">${fieldsHtml}</div>
+    </div>`;
+}
+
+/* ── Render ── */
 function renderAssets() {
     const types = ['property', 'bank', 'vehicle', 'other', 'liability'];
     types.forEach(type => {
@@ -224,30 +289,29 @@ function renderAssets() {
 function addAsset(type) {
     assets.push({ asset_type: type });
     renderAssets();
-    // Scroll to new item
     const list = document.getElementById(type + '-list');
     list.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function removeAsset(type, idx) {
     const items = assets.filter(a => a.asset_type === type);
-    const item = items[idx];
-    const realIdx = assets.indexOf(item);
+    const realIdx = assets.indexOf(items[idx]);
     if (realIdx >= 0) assets.splice(realIdx, 1);
     renderAssets();
 }
 
-/* ── Collect field data from DOM ── */
 function collectAssetData() {
     const types = ['property', 'bank', 'vehicle', 'other', 'liability'];
     const result = [];
     types.forEach(type => {
         const cards = document.querySelectorAll(`[data-type="${type}"]`);
-        cards.forEach(card => {
+        const oldItems = assets.filter(a => a.asset_type === type);
+        cards.forEach((card, ci) => {
             const item = { asset_type: type };
+            // Preserve doc info
+            if (oldItems[ci] && oldItems[ci]._doc_id) { item._doc_id = oldItems[ci]._doc_id; item._doc_name = oldItems[ci]._doc_name; }
             card.querySelectorAll('.asset-field').forEach(field => {
-                const key = field.dataset.field;
-                item[key] = field.value.trim();
+                item[field.dataset.field] = field.value.trim();
             });
             result.push(item);
         });
@@ -255,46 +319,138 @@ function collectAssetData() {
     return result;
 }
 
+/* ── Scan document per asset ── */
+async function scanAssetDoc(type, idx, fileInput) {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    // Collect current data first
+    assets = collectAssetData();
+
+    const statusEl = document.getElementById('scan-status-' + type + '-' + idx);
+    if (statusEl) { statusEl.style.display = 'block'; statusEl.innerHTML = '<span class="text-blue-600">Scanning ' + file.name + '...</span>'; }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('asset_type', type);
+
+    try {
+        const resp = await fetch('/api/ocr/asset-doc', { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (data.ok && data.extracted) {
+            pendingOcr = { type, idx, docId: data.document_id, extracted: data.extracted, fileName: file.name };
+
+            // Show verification modal
+            document.getElementById('ocr-modal-title').textContent = 'Verify Scanned Document — ' + SCAN_LABELS[type];
+            document.getElementById('ocr-doc-iframe').src = '/api/documents/' + data.document_id;
+            buildCompareFields(type, idx, data.extracted);
+            document.getElementById('ocr-verify-modal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+
+            if (statusEl) statusEl.innerHTML = '<span class="text-green-600">&#10003; ' + file.name + '</span>';
+        } else {
+            if (statusEl) statusEl.innerHTML = '<span class="text-amber-600">' + (data.error || 'Could not read document.') + '</span>';
+        }
+    } catch (err) {
+        if (statusEl) statusEl.innerHTML = '<span class="text-red-600">Error: ' + err.message + '</span>';
+    }
+}
+
+/* ── Build comparison fields ── */
+function buildCompareFields(type, idx, extracted) {
+    const fields = FIELD_DEFS[type] || [];
+    const items = assets.filter(a => a.asset_type === type);
+    const existing = items[idx] || {};
+    const container = document.getElementById('ocr-fields-compare');
+    container.innerHTML = '';
+    let hasAnyData = false;
+
+    fields.forEach(f => {
+        const existVal = (existing[f.key] || '').trim();
+        const scanVal = (extracted[f.key] || '').trim();
+        if (!scanVal) return;
+        hasAnyData = true;
+
+        const norm = s => s.toUpperCase().replace(/\s+/g, ' ');
+        const isMatch = existVal && norm(existVal) === norm(scanVal);
+
+        const div = document.createElement('div');
+        div.className = 'p-3 rounded-lg border ' + (isMatch ? 'bg-green-50 border-green-200' : (!existVal ? 'bg-blue-50 border-blue-200' : 'bg-amber-50 border-amber-200'));
+
+        if (!existVal) {
+            div.innerHTML = `<div class="flex items-center justify-between mb-1"><span class="text-xs font-semibold text-gray-600 uppercase">${f.label}</span><span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">New</span></div>
+                <div class="text-sm text-gray-800 font-medium">${escHtml(scanVal)}</div>
+                <input type="hidden" class="ocr-choice" data-key="${f.key}" data-action="update" value="${escHtml(scanVal)}">`;
+        } else if (isMatch) {
+            div.innerHTML = `<div class="flex items-center justify-between mb-1"><span class="text-xs font-semibold text-gray-600 uppercase">${f.label}</span><span class="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">&#10003; Match</span></div>
+                <div class="text-sm text-gray-800 font-medium">${escHtml(existVal)}</div>
+                <input type="hidden" class="ocr-choice" data-key="${f.key}" data-action="keep">`;
+        } else {
+            const diff = charDiffHtml(existVal, scanVal);
+            const fId = 'ocr-c-' + type + '-' + idx + '-' + f.key;
+            div.innerHTML = `<div class="flex items-center justify-between mb-2"><span class="text-xs font-semibold text-gray-600 uppercase">${f.label}</span><span class="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Mismatch</span></div>
+                <div class="space-y-2">
+                    <label class="flex items-start gap-2 p-2 rounded cursor-pointer hover:bg-amber-100 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                        <input type="radio" name="${fId}" class="ocr-radio mt-1" data-key="${f.key}" data-action="keep" checked>
+                        <div><div class="text-xs text-gray-500 mb-0.5">Keep existing <span class="text-gray-400">(default)</span></div><div class="text-sm font-medium font-mono">${diff.existingHtml}</div></div>
+                    </label>
+                    <label class="flex items-start gap-2 p-2 rounded cursor-pointer hover:bg-amber-100 border border-transparent has-[:checked]:border-primary-300 has-[:checked]:bg-primary-50">
+                        <input type="radio" name="${fId}" class="ocr-radio" data-key="${f.key}" data-action="update" data-value="${escHtml(scanVal)}">
+                        <div><div class="text-xs text-gray-500 mb-0.5">Use scanned</div><div class="text-sm font-medium font-mono">${diff.scannedHtml}</div></div>
+                    </label>
+                </div>`;
+        }
+        container.appendChild(div);
+    });
+
+    if (!hasAnyData) {
+        container.innerHTML = '<p class="text-sm text-gray-500">OCR could not extract any data from this document.</p>';
+    }
+}
+
+/* ── Apply OCR choices ── */
+function applyOcrChoices() {
+    const { type, idx, docId, fileName } = pendingOcr;
+    const items = assets.filter(a => a.asset_type === type);
+    if (!items[idx]) { closeOcrModal(); return; }
+
+    document.querySelectorAll('.ocr-choice').forEach(el => {
+        if (el.dataset.action === 'update') items[idx][el.dataset.key] = el.value;
+    });
+    document.querySelectorAll('.ocr-radio:checked').forEach(el => {
+        if (el.dataset.action === 'update') items[idx][el.dataset.key] = el.dataset.value;
+    });
+
+    // Store doc reference
+    if (docId) { items[idx]._doc_id = docId; items[idx]._doc_name = fileName || ''; }
+
+    closeOcrModal();
+    renderAssets();
+}
+
+/* ── View document ── */
+function viewAssetDoc(docId) {
+    document.getElementById('ocr-modal-title').textContent = 'View Document';
+    document.getElementById('ocr-doc-iframe').src = '/api/documents/' + docId;
+    document.getElementById('ocr-fields-compare').innerHTML = '<p class="text-sm text-gray-500">Document preview</p>';
+    // Hide confirm/cancel, just show close
+    document.getElementById('ocr-verify-modal').classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeOcrModal() {
+    document.getElementById('ocr-verify-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOcrModal(); });
+
 /* ── Form submit ── */
-document.getElementById('assets-form').addEventListener('submit', function(e) {
+document.getElementById('assets-form').addEventListener('submit', function() {
     assets = collectAssetData();
     document.getElementById('assets-json-input').value = JSON.stringify(assets);
 });
-
-/* ── Supporting document upload ── */
-const supportFileInput = document.getElementById('support-doc-file');
-const uploadDocBtn = document.getElementById('upload-doc-btn');
-supportFileInput.addEventListener('change', () => { uploadDocBtn.disabled = !supportFileInput.files.length; });
-
-async function uploadSupportDoc() {
-    const files = supportFileInput.files;
-    if (!files.length) return;
-    uploadDocBtn.disabled = true;
-    uploadDocBtn.textContent = 'Uploading...';
-    for (const file of files) {
-        const formData = new FormData();
-        formData.append('file', file);
-        try {
-            const resp = await fetch('/api/ocr/nric', { method: 'POST', body: formData });
-            const data = await resp.json();
-            const docId = data.document_id;
-            const docsDiv = document.getElementById('uploaded-docs');
-            docsDiv.insertAdjacentHTML('beforeend', `
-                <div class="flex items-center gap-2 text-xs text-gray-600">
-                    <span class="text-green-500">&#10003;</span>
-                    <span>${file.name}</span>
-                    ${docId ? `<a href="/api/documents/${docId}" target="_blank" class="text-blue-600 hover:underline">View</a>` : ''}
-                </div>
-            `);
-        } catch (err) {
-            const docsDiv = document.getElementById('uploaded-docs');
-            docsDiv.insertAdjacentHTML('beforeend', `<div class="text-xs text-red-500">${file.name}: upload failed</div>`);
-        }
-    }
-    uploadDocBtn.disabled = false;
-    uploadDocBtn.textContent = 'Upload';
-    supportFileInput.value = '';
-}
 
 /* ── Initial render ── */
 renderAssets();

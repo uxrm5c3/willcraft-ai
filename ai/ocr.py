@@ -547,6 +547,147 @@ IMPORTANT: The character-by-character reading is CRITICAL for accuracy. Do NOT s
     return result
 
 
+def extract_asset_document(image_path: str, asset_type: str) -> dict:
+    """Extract data from an asset-related document (title, bank statement, vehicle card, etc.).
+
+    Args:
+        image_path: Path to the image/PDF file
+        asset_type: One of 'property', 'bank', 'vehicle', 'other', 'liability'
+
+    Returns dict with extracted fields matching the asset type.
+    """
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    with open(image_path, 'rb') as f:
+        image_data = base64.standard_b64encode(f.read()).decode('utf-8')
+
+    ext = image_path.rsplit('.', 1)[-1].lower()
+    if ext == 'pdf':
+        content_block = {
+            "type": "document",
+            "source": {"type": "base64", "media_type": "application/pdf", "data": image_data}
+        }
+    else:
+        media_type = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif'}.get(ext, 'image/jpeg')
+        content_block = {
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": image_data}
+        }
+
+    prompts = {
+        'property': """Read this Malaysian property title document (Hakmilik / Geran / Land Title).
+
+Extract these fields by reading carefully, character by character:
+1. Title Number (Hakmilik) — e.g., H.S.(D) 12345, GRN 67890, PM 1234
+2. Lot Number — e.g., Lot 1234, PT 5678
+3. Mukim / District — the mukim or daerah name
+4. Property Address — full address if shown
+5. Land Area — size in sq ft or hectares if shown
+
+Output ONLY this JSON:
+```json
+{
+    "title_number": "",
+    "lot_number": "",
+    "mukim": "",
+    "description": "full address or property description",
+    "area": ""
+}
+```""",
+        'bank': """Read this bank document (bank statement, passbook, or account document).
+
+Extract these fields:
+1. Bank Name — e.g., Maybank, CIMB, Public Bank, RHB
+2. Account Number — the full account number
+3. Account Holder Name — name on the account
+4. Balance — latest balance if shown (numbers only with commas)
+
+Output ONLY this JSON:
+```json
+{
+    "bank_name": "",
+    "account_number": "",
+    "holder_name": "",
+    "value": ""
+}
+```""",
+        'vehicle': """Read this vehicle document (registration card / JPJ card / road tax / grant).
+
+Extract these fields:
+1. Vehicle Make/Model — e.g., Toyota Vios, Honda City
+2. Registration Number — e.g., JQK 1234, WA 5678 B
+3. Engine Number
+4. Chassis Number
+5. Year of Manufacture
+
+Output ONLY this JSON:
+```json
+{
+    "description": "make and model with year",
+    "reg_number": "",
+    "engine_number": "",
+    "chassis_number": "",
+    "year": ""
+}
+```""",
+        'other': """Read this financial/asset document (insurance policy, EPF statement, share certificate, etc.).
+
+Extract these fields:
+1. Document Type — what kind of document is this (insurance, EPF, shares, etc.)
+2. Description — policy number, account reference, or description
+3. Value/Amount — monetary value if shown
+
+Output ONLY this JSON:
+```json
+{
+    "sub_type": "insurance or epf or shares or other",
+    "description": "",
+    "value": ""
+}
+```""",
+        'liability': """Read this loan/debt document (loan statement, credit card statement, mortgage document).
+
+Extract these fields:
+1. Type — housing loan, car loan, personal loan, credit card, other
+2. Description — lender name and loan/account reference
+3. Outstanding Amount — amount still owed
+
+Output ONLY this JSON:
+```json
+{
+    "sub_type": "mortgage or car_loan or personal_loan or credit_card or other",
+    "description": "",
+    "value": ""
+}
+```"""
+    }
+
+    prompt_text = prompts.get(asset_type, prompts['other'])
+    prompt_text += '\n\nRULES:\n- Read character by character for numbers and names\n- Return "" for any field you cannot read\n- UPPERCASE for names\n- Include commas in monetary amounts'
+
+    message = client.messages.create(
+        model=CLAUDE_MODEL_FAST,
+        max_tokens=1024,
+        messages=[{"role": "user", "content": [content_block, {"type": "text", "text": prompt_text}]}]
+    )
+
+    response_text = message.content[0].text.strip()
+    json_str = _extract_json(response_text)
+    if not json_str:
+        return {"error": "Could not parse extraction results"}
+
+    try:
+        result = json.loads(json_str)
+    except json.JSONDecodeError:
+        try:
+            fixed = re.sub(r'(?<!\\)\n', ' ', json_str)
+            result = json.loads(fixed)
+        except json.JSONDecodeError:
+            return {"error": "Could not parse extraction results"}
+
+    return result
+
+
 def _extract_json(text: str) -> str:
     """Extract JSON object from text that may contain chain-of-thought reasoning.
 

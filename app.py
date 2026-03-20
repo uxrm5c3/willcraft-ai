@@ -3789,11 +3789,26 @@ def probate_step5(probate_id):
     # Validation: check for missing required info per form
     validation_warnings = _validate_probate_data(probate, will_record, recommendations)
 
+    # Load invoices & receipts for this probate
+    receipt_docs = Document.query.filter(
+        Document.description.like(f'probate:{probate_id}|%'),
+        Document.category.in_(['probate_invoice', 'probate_receipt'])
+    ).order_by(Document.created_at.desc()).all()
+    receipts = [{
+        'id': d.id,
+        'filename': d.original_filename,
+        'category': d.category.replace('probate_', ''),
+        'description': (d.description or '').split('|', 1)[-1],
+        'file_size': d.file_size,
+        'created_at': d.created_at.strftime('%d %b %Y, %I:%M %p') if d.created_at else '',
+    } for d in receipt_docs]
+
     ctx['probate_step'] = 5
     ctx['recommendations'] = recommendations
     ctx['generated_forms'] = gen_list
     ctx['exhibit_prefix'] = exhibit_prefix
     ctx['validation_warnings'] = validation_warnings
+    ctx['receipts'] = receipts
     return render_template('probate/step5_review.html', **ctx)
 
 
@@ -3927,6 +3942,121 @@ def api_ocr_death_cert():
     db.session.commit()
 
     return jsonify({'ok': True, 'document_id': doc.id, 'extracted': extracted})
+
+
+@app.route('/api/ocr/asset-doc', methods=['POST'])
+@login_required
+def api_ocr_asset_doc():
+    """Upload an asset document (title, bank statement, vehicle card, etc.) and OCR it."""
+    if 'file' not in request.files:
+        return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({'ok': False, 'error': 'No file selected'}), 400
+
+    asset_type = request.form.get('asset_type', 'other')
+
+    from uploads import save_uploaded_file
+    client_id = session.get('client_id', 'temp')
+    try:
+        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, category=f'asset_{asset_type}')
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+    abs_path = os.path.join(UPLOAD_DIR, rel_path)
+
+    from ai.ocr import extract_asset_document
+    try:
+        extracted = extract_asset_document(abs_path, asset_type)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'OCR failed: {str(e)}'}), 500
+
+    if 'error' in extracted:
+        return jsonify({'ok': False, 'error': extracted['error']})
+
+    doc = Document(
+        client_id=client_id,
+        filename=saved_name,
+        original_filename=file.filename,
+        file_path=rel_path,
+        file_type=file.filename.rsplit('.', 1)[-1].lower(),
+        file_size=file_size,
+        category=f'asset_{asset_type}',
+        extracted_data=json.dumps(extracted),
+    )
+    db.session.add(doc)
+    db.session.commit()
+
+    return jsonify({'ok': True, 'document_id': doc.id, 'extracted': extracted})
+
+
+@app.route('/api/probate/<probate_id>/upload-receipt', methods=['POST'])
+@login_required
+def api_probate_upload_receipt(probate_id):
+    """Upload an invoice or payment receipt for a probate application."""
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        return jsonify({'ok': False, 'error': 'Probate application not found'}), 404
+
+    if 'file' not in request.files:
+        return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
+    file = request.files['file']
+    if not file.filename:
+        return jsonify({'ok': False, 'error': 'No file selected'}), 400
+
+    doc_category = request.form.get('category', 'invoice')  # invoice or receipt
+    description = request.form.get('description', '')
+
+    from uploads import save_uploaded_file
+    client_id = probate.client_id or 'temp'
+    try:
+        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, category=f'probate_{doc_category}')
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+    doc = Document(
+        client_id=client_id,
+        filename=saved_name,
+        original_filename=file.filename,
+        file_path=rel_path,
+        file_type=file.filename.rsplit('.', 1)[-1].lower(),
+        file_size=file_size,
+        category=f'probate_{doc_category}',
+        description=f'probate:{probate_id}|{description}',
+    )
+    db.session.add(doc)
+    db.session.commit()
+
+    return jsonify({
+        'ok': True,
+        'document': {
+            'id': doc.id,
+            'filename': doc.original_filename,
+            'category': doc_category,
+            'description': description,
+            'file_size': doc.file_size,
+            'created_at': doc.created_at.isoformat(),
+        }
+    })
+
+
+@app.route('/api/probate/<probate_id>/receipts')
+@login_required
+def api_probate_receipts(probate_id):
+    """List invoices and payment receipts for a probate application."""
+    docs = Document.query.filter(
+        Document.description.like(f'probate:{probate_id}|%'),
+        Document.category.in_(['probate_invoice', 'probate_receipt'])
+    ).order_by(Document.created_at.desc()).all()
+
+    return jsonify([{
+        'id': d.id,
+        'filename': d.original_filename,
+        'category': d.category.replace('probate_', ''),
+        'description': (d.description or '').split('|', 1)[-1],
+        'file_size': d.file_size,
+        'created_at': d.created_at.isoformat(),
+    } for d in docs])
 
 
 # Admin: Probate Template Management
