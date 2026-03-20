@@ -34,7 +34,7 @@ from fractions import Fraction
 
 @app.template_filter('to_fraction')
 def to_fraction_filter(value):
-    """Convert a share value to fraction display. '40' -> '2/5', '1/3' -> '1/3'."""
+    """Convert a share value to fraction display. '40' -> '4/10', '31' -> '31/100'."""
     if not value or value == '-':
         return value
     s = str(value).strip().rstrip('%')
@@ -42,8 +42,16 @@ def to_fraction_filter(value):
         return s
     try:
         num = float(s)
-        frac = Fraction(num / 100).limit_denominator(100)
-        return f"{frac.numerator}/{frac.denominator}"
+        n = int(num)
+        if n != num:
+            return s
+        if n == 100:
+            return "1/1"
+        # Use /10 if divisible by 10, otherwise /100
+        if n % 10 == 0:
+            return f"{n // 10}/10"
+        else:
+            return f"{n}/100"
     except (ValueError, ZeroDivisionError):
         return s
 
