@@ -22,8 +22,8 @@
                 <div class="flex items-center gap-2">
                     <span class="drag-handle cursor-grab text-gray-300 hover:text-gray-500 select-none text-lg leading-none" title="Drag to reorder" onmousedown="event.stopPropagation()">⠿</span>
                     <div class="reorder-arrows hidden flex-col gap-0.5" onclick="event.stopPropagation()">
-                        <button type="button" onclick="moveGiftUp(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none p-0.5" title="Move up">▲</button>
-                        <button type="button" onclick="moveGiftDown(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none p-0.5" title="Move down">▼</button>
+                        <button type="button" onclick="event.stopPropagation(); moveGiftUp(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none px-1 py-0.5 rounded hover:bg-primary-100" title="Move up">▲</button>
+                        <button type="button" onclick="event.stopPropagation(); moveGiftDown(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none px-1 py-0.5 rounded hover:bg-primary-100" title="Move down">▼</button>
                     </div>
                     <svg class="w-4 h-4 text-gray-400 transition-transform gift-chevron" id="gift-chevron-{{ gift_idx }}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                     <h3 class="font-semibold text-gray-700">Gift No. {{ loop.index }}</h3>
@@ -619,6 +619,7 @@
 }
 </style>
 <script>
+let _reorderMode = false;
 const _giftBeneficiaries = {{ beneficiaries | tojson }};
 const _personAddresses = {{ (persons | default([])) | tojson }};
 function _buildAddressListHtml(idx) {
@@ -657,6 +658,8 @@ allocCounts[{{ loop.index0 }}] = {{ gift.get('allocations', [{}])|length }};
 
 // Collapse/expand gifts
 function toggleGiftCollapse(giftIdx) {
+    // Prevent expand/collapse while in reorder mode
+    if (_reorderMode) return;
     const body = document.getElementById('gift-body-' + giftIdx);
     const summary = document.getElementById('gift-summary-' + giftIdx);
     const chevron = document.getElementById('gift-chevron-' + giftIdx);
@@ -969,8 +972,8 @@ function addGift() {
             <div class="flex items-center gap-2">
                 <span class="drag-handle cursor-grab text-gray-300 hover:text-gray-500 select-none text-lg leading-none" title="Drag to reorder" onmousedown="event.stopPropagation()">&#x2807;</span>
                 <div class="reorder-arrows hidden flex-col gap-0.5" onclick="event.stopPropagation()">
-                    <button type="button" onclick="moveGiftUp(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none p-0.5" title="Move up">▲</button>
-                    <button type="button" onclick="moveGiftDown(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none p-0.5" title="Move down">▼</button>
+                    <button type="button" onclick="event.stopPropagation(); moveGiftUp(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none px-1 py-0.5 rounded hover:bg-primary-100" title="Move up">▲</button>
+                    <button type="button" onclick="event.stopPropagation(); moveGiftDown(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none px-1 py-0.5 rounded hover:bg-primary-100" title="Move down">▼</button>
                 </div>
                 <svg class="w-4 h-4 text-gray-400 transition-transform gift-chevron" id="gift-chevron-${idx}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 <h3 class="font-semibold text-gray-700">Gift No. ${idx + 1}</h3>
@@ -1169,7 +1172,6 @@ function sortGiftsByType() {
 })();
 
 // Reorder mode (iPhone-style with wiggle + up/down arrows)
-let _reorderMode = false;
 function toggleReorderMode() {
     _reorderMode = !_reorderMode;
     const container = document.getElementById('gifts-container');
