@@ -149,28 +149,6 @@ def replace_in_paragraph(paragraph, replacements):
         for run in paragraph.runs[1:]:
             run.text = ""
 
-        # Smart font size adjustment for long lines that would wrap
-        # Estimate visible char count (exclude tabs which take fixed space)
-        visible_len = len(new_text.replace('\t', ''))
-        is_header_line = '…PEMOHON' in new_text
-        is_jurat_line = '\t)' in new_text and visible_len > 30
-
-        if is_header_line or is_jurat_line:
-            from docx.shared import Pt
-            # At 11pt, ~80 chars fit on one line in a standard A4 doc
-            # Reduce font size proportionally for longer lines
-            if visible_len > 75:
-                new_size = Pt(9)
-            elif visible_len > 60:
-                new_size = Pt(10)
-            else:
-                new_size = None
-
-            if new_size:
-                for run in paragraph.runs:
-                    if run.text:
-                        run.font.size = new_size
-
         return True
     return False
 
