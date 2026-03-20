@@ -103,7 +103,6 @@
                 {{ field_val('Fax', probate.firm_fax) }}
                 {{ field_val('Lawyer', probate.lawyer_name, true) }}
                 {{ field_val('Bar Council No', probate.lawyer_bar_number, true) }}
-                {{ field_val('Lawyer NRIC', probate.lawyer_nric) }}
             </div>
             {% set step2_missing = [] %}
             {% if not probate.case_number %}{% set _ = step2_missing.append('Case Number') %}{% endif %}

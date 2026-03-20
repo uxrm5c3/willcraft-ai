@@ -4006,7 +4006,6 @@ def probate_step6(probate_id):
         'Exhibit references': 'Auto-generated',
         'Lawyer name': probate.lawyer_name or '',
         'Lawyer bar council number': probate.lawyer_bar_number or '',
-        'Lawyer NRIC': probate.lawyer_nric or '',
         'Filing year': probate.filing_year or '',
     }
     # Assets summary values
