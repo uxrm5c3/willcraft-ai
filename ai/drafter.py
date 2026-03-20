@@ -283,6 +283,40 @@ def format_will_data(will_data) -> str:
 ## OTHER MATTERS
 {chr(10).join(other_lines)}""")
 
+    # Build mandatory substitute clauses summary
+    sub_clauses = []
+    for i, g in enumerate(will_data.gifts):
+        sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
+        if sub_mode == 'specific':
+            def _lookup_sub(name):
+                for b in will_data.beneficiaries:
+                    if b.full_name.lower() == name.lower():
+                        return format_id_for_will(b.nric_passport_birthcert, getattr(b, 'nationality', 'Malaysian')), b.relationship.lower()
+                return "", ""
+            for a in g.allocations:
+                if a.substitutes:
+                    mb_id, mb_rel = _lookup_sub(a.beneficiary_name)
+                    mb_id_str = f" {mb_id}" if mb_id else ""
+                    mb_rel_str = f"my {mb_rel} " if mb_rel else ""
+                    he_she = "she" if mb_rel in ("sister", "daughter", "mother", "niece", "aunt", "grandmother", "wife") else "he"
+                    sub_parts = []
+                    for s in a.substitutes:
+                        s_id, s_rel = _lookup_sub(s.beneficiary_name)
+                        s_id_str = f" {s_id}" if s_id else ""
+                        s_rel_str = f"my {s_rel} " if s_rel else ""
+                        sub_parts.append(f"{s_rel_str}{s.beneficiary_name.upper()}{s_id_str}")
+                    if len(sub_parts) == 1:
+                        sub_text = sub_parts[0]
+                    else:
+                        sub_text = " and ".join(sub_parts) + " in equal shares or to the survivor of them if one of them does not survive me"
+                    sub_clauses.append(f"  - If {mb_rel_str}{a.beneficiary_name.upper()}{mb_id_str} does not survive me, then the benefit {he_she} would have received shall be given to {sub_text}.")
+
+    if sub_clauses:
+        sections.append(f"""
+## MANDATORY SUBSTITUTE BENEFICIARY CLAUSES
+CRITICAL: You MUST include the following substitute beneficiary clause(s) in the will. Each one should appear as a separate numbered clause after the gift clauses, using "Pursuant to Clause [X] above" to reference the relevant gift clause:
+{chr(10).join(sub_clauses)}""")
+
     return "\n".join(sections)
 
 
@@ -300,7 +334,7 @@ IMPORTANT DRAFTING INSTRUCTIONS:
 - For bank accounts and properties to be sold, use the "The Moneys" pooling mechanism
 - Include EPF/insurance fallback clause if not specifically excluded
 - Each beneficiary mentioned in gifts/residuary MUST include their NRIC number from the beneficiary list
-- Include substitute beneficiary clauses where substitute beneficiaries are provided
+- CRITICAL: Include ALL substitute beneficiary clauses listed in the MANDATORY SUBSTITUTE BENEFICIARY CLAUSES section. Each must appear as a separate numbered clause using "Pursuant to Clause [X] above" format
 - Include the commorientes clause (30-day survivorship rule) in the Declaration section
 - Include the testator declaration clause at the end
 - End with "THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK"
@@ -509,6 +543,103 @@ The expression 'all bank accounts' in this clause shall exclude any account whic
 {next_clause}.  If the nomination(s) made by me in my Employees' Provident Fund do(es) not take effect for whatsoever reason, then I give the benefits of the nomination(s) to form part of my residuary estate."""
     next_clause += 1
 
+    # Specific gift clauses
+    specific_gifts_text = ""
+    gift_clause_map = {}  # Maps gift index to clause number for substitute references
+    if will_data.gifts:
+        for gi, g in enumerate(will_data.gifts):
+            desc = g.get_formatted_description()
+            if not desc:
+                continue
+            # Build beneficiary list
+            alloc_parts = []
+            for a in g.allocations:
+                nric, nat, rel = "", "Malaysian", ""
+                for b in will_data.beneficiaries:
+                    if b.full_name.lower() == a.beneficiary_name.lower():
+                        nric = b.nric_passport_birthcert
+                        nat = getattr(b, 'nationality', 'Malaysian')
+                        rel = b.relationship.lower()
+                        break
+                id_str = f" {format_id_for_will(nric, nat)}" if nric else ""
+                rel_str = f"my {rel} " if rel else ""
+                alloc_parts.append(f"{rel_str}{a.beneficiary_name.upper()}{id_str}")
+
+            if not alloc_parts:
+                continue
+
+            gift_clause_map[gi] = next_clause
+
+            if len(alloc_parts) == 1:
+                ben_text = alloc_parts[0]
+                share_text = ""
+            else:
+                ben_text = ", ".join(alloc_parts[:-1]) + " and " + alloc_parts[-1]
+                shares = [a.share for a in g.allocations]
+                if all(s == shares[0] for s in shares):
+                    share_text = f" in equal shares ({shares[0]} each)"
+                else:
+                    share_text = f" in the shares indicated ({', '.join(shares)})"
+
+            specific_gifts_text += f"""
+
+{next_clause}.  I give to {ben_text} {desc}{share_text}."""
+
+            # Add substitute clause inline for equal/prorata modes
+            sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
+            mb_allocs = [a for a in g.allocations if a.role == 'MB']
+            if sub_mode == 'equal' and len(mb_allocs) > 1:
+                specific_gifts_text += f" If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares or to the survivor of them if one of them does not survive me."
+            elif sub_mode == 'prorata' and len(mb_allocs) > 1:
+                specific_gifts_text += f" If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio as their respective shares."
+
+            next_clause += 1
+
+        # Add specific substitute clauses (for gifts with specific substitute mode)
+        for gi, g in enumerate(will_data.gifts):
+            sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
+            if sub_mode != 'specific' or gi not in gift_clause_map:
+                continue
+            ref_clause = gift_clause_map[gi]
+            for a in g.allocations:
+                if not a.substitutes:
+                    continue
+                mb_nric, mb_nat, mb_rel = "", "Malaysian", ""
+                for b in will_data.beneficiaries:
+                    if b.full_name.lower() == a.beneficiary_name.lower():
+                        mb_nric = b.nric_passport_birthcert
+                        mb_nat = getattr(b, 'nationality', 'Malaysian')
+                        mb_rel = b.relationship.lower()
+                        break
+                mb_id_str = f" {format_id_for_will(mb_nric, mb_nat)}" if mb_nric else ""
+                mb_rel_str = f"my {mb_rel} " if mb_rel else ""
+                he_she = "she" if mb_rel in ("sister", "daughter", "mother", "niece", "aunt", "grandmother", "wife") else "he"
+
+                sub_parts = []
+                for s in a.substitutes:
+                    s_nric, s_nat, s_rel = "", "Malaysian", ""
+                    for b in will_data.beneficiaries:
+                        if b.full_name.lower() == s.beneficiary_name.lower():
+                            s_nric = b.nric_passport_birthcert
+                            s_nat = getattr(b, 'nationality', 'Malaysian')
+                            s_rel = b.relationship.lower()
+                            break
+                    s_id_str = f" {format_id_for_will(s_nric, s_nat)}" if s_nric else ""
+                    s_rel_str = f"my {s_rel} " if s_rel else ""
+                    sub_parts.append(f"{s_rel_str}{s.beneficiary_name.upper()}{s_id_str}")
+
+                if len(sub_parts) == 1:
+                    sub_text = sub_parts[0]
+                    trailing = ""
+                else:
+                    sub_text = " and ".join(sub_parts)
+                    trailing = " in equal shares or to the survivor of them if one of them does not survive me"
+
+                specific_gifts_text += f"""
+
+{next_clause}.  Pursuant to Clause {ref_clause} above, if {mb_rel_str}{a.beneficiary_name.upper()}{mb_id_str} does not survive me, then the benefit {he_she} would have received shall be given to {sub_text}{trailing}."""
+                next_clause += 1
+
     # Declaration
     declaration_text = f"""Declaration
 
@@ -530,6 +661,7 @@ Revocation
 {trustee_clause}
 
 {non_residuary_text}
+{specific_gifts_text}
 
 {residuary_text}
 
