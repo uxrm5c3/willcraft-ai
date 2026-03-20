@@ -142,51 +142,77 @@ def _estimate_line_len(text):
     return length
 
 
-def _trim_leading_whitespace(text, max_len=60):
-    """If text is too long for one line, reduce leading tabs/spaces to fit.
+def _smart_fit_text(text, max_len=62):
+    """Intelligently reduce whitespace so text fits on one line.
 
-    Uses conservative max_len=60 to account for bold text and tab stops.
-    Preserves at least one tab for indented lines. Returns trimmed text.
+    Handles multiple patterns:
+    1. Leading tabs/spaces before a name (signing lines)
+    2. Internal tabs between name and suffix (e.g. NAME\\t\\t...PEMOHON)
+    3. Trailing whitespace padding
+    4. Multiple consecutive spaces that can be collapsed
+
+    Returns the adjusted text.
     """
     est = _estimate_line_len(text)
     if est <= max_len:
         return text
 
-    # Find where the actual content starts (after leading whitespace)
+    # Step 1: Collapse runs of multiple spaces (>3) to fewer spaces
+    import re
+    adjusted = re.sub(r' {4,}', '  ', text)
+    if _estimate_line_len(adjusted) <= max_len:
+        return adjusted
+
+    # Step 2: Reduce internal tab sequences (keep at most 1 tab between content)
+    parts = adjusted.split('\t')
+    if len(parts) > 2:
+        # Find content parts vs whitespace-only parts
+        rebuilt = parts[0]
+        for p in parts[1:]:
+            if rebuilt.rstrip() and p.strip():
+                # Both sides have content — use single tab
+                rebuilt += '\t' + p
+            elif not rebuilt.rstrip():
+                # Leading tab — keep one
+                rebuilt += '\t' + p
+            else:
+                # Trailing or extra tab — use single space
+                rebuilt += ' ' + p
+        adjusted = rebuilt
+        if _estimate_line_len(adjusted) <= max_len:
+            return adjusted
+
+    # Step 3: Trim leading whitespace
     content_start = 0
-    for j, ch in enumerate(text):
+    for j, ch in enumerate(adjusted):
         if ch not in (' ', '\t'):
             content_start = j
             break
+    if content_start > 0:
+        content = adjusted[content_start:]
+        content_len = _estimate_line_len(content)
+        available = max(0, max_len - content_len)
+        if available >= 8:
+            new_leading = '\t' * (available // 8)
+        elif available >= 1:
+            new_leading = ' ' * available
+        else:
+            new_leading = ''
+        adjusted = new_leading + content
+        if _estimate_line_len(adjusted) <= max_len:
+            return adjusted
 
-    if content_start == 0:
-        return text  # No leading whitespace to trim
+    # Step 4: If still too long, remove ALL leading whitespace
+    adjusted = adjusted.lstrip(' \t')
 
-    leading = text[:content_start]
-    content = text[content_start:]
-    content_len = _estimate_line_len(content)
-
-    # Calculate how much leading space we can afford
-    available = max_len - content_len
-    if available < 0:
-        available = 0
-
-    # Rebuild leading whitespace: use tabs (each ~8 chars) to fill available space
-    if available >= 8:
-        new_leading = '\t' * (available // 8)
-    elif available >= 1:
-        new_leading = ' ' * available
-    else:
-        new_leading = ''
-
-    return new_leading + content
+    return adjusted
 
 
 def replace_in_paragraph(paragraph, replacements):
     """Replace placeholders in a paragraph, handling split runs.
 
-    After replacement, trims leading whitespace if the line would be too
-    long (e.g. tabs pushing a name off the right edge).
+    After replacement, applies smart fitting to prevent long names from
+    breaking into 2 lines.
     """
     full_text = ''.join(run.text for run in paragraph.runs)
     if not full_text or '{{' not in full_text:
@@ -198,8 +224,8 @@ def replace_in_paragraph(paragraph, replacements):
             new_text = new_text.replace(placeholder, str(value) if value else '')
 
     if new_text != full_text and paragraph.runs:
-        # Smart adjustment: trim leading whitespace if line is too long
-        new_text = _trim_leading_whitespace(new_text)
+        # Smart adjustment: fit text to prevent line overflow
+        new_text = _smart_fit_text(new_text)
 
         # Keep first run's formatting, clear others
         paragraph.runs[0].text = new_text
@@ -564,36 +590,85 @@ def recommend_forms(will_record, probate_app=None):
 
 
 def _fix_signing_alignment(doc):
-    """Fix signing name lines that use excessive spaces/tabs for right-alignment.
+    """Fix signing/name lines that would overflow due to excessive whitespace.
 
-    After placeholder replacement, lines like:
-        '                                    \t    PARAMSOTHY A/P V APPUKUDDY'
-    overflow because the spaces+name is too wide. Fix by trimming leading
-    whitespace and using right-alignment on the paragraph instead.
+    Handles multiple patterns:
+    1. Lines with 15+ leading spaces/tabs containing a name → right-align
+    2. Lines with NAME + tabs/spaces + suffix (e.g. PEMOHON) → reduce spacing
+    3. Lines that are still too long after smart_fit → adjust paragraph indent
     """
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, Emu
+
+    # Keywords that indicate this is NOT a name line
+    skip_keywords = [
+        'mahkamah', 'dalam', 'negeri', 'saman', 'afidavit', 'borang',
+        'peguambela', 'difailkan', 'setem', 'pembayaran', 'bertarikh',
+        'pada hari', 'bulan', 'tahun', 'hakim', 'pesuruhjaya',
+    ]
+
     for para in doc.paragraphs:
         if not para.runs:
             continue
         full_text = ''.join(r.text for r in para.runs)
         stripped = full_text.strip()
-        if not stripped:
+        if not stripped or '{{' in stripped:
             continue
+
+        est_len = _estimate_line_len(full_text)
         leading_ws = len(full_text) - len(full_text.lstrip())
-        # Target: lines with 20+ leading spaces that contain a name (no {{ }})
+
+        # Pattern 1: Lines with significant leading whitespace + name
         # These are signing name lines like "                    JOHN DOE"
-        if leading_ws >= 20 and '{{' not in stripped and len(stripped) < 100:
-            # Check it's a name-like line (mostly uppercase, short)
-            words = stripped.replace('[', '').replace(']', '').split()
-            if words and not any(kw in stripped.lower() for kw in [
-                'mahkamah', 'dalam', 'negeri', 'saman', 'afidavit', 'borang',
-                'peguambela', 'difailkan', 'setem', 'pembayaran'
-            ]):
-                # Right-align the paragraph and remove leading whitespace
-                para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-                para.runs[0].text = stripped
+        if leading_ws >= 15 and len(stripped) < 80:
+            is_skip = any(kw in stripped.lower() for kw in skip_keywords)
+            if not is_skip:
+                if est_len > 55:
+                    # Too long with whitespace — right-align and strip
+                    para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                    para.runs[0].text = stripped
+                    for run in para.runs[1:]:
+                        run.text = ''
+                    # Also clear first-line indent which can push text further
+                    if para.paragraph_format.first_line_indent:
+                        para.paragraph_format.first_line_indent = Pt(0)
+                    continue
+
+        # Pattern 2: Lines that are too long overall — try reducing paragraph indent
+        if est_len > 62:
+            # Try smart fit on the text
+            fitted = _smart_fit_text(full_text, max_len=62)
+            if fitted != full_text:
+                para.runs[0].text = fitted
                 for run in para.runs[1:]:
                     run.text = ''
+
+            # If paragraph has large first_line_indent, reduce it
+            pf = para.paragraph_format
+            if pf.first_line_indent and pf.first_line_indent > Pt(18):
+                pf.first_line_indent = Pt(18)
+            if pf.left_indent and pf.left_indent > Pt(36):
+                # Don't reduce if it's a hanging indent (negative first_line)
+                if not pf.first_line_indent or pf.first_line_indent >= Pt(0):
+                    pf.left_indent = Pt(36)
+
+    # Also process table cells — header tables often have space-padded names
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    if not para.runs:
+                        continue
+                    full_text = ''.join(r.text for r in para.runs)
+                    if not full_text.strip() or '{{' in full_text:
+                        continue
+                    est_len = _estimate_line_len(full_text)
+                    if est_len > 62:
+                        fitted = _smart_fit_text(full_text, max_len=62)
+                        if fitted != full_text:
+                            para.runs[0].text = fitted
+                            for run in para.runs[1:]:
+                                run.text = ''
 
 
 def _cleanup_empty_placeholders(doc):

@@ -3657,19 +3657,32 @@ def _get_probate_context(probate_id):
     else:
         # Probate: from will data
         if not will_record:
-            return probate, None, {'probate': probate, 'probate_id': probate_id,
-                                   'is_la': False, 'will_title': 'Unknown', 'client_name': '',
-                                   'testator': {}, 'executor': None}
-        testator = json.loads(will_record.step1_data or '{}')
-        step2 = json.loads(will_record.step2_data or '{}')
-        executors = step2.get('executors', []) if isinstance(step2, dict) else step2
-        executor = executors[0] if executors else {}
-        will_title = will_record.title
-        client_name = will_record.client.full_name if will_record.client else ''
+            # Manual will upload / no linked will — treat like LA for field entry
+            testator = {
+                'full_name': probate.deceased_name or '',
+                'nric_passport': probate.deceased_nric or '',
+                'residential_address': probate.deceased_address or '',
+            }
+            executor = {
+                'full_name': probate.applicant_name or '',
+                'nric_passport': probate.applicant_nric or '',
+                'address': probate.applicant_address or '',
+                'relationship': probate.applicant_relationship or '',
+            }
+            will_title = f'Probate — {probate.deceased_name or "Manual Entry"}'
+            client_name = probate.applicant_name or ''
+        else:
+            testator = json.loads(will_record.step1_data or '{}')
+            step2 = json.loads(will_record.step2_data or '{}')
+            executors = step2.get('executors', []) if isinstance(step2, dict) else step2
+            executor = executors[0] if executors else {}
+            will_title = will_record.title
+            client_name = will_record.client.full_name if will_record.client else ''
 
     # Determine max completed step based on data presence
     max_step = 0
-    if probate.date_of_death or probate.place_of_death or (is_la and probate.deceased_name):
+    no_will = not is_la and not will_record
+    if probate.date_of_death or probate.place_of_death or ((is_la or no_will) and probate.deceased_name):
         max_step = 1
     if probate.court_location or probate.firm_name:
         max_step = max(max_step, 2)
@@ -3682,10 +3695,13 @@ def _get_probate_context(probate_id):
     if probate.status == 'generated':
         max_step = 6
 
+    no_will = not is_la and not will_record  # Manual will upload (probate without linked will)
+
     return probate, will_record, {
         'probate': probate,
         'probate_id': probate_id,
         'is_la': is_la,
+        'no_will': no_will,
         'will_title': will_title,
         'client_name': client_name,
         'testator': testator,
@@ -3822,8 +3838,8 @@ def probate_step1(probate_id):
         doc_id = request.form.get('death_cert_document_id', '').strip()
         if doc_id:
             probate.death_cert_document_id = doc_id
-        # LA-specific fields
-        if probate.application_type == 'la':
+        # LA or no-will probate: save deceased/applicant fields
+        if probate.application_type == 'la' or not probate.will_id:
             probate.deceased_name = request.form.get('deceased_name', '').strip()
             probate.deceased_nric = request.form.get('deceased_nric', '').strip()
             probate.deceased_address = request.form.get('deceased_address', '').strip()

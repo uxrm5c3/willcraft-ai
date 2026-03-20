@@ -142,9 +142,9 @@
                     <div class="text-xs text-gray-500">Link to a will already in WillCraft.</div>
                 </button>
                 <button onclick="selectAppType('skip')" id="btn-skip"
-                        class="p-4 rounded-lg border-2 border-gray-200 text-left hover:border-amber-300 transition-all">
-                    <div class="text-sm font-bold text-gray-700 mb-1">Start Without Will</div>
-                    <div class="text-xs text-gray-500">Upload external will or enter details manually in Step 1.</div>
+                        class="p-4 rounded-lg border-2 border-gray-200 text-left hover:border-primary-300 transition-all">
+                    <div class="text-sm font-bold text-gray-700 mb-1">Manual Will Upload</div>
+                    <div class="text-xs text-gray-500">Upload will PDF or enter details manually.</div>
                 </button>
             </div>
 
@@ -187,9 +187,9 @@
                 {% endif %}
             </div>
 
-            <!-- Skip: Start without will (always probate type) -->
+            <!-- Manual Will Upload -->
             <div id="skip-section" class="hidden">
-                <p class="text-sm text-gray-500 mb-3">Start a probate application without linking to a WillCraft will. You can upload the will PDF for OCR extraction or enter all details manually in Step 1.</p>
+                <p class="text-sm text-gray-500 mb-3">Upload a will PDF for OCR extraction or enter all details manually in Step 1.</p>
                 <a href="/probate/new-probate" class="block w-full px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700 text-center no-underline">
                     Start Probate Application
                 </a>
@@ -211,13 +211,13 @@ function selectAppType(type) {
     if (type === 'probate') {
         probBtn.className = 'p-4 rounded-lg border-2 border-primary-500 bg-primary-50 text-left transition-all';
         probBtn.querySelector('.text-sm').className = 'text-sm font-bold text-primary-700 mb-1';
-        skipBtn.className = 'p-4 rounded-lg border-2 border-gray-200 text-left hover:border-amber-300 transition-all';
+        skipBtn.className = 'p-4 rounded-lg border-2 border-gray-200 text-left hover:border-primary-300 transition-all';
         skipBtn.querySelector('.text-sm').className = 'text-sm font-bold text-gray-700 mb-1';
         probSec.classList.remove('hidden');
         skipSec.classList.add('hidden');
     } else {
-        skipBtn.className = 'p-4 rounded-lg border-2 border-amber-500 bg-amber-50 text-left transition-all';
-        skipBtn.querySelector('.text-sm').className = 'text-sm font-bold text-amber-700 mb-1';
+        skipBtn.className = 'p-4 rounded-lg border-2 border-primary-500 bg-primary-50 text-left transition-all';
+        skipBtn.querySelector('.text-sm').className = 'text-sm font-bold text-primary-700 mb-1';
         probBtn.className = 'p-4 rounded-lg border-2 border-gray-200 text-left hover:border-primary-300 transition-all';
         probBtn.querySelector('.text-sm').className = 'text-sm font-bold text-gray-700 mb-1';
         skipSec.classList.remove('hidden');

@@ -19,10 +19,11 @@
         </div>
     </div>
 
-    <!-- Will Upload Section -->
+    {% if is_la or no_will %}
+    <!-- Will Upload Section (for LA / Manual Will Upload) -->
     <div class="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
         <h3 class="text-sm font-semibold text-green-800 mb-2">Upload Will Document (Optional)</h3>
-        <p class="text-xs text-green-600 mb-3">Upload a will PDF or image. AI will extract testator, executor, witnesses, beneficiaries and assets to auto-fill subsequent steps. <span class="text-gray-400">(Accepted: JPG, PNG, PDF)</span></p>
+        <p class="text-xs text-green-600 mb-3">Upload a will PDF or image. AI will extract testator, executor, witnesses, beneficiaries and assets. You can confirm each field before it is applied. <span class="text-gray-400">(Accepted: JPG, PNG, PDF)</span></p>
         <div class="flex items-center gap-3">
             <input type="file" id="will-doc-file" accept=".jpg,.jpeg,.png,.pdf"
                    class="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-green-600 file:text-white file:cursor-pointer hover:file:bg-green-700">
@@ -31,13 +32,8 @@
             </button>
             <span id="will-ocr-status" class="text-xs text-gray-500"></span>
         </div>
-        <!-- Extracted will data summary (shown after scan) -->
-        <div id="will-extract-summary" class="hidden mt-4 p-3 bg-white rounded-lg border border-green-200">
-            <h4 class="text-xs font-semibold text-green-700 mb-2">Extracted from Will:</h4>
-            <div id="will-extract-content" class="text-xs text-gray-700 space-y-1"></div>
-            <p class="text-[10px] text-gray-400 mt-2">This data will auto-fill the form below and subsequent steps (witnesses, beneficiaries).</p>
-        </div>
     </div>
+    {% endif %}
 
     <!-- Form -->
     <form method="POST" action="/probate/{{ probate_id }}/step/1" id="death-form">
@@ -76,8 +72,8 @@
             </div>
         </div>
 
-        {% if is_la %}
-        <!-- LA: Deceased details (manual entry) -->
+        {% if is_la or no_will %}
+        <!-- LA / Manual Entry: Deceased details -->
         <div class="mt-6 p-4 bg-purple-50 border border-purple-200 rounded-lg">
             <h3 class="text-sm font-semibold text-purple-800 mb-3">Deceased Person Details</h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -100,9 +96,9 @@
             </div>
         </div>
 
-        <!-- LA: Applicant (next-of-kin) details -->
+        <!-- LA / Manual Entry: Applicant (Executor / Next-of-Kin) -->
         <div class="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-            <h3 class="text-sm font-semibold text-purple-800 mb-3">Applicant (Next-of-Kin)</h3>
+            <h3 class="text-sm font-semibold text-purple-800 mb-3">Applicant ({{ 'Next-of-Kin' if is_la else 'Executor' }})</h3>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
@@ -169,6 +165,28 @@
                     <button onclick="closeOcrModal()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium border border-gray-300 rounded-lg">Cancel</button>
                     <button onclick="applyOcrChoices()" class="px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">Confirm</button>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Will OCR Confirmation Modal (step-by-step) -->
+<div id="will-confirm-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+        <div class="flex items-center justify-between p-4 border-b">
+            <h3 class="text-sm font-bold text-gray-800">Verify Extracted Will Data</h3>
+            <button onclick="document.getElementById('will-confirm-modal').classList.add('hidden');document.body.style.overflow=''" class="text-gray-400 hover:text-gray-600">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 overflow-hidden">
+            <!-- Left: Will document -->
+            <div class="border-r overflow-auto bg-gray-100 p-2 flex items-start justify-center">
+                <iframe id="will-doc-iframe" class="w-full h-full min-h-[400px] rounded" style="border:none;"></iframe>
+            </div>
+            <!-- Right: Field-by-field confirmation -->
+            <div class="overflow-auto p-4">
+                <div id="will-confirm-fields"></div>
             </div>
         </div>
     </div>
@@ -362,9 +380,13 @@ function closeOcrModal() {
 
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOcrModal(); });
 
-/* ── Will Document OCR ── */
+/* ── Will Document OCR with field-by-field confirmation ── */
 const willFileInput = document.getElementById('will-doc-file');
 const willOcrBtn = document.getElementById('will-ocr-btn');
+let willExtractedData = null;
+let willConfirmFields = [];
+let willConfirmIndex = 0;
+
 if (willFileInput) {
     willFileInput.addEventListener('change', () => {
         willOcrBtn.disabled = !willFileInput.files.length;
@@ -372,94 +394,217 @@ if (willFileInput) {
 }
 
 async function ocrWillDoc() {
-    const file = willFileInput.files[0];
+    let file = willFileInput.files[0];
     if (!file) return;
     const statusEl = document.getElementById('will-ocr-status');
     willOcrBtn.disabled = true;
-    statusEl.textContent = 'Scanning will document...';
+    statusEl.textContent = 'Scanning will document... please wait';
     statusEl.className = 'text-xs text-blue-600';
 
-    const compressed = await compressImageIfNeeded(file);
+    file = await compressImageIfNeeded(file);
     const formData = new FormData();
-    formData.append('file', compressed);
+    formData.append('file', file);
 
     try {
         const resp = await fetch('/api/ocr/will-document', { method: 'POST', body: formData });
         const data = await resp.json();
         if (data.ok && data.extracted) {
-            statusEl.textContent = 'Extraction complete!';
-            statusEl.className = 'text-xs text-green-600';
+            statusEl.innerHTML = '<span class="text-green-600 font-medium">&#10003; Extracted! Review below.</span>';
             document.getElementById('will-doc-id').value = data.document_id || '';
+            willExtractedData = data.extracted;
             document.getElementById('will-extracted-data').value = JSON.stringify(data.extracted);
-            applyWillExtractedData(data.extracted);
+            // Build field list and open confirmation modal
+            buildWillConfirmFields(data.extracted, data.document_id);
         } else {
             statusEl.textContent = data.error || 'Scan failed';
             statusEl.className = 'text-xs text-red-500';
         }
     } catch (e) {
-        statusEl.textContent = 'Scan error';
+        statusEl.textContent = 'Error: ' + e.message;
         statusEl.className = 'text-xs text-red-500';
     }
     willOcrBtn.disabled = false;
 }
 
-function applyWillExtractedData(ext) {
-    // Auto-fill deceased details from testator
+function buildWillConfirmFields(ext, docId) {
+    willConfirmFields = [];
     const t = ext.testator || {};
-    if (t.full_name) {
-        const el = document.querySelector('[name="deceased_name"]');
-        if (el && !el.value) el.value = t.full_name;
-    }
-    if (t.nric_number) {
-        const el = document.querySelector('[name="deceased_nric"]');
-        if (el && !el.value) el.value = t.nric_number;
-    }
-    if (t.address) {
-        const el = document.querySelector('[name="deceased_address"]');
-        if (el && !el.value) el.value = t.address;
+    const exec = (ext.executors || [])[0] || {};
+
+    // Step 1: Testator (Deceased)
+    if (t.full_name || t.nric_number || t.address) {
+        willConfirmFields.push({
+            category: 'Testator (Deceased)',
+            icon: '1',
+            fields: [
+                { label: 'Full Name', value: t.full_name || '', formName: 'deceased_name' },
+                { label: 'NRIC', value: t.nric_number || '', formName: 'deceased_nric' },
+                { label: 'Address', value: t.address || '', formName: 'deceased_address' },
+            ].filter(f => f.value)
+        });
     }
 
-    // Auto-fill applicant from first executor
-    const exec = (ext.executors || [])[0];
-    if (exec) {
-        if (exec.full_name) {
-            const el = document.querySelector('[name="applicant_name"]');
-            if (el && !el.value) el.value = exec.full_name;
-        }
-        if (exec.nric_number) {
-            const el = document.querySelector('[name="applicant_nric"]');
-            if (el && !el.value) el.value = exec.nric_number;
-        }
-        if (exec.relationship) {
-            const el = document.querySelector('[name="applicant_relationship"]');
-            if (el && !el.value) el.value = exec.relationship;
-        }
-        if (exec.address) {
-            const el = document.querySelector('[name="applicant_address"]');
-            if (el && !el.value) el.value = exec.address;
-        }
+    // Step 2: Executor (Applicant)
+    if (exec.full_name || exec.nric_number) {
+        willConfirmFields.push({
+            category: 'Executor (Applicant)',
+            icon: '2',
+            fields: [
+                { label: 'Full Name', value: exec.full_name || '', formName: 'applicant_name' },
+                { label: 'NRIC', value: exec.nric_number || '', formName: 'applicant_nric' },
+                { label: 'Relationship', value: exec.relationship || '', formName: 'applicant_relationship' },
+                { label: 'Address', value: exec.address || '', formName: 'applicant_address' },
+            ].filter(f => f.value)
+        });
     }
 
-    // Show summary
-    const summaryDiv = document.getElementById('will-extract-summary');
-    const contentDiv = document.getElementById('will-extract-content');
-    let html = '';
-    if (t.full_name) html += `<div><strong>Testator:</strong> ${t.full_name} ${t.nric_number ? '(' + t.nric_number + ')' : ''}</div>`;
-    if (ext.executors && ext.executors.length) {
-        html += `<div><strong>Executors:</strong> ${ext.executors.map(e => e.full_name).join(', ')}</div>`;
-    }
+    // Step 3: Witnesses (stored for later steps)
     if (ext.witnesses && ext.witnesses.length) {
-        html += `<div><strong>Witnesses:</strong> ${ext.witnesses.map(w => w.full_name).join(', ')}</div>`;
+        const wFields = [];
+        ext.witnesses.forEach((w, i) => {
+            if (w.full_name) wFields.push({ label: `Witness ${i+1} Name`, value: w.full_name, storeKey: `witness${i+1}_name` });
+            if (w.nric_number) wFields.push({ label: `Witness ${i+1} NRIC`, value: w.nric_number, storeKey: `witness${i+1}_nric` });
+            if (w.address) wFields.push({ label: `Witness ${i+1} Address`, value: w.address, storeKey: `witness${i+1}_address` });
+        });
+        if (wFields.length) willConfirmFields.push({ category: 'Witnesses', icon: '3', fields: wFields, info: 'Will be saved for Step 3 (Witnesses)' });
     }
+
+    // Step 4: Beneficiaries (stored for later steps)
     if (ext.beneficiaries && ext.beneficiaries.length) {
-        html += `<div><strong>Beneficiaries:</strong> ${ext.beneficiaries.map(b => b.full_name + (b.relationship ? ' (' + b.relationship + ')' : '')).join(', ')}</div>`;
+        const bFields = [];
+        ext.beneficiaries.forEach((b, i) => {
+            const parts = [b.full_name];
+            if (b.nric_number) parts.push(`NRIC: ${b.nric_number}`);
+            if (b.relationship) parts.push(`(${b.relationship})`);
+            bFields.push({ label: `Beneficiary ${i+1}`, value: parts.join(' — '), storeKey: `beneficiary_${i}` });
+        });
+        if (bFields.length) willConfirmFields.push({ category: 'Beneficiaries', icon: '4', fields: bFields, info: 'Will be saved for Step 4 (Beneficiaries)' });
     }
+
+    // Step 5: Assets
     if (ext.assets && ext.assets.length) {
-        html += `<div><strong>Assets:</strong> ${ext.assets.length} item(s) found</div>`;
+        const aFields = ext.assets.map((a, i) => ({
+            label: `Asset ${i+1}`, value: a.description || a.type || JSON.stringify(a), storeKey: `asset_${i}`
+        }));
+        willConfirmFields.push({ category: 'Assets', icon: '5', fields: aFields, info: 'Will be saved for Step 5 (Assets)' });
     }
-    if (ext.will_date) html += `<div><strong>Will Date:</strong> ${ext.will_date}</div>`;
-    contentDiv.innerHTML = html || '<span class="text-gray-400">No data extracted</span>';
-    summaryDiv.classList.remove('hidden');
+
+    if (ext.will_date) {
+        willConfirmFields.push({ category: 'Will Details', icon: 'i', fields: [
+            { label: 'Will Date', value: ext.will_date, storeKey: 'will_date' }
+        ]});
+    }
+
+    if (willConfirmFields.length === 0) {
+        alert('No data could be extracted from the will. Please enter details manually.');
+        return;
+    }
+
+    willConfirmIndex = 0;
+    showWillConfirmModal(docId);
+}
+
+function showWillConfirmModal(docId) {
+    const modal = document.getElementById('will-confirm-modal');
+    modal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+    if (docId) {
+        document.getElementById('will-doc-iframe').src = '/api/documents/' + docId;
+    }
+    renderWillConfirmStep();
+}
+
+function renderWillConfirmStep() {
+    const container = document.getElementById('will-confirm-fields');
+    const step = willConfirmFields[willConfirmIndex];
+    const total = willConfirmFields.length;
+
+    let html = `<div class="flex items-center justify-between mb-3">
+        <h4 class="text-sm font-bold text-gray-800">${step.icon}. ${step.category}</h4>
+        <span class="text-xs text-gray-400">${willConfirmIndex + 1} of ${total}</span>
+    </div>`;
+
+    if (step.info) {
+        html += `<p class="text-xs text-blue-500 mb-3">${step.info}</p>`;
+    }
+
+    step.fields.forEach((f, fi) => {
+        const existing = f.formName ? (document.querySelector('[name="' + f.formName + '"]')?.value || '') : '';
+        const hasConflict = existing && existing.trim().toUpperCase() !== f.value.trim().toUpperCase();
+        const fieldId = `wc_${willConfirmIndex}_${fi}`;
+
+        html += `<div class="p-3 rounded-lg border mb-2 ${hasConflict ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}">
+            <div class="text-xs font-semibold text-gray-600 mb-1">${f.label}</div>`;
+
+        if (hasConflict) {
+            html += `<div class="space-y-1">
+                <label class="flex items-start gap-2 cursor-pointer">
+                    <input type="radio" name="${fieldId}" value="scanned" checked class="mt-0.5 will-confirm-radio" data-idx="${willConfirmIndex}" data-fidx="${fi}">
+                    <div><span class="text-xs text-gray-400">Scanned:</span> <span class="text-sm font-medium">${escHtml(f.value)}</span></div>
+                </label>
+                <label class="flex items-start gap-2 cursor-pointer">
+                    <input type="radio" name="${fieldId}" value="existing" class="mt-0.5 will-confirm-radio" data-idx="${willConfirmIndex}" data-fidx="${fi}">
+                    <div><span class="text-xs text-gray-400">Existing:</span> <span class="text-sm font-medium">${escHtml(existing)}</span></div>
+                </label>
+            </div>`;
+        } else {
+            html += `<div class="text-sm font-medium text-gray-800">${escHtml(f.value)}</div>
+                <input type="hidden" class="will-confirm-radio" data-idx="${willConfirmIndex}" data-fidx="${fi}" value="scanned">`;
+        }
+        html += '</div>';
+    });
+
+    // Navigation buttons
+    html += '<div class="flex justify-between mt-4 pt-3 border-t">';
+    if (willConfirmIndex > 0) {
+        html += '<button onclick="willConfirmPrev()" class="px-3 py-1.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">Back</button>';
+    } else {
+        html += '<div></div>';
+    }
+    if (willConfirmIndex < total - 1) {
+        html += '<button onclick="willConfirmNext()" class="px-4 py-1.5 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">Confirm & Next</button>';
+    } else {
+        html += '<button onclick="willConfirmFinish()" class="px-4 py-1.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700">Confirm & Apply All</button>';
+    }
+    html += '</div>';
+
+    container.innerHTML = html;
+}
+
+function willConfirmApplyCurrentStep() {
+    const step = willConfirmFields[willConfirmIndex];
+    step.fields.forEach((f, fi) => {
+        if (!f.formName) return; // stored fields applied later
+        const radios = document.querySelectorAll(`[name="wc_${willConfirmIndex}_${fi}"]`);
+        let useScanned = true;
+        radios.forEach(r => { if (r.checked && r.value === 'existing') useScanned = false; });
+        if (useScanned) {
+            const el = document.querySelector(`[name="${f.formName}"]`);
+            if (el) el.value = f.value;
+        }
+    });
+    // Mark step as confirmed
+    step._confirmed = true;
+}
+
+function willConfirmNext() {
+    willConfirmApplyCurrentStep();
+    willConfirmIndex++;
+    renderWillConfirmStep();
+}
+
+function willConfirmPrev() {
+    willConfirmIndex--;
+    renderWillConfirmStep();
+}
+
+function willConfirmFinish() {
+    willConfirmApplyCurrentStep();
+    // Close modal
+    document.getElementById('will-confirm-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+    // Show success message
+    document.getElementById('will-ocr-status').innerHTML = '<span class="text-green-600 font-medium">&#10003; Will data applied to form</span>';
 }
 </script>
 {% endblock %}
