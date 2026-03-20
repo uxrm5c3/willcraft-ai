@@ -17,13 +17,39 @@
         {% if not gifts %}{% set gifts = [{'gift_type': 'property', 'description': '', 'property_details': {}, 'financial_details': {}, 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}] %}{% endif %}
         {% for gift in gifts %}
         {% set gift_idx = loop.index0 %}
-        <div class="gift-entry border border-gray-200 rounded-lg p-5 mb-4" data-gift-index="{{ gift_idx }}">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="font-semibold text-gray-700">Gift No. {{ loop.index }}</h3>
-                {% if loop.index > 1 %}
-                <button type="button" onclick="removeGift(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+        <div class="gift-entry border border-gray-200 rounded-lg mb-4" data-gift-index="{{ gift_idx }}">
+            <div class="flex justify-between items-center p-5 pb-0 cursor-pointer" onclick="toggleGiftCollapse({{ gift_idx }})">
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-gray-400 transition-transform gift-chevron" id="gift-chevron-{{ gift_idx }}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    <h3 class="font-semibold text-gray-700">Gift No. {{ loop.index }}</h3>
+                </div>
+                <div class="flex items-center gap-2">
+                    {% if loop.index > 1 %}
+                    <button type="button" onclick="event.stopPropagation(); removeGift(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+                    {% endif %}
+                </div>
+            </div>
+            <!-- Summary (shown when collapsed) -->
+            <div id="gift-summary-{{ gift_idx }}" class="hidden px-5 py-3 text-sm text-gray-600">
+                {% set gt = gift.get('gift_type', 'property') %}
+                {% set pd = gift.get('property_details', {}) %}
+                {% set fd = gift.get('financial_details', {}) %}
+                {% set allocs = gift.get('allocations', []) %}
+                <span class="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium mr-2">{{ gt|capitalize }}</span>
+                {% if gt == 'property' and pd.get('property_address') %}
+                <span class="text-gray-500">{{ pd.get('property_address', '')[:60] }}{% if pd.get('property_address', '')|length > 60 %}...{% endif %}</span>
+                {% elif gt == 'financial' and fd.get('institution') %}
+                <span class="text-gray-500">{{ fd.get('institution', '') }} {{ fd.get('account_number', '') }}</span>
+                {% endif %}
+                {% if allocs %}
+                <span class="ml-2 text-gray-400">→</span>
+                {% for a in allocs[:3] %}
+                <span class="ml-1 text-xs text-gray-500">{{ a.get('beneficiary_name', '?') }} ({{ a.get('share', '') }})</span>{% if not loop.last %},{% endif %}
+                {% endfor %}
+                {% if allocs|length > 3 %}<span class="text-xs text-gray-400">+{{ allocs|length - 3 }} more</span>{% endif %}
                 {% endif %}
             </div>
+            <div id="gift-body-{{ gift_idx }}" class="p-5 pt-4">
 
             <!-- Gift Type Selector -->
             <div class="mb-4">
@@ -418,7 +444,15 @@
 
             <!-- Substitute Beneficiaries -->
             <div class="border-t border-gray-100 pt-4 mt-4">
-                <h4 class="text-sm font-semibold text-gray-600 mb-2">If a beneficiary does not survive</h4>
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="text-sm font-semibold text-gray-600">If a beneficiary does not survive</h4>
+                    {% if loop.index0 > 0 %}
+                    <button type="button" data-context="sub" onclick="showCopyDistributionMenu({{ loop.index0 }})"
+                            class="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors">
+                        Follow existing gift
+                    </button>
+                    {% endif %}
+                </div>
                 {% set sub_mode = gift.get('substitute_mode', 'equal') %}
                 <div class="space-y-2 mb-3" id="sub-mode-{{ loop.index0 }}">
                     <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
@@ -483,7 +517,14 @@
                     {% endfor %}
                 </div>
             </div>
-        </div>
+            <div class="mt-4 pt-3 border-t border-gray-100">
+                <button type="button" onclick="saveAndCollapseGift({{ gift_idx }})"
+                        class="w-full px-4 py-2 text-sm font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 border border-green-200 transition-colors">
+                    ✓ Done with Gift {{ loop.index }}
+                </button>
+            </div>
+        </div><!-- /gift-body -->
+        </div><!-- /gift-entry -->
         {% endfor %}
     </div>
 
@@ -549,10 +590,76 @@ let allocCounts = {};
 allocCounts[{{ loop.index0 }}] = {{ gift.get('allocations', [{}])|length }};
 {% endfor %}
 
+// Collapse/expand gifts
+function toggleGiftCollapse(giftIdx) {
+    const body = document.getElementById('gift-body-' + giftIdx);
+    const summary = document.getElementById('gift-summary-' + giftIdx);
+    const chevron = document.getElementById('gift-chevron-' + giftIdx);
+    if (!body) return;
+    const isCollapsed = body.classList.contains('hidden');
+    body.classList.toggle('hidden', !isCollapsed);
+    if (summary) summary.classList.toggle('hidden', isCollapsed);
+    if (chevron) chevron.style.transform = isCollapsed ? '' : 'rotate(-90deg)';
+}
+
+function buildGiftSummaryText(giftIdx) {
+    const entry = document.querySelector(`.gift-entry[data-gift-index="${giftIdx}"]`);
+    if (!entry) return '';
+    const type = entry.querySelector(`input[name="gift_type_${giftIdx}"]:checked`)?.value || 'other';
+    const addr = entry.querySelector(`[name="gift_prop_address_${giftIdx}"]`)?.value || '';
+    const inst = entry.querySelector(`[name="gift_fin_institution_${giftIdx}"]`)?.value || '';
+    const container = document.getElementById('allocations-' + giftIdx);
+    const bens = [];
+    if (container) {
+        container.querySelectorAll('.allocation-entry').forEach(e => {
+            const name = e.querySelector('.alloc-name-select')?.value || '';
+            const share = e.querySelector('input[name*="_alloc_share_"]')?.value || '';
+            if (name) bens.push(`${name} (${share})`);
+        });
+    }
+    let summary = `<span class="inline-block px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium mr-2">${type.charAt(0).toUpperCase()+type.slice(1)}</span>`;
+    if (type === 'property' && addr) summary += `<span class="text-gray-500">${addr.substring(0,60)}${addr.length>60?'...':''}</span>`;
+    else if (type === 'financial' && inst) summary += `<span class="text-gray-500">${inst}</span>`;
+    if (bens.length) summary += ` <span class="text-gray-400">→</span> <span class="text-xs text-gray-500">${bens.join(', ')}</span>`;
+    return summary;
+}
+
+function collapseGift(giftIdx) {
+    const body = document.getElementById('gift-body-' + giftIdx);
+    const summary = document.getElementById('gift-summary-' + giftIdx);
+    const chevron = document.getElementById('gift-chevron-' + giftIdx);
+    if (!body) return;
+    // Update summary text from current form data
+    if (summary) summary.innerHTML = buildGiftSummaryText(giftIdx);
+    body.classList.add('hidden');
+    if (summary) summary.classList.remove('hidden');
+    if (chevron) chevron.style.transform = 'rotate(-90deg)';
+}
+
+function saveAndCollapseGift(giftIdx) {
+    // Validate shares first
+    if (typeof validateShareTotal === 'function') validateShareTotal(giftIdx);
+    // Collapse the gift
+    collapseGift(giftIdx);
+    // Show brief confirmation
+    const entry = document.querySelector(`.gift-entry[data-gift-index="${giftIdx}"]`);
+    if (entry) {
+        entry.style.borderColor = '#10b981';
+        setTimeout(() => entry.style.borderColor = '', 2000);
+    }
+}
+
+// Auto-collapse saved gifts on load (collapse all except last)
 // Initialize property previews
 document.addEventListener('DOMContentLoaded', function() {
     for (let i = 0; i < giftCount; i++) {
         updatePropertyPreview(i);
+    }
+    // Auto-collapse all gifts except the last one (if more than 1 gift)
+    if (giftCount > 1) {
+        for (let i = 0; i < giftCount - 1; i++) {
+            collapseGift(i);
+        }
     }
 });
 
@@ -791,11 +898,16 @@ function addGift() {
     const idx = giftCount;
     allocCounts[idx] = 1;
     const html = `
-    <div class="gift-entry border border-gray-200 rounded-lg p-5 mb-4" data-gift-index="${idx}">
-        <div class="flex justify-between items-center mb-4">
-            <h3 class="font-semibold text-gray-700">Gift No. ${idx + 1}</h3>
-            <button type="button" onclick="removeGift(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+    <div class="gift-entry border border-gray-200 rounded-lg mb-4" data-gift-index="${idx}">
+        <div class="flex justify-between items-center p-5 pb-0 cursor-pointer" onclick="toggleGiftCollapse(${idx})">
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-gray-400 transition-transform gift-chevron" id="gift-chevron-${idx}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                <h3 class="font-semibold text-gray-700">Gift No. ${idx + 1}</h3>
+            </div>
+            <button type="button" onclick="event.stopPropagation(); removeGift(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
         </div>
+        <div id="gift-summary-${idx}" class="hidden px-5 py-3 text-sm text-gray-600"></div>
+        <div id="gift-body-${idx}" class="p-5 pt-4">
         <div class="mb-4">
             <label class="block text-sm font-medium text-gray-700 mb-2">Gift Type</label>
             <div class="flex flex-wrap gap-3 sm:gap-4">
@@ -875,7 +987,13 @@ function addGift() {
             </div>
         </div>
         <div class="border-t border-gray-100 pt-4 mt-4">
-            <h4 class="text-sm font-semibold text-gray-600 mb-2">If a beneficiary does not survive</h4>
+            <div class="flex items-center justify-between mb-2">
+                <h4 class="text-sm font-semibold text-gray-600">If a beneficiary does not survive</h4>
+                <button type="button" data-context="sub" onclick="showCopyDistributionMenu(${idx})"
+                        class="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors">
+                    Follow existing gift
+                </button>
+            </div>
             <div class="space-y-2 mb-3" id="sub-mode-${idx}">
                 <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
                     <input type="radio" name="gift_${idx}_sub_mode" value="equal" checked onchange="toggleSubstituteMode(${idx})" class="text-primary-600 mr-2">
@@ -892,6 +1010,13 @@ function addGift() {
             </div>
             <div id="sub-specific-${idx}" class="hidden space-y-4 pl-2 border-l-2 border-primary-200"></div>
         </div>
+        <div class="mt-4 pt-3 border-t border-gray-100">
+            <button type="button" onclick="saveAndCollapseGift(${idx})"
+                    class="w-full px-4 py-2 text-sm font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 border border-green-200 transition-colors">
+                ✓ Done with Gift ${idx + 1}
+            </button>
+        </div>
+    </div><!-- /gift-body -->
     </div>`;
     container.insertAdjacentHTML('beforeend', html);
     giftCount++;
@@ -1160,7 +1285,7 @@ document.addEventListener('DOMContentLoaded', function() {
 function showCopyDistributionMenu(targetGiftIdx) {
     // Build list of other gifts to copy from
     const gifts = document.querySelectorAll('.gift-entry');
-    const options = [];
+    const sourceGifts = [];
     gifts.forEach((entry, i) => {
         const giftIdx = parseInt(entry.dataset.giftIndex);
         if (giftIdx === targetGiftIdx) return;
@@ -1171,21 +1296,50 @@ function showCopyDistributionMenu(targetGiftIdx) {
             if (sel.value) names.push(sel.value);
         });
         if (names.length === 0) return;
-        options.push({ idx: giftIdx, label: `Gift ${i + 1}: ${names.join(', ')}` });
+        sourceGifts.push({ idx: giftIdx, num: i + 1, label: names.join(', ') });
     });
-    if (options.length === 0) { alert('No other gifts with beneficiaries to copy from.'); return; }
-    if (options.length === 1) { copyDistributionFrom(targetGiftIdx, options[0].idx); return; }
-    // Show selection popup
+    if (sourceGifts.length === 0) { alert('No other gifts with beneficiaries to copy from.'); return; }
+
+    // Show menu with options
     const menu = document.createElement('div');
-    menu.className = 'absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 max-w-xs';
+    menu.className = 'absolute z-50 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[220px]';
     menu.style.right = '0';
-    options.forEach(opt => {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'w-full text-left text-xs px-3 py-2 hover:bg-primary-50 text-gray-700 truncate';
-        btn.textContent = opt.label;
-        btn.onclick = () => { menu.remove(); copyDistributionFrom(targetGiftIdx, opt.idx); };
-        menu.appendChild(btn);
+    // Header
+    const hdr = document.createElement('div');
+    hdr.className = 'px-3 py-1.5 text-xs font-semibold text-gray-400 uppercase border-b border-gray-100';
+    hdr.textContent = 'Copy from...';
+    menu.appendChild(hdr);
+    // Determine context: main or substitute section
+    const isSubContext = event.currentTarget.closest('[id^="sub-mode-"]') || event.currentTarget.dataset.context === 'sub';
+    sourceGifts.forEach(src => {
+        // Get gift description for clarity
+        const srcEntry = document.querySelector(`.gift-entry[data-gift-index="${src.idx}"]`);
+        const srcType = srcEntry?.querySelector(`input[name="gift_type_${src.idx}"]:checked`)?.value || '';
+        const srcAddr = srcEntry?.querySelector(`[name="gift_prop_address_${src.idx}"]`)?.value || '';
+        const desc = srcAddr ? srcAddr.substring(0, 40) : srcType;
+        if (isSubContext) {
+            // From substitute section: only copy substitutes
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'w-full text-left text-xs px-3 py-2 hover:bg-blue-50 text-gray-700';
+            btn.innerHTML = `<strong>Gift ${src.num}</strong> <span class="text-gray-400">${desc}</span>`;
+            btn.onclick = () => { menu.remove(); copySubstitutesFrom(targetGiftIdx, src.idx); };
+            menu.appendChild(btn);
+        } else {
+            // From main section: two options
+            const btnAll = document.createElement('button');
+            btnAll.type = 'button';
+            btnAll.className = 'w-full text-left text-xs px-3 py-2 hover:bg-primary-50 text-gray-700';
+            btnAll.innerHTML = `<strong>Gift ${src.num}</strong> <span class="text-gray-400">${desc}</span> — Copy all`;
+            btnAll.onclick = () => { menu.remove(); copyDistributionFrom(targetGiftIdx, src.idx); };
+            menu.appendChild(btnAll);
+            const btnMain = document.createElement('button');
+            btnMain.type = 'button';
+            btnMain.className = 'w-full text-left text-xs px-3 py-2 hover:bg-green-50 text-gray-600';
+            btnMain.innerHTML = `<strong>Gift ${src.num}</strong> <span class="text-gray-400">${desc}</span> — Main only`;
+            btnMain.onclick = () => { menu.remove(); copyMainBeneficiariesFrom(targetGiftIdx, src.idx); };
+            menu.appendChild(btnMain);
+        }
     });
     // Position relative to button
     const btnEl = event.currentTarget;
@@ -1195,6 +1349,92 @@ function showCopyDistributionMenu(targetGiftIdx) {
     setTimeout(() => document.addEventListener('click', function closeMenu(e) {
         if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', closeMenu); }
     }), 10);
+}
+
+/**
+ * Copy only main beneficiaries (no substitutes) from source gift to target gift.
+ */
+function copyMainBeneficiariesFrom(targetGiftIdx, sourceIdx) {
+    const sourceContainer = document.getElementById('allocations-' + sourceIdx);
+    const targetContainer = document.getElementById('allocations-' + targetGiftIdx);
+    if (!sourceContainer || !targetContainer) return;
+
+    const sourceMBs = [];
+    sourceContainer.querySelectorAll('.allocation-entry').forEach(entry => {
+        const sel = entry.querySelector('.alloc-name-select');
+        const share = entry.querySelector('input[name*="_alloc_share_"]');
+        if (sel && sel.value) sourceMBs.push({ name: sel.value, share: share?.value || '1/1' });
+    });
+    if (sourceMBs.length === 0) { alert('Source gift has no beneficiaries.'); return; }
+
+    targetContainer.innerHTML = '';
+    allocCounts[targetGiftIdx] = sourceMBs.length;
+    sourceMBs.forEach((mb, i) => {
+        const canRemove = i > 0 ? `<button type="button" onclick="removeAllocation(this)" class="text-red-500 hover:text-red-700 text-xs font-medium">✕ Remove</button>` : '';
+        targetContainer.innerHTML += `
+        <div class="allocation-entry bg-gray-50 rounded-lg p-3 border border-gray-200" data-alloc-index="${i}">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-gray-500 uppercase">Beneficiary ${i + 1}</span>
+                ${canRemove}
+            </div>
+            <div class="mb-2">
+                <select name="gift_${targetGiftIdx}_alloc_name_${i}" class="alloc-name-select w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm bg-white">
+                    ${_buildGiftBenOptions(mb.name)}
+                </select>
+                <input type="hidden" name="gift_${targetGiftIdx}_alloc_role_${i}" value="MB">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Share (fraction)</label>
+                <input type="text" name="gift_${targetGiftIdx}_alloc_share_${i}" value="${mb.share}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm" placeholder="1/1">
+            </div>
+        </div>`;
+    });
+    const countField = targetContainer.closest('.gift-entry')?.querySelector(`input[name="gift_${targetGiftIdx}_alloc_count"]`);
+    if (countField) countField.value = sourceMBs.length;
+    validateShareTotal(targetGiftIdx);
+}
+
+/**
+ * Copy only substitute arrangement from source gift to target gift.
+ * Keeps target's main beneficiaries unchanged.
+ */
+function copySubstitutesFrom(targetGiftIdx, sourceIdx) {
+    // Copy substitute mode
+    const sourceMode = document.querySelector(`input[name="gift_${sourceIdx}_sub_mode"]:checked`)?.value || 'equal';
+    const targetRadio = document.querySelector(`input[name="gift_${targetGiftIdx}_sub_mode"][value="${sourceMode}"]`);
+    if (targetRadio) targetRadio.checked = true;
+    toggleSubstituteMode(targetGiftIdx);
+
+    // If specific mode, rebuild and copy subs
+    if (sourceMode === 'specific') {
+        rebuildSubstitutePanel(targetGiftIdx);
+        const sourcePanel = document.getElementById('sub-specific-' + sourceIdx);
+        const targetPanel = document.getElementById('sub-specific-' + targetGiftIdx);
+        if (sourcePanel && targetPanel) {
+            // For each MB in target, copy subs from the corresponding source MB (or first source MB)
+            const targetGroups = targetPanel.querySelectorAll('.sub-group');
+            const sourceGroups = sourcePanel.querySelectorAll('.sub-group');
+            targetGroups.forEach((tgtGroup, mbIdx) => {
+                // Use source group at same index, or the first one
+                const srcGroup = sourceGroups[mbIdx] || sourceGroups[0];
+                if (!srcGroup) return;
+                srcGroup.querySelectorAll('.sub-entry').forEach(srcEntry => {
+                    const srcSel = srcEntry.querySelector('select');
+                    const srcShare = srcEntry.querySelector('input[type="text"]');
+                    if (srcSel?.value) {
+                        addSubstitute(targetGiftIdx, mbIdx);
+                        const newEntries = tgtGroup.querySelectorAll('.sub-entry');
+                        const lastEntry = newEntries[newEntries.length - 1];
+                        if (lastEntry) {
+                            lastEntry.querySelector('select').value = srcSel.value;
+                            lastEntry.querySelector('input[type="text"]').value = srcShare?.value || '1/1';
+                        }
+                    }
+                });
+            });
+            updateSubCounts(targetGiftIdx);
+        }
+    }
 }
 
 function copyDistributionFrom(targetGiftIdx, sourceIdx) {

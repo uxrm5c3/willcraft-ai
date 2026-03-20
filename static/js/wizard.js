@@ -777,6 +777,17 @@ function closeTranslation() {
     if (overlay) overlay.classList.add('hidden');
 }
 
+function viewGiftDocument(docUrl, filename) {
+    // Extract document ID from URL pattern /api/documents/<id>
+    const match = docUrl.match(/\/api\/documents\/([^/]+)/);
+    if (match) {
+        viewDocumentById(match[1], filename);
+    } else {
+        // Fallback: open in new tab
+        window.open(docUrl, '_blank');
+    }
+}
+
 /**
  * Retake/replace the uploaded document.
  */
@@ -2651,7 +2662,7 @@ function _addGiftDocPreview(giftIndex, fileName, docUrl, docType) {
     <div id="${docId}" class="flex items-center gap-2 p-2 bg-white border border-gray-200 rounded-lg text-xs">
         <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium flex-shrink-0">${typeLabel}</span>
         <span class="text-gray-500 flex-shrink-0">${ext}</span>
-        ${docUrl ? `<button type="button" onclick="window.open('${docUrl}', '_blank')" class="px-2.5 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium flex-shrink-0">View</button>` : ''}
+        ${docUrl ? `<button type="button" onclick="viewGiftDocument('${docUrl}', '${fileName.replace(/'/g, "\\'")}')" class="px-2.5 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium flex-shrink-0">View</button>` : ''}
         <button type="button" onclick="if(confirm('Delete this document?')){document.getElementById('${docId}').remove(); var c=document.getElementById('gift-docs-${giftIndex}'); if(c && !c.children.length) c.classList.add('hidden');}"
                 class="px-2.5 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 font-medium flex-shrink-0">Delete</button>
     </div>`;
