@@ -23,10 +23,14 @@
         <div class="flex justify-between items-center mb-1">
             <h3 class="text-lg font-semibold text-gray-800">Main Beneficiaries</h3>
             {% if gifts %}
-            <div class="relative">
+            <div class="relative flex gap-2">
+                <button type="button" onclick="showFollowGiftMenu('both')"
+                        class="text-xs text-emerald-600 hover:text-emerald-800 font-medium px-2 py-1 bg-emerald-50 rounded-md hover:bg-emerald-100 transition-colors">
+                    Follow gift (both)
+                </button>
                 <button type="button" onclick="showFollowGiftMenu('main')"
                         class="text-xs text-primary-600 hover:text-primary-800 font-medium px-2 py-1 bg-primary-50 rounded-md hover:bg-primary-100 transition-colors">
-                    Follow specific gift
+                    Follow gift (main only)
                 </button>
             </div>
             {% endif %}
@@ -411,22 +415,29 @@ function showFollowGiftMenu(mode) {
     // Filter gifts based on mode
     const relevantGifts = [];
     _giftsList.forEach((gift, i) => {
-        if (mode === 'main') {
-            if (gift.allocations && gift.allocations.length > 0) {
-                relevantGifts.push({gift, index: i});
-            }
-        } else {
+        if (mode === 'sub') {
+            // Sub-only: need gifts with substitutes
             const hasSubs = (gift.allocations || []).some(a => a.substitutes && a.substitutes.length > 0);
-            if (hasSubs) {
+            if (hasSubs) relevantGifts.push({gift, index: i});
+        } else {
+            // Main or Both: need gifts with allocations
+            if (gift.allocations && gift.allocations.length > 0) {
                 relevantGifts.push({gift, index: i});
             }
         }
     });
 
     if (relevantGifts.length === 0) {
-        alert(mode === 'main' ? 'No gifts with beneficiaries found.' : 'No gifts with substitute beneficiaries found.');
+        alert('No gifts with beneficiaries found.');
         return;
     }
+
+    // Title based on mode
+    const titles = {
+        both: 'Follow Gift \u2014 Main + Substitute Beneficiaries',
+        main: 'Follow Gift \u2014 Main Beneficiaries Only',
+        sub: 'Follow Gift \u2014 Substitute Beneficiaries Only'
+    };
 
     // Build dropdown menu
     const menu = document.createElement('div');
@@ -434,7 +445,7 @@ function showFollowGiftMenu(mode) {
     menu.style.backgroundColor = 'rgba(0,0,0,0.3)';
 
     let itemsHtml = '';
-    if (mode === 'main') {
+    if (mode === 'main' || mode === 'both') {
         itemsHtml += `<div class="px-4 py-2 hover:bg-primary-50 cursor-pointer text-sm text-primary-700 font-medium border-b border-gray-100"
                            data-action="all">Follow all gifts (combine all main beneficiaries)</div>`;
     }
@@ -446,7 +457,7 @@ function showFollowGiftMenu(mode) {
     menu.innerHTML = `
         <div class="bg-white rounded-lg shadow-xl border border-gray-200 max-w-lg w-full max-h-80 overflow-y-auto">
             <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
-                <h4 class="font-semibold text-gray-800">${mode === 'main' ? 'Follow Gift \u2014 Main Beneficiaries' : 'Follow Gift \u2014 Substitute Beneficiaries'}</h4>
+                <h4 class="font-semibold text-gray-800">${titles[mode] || titles.main}</h4>
                 <button type="button" class="text-gray-400 hover:text-gray-600 text-lg" onclick="this.closest('.follow-gift-menu').remove()">\u00d7</button>
             </div>
             ${itemsHtml}
@@ -461,14 +472,22 @@ function showFollowGiftMenu(mode) {
             return;
         }
         const action = item.dataset.action;
-        if (mode === 'main') {
+        const giftIdx = parseInt(item.dataset.giftIndex);
+        if (mode === 'both') {
             if (action === 'all') {
                 followAllGiftsMain();
             } else {
-                followGiftMain(parseInt(item.dataset.giftIndex));
+                followGiftMain(giftIdx);
+                followGiftSubstitutes(giftIdx);
+            }
+        } else if (mode === 'main') {
+            if (action === 'all') {
+                followAllGiftsMain();
+            } else {
+                followGiftMain(giftIdx);
             }
         } else {
-            followGiftSubstitutes(parseInt(item.dataset.giftIndex));
+            followGiftSubstitutes(giftIdx);
         }
         menu.remove();
     });
