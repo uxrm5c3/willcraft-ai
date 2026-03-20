@@ -96,7 +96,7 @@ Unless specifically stated to the contrary in this Will, I direct that any sums 
 
 ### 9. DISTRIBUTION OF "THE MONEYS" (if assets were pooled)
 "[N]. With reference to Clause [X] to Clause [Y] above, I direct my Executor to give the fund and assets stated in the respective clauses and any other provisions set aside for this clause (hereinafter known as 'The Moneys') to the beneficiaries named below in the shares indicated.
-(i) my [relationship] [NAME] MALAYSIA NRIC No. [number] ([X]% share)
+(i) my [relationship] [NAME] MALAYSIA NRIC No. [number] ([X/Y] share)
 (ii) ..."
 
 ### 10. SUBSTITUTE BENEFICIARIES (if applicable)
@@ -211,7 +211,7 @@ Second Witness Contact Number: _________________________________________________
 6. Number all clauses sequentially (1., 2., 3., etc.) — use a period after the number
 7. Use lettered sub-clauses (a), (b), (c) for items within residuary estate clauses
 8. Use Roman numerals (i), (ii), (iii) for listing beneficiaries with shares within sub-clauses
-9. Ensure shares/percentages are clearly stated and total 100%
+9. Express shares as FRACTIONS (e.g., 4/10, 3/10, 1/3) — NEVER use percentages (e.g., 40%, 30%)
 10. Include proper substitution language — EITHER inline within the gift clause itself OR as separate substitute clauses
 11. For jointly held bank accounts, include the joint account clause ONLY if joint_account_clause_enabled is true
 12. Include the bank account exclusion expression ONLY if there are bank account gifts: "The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."

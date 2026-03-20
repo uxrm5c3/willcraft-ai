@@ -6,6 +6,24 @@ from config import ANTHROPIC_API_KEY, CLAUDE_MODEL, MAX_TOKENS
 from ai.prompts.system_prompt import SYSTEM_PROMPT
 
 
+def _to_fraction(value: str) -> str:
+    """Convert a share value to fraction. '40' -> '4/10', '31' -> '31/100', '1/3' -> '1/3'."""
+    if not value or value == '-' or value == '?':
+        return value
+    s = str(value).strip().rstrip('%')
+    if '/' in s:
+        return s
+    try:
+        n = int(float(s))
+        if n == 100:
+            return "1/1"
+        if n % 10 == 0:
+            return f"{n // 10}/10"
+        return f"{n}/100"
+    except (ValueError, ZeroDivisionError):
+        return s
+
+
 def _is_malaysian_nric(id_str: str) -> bool:
     """Check if an ID string is a Malaysian NRIC (12 digits, with optional dashes)."""
     cleaned = re.sub(r'[-\s]', '', id_str)
@@ -166,7 +184,7 @@ def format_will_data(will_data) -> str:
             if getattr(g, 'sell_property', False) and g.gift_type == 'property':
                 gift_lines.append(f"    SELL DIRECTIVE: Direct executor to sell property and distribute nett proceeds of sale to beneficiaries")
             for a in g.allocations:
-                gift_lines.append(f"    - {a.beneficiary_name}: {a.share} (Main Beneficiary)")
+                gift_lines.append(f"    - {a.beneficiary_name}: {_to_fraction(a.share)} (Main Beneficiary)")
             # Substitute beneficiary instructions
             sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
             mb_allocs = [a for a in g.allocations if a.role == 'MB']
@@ -195,7 +213,7 @@ def format_will_data(will_data) -> str:
                             s_id, s_rel = _lookup(s.beneficiary_name)
                             s_id_str = f" {s_id}" if s_id else ""
                             s_rel_str = f"my {s_rel} " if s_rel else ""
-                            sub_parts.append(f"{s_rel_str}{s.beneficiary_name.upper()}{s_id_str} ({s.share})")
+                            sub_parts.append(f"{s_rel_str}{s.beneficiary_name.upper()}{s_id_str} ({_to_fraction(s.share)})")
                         gift_lines.append(f"    Substitute for {mb_rel_str}{a.beneficiary_name.upper()}{mb_id_str}: the benefit shall be given to {', '.join(sub_parts)}")
         sections.append(f"""
 ## SPECIFIC GIFTS / BEQUESTS
@@ -217,7 +235,7 @@ def format_will_data(will_data) -> str:
             nric, nat, rel = _lookup_res_ben(rb.beneficiary_name)
             id_str = f" {format_id_for_will(nric, nat)}" if nric else ""
             rel_str = f"my {rel} " if rel else ""
-            res_lines.append(f"    - {rel_str}{rb.beneficiary_name.upper()}{id_str}: {rb.share}")
+            res_lines.append(f"    - {rel_str}{rb.beneficiary_name.upper()}{id_str}: {_to_fraction(rb.share)}")
 
         if re.substitute_groups:
             res_lines.append("  Substitute Beneficiaries (for residuary clause (c)):")
@@ -227,7 +245,7 @@ def format_will_data(will_data) -> str:
                     nric, nat, rel = _lookup_res_ben(rb.beneficiary_name)
                     id_str = f" {format_id_for_will(nric, nat)}" if nric else ""
                     rel_str = f"my {rel} " if rel else ""
-                    res_lines.append(f"      - {rel_str}{rb.beneficiary_name.upper()}{id_str}: {rb.share}")
+                    res_lines.append(f"      - {rel_str}{rb.beneficiary_name.upper()}{id_str}: {_to_fraction(rb.share)}")
             res_lines.append("  Use clause (c) pattern: 'But if [he/she] does not survive me, to divide the residue equally between [substitute names with IDs]. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift.'")
 
         if re.additional_notes:
@@ -242,7 +260,7 @@ def format_will_data(will_data) -> str:
         tt = will_data.testamentary_trust
         trust_lines = ["  Trust Beneficiaries:"]
         for tb in tt.beneficiaries:
-            trust_lines.append(f"    - {tb.beneficiary_name}: {tb.share}")
+            trust_lines.append(f"    - {tb.beneficiary_name}: {_to_fraction(tb.share)}")
         trust_lines.append(f"  Purposes: {', '.join(tt.purposes)}")
         if tt.duration:
             trust_lines.append(f"  Duration: {tt.duration}")
@@ -253,7 +271,7 @@ def format_will_data(will_data) -> str:
         if tt.balance_beneficiaries:
             trust_lines.append("  Balance of Trust to:")
             for bb in tt.balance_beneficiaries:
-                trust_lines.append(f"    - {bb.beneficiary_name}: {bb.share}")
+                trust_lines.append(f"    - {bb.beneficiary_name}: {_to_fraction(bb.share)}")
 
         sections.append(f"""
 ## TESTAMENTARY TRUST
@@ -604,7 +622,7 @@ def draft_will_mock(will_data) -> str:
             numeral = roman_numerals[i] if i < len(roman_numerals) else str(i + 1)
             nric_str = f" {format_id_for_will(nric, nat)}" if nric else ""
             rel_str = f"my {relationship} " if relationship else ""
-            ben_lines.append(f"    ({numeral}) {rel_str}{rb.beneficiary_name.upper()}{nric_str} ({rb.share} share)")
+            ben_lines.append(f"    ({numeral}) {rel_str}{rb.beneficiary_name.upper()}{nric_str} ({_to_fraction(rb.share)} share)")
 
         # Build substitute clause (c) if substitute groups exist
         sub_clause_c = ""
@@ -707,7 +725,7 @@ The expression 'all bank accounts' in this clause shall exclude any account whic
                 share_text = ""
             else:
                 ben_text = ", ".join(alloc_parts[:-1]) + " and " + alloc_parts[-1]
-                shares = [a.share for a in g.allocations]
+                shares = [_to_fraction(a.share) for a in g.allocations]
                 if all(s == shares[0] for s in shares):
                     share_text = f" in equal shares ({shares[0]} each)"
                 else:
