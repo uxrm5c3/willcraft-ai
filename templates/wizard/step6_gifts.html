@@ -336,20 +336,34 @@
             </div>
 
             <!-- Trust, Guardian Allowance & Sell Property Checkboxes -->
-            <div class="flex flex-wrap gap-4 mb-4">
-                <label class="flex items-center">
-                    <input type="checkbox" name="gift_trust_{{ loop.index0 }}" value="1"
-                           {% if gift.get('subject_to_trust') %}checked{% endif %}
-                           class="rounded border-gray-300 text-primary-600 mr-2">
-                    <span class="text-sm text-gray-700">Subject to Testamentary Trust</span>
-                </label>
-                <label class="flex items-center gift-sell-option {% if gift.get('gift_type', 'property') != 'property' %}hidden{% endif %}" data-gift-index="{{ loop.index0 }}">
-                    <input type="checkbox" name="gift_sell_property_{{ loop.index0 }}" value="1"
-                           {% if gift.get('sell_property') %}checked{% endif %}
-                           onchange="updatePropertyPreview({{ loop.index0 }})"
-                           class="rounded border-gray-300 text-primary-600 mr-2">
-                    <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
-                </label>
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Gift Handling</label>
+                <div class="space-y-2">
+                    <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                        <input type="radio" name="gift_handling_{{ loop.index0 }}" value="direct"
+                               {% if not gift.get('subject_to_trust') and not gift.get('sell_property') %}checked{% endif %}
+                               onchange="onGiftHandlingChange({{ loop.index0 }})"
+                               class="text-primary-600 mr-2">
+                        <span class="text-sm text-gray-700">Give directly to beneficiaries</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50 gift-sell-option {% if gift.get('gift_type', 'property') != 'property' %}hidden{% endif %}" data-gift-index="{{ loop.index0 }}">
+                        <input type="radio" name="gift_handling_{{ loop.index0 }}" value="sell"
+                               {% if gift.get('sell_property') %}checked{% endif %}
+                               onchange="onGiftHandlingChange({{ loop.index0 }})"
+                               class="text-primary-600 mr-2">
+                        <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                        <input type="radio" name="gift_handling_{{ loop.index0 }}" value="trust"
+                               {% if gift.get('subject_to_trust') %}checked{% endif %}
+                               onchange="onGiftHandlingChange({{ loop.index0 }})"
+                               class="text-primary-600 mr-2">
+                        <span class="text-sm text-gray-700">Subject to Testamentary Trust <span class="text-xs text-gray-400">(configure in Step 8)</span></span>
+                    </label>
+                </div>
+                <!-- Hidden fields for backward compat -->
+                <input type="hidden" name="gift_trust_{{ loop.index0 }}" id="gift_trust_{{ loop.index0 }}" value="{% if gift.get('subject_to_trust') %}1{% endif %}">
+                <input type="hidden" name="gift_sell_property_{{ loop.index0 }}" id="gift_sell_{{ loop.index0 }}" value="{% if gift.get('sell_property') %}1{% endif %}">
             </div>
 
             <!-- Allocations (Main Beneficiaries) -->
@@ -546,9 +560,29 @@ function switchGiftType(giftIndex, type) {
     document.getElementById('property-panel-' + giftIndex).classList.toggle('hidden', type !== 'property');
     document.getElementById('financial-panel-' + giftIndex).classList.toggle('hidden', type !== 'financial');
     document.getElementById('other-panel-' + giftIndex).classList.toggle('hidden', type !== 'other');
-    // Show/hide sell property checkbox
-    const sellOpt = document.querySelector(`.gift-sell-option[data-gift-index="${giftIndex}"]`);
-    if (sellOpt) sellOpt.classList.toggle('hidden', type !== 'property');
+    // Show/hide sell property option in gift handling
+    const sellOpts = document.querySelectorAll(`.gift-sell-option[data-gift-index="${giftIndex}"]`);
+    sellOpts.forEach(el => el.classList.toggle('hidden', type !== 'property'));
+    // If switching away from property and sell was selected, reset to direct
+    if (type !== 'property') {
+        const sellRadio = document.querySelector(`input[name="gift_handling_${giftIndex}"][value="sell"]`);
+        if (sellRadio && sellRadio.checked) {
+            const directRadio = document.querySelector(`input[name="gift_handling_${giftIndex}"][value="direct"]`);
+            if (directRadio) directRadio.checked = true;
+            onGiftHandlingChange(giftIndex);
+        }
+    }
+}
+
+function onGiftHandlingChange(giftIndex) {
+    const selected = document.querySelector(`input[name="gift_handling_${giftIndex}"]:checked`)?.value || 'direct';
+    // Update hidden fields
+    const trustField = document.getElementById('gift_trust_' + giftIndex);
+    const sellField = document.getElementById('gift_sell_' + giftIndex);
+    if (trustField) trustField.value = (selected === 'trust') ? '1' : '';
+    if (sellField) sellField.value = (selected === 'sell') ? '1' : '';
+    // Update property preview
+    updatePropertyPreview(giftIndex);
 }
 
 function toggleOwnership(giftIndex, type) {
@@ -593,23 +627,20 @@ function updatePropertyPreview(giftIndex) {
     if (postcode || city) fullAddr += ', ' + [postcode, city].filter(Boolean).join(' ');
     if (state) fullAddr += ', ' + state.toUpperCase();
 
-    // Check if sell directive is checked
-    const sellCheckbox = document.querySelector(`[name="gift_sell_property_${giftIndex}"]`);
-    const isSell = sellCheckbox && sellCheckbox.checked;
+    // Check gift handling mode
+    const handling = document.querySelector(`input[name="gift_handling_${giftIndex}"]:checked`)?.value || 'direct';
+    const isSell = (handling === 'sell');
+    const isTrust = (handling === 'trust');
 
     let prefix;
     if (isSell) {
-        if (isJoint && testatorShare) {
-            prefix = 'I direct my Executor to sell my ' + testatorShare + ' undivided share and interest in the property known as ';
-        } else {
-            prefix = 'I direct my Executor to sell my property known as ';
-        }
+        prefix = isJoint && testatorShare
+            ? 'I direct my Executor to sell my ' + testatorShare + ' undivided share and interest in the property known as '
+            : 'I direct my Executor to sell my property known as ';
     } else {
-        if (isJoint && testatorShare) {
-            prefix = 'my ' + testatorShare + ' undivided share and interest in the property known as ';
-        } else {
-            prefix = 'my property known as ';
-        }
+        prefix = isJoint && testatorShare
+            ? 'my ' + testatorShare + ' undivided share and interest in the property known as '
+            : 'my property known as ';
     }
     let parts = [prefix + fullAddr];
     if (titleType && titleNum) parts.push('held under ' + titleType + ' No. ' + titleNum);
@@ -620,6 +651,7 @@ function updatePropertyPreview(giftIndex) {
 
     let suffix = ';';
     if (isSell) suffix = ' and distribute the nett proceeds of the sale to the beneficiaries named below in the shares indicated.';
+    if (isTrust) suffix = '; [Subject to Testamentary Trust — configure in Step 8]';
 
     document.getElementById('property-preview-' + giftIndex).textContent = parts.join(', ') + suffix;
 }
@@ -757,15 +789,24 @@ function addGift() {
             <label class="block text-sm font-medium text-gray-700 mb-1">Asset Description (Free Text)</label>
             <textarea name="gift_desc_${idx}" rows="3" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="Describe the asset in your own words"></textarea>
         </div>
-        <div class="flex flex-wrap gap-4 mb-4">
-            <label class="flex items-center">
-                <input type="checkbox" name="gift_trust_${idx}" value="1" class="rounded border-gray-300 text-primary-600 mr-2">
-                <span class="text-sm text-gray-700">Subject to Testamentary Trust</span>
-            </label>
-            <label class="flex items-center gift-sell-option" data-gift-index="${idx}">
-                <input type="checkbox" name="gift_sell_property_${idx}" value="1" onchange="updatePropertyPreview(${idx})" class="rounded border-gray-300 text-primary-600 mr-2">
-                <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
-            </label>
+        <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-2">Gift Handling</label>
+            <div class="space-y-2">
+                <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                    <input type="radio" name="gift_handling_${idx}" value="direct" checked onchange="onGiftHandlingChange(${idx})" class="text-primary-600 mr-2">
+                    <span class="text-sm text-gray-700">Give directly to beneficiaries</span>
+                </label>
+                <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50 gift-sell-option" data-gift-index="${idx}">
+                    <input type="radio" name="gift_handling_${idx}" value="sell" onchange="onGiftHandlingChange(${idx})" class="text-primary-600 mr-2">
+                    <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
+                </label>
+                <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                    <input type="radio" name="gift_handling_${idx}" value="trust" onchange="onGiftHandlingChange(${idx})" class="text-primary-600 mr-2">
+                    <span class="text-sm text-gray-700">Subject to Testamentary Trust <span class="text-xs text-gray-400">(configure in Step 8)</span></span>
+                </label>
+            </div>
+            <input type="hidden" name="gift_trust_${idx}" id="gift_trust_${idx}" value="">
+            <input type="hidden" name="gift_sell_property_${idx}" id="gift_sell_${idx}" value="">
         </div>
         <div class="border-t border-gray-100 pt-4">
             <div class="flex items-center justify-between mb-2">

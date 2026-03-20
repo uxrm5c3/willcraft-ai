@@ -105,23 +105,94 @@
         </div>
     </div>
 
-    <!-- Immovable Properties -->
+    <!-- Assets Held in Trust -->
     <div>
-        <h3 class="text-lg font-semibold text-gray-800 mb-1">For Immovable Properties</h3>
-        <p class="text-sm text-gray-500 mb-4">How should immovable properties (land, houses, etc.) held in trust be managed?</p>
+        <h3 class="text-lg font-semibold text-gray-800 mb-1">Assets Held in Trust</h3>
+        <p class="text-sm text-gray-500 mb-3">Gifts marked "Subject to Testamentary Trust" in Step 6 are automatically included. For each property, specify how it should be managed.</p>
 
+        {% set saved_refs = trust.get('assets_from_gifts', []) %}
+        {% set prop_actions = trust.get('property_actions', {}) %}
+        {% set prop_residents = trust.get('property_residents', {}) %}
+        {% set has_trust_gifts = false %}
+
+        {% if gifts %}
         <div class="space-y-3">
-            <label class="flex items-center">
-                <input type="radio" name="immovable_property_action" value="let_lease" {% if trust.get('immovable_property_action') == 'let_lease' %}checked{% endif %}
-                       class="border-gray-300 text-primary-600 mr-2">
-                <span class="text-sm text-gray-700">Let / Lease the property</span>
-            </label>
-            <label class="flex items-center">
-                <input type="radio" name="immovable_property_action" value="reside" {% if trust.get('immovable_property_action') == 'reside' %}checked{% endif %}
-                       class="border-gray-300 text-primary-600 mr-2">
-                <span class="text-sm text-gray-700">Allow beneficiary to reside in the property</span>
-            </label>
+            {% for gift in gifts %}
+            {% set gift_num = loop.index %}
+            {% set is_trust = gift.get('subject_to_trust', false) %}
+            {% set gift_ref = 'Gift ' ~ gift_num %}
+            {% if is_trust or gift_ref in saved_refs %}
+            {% set has_trust_gifts = true %}
+
+            {% set desc = '' %}
+            {% if gift.get('gift_type') == 'property' and gift.get('property_details', {}).get('property_address') %}
+                {% set desc = gift.get('property_details', {}).get('property_address', '') %}
+            {% elif gift.get('gift_type') == 'financial' and gift.get('financial_details', {}).get('institution') %}
+                {% set desc = gift.get('financial_details', {}).get('institution', '') ~ ' - ' ~ gift.get('financial_details', {}).get('asset_type', '') %}
+            {% elif gift.get('description') %}
+                {% set desc = gift.get('description') %}
+            {% endif %}
+
+            <input type="hidden" name="gift_references" value="{{ gift_ref }}">
+
+            <div class="p-4 rounded-lg border border-primary-200 bg-primary-50/30">
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="text-sm font-semibold text-gray-800">Gift {{ gift_num }} — {{ gift.get('gift_type', 'other')|capitalize }}</span>
+                </div>
+                {% if desc %}
+                <p class="text-xs text-gray-600 mb-3">{{ desc }}</p>
+                {% endif %}
+
+                {% if gift.get('gift_type') == 'property' %}
+                <!-- Per-property management options -->
+                {% set action = prop_actions.get(gift_ref, 'reside') %}
+                <div class="space-y-2 ml-1">
+                    <label class="flex items-start gap-2 cursor-pointer text-sm">
+                        <input type="radio" name="prop_action_{{ gift_num }}" value="reside"
+                               {% if action == 'reside' %}checked{% endif %}
+                               onchange="toggleResidentSelect({{ gift_num }})"
+                               class="mt-0.5 text-primary-600">
+                        <span>Allow beneficiary to reside in this property</span>
+                    </label>
+                    <div id="resident-select-{{ gift_num }}" class="{% if action != 'reside' %}hidden{% endif %} ml-6 mb-1">
+                        <select name="prop_resident_{{ gift_num }}"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white">
+                            <option value="">-- Select beneficiary to reside --</option>
+                            {% for b in beneficiaries %}
+                            <option value="{{ b.full_name }}" {% if prop_residents.get(gift_ref) == b.full_name %}selected{% endif %}>{{ b.full_name }} ({{ b.relationship }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <label class="flex items-start gap-2 cursor-pointer text-sm">
+                        <input type="radio" name="prop_action_{{ gift_num }}" value="lease"
+                               {% if action == 'lease' %}checked{% endif %}
+                               onchange="toggleResidentSelect({{ gift_num }})"
+                               class="mt-0.5 text-primary-600">
+                        <span>Let / Lease this property</span>
+                    </label>
+                    <label class="flex items-start gap-2 cursor-pointer text-sm">
+                        <input type="radio" name="prop_action_{{ gift_num }}" value="sell"
+                               {% if action == 'sell' %}checked{% endif %}
+                               onchange="toggleResidentSelect({{ gift_num }})"
+                               class="mt-0.5 text-primary-600">
+                        <span>Sell this property and add proceeds to trust</span>
+                    </label>
+                </div>
+                {% else %}
+                <!-- Financial/other asset — just show as included -->
+                <p class="text-xs text-gray-500 italic ml-1">This financial asset will be held in trust.</p>
+                {% endif %}
+            </div>
+            {% endif %}
+            {% endfor %}
         </div>
+
+        {% if not has_trust_gifts %}
+        <p class="text-sm text-gray-400 italic p-3 border border-dashed border-gray-300 rounded-lg">No gifts assigned to trust. Go to <a href="/wizard/step/6" class="text-primary-600 hover:underline">Step 6</a> and select "Subject to Testamentary Trust" for the gifts you want held in trust.</p>
+        {% endif %}
+        {% else %}
+        <p class="text-sm text-gray-400 italic p-3 border border-dashed border-gray-300 rounded-lg">No gifts added yet. <a href="/wizard/step/6" class="text-primary-600 hover:underline">Go to Step 6</a> to add gifts.</p>
+        {% endif %}
     </div>
 
     <!-- Duration of Trust -->
@@ -132,48 +203,6 @@
         <input type="text" name="trust_duration" value="{{ trust.get('trust_duration', '') }}"
                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
                placeholder="e.g., Until the beneficiary turns 25 years old, or Until the beneficiary completes tertiary education">
-    </div>
-
-    <!-- Assets from Gifts -->
-    <div>
-        <h3 class="text-lg font-semibold text-gray-800 mb-1">Assets from Specific Gifts</h3>
-        <p class="text-sm text-gray-500 mb-3">Select which gifts from Step 6 should be held in trust. Gifts marked "Subject to Testamentary Trust" in Step 6 are pre-selected.</p>
-
-        {% set saved_refs = trust.get('assets_from_gifts', []) %}
-        {% if gifts %}
-        <div class="space-y-2">
-            {% for gift in gifts %}
-            {% set gift_num = loop.index %}
-            {% set is_trust = gift.get('subject_to_trust', false) %}
-            {% set gift_ref = 'Gift ' ~ gift_num %}
-            {% set is_checked = is_trust or gift_ref in saved_refs %}
-            {% set desc = '' %}
-            {% if gift.get('gift_type') == 'property' and gift.get('property_details', {}).get('property_address') %}
-                {% set desc = gift.get('property_details', {}).get('property_address', '') %}
-            {% elif gift.get('gift_type') == 'financial' and gift.get('financial_details', {}).get('institution') %}
-                {% set desc = gift.get('financial_details', {}).get('institution', '') ~ ' - ' ~ gift.get('financial_details', {}).get('asset_type', '') %}
-            {% elif gift.get('description') %}
-                {% set desc = gift.get('description') %}
-            {% endif %}
-            <label class="flex items-start gap-3 p-3 rounded-lg border {% if is_checked %}border-primary-300 bg-primary-50{% else %}border-gray-200 hover:bg-gray-50{% endif %} cursor-pointer transition-colors">
-                <input type="checkbox" name="gift_references" value="{{ gift_ref }}"
-                       {% if is_checked %}checked{% endif %}
-                       class="mt-0.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500">
-                <div class="flex-1">
-                    <span class="text-sm font-medium text-gray-800">Gift {{ gift_num }} ({{ gift.get('gift_type', 'other')|capitalize }})</span>
-                    {% if desc %}
-                    <p class="text-xs text-gray-500 mt-0.5 truncate">{{ desc }}</p>
-                    {% endif %}
-                    {% if is_trust %}
-                    <span class="inline-block mt-1 text-xs bg-primary-100 text-primary-700 px-2 py-0.5 rounded-full font-medium">Marked in Step 6</span>
-                    {% endif %}
-                </div>
-            </label>
-            {% endfor %}
-        </div>
-        {% else %}
-        <p class="text-sm text-gray-400 italic p-3 border border-dashed border-gray-300 rounded-lg">No gifts added in Step 6 yet. <a href="/wizard/step/6" class="text-primary-600 hover:underline">Go to Step 6</a> to add gifts.</p>
-        {% endif %}
     </div>
 
     <!-- Payment Mode -->
@@ -344,6 +373,12 @@ function removeTrustBeneficiary(btn) {
     btn.closest('.trust-ben-entry').remove();
     trustBenCount--;
     document.getElementById('trust-beneficiary-count').value = trustBenCount;
+}
+
+function toggleResidentSelect(giftNum) {
+    const action = document.querySelector(`input[name="prop_action_${giftNum}"]:checked`)?.value || '';
+    const residentDiv = document.getElementById('resident-select-' + giftNum);
+    if (residentDiv) residentDiv.classList.toggle('hidden', action !== 'reside');
 }
 
 // Show trustee identity info on page load if pre-selected

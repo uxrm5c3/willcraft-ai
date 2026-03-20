@@ -2722,9 +2722,10 @@ def wizard_step_trust():
             'beneficiaries': trust_bens,
             'purposes': purposes,
             'other_purpose': other_purpose,
-            'property_use': request.form.get('immovable_property_action', '').strip() or None,
             'duration': request.form.get('trust_duration', '').strip() or None,
             'assets_from_gifts': request.form.getlist('gift_references'),
+            'property_actions': {},
+            'property_residents': {},
             'payment_mode': request.form.get('payment_mode', '').strip() or None,
             'payment_amount': request.form.get('payment_amount', '').strip() or None,
             'other_payment_mode': request.form.get('payment_mode_other', '').strip() or None,
@@ -2733,6 +2734,21 @@ def wizard_step_trust():
             'trustee_person_id': request.form.get('trustee_person_id', '').strip() or None,
             'trustee_relationship': request.form.get('trustee_relationship', '').strip() or None,
         }
+        # Parse per-property actions (reside/lease/sell) and resident selections
+        gift_refs = trust_data['assets_from_gifts']
+        for ref in gift_refs:
+            # Extract gift number from "Gift 1", "Gift 2", etc.
+            try:
+                gift_num = int(ref.replace('Gift ', ''))
+            except (ValueError, AttributeError):
+                continue
+            action = request.form.get(f'prop_action_{gift_num}', '').strip()
+            if action:
+                trust_data['property_actions'][ref] = action
+            resident = request.form.get(f'prop_resident_{gift_num}', '').strip()
+            if resident:
+                trust_data['property_residents'][ref] = resident
+
         # Look up trustee identity
         trustee_pid = trust_data.get('trustee_person_id')
         if trustee_pid:
