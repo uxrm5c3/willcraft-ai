@@ -268,7 +268,23 @@
                     {% endif %}
                     {% set allocs = gift.get('allocations', []) %}
                     {% if allocs %}
-                    <p class="text-gray-500 mt-1">To: {% for a in allocs %}{{ a.get('beneficiary_name', '?') }} ({{ a.get('share', '?') }}{% if a.get('role') == 'SB' %}, Substitute{% endif %}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+                    <div class="mt-1 space-y-0.5">
+                        <p class="text-gray-500">To: {% for a in allocs %}{{ a.get('beneficiary_name', '?') }} ({{ a.get('share', '?') }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+                        {% set sub_mode = gift.get('substitute_mode', 'equal') %}
+                        {% if sub_mode == 'specific' %}
+                            {% for a in allocs %}
+                                {% if a.get('substitutes') %}
+                                <p class="text-gray-400 text-xs ml-3">↳ If {{ a.get('beneficiary_name', '?') }} does not survive: {% for s in a.get('substitutes', []) %}{{ s.get('beneficiary_name', '?') }} ({{ s.get('share', '100%') }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+                                {% endif %}
+                            {% endfor %}
+                        {% elif sub_mode == 'prorata' %}
+                        <p class="text-gray-400 text-xs ml-3">↳ Substitute: pro-rata to surviving beneficiaries</p>
+                        {% elif sub_mode == 'survivorship' %}
+                        <p class="text-gray-400 text-xs ml-3">↳ Substitute: to survivor(s)</p>
+                        {% elif allocs|length > 1 %}
+                        <p class="text-gray-400 text-xs ml-3">↳ Substitute: equal shares to surviving beneficiaries</p>
+                        {% endif %}
+                    </div>
                     {% endif %}
                 </div>
                 {% endfor %}
@@ -300,12 +316,16 @@
             </div>
             {% set sub_groups = residuary.get('substitute_groups', []) %}
             {% if sub_groups %}
-            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Substitute Groups</h4>
+            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Substitute Beneficiaries</h4>
             {% for group in sub_groups %}
             <div class="mb-2">
-                <p class="text-xs text-gray-400 mb-1">Group {{ loop.index }}</p>
+                {% if main_bens|length > 1 %}
+                <p class="text-xs text-gray-400 mb-1">↳ If {{ main_bens[loop.index0].get('beneficiary_name', 'Beneficiary ' ~ loop.index) if loop.index0 < main_bens|length else 'Beneficiary ' ~ loop.index }} does not survive:</p>
+                {% else %}
+                <p class="text-xs text-gray-400 mb-1">↳ If {{ main_bens[0].get('beneficiary_name', 'beneficiary') }} does not survive:</p>
+                {% endif %}
                 {% for sub in group %}
-                <div class="text-sm flex justify-between ml-3">
+                <div class="text-sm flex justify-between ml-5">
                     <span class="text-gray-900">{{ sub.get('beneficiary_name', '-') }}</span>
                     <span class="text-gray-600">{{ sub.get('share', '-') }}%</span>
                 </div>
