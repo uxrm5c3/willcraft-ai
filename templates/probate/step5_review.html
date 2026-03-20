@@ -307,6 +307,8 @@ async function uploadReceipt(category, fileInput) {
     const statusEl = document.getElementById(category + '-upload-status');
     statusEl.innerHTML = '<span class="text-blue-600">Uploading ' + file.name + '...</span>';
 
+    file = await compressImageIfNeeded(file);
+
     const formData = new FormData();
     formData.append('file', file);
     formData.append('category', category);

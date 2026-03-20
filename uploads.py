@@ -35,6 +35,30 @@ def save_uploaded_file(file, client_id, category='general', folder_name=None):
     file.save(filepath)
     file_size = os.path.getsize(filepath)
 
+    # Auto-compress large images server-side
+    if file_size > MAX_FILE_SIZE and ext in ('jpg', 'jpeg', 'png', 'bmp', 'webp', 'heic', 'heif', 'tiff', 'tif'):
+        try:
+            from PIL import Image
+            img = Image.open(filepath)
+            if img.mode in ('RGBA', 'P', 'LA'):
+                img = img.convert('RGB')
+            # Scale down if very large
+            max_dim = 2000
+            if img.width > max_dim or img.height > max_dim:
+                ratio = min(max_dim / img.width, max_dim / img.height)
+                img = img.resize((round(img.width * ratio), round(img.height * ratio)), Image.LANCZOS)
+            # Save as JPEG
+            compressed_name = safe_name.rsplit('.', 1)[0] + '.jpg'
+            compressed_path = os.path.join(folder, compressed_name)
+            img.save(compressed_path, 'JPEG', quality=85)
+            os.remove(filepath)
+            filepath = compressed_path
+            safe_name = compressed_name
+            ext = 'jpg'
+            file_size = os.path.getsize(filepath)
+        except Exception:
+            pass  # Fall through to size check below
+
     if file_size > MAX_FILE_SIZE:
         os.remove(filepath)
         raise ValueError(f"File too large: {file_size} bytes (max {MAX_FILE_SIZE})")

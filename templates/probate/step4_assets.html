@@ -338,6 +338,8 @@ async function scanAssetDoc(type, idx, fileInput) {
     const statusEl = document.getElementById('scan-status-' + type + '-' + idx);
     if (statusEl) { statusEl.style.display = 'block'; statusEl.innerHTML = '<span class="text-blue-600">Scanning ' + file.name + '...</span>'; }
 
+    file = await compressImageIfNeeded(file);
+
     const formData = new FormData();
     formData.append('file', file);
     formData.append('asset_type', type);

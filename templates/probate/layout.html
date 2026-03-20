@@ -68,4 +68,41 @@
         </div>
     </div>
 </div>
+
+<script>
+/* Shared image compression for probate uploads */
+const MAX_IMAGE_SIZE_MB = 4;
+function compressImageIfNeeded(file) {
+    return new Promise((resolve) => {
+        const ext = (file.name || '').split('.').pop().toLowerCase();
+        if (ext === 'pdf') { resolve(file); return; }
+        if (file.size <= MAX_IMAGE_SIZE_MB * 1024 * 1024) { resolve(file); return; }
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = function() {
+            URL.revokeObjectURL(url);
+            const MAX_DIM = 2000;
+            let w = img.width, h = img.height;
+            if (w > MAX_DIM || h > MAX_DIM) {
+                const ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
+                w = Math.round(w * ratio);
+                h = Math.round(h * ratio);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w; canvas.height = h;
+            canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+            let quality = 0.85;
+            const tryCompress = () => {
+                canvas.toBlob((blob) => {
+                    if (blob.size > 10 * 1024 * 1024 && quality > 0.3) { quality -= 0.15; tryCompress(); }
+                    else { resolve(new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() })); }
+                }, 'image/jpeg', quality);
+            };
+            tryCompress();
+        };
+        img.onerror = function() { URL.revokeObjectURL(url); resolve(file); };
+        img.src = url;
+    });
+}
+</script>
 {% endblock %}

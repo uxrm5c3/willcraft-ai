@@ -564,21 +564,76 @@ function handleDrop(event, uploadId, category) {
 // CLIENT-SIDE FILE VALIDATION
 // ===========================================================================
 const MAX_FILE_SIZE_MB = 10;
+const MAX_IMAGE_SIZE_MB = 4;  // Auto-compress images above this
 const OCR_ALLOWED_EXTS = ['jpg', 'jpeg', 'png', 'pdf'];
 
 function validateFile(file) {
     if (!file) return { valid: false, error: 'No file selected.' };
-    const sizeMB = file.size / (1024 * 1024);
-    if (sizeMB > MAX_FILE_SIZE_MB) {
-        return { valid: false, error: `File too large (${sizeMB.toFixed(1)}MB). Maximum is ${MAX_FILE_SIZE_MB}MB.` };
-    }
     const ext = (file.name || '').split('.').pop().toLowerCase();
     if (!OCR_ALLOWED_EXTS.includes(ext)) {
         const msg = `Unsupported file format: .${ext}\n\nAccepted formats: JPG, PNG, PDF`;
         alert(msg);
         return { valid: false, error: msg };
     }
+    // PDFs can't be compressed client-side — enforce hard limit
+    if (ext === 'pdf' && file.size / (1024 * 1024) > MAX_FILE_SIZE_MB) {
+        return { valid: false, error: `PDF too large (${(file.size/(1024*1024)).toFixed(1)}MB). Maximum is ${MAX_FILE_SIZE_MB}MB.` };
+    }
     return { valid: true };
+}
+
+/**
+ * Compress an image file if it exceeds MAX_IMAGE_SIZE_MB.
+ * Returns a Promise that resolves to a (possibly compressed) File.
+ * PDFs and small images are returned as-is.
+ */
+function compressImageIfNeeded(file) {
+    return new Promise((resolve) => {
+        const ext = (file.name || '').split('.').pop().toLowerCase();
+        // Skip PDFs — can't compress client-side
+        if (ext === 'pdf') { resolve(file); return; }
+        // Skip small files
+        if (file.size <= MAX_IMAGE_SIZE_MB * 1024 * 1024) { resolve(file); return; }
+
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = function() {
+            URL.revokeObjectURL(url);
+            // Scale down: target ~2MP max (1600x1200ish) for OCR — still very readable
+            const MAX_DIM = 2000;
+            let w = img.width, h = img.height;
+            if (w > MAX_DIM || h > MAX_DIM) {
+                const ratio = Math.min(MAX_DIM / w, MAX_DIM / h);
+                w = Math.round(w * ratio);
+                h = Math.round(h * ratio);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            // Try quality levels until under limit
+            let quality = 0.85;
+            const tryCompress = () => {
+                canvas.toBlob((blob) => {
+                    if (blob.size > MAX_FILE_SIZE_MB * 1024 * 1024 && quality > 0.3) {
+                        quality -= 0.15;
+                        tryCompress();
+                    } else {
+                        const compressed = new File([blob], file.name, { type: 'image/jpeg', lastModified: Date.now() });
+                        console.log(`Image compressed: ${(file.size/(1024*1024)).toFixed(1)}MB → ${(compressed.size/(1024*1024)).toFixed(1)}MB`);
+                        resolve(compressed);
+                    }
+                }, 'image/jpeg', quality);
+            };
+            tryCompress();
+        };
+        img.onerror = function() {
+            URL.revokeObjectURL(url);
+            resolve(file); // Fallback: send original
+        };
+        img.src = url;
+    });
 }
 
 // ===========================================================================
@@ -1360,6 +1415,8 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
     }
 
     if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Scanning property document...</span>';
+
+    file = await compressImageIfNeeded(file);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -2439,6 +2496,8 @@ async function uploadNRICForIdentity(inputOrFile) {
     const statusEl = document.getElementById('modal-nric-status');
     if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Uploading document...</span>';
 
+    file = await compressImageIfNeeded(file);
+
     const formData = new FormData();
     formData.append('file', file);
     formData.append('category', 'nric');
@@ -2626,6 +2685,8 @@ async function uploadAndExtractAsset(inputOrFile, statusElId, giftIndex) {
     }
 
     if (statusEl) statusEl.innerHTML = '<span class="text-primary-600">⏳ Scanning financial document...</span>';
+
+    file = await compressImageIfNeeded(file);
 
     const formData = new FormData();
     formData.append('file', file);

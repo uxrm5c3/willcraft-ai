@@ -284,6 +284,8 @@ async function ocrDeathCert() {
     ocrBtn.disabled = true;
     document.getElementById('ocr-status').textContent = 'Scanning... please wait';
 
+    file = await compressImageIfNeeded(file);
+
     const formData = new FormData();
     formData.append('file', file);
 

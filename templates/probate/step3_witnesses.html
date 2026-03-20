@@ -262,6 +262,8 @@ async function scanIC(witnessNum, fileInput) {
     const statusEl = document.getElementById('ic-status-' + witnessNum);
     statusEl.innerHTML = '<span class="text-blue-600">Scanning...</span>';
 
+    file = await compressImageIfNeeded(file);
+
     const formData = new FormData();
     formData.append('file', file);
 
