@@ -77,19 +77,19 @@ FORM_FIELDS = {
         'name': 'Assets & Liabilities Schedule',
         'fields': [
             ('Deceased name & NRIC', 'Will — Testator'),
-            ('Properties (title, lot, mukim, address)', 'Step 4 — Assets'),
-            ('Bank accounts (bank, account no., value)', 'Step 4 — Assets'),
-            ('Vehicles (desc, reg no., engine, chassis)', 'Step 4 — Assets'),
-            ('Other assets (description, value)', 'Step 4 — Assets'),
-            ('Liabilities (description, value)', 'Step 4 — Assets'),
+            ('Properties (title, lot, mukim, address)', 'Step 5 — Assets'),
+            ('Bank accounts (bank, account no., value)', 'Step 5 — Assets'),
+            ('Vehicles (desc, reg no., engine, chassis)', 'Step 5 — Assets'),
+            ('Other assets (description, value)', 'Step 5 — Assets'),
+            ('Liabilities (description, value)', 'Step 5 — Assets'),
         ],
     },
     'doc07': {
         'name': 'Beneficiary List',
         'fields': [
             ('Deceased name & NRIC', 'Will — Testator'),
-            ('Beneficiary names & NRIC', 'Will — Beneficiaries'),
-            ('Beneficiary relationships', 'Will — Beneficiaries'),
+            ('Beneficiary names & NRIC', 'Step 4 — Beneficiaries'),
+            ('Beneficiary relationships', 'Step 4 — Beneficiaries'),
             ('Court location & case number', 'Step 2 — Court Info'),
         ],
     },
@@ -107,9 +107,9 @@ FORM_FIELDS = {
     'form14a': {
         'name': 'Land Transfer (Form 14A)',
         'fields': [
-            ('Property title number', 'Step 4 — Assets (Property)'),
-            ('Property lot number', 'Step 4 — Assets (Property)'),
-            ('Property mukim', 'Step 4 — Assets (Property)'),
+            ('Property title number', 'Step 5 — Assets (Property)'),
+            ('Property lot number', 'Step 5 — Assets (Property)'),
+            ('Property mukim', 'Step 5 — Assets (Property)'),
             ('Deceased name & NRIC', 'Will — Testator'),
             ('Applicant name & NRIC', 'Will — Executor'),
             ('Court location & case number', 'Step 2 — Court Info'),
@@ -118,8 +118,8 @@ FORM_FIELDS = {
     'form346': {
         'name': 'Personal Representative (Form 346)',
         'fields': [
-            ('Property title number', 'Step 4 — Assets (Property)'),
-            ('Property lot number', 'Step 4 — Assets (Property)'),
+            ('Property title number', 'Step 5 — Assets (Property)'),
+            ('Property lot number', 'Step 5 — Assets (Property)'),
             ('Deceased name & NRIC', 'Will — Testator'),
             ('Applicant name & NRIC', 'Will — Executor'),
             ('Court case number', 'Step 2 — Court Info'),
@@ -230,7 +230,9 @@ def build_replacements(probate_app, will_record):
         step2 = json.loads(will_record.step2_data or '{}')
         executors = step2.get('executors', []) if isinstance(step2, dict) else step2
         primary_exec = executors[0] if executors else {}
-        beneficiaries = json.loads(will_record.step4_data or '[]')
+        # Prefer probate.beneficiaries_data (populated in step 4), fall back to will data
+        _probate_bens = json.loads(probate_app.beneficiaries_data or '[]') if probate_app.beneficiaries_data and probate_app.beneficiaries_data != '[]' else []
+        beneficiaries = _probate_bens if _probate_bens else json.loads(will_record.step4_data or '[]')
         gifts = json.loads(will_record.step5_data or '[]')
 
     # Build applicant initials for exhibit references (e.g., TLL from TAN LI LI)

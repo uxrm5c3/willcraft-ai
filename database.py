@@ -208,6 +208,7 @@ class ProbateApplication(db.Model):
     time_of_death = db.Column(db.String(20), nullable=True)
     place_of_death = db.Column(db.String(500), nullable=True)
     death_cert_document_id = db.Column(db.String(36), nullable=True)
+    will_document_id = db.Column(db.String(36), nullable=True)
     estate_value_estimate = db.Column(db.String(100), nullable=True)
 
     # Court details

@@ -760,3 +760,138 @@ If the document is already in English, just reproduce the text content."""
         }]
     )
     return message.content[0].text
+
+
+def extract_will_data(file_path: str) -> dict:
+    """Extract structured data from an uploaded will document (PDF or image).
+
+    Returns dict with keys: testator, executors, witnesses, beneficiaries, assets, will_date.
+    """
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    content_block = _make_content_block(file_path)
+
+    message = client.messages.create(
+        model=CLAUDE_MODEL_FAST,
+        max_tokens=4096,
+        messages=[{
+            "role": "user",
+            "content": [
+                content_block,
+                {
+                    "type": "text",
+                    "text": """Read this Malaysian Will document carefully.
+
+You MUST follow these steps IN ORDER. Do NOT skip any step.
+
+STEP 1 — IDENTIFY DOCUMENT:
+Confirm this is a Last Will and Testament. Look for "WASIAT TERAKHIR", "LAST WILL AND TESTAMENT", or similar header.
+
+STEP 2 — READ TESTATOR (the person making the will):
+Look for the person declaring the will. Read their:
+- Full name (CHARACTER BY CHARACTER for accuracy)
+- NRIC number (DIGIT BY DIGIT — format YYMMDD-SS-NNNN)
+- Address
+Watch for: I vs L, O vs 0, S vs 5, B vs 8.
+
+STEP 3 — READ EXECUTORS:
+Look for "executor", "wasi", "personal representative". For each executor:
+- Full name, NRIC, relationship to testator, address
+There may be 1-3 executors.
+
+STEP 4 — READ WITNESSES:
+Look for signatures at the end, "witnessed by", "saksi". For each witness:
+- Full name, NRIC (if shown)
+Usually 2 witnesses.
+
+STEP 5 — READ BENEFICIARIES:
+Look for people receiving gifts/bequests. For each beneficiary:
+- Full name, NRIC (if shown), relationship to testator
+- What they receive (if mentioned near their name)
+
+STEP 6 — READ ASSETS MENTIONED:
+Look for property addresses, bank accounts, vehicles, or other assets mentioned in the will.
+For each asset:
+- Type: property, bank, vehicle, or other
+- Description (address, account details, etc.)
+
+STEP 7 — READ WILL DATE:
+Look for the date the will was signed. Format as DD-MM-YYYY.
+
+STEP 8 — OUTPUT THE FINAL JSON:
+After your analysis above, output ONLY this JSON block:
+
+```json
+{
+    "testator": {
+        "full_name": "EXACT NAME IN UPPERCASE",
+        "nric_number": "YYMMDD-SS-NNNN",
+        "address": "full address"
+    },
+    "executors": [
+        {"full_name": "NAME", "nric_number": "YYMMDD-SS-NNNN", "relationship": "relationship", "address": "address"}
+    ],
+    "witnesses": [
+        {"full_name": "NAME", "nric_number": "YYMMDD-SS-NNNN"}
+    ],
+    "beneficiaries": [
+        {"full_name": "NAME", "nric_number": "YYMMDD-SS-NNNN", "relationship": "relationship"}
+    ],
+    "assets": [
+        {"type": "property|bank|vehicle|other", "description": "description of the asset"}
+    ],
+    "will_date": "DD-MM-YYYY"
+}
+```
+
+RULES:
+- All names in UPPERCASE, exactly as printed
+- NRIC: 12 digits with dashes YYMMDD-SS-NNNN (validate month 01-12, day 01-31)
+- Return "" for any field you truly cannot read
+- Return empty arrays [] if no items found for a category
+- Include ALL beneficiaries and assets you can find
+
+IMPORTANT: The character-by-character reading is CRITICAL for accuracy."""
+                }
+            ]
+        }]
+    )
+
+    response_text = message.content[0].text.strip()
+    json_str = _extract_json(response_text)
+    if not json_str:
+        return {"error": "Could not parse extraction results", "raw": response_text[:500]}
+
+    try:
+        result = json.loads(json_str)
+    except json.JSONDecodeError:
+        try:
+            fixed = re.sub(r'(?<!\\)\n', ' ', json_str)
+            result = json.loads(fixed)
+        except json.JSONDecodeError:
+            return {"error": "Could not parse extraction results", "raw": response_text[:500]}
+
+    # Post-processing: validate NRIC formats
+    def normalize_nric(nric):
+        if not nric:
+            return ''
+        digits_only = nric.replace('-', '').replace(' ', '')
+        if len(digits_only) == 12 and digits_only.isdigit():
+            return f"{digits_only[:6]}-{digits_only[6:8]}-{digits_only[8:]}"
+        return nric
+
+    if 'testator' in result and isinstance(result['testator'], dict):
+        result['testator']['nric_number'] = normalize_nric(result['testator'].get('nric_number', ''))
+    for lst_key in ('executors', 'witnesses', 'beneficiaries'):
+        for item in result.get(lst_key, []):
+            if isinstance(item, dict):
+                item['nric_number'] = normalize_nric(item.get('nric_number', ''))
+
+    # Ensure all expected fields exist
+    result.setdefault('testator', {'full_name': '', 'nric_number': '', 'address': ''})
+    result.setdefault('executors', [])
+    result.setdefault('witnesses', [])
+    result.setdefault('beneficiaries', [])
+    result.setdefault('assets', [])
+    result.setdefault('will_date', '')
+
+    return result

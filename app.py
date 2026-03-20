@@ -266,6 +266,7 @@ with app.app_context():
         ("probate_applications", "applicant_relationship", "VARCHAR(100)"),
         ("probate_applications", "assets_data", "TEXT DEFAULT '[]'"),
         ("probate_applications", "beneficiaries_data", "TEXT DEFAULT '[]'"),
+        ("probate_applications", "will_document_id", "VARCHAR(36)"),
     ]:
         try:
             with db.engine.connect() as conn:
@@ -324,7 +325,7 @@ with app.app_context():
                  'requires_property': True, 'sort_order': 9},
                 {'form_code': 'form346', 'form_name': 'Personal Representative (Form 346)', 'form_name_malay': 'Borang 346 - Pendaftaran Wakil Diri',
                  'description': 'Registers the executor as the legal representative at the land office so they can handle property transfers.',
-                 'file_path': 'probate_templates/form346_personal_rep.doc', 'category': 'property',
+                 'file_path': 'probate_templates/form346_personal_rep.docx', 'category': 'property',
                  'requires_property': True, 'sort_order': 10},
             ]
             for tpl in PROBATE_FORM_DEFAULTS:
@@ -3508,11 +3509,16 @@ def _validate_probate_data(probate, will_record, recommendations):
                 missing.append('Witness 2 NRIC (Step 3)')
             if not probate.witness2_address:
                 missing.append('Witness 2 Address (Step 3)')
+        # Beneficiaries
+        if code == 'doc07':
+            bens = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data else []
+            if not bens:
+                missing.append('No beneficiaries entered (Step 4)')
         # Assets
         if code == 'doc06':
             assets = json.loads(probate.assets_data or '[]')
             if not assets:
-                missing.append('No assets entered (Step 4)')
+                missing.append('No assets entered (Step 5)')
         if missing:
             warnings[code] = missing
     return warnings
@@ -3563,10 +3569,12 @@ def _get_probate_context(probate_id):
         max_step = max(max_step, 2)
     if probate.witness1_name or probate.witness2_name:
         max_step = max(max_step, 3)
-    if probate.assets_data and probate.assets_data != '[]':
+    if probate.beneficiaries_data and probate.beneficiaries_data != '[]':
         max_step = max(max_step, 4)
+    if probate.assets_data and probate.assets_data != '[]':
+        max_step = max(max_step, 5)
     if probate.status == 'generated':
-        max_step = 5
+        max_step = 6
 
     return probate, will_record, {
         'probate': probate,
@@ -3669,6 +3677,51 @@ def probate_step1(probate_id):
             probate.applicant_nric = request.form.get('applicant_nric', '').strip()
             probate.applicant_address = request.form.get('applicant_address', '').strip()
             probate.applicant_relationship = request.form.get('applicant_relationship', '').strip()
+        # Will document upload (for LA with external will)
+        will_doc_id = request.form.get('will_document_id', '').strip()
+        if will_doc_id:
+            probate.will_document_id = will_doc_id
+        # Store extracted will data for auto-populating later steps
+        will_extracted = request.form.get('will_extracted_data', '').strip()
+        if will_extracted:
+            try:
+                ext = json.loads(will_extracted)
+                # Pre-populate witnesses from extracted will data
+                witnesses = ext.get('witnesses', [])
+                if witnesses and not probate.witness1_name:
+                    if len(witnesses) >= 1:
+                        probate.witness1_name = witnesses[0].get('full_name', '')
+                        probate.witness1_nric = witnesses[0].get('nric_number', '')
+                    if len(witnesses) >= 2:
+                        probate.witness2_name = witnesses[1].get('full_name', '')
+                        probate.witness2_nric = witnesses[1].get('nric_number', '')
+                # Pre-populate beneficiaries from extracted will data
+                bens = ext.get('beneficiaries', [])
+                existing_bens = json.loads(probate.beneficiaries_data or '[]')
+                if bens and not existing_bens:
+                    ben_list = []
+                    for b in bens:
+                        ben_list.append({
+                            'full_name': b.get('full_name', ''),
+                            'nric_passport': b.get('nric_number', ''),
+                            'relationship': b.get('relationship', ''),
+                            'address': '',
+                        })
+                    probate.beneficiaries_data = json.dumps(ben_list)
+                # Pre-populate assets from extracted will data
+                assets = ext.get('assets', [])
+                existing_assets = json.loads(probate.assets_data or '[]')
+                if assets and not existing_assets:
+                    asset_list = []
+                    for a in assets:
+                        atype = a.get('type', 'other')
+                        asset_list.append({
+                            'asset_type': atype if atype in ('property', 'bank', 'vehicle') else 'other',
+                            'description': a.get('description', ''),
+                        })
+                    probate.assets_data = json.dumps(asset_list)
+            except (json.JSONDecodeError, Exception):
+                pass  # Silently skip if parsing fails
         probate.updated_at = datetime.utcnow()
         db.session.commit()
         return redirect(f'/probate/{probate_id}/step/2')
@@ -3735,7 +3788,46 @@ def probate_step3(probate_id):
 @app.route('/probate/<probate_id>/step/4', methods=['GET', 'POST'])
 @login_required
 def probate_step4(probate_id):
-    """Step 4: Assets & Liabilities schedule."""
+    """Step 4: Beneficiaries list."""
+    probate, will_record, ctx = _get_probate_context(probate_id)
+    if not probate:
+        flash('Probate application not found.', 'error')
+        return redirect(url_for('probate_list'))
+
+    if request.method == 'POST':
+        bens_json = request.form.get('beneficiaries_json', '[]')
+        try:
+            bens = json.loads(bens_json)
+        except json.JSONDecodeError:
+            bens = []
+        probate.beneficiaries_data = json.dumps(bens)
+        probate.updated_at = datetime.utcnow()
+        db.session.commit()
+        if request.headers.get('X-Save-Only'):
+            return jsonify(ok=True)
+        return redirect(f'/probate/{probate_id}/step/5')
+
+    # Pre-populate from will data if beneficiaries_data is empty
+    existing_bens = json.loads(probate.beneficiaries_data or '[]')
+    if not existing_bens and will_record:
+        will_bens = json.loads(will_record.step4_data or '[]')
+        for b in will_bens:
+            existing_bens.append({
+                'full_name': b.get('full_name', b.get('beneficiary_name', '')),
+                'nric_passport': b.get('nric_passport_birthcert', b.get('nric_passport', '')),
+                'relationship': b.get('relationship', ''),
+                'address': '',
+            })
+
+    ctx['probate_step'] = 4
+    ctx['beneficiaries_json'] = json.dumps(existing_bens)
+    return render_template('probate/step4_beneficiaries.html', **ctx)
+
+
+@app.route('/probate/<probate_id>/step/5', methods=['GET', 'POST'])
+@login_required
+def probate_step5(probate_id):
+    """Step 5: Assets & Liabilities schedule."""
     probate, will_record, ctx = _get_probate_context(probate_id)
     if not probate:
         flash('Probate application not found.', 'error')
@@ -3752,7 +3844,7 @@ def probate_step4(probate_id):
         db.session.commit()
         if request.headers.get('X-Save-Only'):
             return jsonify(ok=True)
-        return redirect(f'/probate/{probate_id}/step/5')
+        return redirect(f'/probate/{probate_id}/step/6')
 
     # Pre-populate from will gifts if assets_data is empty and will exists
     existing_assets = json.loads(probate.assets_data or '[]')
@@ -3783,15 +3875,15 @@ def probate_step4(probate_id):
     exec_name = exec_data.full_name if exec_data and hasattr(exec_data, 'full_name') else ''
     exhibit_prefix = ''.join(w[0] for w in exec_name.split() if w) if exec_name else 'APP'
 
-    ctx['probate_step'] = 4
+    ctx['probate_step'] = 5
     ctx['assets_json'] = json.dumps(existing_assets)
     ctx['exhibit_prefix'] = exhibit_prefix
-    return render_template('probate/step4_assets.html', **ctx)
+    return render_template('probate/step5_assets.html', **ctx)
 
 
-@app.route('/probate/<probate_id>/step/5', methods=['GET'])
+@app.route('/probate/<probate_id>/step/6', methods=['GET'])
 @login_required
-def probate_step5(probate_id):
+def probate_step6(probate_id):
     probate, will_record, ctx = _get_probate_context(probate_id)
     if not probate:
         flash('Probate application not found.', 'error')
@@ -3841,7 +3933,8 @@ def probate_step5(probate_id):
     field_values['Vehicles (desc, reg no., engine, chassis)'] = f'{len(_vehicles)} vehicles' if _vehicles else ''
     field_values['Other assets (description, value)'] = f'{len(_others)} items' if _others else ''
     field_values['Liabilities (description, value)'] = f'{len(_liabs)} items' if _liabs else ''
-    _bens = json.loads(will_record.step4_data or '[]') if will_record else json.loads(probate.beneficiaries_data or '[]') if hasattr(probate, 'beneficiaries_data') else []
+    # Prefer probate.beneficiaries_data (populated in step 4), fall back to will data
+    _bens = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data and probate.beneficiaries_data != '[]' else (json.loads(will_record.step4_data or '[]') if will_record else [])
     field_values['Beneficiary names & NRIC'] = ', '.join(b.get('full_name', b.get('beneficiary_name', '')) for b in _bens[:5]) if _bens else ''
     field_values['Beneficiary relationships'] = ', '.join(b.get('relationship', '') for b in _bens[:5]) if _bens else ''
     if _props:
@@ -3927,10 +4020,10 @@ def probate_step5(probate_id):
     will_ok = bool(will_record)
     will_missing = [] if will_ok else ['No approved will linked']
 
-    # Beneficiary info?
-    beneficiaries = json.loads(will_record.step4_data or '[]') if will_record else []
+    # Beneficiary info? (prefer probate.beneficiaries_data from step 4)
+    beneficiaries = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data and probate.beneficiaries_data != '[]' else (json.loads(will_record.step4_data or '[]') if will_record else [])
     ben_ok = len(beneficiaries) > 0
-    ben_missing = [] if ben_ok else ['No beneficiaries in will']
+    ben_missing = [] if ben_ok else ['No beneficiaries entered']
 
     # Executor info?
     exec_ok = bool(exec_nric and exec_data and exec_data.full_name)
@@ -4052,7 +4145,7 @@ def probate_step5(probate_id):
          'checked': manual_checks.get('property_titles', prop_ok)},
     ]
 
-    ctx['probate_step'] = 5
+    ctx['probate_step'] = 6
     ctx['recommendations'] = recommendations
     ctx['generated_forms'] = gen_list
     ctx['exhibit_prefix'] = exhibit_prefix
@@ -4061,7 +4154,7 @@ def probate_step5(probate_id):
     ctx['filing_checklist'] = filing_checklist
     ctx['has_property'] = has_property
     ctx['beneficiaries'] = beneficiaries
-    return render_template('probate/step5_review.html', **ctx)
+    return render_template('probate/step6_review.html', **ctx)
 
 
 @app.route('/probate/<probate_id>/generate', methods=['POST'])
@@ -4075,7 +4168,7 @@ def probate_generate(probate_id):
     selected_codes = request.form.getlist('forms')
     if not selected_codes:
         flash('Please select at least one form to generate.', 'error')
-        return redirect(f'/probate/{probate_id}/step/5')
+        return redirect(f'/probate/{probate_id}/step/6')
 
     # Build template paths map
     templates = ProbateFormTemplate.query.all()
@@ -4114,7 +4207,7 @@ def probate_generate(probate_id):
     db.session.commit()
 
     flash(f'Successfully generated {len(results)} probate form(s).', 'success')
-    return redirect(f'/probate/{probate_id}/step/5')
+    return redirect(f'/probate/{probate_id}/step/6')
 
 
 @app.route('/probate/<probate_id>/download/<form_code>')
@@ -4124,7 +4217,7 @@ def probate_download(probate_id, form_code):
     gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
     if not gf or not os.path.exists(gf.file_path):
         flash('Form not found.', 'error')
-        return redirect(f'/probate/{probate_id}/step/5')
+        return redirect(f'/probate/{probate_id}/step/6')
 
     if fmt == 'pdf':
         from documents.probate_generator import convert_to_pdf
@@ -4143,7 +4236,7 @@ def probate_download_all(probate_id):
     forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
     if not forms:
         flash('No generated forms found.', 'error')
-        return redirect(f'/probate/{probate_id}/step/5')
+        return redirect(f'/probate/{probate_id}/step/6')
 
     from documents.probate_generator import create_zip
     zip_path = os.path.join(tempfile.gettempdir(), f'probate_{probate_id[:8]}.zip')
@@ -4189,6 +4282,52 @@ def api_ocr_death_cert():
         file_type=file.filename.rsplit('.', 1)[-1].lower(),
         file_size=file_size,
         category='death_certificate',
+        extracted_data=json.dumps(extracted),
+    )
+    db.session.add(doc)
+    db.session.commit()
+
+    return jsonify({'ok': True, 'document_id': doc.id, 'extracted': extracted})
+
+
+@app.route('/api/ocr/will-document', methods=['POST'])
+@login_required
+def api_ocr_will_document():
+    """Upload a will document (PDF/image) and OCR extract testator, executors, witnesses, beneficiaries, assets."""
+    if 'file' not in request.files:
+        return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
+    file = request.files['file']
+    fmt_err = _validate_ocr_file(file)
+    if fmt_err:
+        return jsonify({'ok': False, 'error': fmt_err}), 400
+
+    from uploads import save_uploaded_file
+    client_id = session.get('client_id', 'temp')
+    try:
+        saved_name, rel_path, file_size = save_uploaded_file(file, client_id, category='will_document')
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+    abs_path = os.path.join(UPLOAD_DIR, rel_path)
+
+    from ai.ocr import extract_will_data
+    try:
+        extracted = extract_will_data(abs_path)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'OCR failed: {str(e)}'}), 500
+
+    if 'error' in extracted:
+        return jsonify({'ok': False, 'error': extracted['error'], 'extracted': extracted})
+
+    # Save document record
+    doc = Document(
+        client_id=client_id,
+        filename=saved_name,
+        original_filename=file.filename,
+        file_path=rel_path,
+        file_type=file.filename.rsplit('.', 1)[-1].lower(),
+        file_size=file_size,
+        category='will_document',
         extracted_data=json.dumps(extracted),
     )
     db.session.add(doc)
@@ -4380,7 +4519,7 @@ def admin_probate_template_reset(form_code):
         'doc03': 'doc03_sumpah_pentadbiran.docx', 'doc04': 'doc04_afidavit_saksi_1.docx',
         'doc05': 'doc05_afidavit_saksi_2.docx', 'doc06': 'doc06_jadual_aset.docx',
         'doc07': 'doc07_senarai_benefisiari.docx', 'doc08': 'doc08_notis_peguamcara.docx',
-        'form14a': 'form14a_land_transfer.docx', 'form346': 'form346_personal_rep.doc',
+        'form14a': 'form14a_land_transfer.docx', 'form346': 'form346_personal_rep.docx',
     }
     default_file = default_files.get(form_code, f'{form_code}.docx')
     tpl.file_path = f'probate_templates/{default_file}'
@@ -4403,23 +4542,30 @@ def probate_template_view(form_code):
     if not os.path.exists(template_path):
         flash('Template file not found on disk.', 'error')
         return redirect(url_for('probate_list'))
+    # Detect actual file extension for correct download names
+    actual_ext = os.path.splitext(template_path)[1].lstrip('.') or 'docx'
     fmt = request.args.get('format', 'pdf')
-    if fmt == 'docx':
+    if fmt in ('docx', 'doc'):
         return send_file(template_path, as_attachment=True,
-                         download_name=f'{form_code}_template.docx')
+                         download_name=f'{form_code}_template.{actual_ext}')
     # Convert to PDF for in-browser viewing
     from documents.probate_generator import convert_to_pdf
     import shutil
     tmp_dir = tempfile.mkdtemp()
-    tmp_docx = os.path.join(tmp_dir, os.path.basename(template_path))
-    shutil.copy2(template_path, tmp_docx)
-    pdf_path = convert_to_pdf(tmp_docx)
+    tmp_copy = os.path.join(tmp_dir, os.path.basename(template_path))
+    shutil.copy2(template_path, tmp_copy)
+    pdf_path = convert_to_pdf(tmp_copy)
     if pdf_path and os.path.exists(pdf_path):
-        return send_file(pdf_path, mimetype='application/pdf',
+        resp = send_file(pdf_path, mimetype='application/pdf',
                          download_name=f'{form_code}_template.pdf')
-    # Fallback: download docx
+        # Prevent browser caching stale PDFs
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
+    # Fallback: download in original format
     return send_file(template_path, as_attachment=True,
-                     download_name=f'{form_code}_template.docx')
+                     download_name=f'{form_code}_template.{actual_ext}')
 
 
 @app.route('/probate/template/<form_code>/translate', methods=['POST'])

@@ -19,9 +19,33 @@
         </div>
     </div>
 
+    <!-- Will Upload Section (for LA or external wills) -->
+    {% if is_la %}
+    <div class="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <h3 class="text-sm font-semibold text-green-800 mb-2">Upload Will Document (Optional)</h3>
+        <p class="text-xs text-green-600 mb-3">Upload a will PDF or image. AI will extract testator, executor, witnesses, beneficiaries and assets to auto-fill subsequent steps. <span class="text-gray-400">(Accepted: JPG, PNG, PDF)</span></p>
+        <div class="flex items-center gap-3">
+            <input type="file" id="will-doc-file" accept=".jpg,.jpeg,.png,.pdf"
+                   class="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-green-600 file:text-white file:cursor-pointer hover:file:bg-green-700">
+            <button type="button" onclick="ocrWillDoc()" id="will-ocr-btn" class="px-4 py-1.5 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:opacity-50" disabled>
+                Scan & Extract
+            </button>
+            <span id="will-ocr-status" class="text-xs text-gray-500"></span>
+        </div>
+        <!-- Extracted will data summary (shown after scan) -->
+        <div id="will-extract-summary" class="hidden mt-4 p-3 bg-white rounded-lg border border-green-200">
+            <h4 class="text-xs font-semibold text-green-700 mb-2">Extracted from Will:</h4>
+            <div id="will-extract-content" class="text-xs text-gray-700 space-y-1"></div>
+            <p class="text-[10px] text-gray-400 mt-2">This data will auto-fill the form below and subsequent steps (witnesses, beneficiaries).</p>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Form -->
     <form method="POST" action="/probate/{{ probate_id }}/step/1" id="death-form">
         <input type="hidden" name="death_cert_document_id" id="death-cert-doc-id" value="{{ probate.death_cert_document_id or '' }}">
+        <input type="hidden" name="will_document_id" id="will-doc-id" value="{{ probate.will_document_id or '' }}">
+        <input type="hidden" name="will_extracted_data" id="will-extracted-data" value="">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Death Certificate Number</label>
@@ -339,5 +363,107 @@ function closeOcrModal() {
 }
 
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeOcrModal(); });
+
+/* ── Will Document OCR ── */
+{% if is_la %}
+const willFileInput = document.getElementById('will-doc-file');
+const willOcrBtn = document.getElementById('will-ocr-btn');
+if (willFileInput) {
+    willFileInput.addEventListener('change', () => {
+        willOcrBtn.disabled = !willFileInput.files.length;
+    });
+}
+
+async function ocrWillDoc() {
+    const file = willFileInput.files[0];
+    if (!file) return;
+    const statusEl = document.getElementById('will-ocr-status');
+    willOcrBtn.disabled = true;
+    statusEl.textContent = 'Scanning will document...';
+    statusEl.className = 'text-xs text-blue-600';
+
+    const compressed = await compressImageIfNeeded(file);
+    const formData = new FormData();
+    formData.append('file', compressed);
+
+    try {
+        const resp = await fetch('/api/ocr/will-document', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (data.ok && data.extracted) {
+            statusEl.textContent = 'Extraction complete!';
+            statusEl.className = 'text-xs text-green-600';
+            document.getElementById('will-doc-id').value = data.document_id || '';
+            document.getElementById('will-extracted-data').value = JSON.stringify(data.extracted);
+            applyWillExtractedData(data.extracted);
+        } else {
+            statusEl.textContent = data.error || 'Scan failed';
+            statusEl.className = 'text-xs text-red-500';
+        }
+    } catch (e) {
+        statusEl.textContent = 'Scan error';
+        statusEl.className = 'text-xs text-red-500';
+    }
+    willOcrBtn.disabled = false;
+}
+
+function applyWillExtractedData(ext) {
+    // Auto-fill deceased details from testator
+    const t = ext.testator || {};
+    if (t.full_name) {
+        const el = document.querySelector('[name="deceased_name"]');
+        if (el && !el.value) el.value = t.full_name;
+    }
+    if (t.nric_number) {
+        const el = document.querySelector('[name="deceased_nric"]');
+        if (el && !el.value) el.value = t.nric_number;
+    }
+    if (t.address) {
+        const el = document.querySelector('[name="deceased_address"]');
+        if (el && !el.value) el.value = t.address;
+    }
+
+    // Auto-fill applicant from first executor
+    const exec = (ext.executors || [])[0];
+    if (exec) {
+        if (exec.full_name) {
+            const el = document.querySelector('[name="applicant_name"]');
+            if (el && !el.value) el.value = exec.full_name;
+        }
+        if (exec.nric_number) {
+            const el = document.querySelector('[name="applicant_nric"]');
+            if (el && !el.value) el.value = exec.nric_number;
+        }
+        if (exec.relationship) {
+            const el = document.querySelector('[name="applicant_relationship"]');
+            if (el && !el.value) el.value = exec.relationship;
+        }
+        if (exec.address) {
+            const el = document.querySelector('[name="applicant_address"]');
+            if (el && !el.value) el.value = exec.address;
+        }
+    }
+
+    // Show summary
+    const summaryDiv = document.getElementById('will-extract-summary');
+    const contentDiv = document.getElementById('will-extract-content');
+    let html = '';
+    if (t.full_name) html += `<div><strong>Testator:</strong> ${t.full_name} ${t.nric_number ? '(' + t.nric_number + ')' : ''}</div>`;
+    if (ext.executors && ext.executors.length) {
+        html += `<div><strong>Executors:</strong> ${ext.executors.map(e => e.full_name).join(', ')}</div>`;
+    }
+    if (ext.witnesses && ext.witnesses.length) {
+        html += `<div><strong>Witnesses:</strong> ${ext.witnesses.map(w => w.full_name).join(', ')}</div>`;
+    }
+    if (ext.beneficiaries && ext.beneficiaries.length) {
+        html += `<div><strong>Beneficiaries:</strong> ${ext.beneficiaries.map(b => b.full_name + (b.relationship ? ' (' + b.relationship + ')' : '')).join(', ')}</div>`;
+    }
+    if (ext.assets && ext.assets.length) {
+        html += `<div><strong>Assets:</strong> ${ext.assets.length} item(s) found</div>`;
+    }
+    if (ext.will_date) html += `<div><strong>Will Date:</strong> ${ext.will_date}</div>`;
+    contentDiv.innerHTML = html || '<span class="text-gray-400">No data extracted</span>';
+    summaryDiv.classList.remove('hidden');
+}
+{% endif %}
 </script>
 {% endblock %}

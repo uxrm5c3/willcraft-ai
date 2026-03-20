@@ -1,0 +1,667 @@
+{% extends "probate/layout.html" %}
+
+{% block step_content %}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+    <h2 class="text-lg font-bold text-gray-800 mb-1">Step 6: Review & Generate Forms</h2>
+    <p class="text-sm text-gray-500 mb-6">Review all information and select which court forms to generate.</p>
+
+    <!-- Validation Warnings -->
+    {% if validation_warnings %}
+    <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+        <h3 class="text-sm font-semibold text-red-800 mb-2 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+            Missing Information Required for Some Forms
+        </h3>
+        {% for form_code, missing_fields in validation_warnings.items() %}
+        <div class="mt-2">
+            <span class="text-xs font-semibold text-red-700">{{ form_code | upper }}:</span>
+            <ul class="text-xs text-red-600 ml-4 list-disc">
+                {% for field in missing_fields %}
+                <li>{{ field }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endfor %}
+        <p class="text-xs text-red-500 mt-2">Please go back and fill in the missing information, or uncheck the affected forms below.</p>
+    </div>
+    {% endif %}
+
+    <!-- Data Summary -->
+    <div class="mb-6 space-y-4">
+        <!-- Deceased -->
+        <div class="p-4 bg-gray-50 rounded-lg">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-sm font-semibold text-gray-700">Step 1 — Deceased Person &amp; Death Details</h3>
+                <a href="/probate/{{ probate_id }}/step/1" class="text-xs text-primary-600 hover:underline">Edit</a>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                <div><span class="text-gray-500">Name:</span><br><span class="font-medium">{{ testator.full_name }}</span></div>
+                <div><span class="text-gray-500">NRIC:</span><br><span class="font-medium">{{ testator.nric_passport }}</span></div>
+                <div><span class="text-gray-500">Date of Death:</span><br><span class="font-medium">{{ probate.date_of_death or 'Not set' }}</span></div>
+                <div><span class="text-gray-500">Place of Death:</span><br><span class="font-medium">{{ probate.place_of_death or 'Not set' }}</span></div>
+            </div>
+        </div>
+
+        <!-- Executor/Applicant -->
+        <div class="p-4 bg-gray-50 rounded-lg">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Executor / Applicant (from Will)</h3>
+            <div class="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                {% if executor %}
+                <div><span class="text-gray-500">Name:</span><br><span class="font-medium">{{ executor.full_name }}</span></div>
+                <div><span class="text-gray-500">NRIC:</span><br><span class="font-medium">{{ executor.nric_passport }}</span></div>
+                <div><span class="text-gray-500">Relationship:</span><br><span class="font-medium">{{ executor.relationship }}</span></div>
+                {% else %}
+                <div class="text-red-500">No executor found in will data</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Court & Firm -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="p-4 bg-gray-50 rounded-lg">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-sm font-semibold text-gray-700">Step 2 — Court</h3>
+                    <a href="/probate/{{ probate_id }}/step/2" class="text-xs text-primary-600 hover:underline">Edit</a>
+                </div>
+                <div class="text-xs space-y-1">
+                    <div><span class="text-gray-500">Location:</span> {{ probate.court_location or 'Not set' }}</div>
+                    <div><span class="text-gray-500">Case No:</span> {{ probate.case_number or 'Not set' }}</div>
+                </div>
+            </div>
+            <div class="p-4 bg-gray-50 rounded-lg">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-sm font-semibold text-gray-700">Step 2 — Law Firm</h3>
+                    <a href="/probate/{{ probate_id }}/step/2" class="text-xs text-primary-600 hover:underline">Edit</a>
+                </div>
+                <div class="text-xs space-y-1">
+                    <div><span class="text-gray-500">Firm:</span> {{ probate.firm_name or 'Not set' }}</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Witnesses -->
+        <div class="p-4 bg-gray-50 rounded-lg">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-sm font-semibold text-gray-700">Step 3 — Witnesses</h3>
+                <a href="/probate/{{ probate_id }}/step/3" class="text-xs text-primary-600 hover:underline">Edit</a>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div>
+                    <span class="text-gray-500">Witness 1:</span><br>
+                    <span class="font-medium">{{ probate.witness1_name or 'Not set' }}</span>
+                    {% if probate.witness1_nric %}<span class="text-gray-400 ml-1">({{ probate.witness1_nric }})</span>{% endif %}
+                </div>
+                <div>
+                    <span class="text-gray-500">Witness 2:</span><br>
+                    <span class="font-medium">{{ probate.witness2_name or 'Not set' }}</span>
+                    {% if probate.witness2_nric %}<span class="text-gray-400 ml-1">({{ probate.witness2_nric }})</span>{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Beneficiaries Summary -->
+        <div class="p-4 bg-gray-50 rounded-lg">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-sm font-semibold text-gray-700">Step 4 — Beneficiaries</h3>
+                <a href="/probate/{{ probate_id }}/step/4" class="text-xs text-primary-600 hover:underline">Edit</a>
+            </div>
+            <div class="text-xs text-gray-600">
+                {% if beneficiaries %}
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {% for b in beneficiaries %}
+                        <div>
+                            <span class="font-medium">{{ b.full_name or 'Unnamed' }}</span>
+                            {% if b.nric_passport %}<span class="text-gray-400 ml-1">({{ b.nric_passport }})</span>{% endif %}
+                            {% if b.relationship %}<span class="text-gray-400 ml-1">— {{ b.relationship }}</span>{% endif %}
+                        </div>
+                    {% endfor %}
+                    </div>
+                {% else %}
+                    <span class="text-amber-600">No beneficiaries entered</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Assets Summary -->
+        {% set assets = probate.assets_data | default('[]', true) %}
+        <div class="p-4 bg-gray-50 rounded-lg">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-sm font-semibold text-gray-700">Step 5 — Assets &amp; Liabilities</h3>
+                <a href="/probate/{{ probate_id }}/step/5" class="text-xs text-primary-600 hover:underline">Edit</a>
+            </div>
+            <div class="text-xs text-gray-600" id="assets-summary">
+                <script>
+                    (function(){
+                        const assets = {{ assets | safe }};
+                        const counts = {};
+                        assets.forEach(a => { counts[a.asset_type] = (counts[a.asset_type]||0) + 1; });
+                        const labels = {property:'Properties',bank:'Bank Accounts',vehicle:'Vehicles',other:'Other Assets',liability:'Liabilities'};
+                        const parts = [];
+                        for (const [k,v] of Object.entries(labels)) { if (counts[k]) parts.push(counts[k] + ' ' + v); }
+                        document.getElementById('assets-summary').textContent = parts.length ? parts.join(', ') : 'No assets entered';
+                    })();
+                </script>
+            </div>
+        </div>
+
+        <!-- Beneficiaries Summary -->
+        <div class="p-4 bg-gray-50 rounded-lg">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Beneficiaries</h3>
+            {% if beneficiaries %}
+            <div class="text-xs text-gray-600 space-y-1">
+                {% for b in beneficiaries %}
+                <div class="flex items-center gap-2">
+                    <span class="font-medium">{{ b.full_name or b.beneficiary_name or b.get('name', 'Unknown') }}</span>
+                    {% if b.nric_passport_birthcert or b.nric_passport %}<span class="text-gray-400">({{ b.nric_passport_birthcert or b.nric_passport }})</span>{% endif %}
+                    {% if b.relationship %}<span class="text-gray-400">{{ b.relationship }}</span>{% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-xs text-red-500">No beneficiaries found in will data</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Filing Checklist -->
+    <div class="p-4 border rounded-lg mb-6 {% if filing_checklist | selectattr('checked', 'false') | list %}bg-amber-50 border-amber-200{% else %}bg-green-50 border-green-200{% endif %}" id="checklist-container">
+        <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                Filing Checklist — Documents Required from Executor
+            </h3>
+            <span id="checklist-count" class="text-xs font-medium px-2 py-0.5 rounded-full"></span>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">Tick each item once received and verified. All items must be completed before generating forms.</p>
+
+        <div class="space-y-1.5">
+            {% for item in filing_checklist %}
+            {% if not item.get('conditional') or item.get('condition_met') %}
+            <div class="rounded-lg border transition-colors
+                        {% if item.complete %}bg-green-50 border-green-200{% else %}bg-white border-gray-200{% endif %}"
+                 id="checklist-row-{{ item.key }}">
+                <label class="flex items-start gap-3 p-2.5 cursor-pointer">
+                    <input type="checkbox" class="checklist-box w-4 h-4 mt-0.5 text-green-600 rounded border-gray-300 focus:ring-green-500"
+                           data-key="{{ item.key }}" {% if item.checked %}checked{% endif %}
+                           onchange="updateChecklist()">
+                    <div class="flex-1 text-xs">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="{% if item.complete %}text-green-800{% else %}text-gray-700{% endif %} font-medium">
+                                {{ loop.index }}. {{ item.label | safe }}
+                            </span>
+                            {% if item.exhibit %}
+                            <span class="text-gray-400 text-[10px]">Exhibit {{ item.exhibit }}</span>
+                            {% endif %}
+                            {% if item.complete %}
+                            <span class="checklist-badge px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded">Complete</span>
+                            {% elif item.missing %}
+                            <span class="checklist-badge px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded">Incomplete</span>
+                            {% endif %}
+                        </div>
+                        {% if item.missing %}
+                        <div class="mt-1 text-[10px] text-red-500">
+                            Missing: {{ item.missing | join(', ') }}
+                        </div>
+                        {% endif %}
+                        {% if item.get('warnings') %}
+                        <div class="mt-1 text-[10px] text-amber-500">
+                            {{ item.warnings | join(', ') }}
+                        </div>
+                        {% endif %}
+                    </div>
+                </label>
+                {% if item.get('details') %}
+                <details class="px-2.5 pb-2.5 ml-7">
+                    <summary class="text-[11px] text-primary-600 cursor-pointer hover:text-primary-800 font-medium select-none">
+                        View details
+                    </summary>
+                    <div class="mt-1.5 space-y-0.5 text-[10px]">
+                        {% for label, value in item.details %}
+                        <div class="flex gap-2">
+                            {% if label %}
+                            <span class="text-gray-500 min-w-[80px] shrink-0">{{ label }}:</span>
+                            {% endif %}
+                            <span class="{% if value %}text-gray-700{% else %}text-red-400 italic{% endif %}">{{ value or 'Not set' }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </details>
+                {% endif %}
+            </div>
+            {% endif %}
+            {% endfor %}
+        </div>
+        <div id="checklist-save-status" class="text-[10px] text-gray-400 mt-2"></div>
+    </div>
+
+    <!-- Form Selection -->
+    <div class="mb-6">
+        <h3 class="text-sm font-bold text-gray-800 mb-3">Select Forms to Generate</h3>
+        <p class="text-xs text-gray-500 mb-4">The system has pre-selected forms based on the will data. You can uncheck forms you don't need.</p>
+
+        <form method="POST" action="/probate/{{ probate_id }}/generate" id="generate-form">
+            <div class="space-y-2">
+                {% for rec in recommendations %}
+                <label class="flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer
+                             {% if rec.form_code in validation_warnings %}border-red-200 bg-red-50/30
+                             {% elif rec.recommended %}border-primary-200 bg-primary-50/30 hover:bg-primary-50
+                             {% else %}border-gray-200 hover:bg-gray-50{% endif %}">
+                    <input type="checkbox" name="forms" value="{{ rec.form_code }}"
+                           {% if rec.recommended %}checked{% endif %}
+                           class="mt-1 w-4 h-4 text-primary-600 rounded border-gray-300 focus:ring-primary-500">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="text-sm font-semibold text-gray-800">{{ rec.form_name }}</span>
+                            <span class="text-xs text-gray-400">({{ rec.form_name_malay }})</span>
+                            {% if rec.recommended %}
+                            <span class="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded">Recommended</span>
+                            {% endif %}
+                            {% if rec.form_code in validation_warnings %}
+                            <span class="px-1.5 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded">Missing Info</span>
+                            {% endif %}
+                            <button type="button" onclick="viewTemplate('{{ rec.form_code }}', '{{ rec.form_name }}')"
+                               class="px-1.5 py-0.5 bg-gray-100 text-gray-600 text-[10px] font-medium rounded hover:bg-gray-200 hover:text-gray-800 transition-colors"
+                               title="View blank template">View</button>
+                            <a href="/probate/template/{{ rec.form_code }}/view?format=docx"
+                               class="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-medium rounded hover:bg-blue-100 transition-colors no-underline"
+                               title="Download editable DOCX template">DOCX</a>
+                            {% if session.get('user_role') in ('admin', 'approver') %}
+                            <label class="px-1.5 py-0.5 bg-amber-50 text-amber-600 text-[10px] font-medium rounded hover:bg-amber-100 transition-colors cursor-pointer"
+                                   title="Upload replacement template">
+                                Replace
+                                <input type="file" accept=".docx,.doc" class="hidden"
+                                       onchange="replaceTemplate('{{ rec.form_code }}', this)">
+                            </label>
+                            {% endif %}
+                        </div>
+                        <p class="text-xs text-gray-500 mt-0.5">{{ rec.description }}</p>
+                        <p class="text-xs mt-1 {% if rec.recommended %}text-green-600{% else %}text-amber-600{% endif %}">
+                            {{ rec.reason }}
+                        </p>
+                        {% if rec.form_code in validation_warnings %}
+                        <p class="text-xs text-red-500 mt-1">Missing: {{ validation_warnings[rec.form_code] | join(', ') }}</p>
+                        {% endif %}
+                        {% if rec.fields %}
+                        <details class="mt-1.5">
+                            <summary class="text-[11px] text-primary-600 cursor-pointer hover:text-primary-800 font-medium select-none">
+                                Info to fill ({{ rec.fields | length }} fields)
+                            </summary>
+                            <table class="mt-1 w-full text-[10px] border-l-2 border-primary-100 ml-0">
+                                {% for field_name, field_source, field_value in rec.fields %}
+                                <tr class="{% if not field_value %}bg-red-50/50{% endif %}">
+                                    <td class="py-0.5 pl-2 pr-2 text-gray-700 font-medium whitespace-nowrap align-top">{{ field_name }}</td>
+                                    <td class="py-0.5 pr-2 {% if field_value %}text-gray-600{% else %}text-red-400 italic{% endif %} align-top">
+                                        {{ field_value or 'Not set' }}
+                                    </td>
+                                    <td class="py-0.5 text-gray-400 align-top whitespace-nowrap">{{ field_source }}</td>
+                                </tr>
+                                {% endfor %}
+                            </table>
+                        </details>
+                        {% endif %}
+                    </div>
+                </label>
+                {% endfor %}
+            </div>
+
+            <div class="flex justify-between items-center mt-6">
+                <a href="/probate/{{ probate_id }}/step/5" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
+                <div class="flex items-center gap-3">
+                    <span id="generate-warning" class="text-xs text-red-500 hidden">Complete all checklist items first</span>
+                    <button type="submit" id="generate-btn" class="px-6 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        Generate Selected Forms
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Generated Forms (shown after generation) -->
+    {% if generated_forms %}
+    <div class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-green-800">Generated Forms</h3>
+            <span class="text-xs text-green-600">DOCX files are editable in Microsoft Word</span>
+        </div>
+        <div class="space-y-2">
+            {% for gf in generated_forms %}
+            <div class="flex items-center justify-between p-2 bg-white rounded border border-green-100">
+                <div class="flex items-center gap-2">
+                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+                    <span class="text-sm font-medium text-gray-700">{{ gf.form_name }}</span>
+                </div>
+                <div class="flex items-center gap-1">
+                    <a href="/probate/{{ probate_id }}/download/{{ gf.form_code }}" class="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700" title="Editable Word document">
+                        DOCX
+                    </a>
+                    <a href="/probate/{{ probate_id }}/download/{{ gf.form_code }}?format=pdf" class="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700" title="PDF format">
+                        PDF
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="mt-3 flex items-center gap-2">
+            <a href="/probate/{{ probate_id }}/download-all" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Download All DOCX (ZIP)
+            </a>
+            <a href="/probate/{{ probate_id }}/download-all?format=pdf" class="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Download All PDF (ZIP)
+            </a>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Invoices & Payment Receipts -->
+    <div class="mt-6 p-4 bg-white border border-gray-200 rounded-lg">
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z"/></svg>
+                Invoices & Payment Receipts
+            </h3>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">Upload invoices issued and payment receipts related to this probate application.</p>
+
+        <!-- Upload Section -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+            <div class="p-3 border border-dashed border-blue-300 rounded-lg bg-blue-50/50">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-blue-700">Upload Invoice</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="text" id="invoice-desc" placeholder="Description (optional)" class="flex-1 px-2 py-1.5 border border-gray-300 rounded text-xs">
+                    <label class="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 cursor-pointer flex items-center gap-1 whitespace-nowrap">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                        Choose File
+                        <input type="file" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx" onchange="uploadReceipt('invoice', this)" class="hidden">
+                    </label>
+                </div>
+                <span id="invoice-upload-status" class="text-[10px] text-gray-400 mt-1 block"></span>
+            </div>
+            <div class="p-3 border border-dashed border-green-300 rounded-lg bg-green-50/50">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-semibold text-green-700">Upload Payment Receipt</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="text" id="receipt-desc" placeholder="Description (optional)" class="flex-1 px-2 py-1.5 border border-gray-300 rounded text-xs">
+                    <label class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700 cursor-pointer flex items-center gap-1 whitespace-nowrap">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                        Choose File
+                        <input type="file" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx" onchange="uploadReceipt('receipt', this)" class="hidden">
+                    </label>
+                </div>
+                <span id="receipt-upload-status" class="text-[10px] text-gray-400 mt-1 block"></span>
+            </div>
+        </div>
+
+        <!-- Uploaded Documents List -->
+        <div id="receipts-list">
+            {% for doc in receipts %}
+            <div class="flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-100 mb-1" id="receipt-row-{{ doc.id }}">
+                <div class="flex items-center gap-2 min-w-0">
+                    {% if doc.category == 'invoice' %}
+                    <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded shrink-0">INVOICE</span>
+                    {% else %}
+                    <span class="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded shrink-0">RECEIPT</span>
+                    {% endif %}
+                    <span class="text-xs text-gray-700 truncate">{{ doc.filename }}</span>
+                    {% if doc.description %}
+                    <span class="text-[10px] text-gray-400 truncate">— {{ doc.description }}</span>
+                    {% endif %}
+                    <span class="text-[10px] text-gray-400 shrink-0">{{ doc.created_at }}</span>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                    <a href="/api/documents/{{ doc.id }}" target="_blank" class="px-2 py-1 bg-gray-500 text-white text-[10px] font-medium rounded hover:bg-gray-600">View</a>
+                    <button onclick="deleteReceipt('{{ doc.id }}')" class="px-2 py-1 bg-red-500 text-white text-[10px] font-medium rounded hover:bg-red-600">Delete</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <div id="receipts-empty" class="text-xs text-gray-400 italic p-2" {% if receipts %}style="display:none"{% endif %}>
+            No invoices or receipts uploaded yet.
+        </div>
+    </div>
+</div>
+
+<script>
+async function uploadReceipt(category, fileInput) {
+    let file = fileInput.files[0];
+    if (!file) return;
+
+    const descInput = document.getElementById(category + '-desc');
+    const statusEl = document.getElementById(category + '-upload-status');
+    statusEl.innerHTML = '<span class="text-blue-600">Uploading ' + file.name + '...</span>';
+
+    file = await compressImageIfNeeded(file);
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('category', category);
+    formData.append('description', descInput.value.trim());
+
+    try {
+        const resp = await fetch('/api/probate/{{ probate_id }}/upload-receipt', { method: 'POST', body: formData });
+        const data = await resp.json();
+
+        if (data.ok && data.document) {
+            const doc = data.document;
+            const badgeClass = category === 'invoice' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700';
+            const badgeText = category.toUpperCase();
+            const descHtml = doc.description ? ' <span class="text-[10px] text-gray-400 truncate">— ' + escapeHtml(doc.description) + '</span>' : '';
+
+            const row = document.createElement('div');
+            row.id = 'receipt-row-' + doc.id;
+            row.className = 'flex items-center justify-between p-2 bg-gray-50 rounded border border-gray-100 mb-1';
+            row.innerHTML = `
+                <div class="flex items-center gap-2 min-w-0">
+                    <span class="px-1.5 py-0.5 ${badgeClass} text-[10px] font-bold rounded shrink-0">${badgeText}</span>
+                    <span class="text-xs text-gray-700 truncate">${escapeHtml(doc.filename)}</span>
+                    ${descHtml}
+                    <span class="text-[10px] text-gray-400 shrink-0">Just now</span>
+                </div>
+                <div class="flex items-center gap-1 shrink-0">
+                    <a href="/api/documents/${doc.id}" target="_blank" class="px-2 py-1 bg-gray-500 text-white text-[10px] font-medium rounded hover:bg-gray-600">View</a>
+                    <button onclick="deleteReceipt('${doc.id}')" class="px-2 py-1 bg-red-500 text-white text-[10px] font-medium rounded hover:bg-red-600">Delete</button>
+                </div>`;
+
+            document.getElementById('receipts-list').prepend(row);
+            document.getElementById('receipts-empty').style.display = 'none';
+
+            statusEl.innerHTML = '<span class="text-green-600">&#10003; ' + escapeHtml(file.name) + ' uploaded</span>';
+            descInput.value = '';
+            fileInput.value = '';
+        } else {
+            statusEl.innerHTML = '<span class="text-red-600">' + (data.error || 'Upload failed') + '</span>';
+        }
+    } catch (err) {
+        statusEl.innerHTML = '<span class="text-red-600">Error: ' + err.message + '</span>';
+    }
+}
+
+async function deleteReceipt(docId) {
+    if (!confirm('Delete this document?')) return;
+    try {
+        const resp = await fetch('/api/documents/' + docId, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.ok) {
+            const row = document.getElementById('receipt-row-' + docId);
+            if (row) row.remove();
+            // Check if list is now empty
+            if (!document.getElementById('receipts-list').children.length) {
+                document.getElementById('receipts-empty').style.display = 'block';
+            }
+        }
+    } catch (err) {
+        alert('Delete failed: ' + err.message);
+    }
+}
+
+function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── Filing Checklist ── */
+function updateChecklist() {
+    const boxes = document.querySelectorAll('.checklist-box');
+    const checklist = {};
+    let total = 0, checked = 0;
+    boxes.forEach(box => {
+        checklist[box.dataset.key] = box.checked;
+        total++;
+        if (box.checked) checked++;
+        // Update row styling
+        const row = document.getElementById('checklist-row-' + box.dataset.key);
+        if (row) {
+            if (box.checked) {
+                row.classList.remove('bg-white', 'border-gray-200');
+                row.classList.add('bg-green-50', 'border-green-200');
+            } else {
+                row.classList.remove('bg-green-50', 'border-green-200');
+                row.classList.add('bg-white', 'border-gray-200');
+            }
+        }
+    });
+
+    // Update counter
+    const countEl = document.getElementById('checklist-count');
+    countEl.textContent = checked + '/' + total + ' completed';
+    countEl.className = checked === total
+        ? 'text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700'
+        : 'text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700';
+
+    // Update container bg
+    const container = document.getElementById('checklist-container');
+    if (checked === total) {
+        container.classList.remove('bg-amber-50', 'border-amber-200');
+        container.classList.add('bg-green-50', 'border-green-200');
+    } else {
+        container.classList.remove('bg-green-50', 'border-green-200');
+        container.classList.add('bg-amber-50', 'border-amber-200');
+    }
+
+    // Enable/disable generate button
+    const genBtn = document.getElementById('generate-btn');
+    const genWarn = document.getElementById('generate-warning');
+    if (genBtn) {
+        genBtn.disabled = checked < total;
+        genWarn.classList.toggle('hidden', checked >= total);
+    }
+
+    // Save to server
+    fetch('/api/probate/{{ probate_id }}/checklist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checklist })
+    }).then(() => {
+        const s = document.getElementById('checklist-save-status');
+        s.textContent = '✓ Saved';
+        s.className = 'text-[10px] text-green-600 mt-2';
+        setTimeout(() => { s.textContent = ''; }, 2000);
+    });
+}
+
+/* ── Document viewer helpers (not loaded from wizard.js on probate pages) ── */
+function closeDocumentViewer() {
+    const viewer = document.getElementById('document-viewer');
+    if (viewer) viewer.classList.add('hidden');
+    document.body.style.overflow = '';
+    _currentTemplateCode = null;
+    closeTranslation();
+    const imgEl = document.getElementById('doc-viewer-img');
+    const pdfEl = document.getElementById('doc-viewer-pdf');
+    if (imgEl) imgEl.src = '';
+    if (pdfEl) { pdfEl.src = ''; pdfEl.classList.add('hidden'); }
+}
+
+function closeTranslation() {
+    const overlay = document.getElementById('doc-translate-overlay');
+    if (overlay) overlay.classList.add('hidden');
+}
+
+/* ── View Template inline ── */
+let _currentTemplateCode = null;
+
+function viewTemplate(formCode, formName) {
+    _currentTemplateCode = formCode;
+    const viewer = document.getElementById('document-viewer');
+    if (!viewer) return;
+
+    const imgEl = document.getElementById('doc-viewer-img');
+    const pdfEl = document.getElementById('doc-viewer-pdf');
+    const titleEl = document.getElementById('doc-viewer-title');
+
+    if (titleEl) titleEl.textContent = formName + ' (Template)';
+    if (imgEl) imgEl.classList.add('hidden');
+    if (pdfEl) {
+        pdfEl.classList.remove('hidden');
+        pdfEl.src = '/probate/template/' + formCode + '/view';
+    }
+
+    viewer.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+
+    // Override translate button for template mode
+    const translateBtn = document.getElementById('doc-translate-btn');
+    if (translateBtn) {
+        translateBtn.onclick = function() { translateTemplate(); };
+    }
+}
+
+async function translateTemplate() {
+    if (!_currentTemplateCode) return;
+    const btn = document.getElementById('doc-translate-btn');
+    const overlay = document.getElementById('doc-translate-overlay');
+    const content = document.getElementById('doc-translate-content');
+    if (!overlay || !content) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Translating...';
+
+    try {
+        const resp = await fetch('/probate/template/' + _currentTemplateCode + '/translate', { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+            content.textContent = data.translation;
+            overlay.classList.remove('hidden');
+        } else {
+            alert(data.error || 'Translation failed');
+        }
+    } catch (err) {
+        alert('Translation failed: ' + err.message);
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg> Translate';
+}
+
+/* ── Replace Template ── */
+async function replaceTemplate(formCode, fileInput) {
+    const file = fileInput.files[0];
+    if (!file) return;
+    if (!confirm('Replace the ' + formCode.toUpperCase() + ' template with "' + file.name + '"?')) {
+        fileInput.value = '';
+        return;
+    }
+    const formData = new FormData();
+    formData.append('template', file);
+    try {
+        const resp = await fetch('/probate/template/' + formCode + '/replace', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (data.ok) {
+            alert('Template replaced successfully: ' + (data.message || ''));
+        } else {
+            alert('Error: ' + (data.error || 'Upload failed'));
+        }
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+    fileInput.value = '';
+}
+
+// Initialize on load
+updateChecklist();
+</script>
+{% endblock %}

@@ -1,0 +1,291 @@
+{% extends "probate/layout.html" %}
+
+{% block step_content %}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+    <h2 class="text-lg font-bold text-gray-800 mb-1">Step 4: Beneficiaries</h2>
+    <p class="text-sm text-gray-500 mb-6">List all beneficiaries of the estate. {% if not is_la %}Beneficiaries have been pre-populated from the will — review and edit as needed.{% else %}Add each beneficiary manually or scan their NRIC to auto-fill.{% endif %}</p>
+
+    <form method="POST" action="/probate/{{ probate_id }}/step/4" id="ben-form">
+        <input type="hidden" name="beneficiaries_json" id="ben-json-input">
+
+    <!-- Beneficiary Cards -->
+    <div id="ben-list" class="space-y-4 mb-6"></div>
+
+    <!-- Add Button -->
+    <button type="button" onclick="addBeneficiary()"
+            class="w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-sm text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors flex items-center justify-center gap-2 mb-6">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        Add Beneficiary
+    </button>
+
+    <!-- Save Status -->
+    <div id="save-status" class="text-xs text-gray-400 mb-4 text-right"></div>
+
+    <!-- Navigation -->
+    <div class="flex justify-between border-t border-gray-100 pt-4">
+        <a href="/probate/{{ probate_id }}/step/3" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
+        <button type="submit" class="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
+            Save & Next
+        </button>
+    </div>
+    </form>
+</div>
+
+<!-- OCR Comparison Modal -->
+<div id="ocr-modal" class="fixed inset-0 bg-black/50 z-50 hidden items-center justify-center">
+    <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+        <div class="flex items-center justify-between px-6 py-4 border-b">
+            <h3 class="text-lg font-bold text-gray-800">Verify Scanned IC</h3>
+            <button onclick="closeOcrModal()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+        </div>
+        <div class="flex-1 overflow-auto p-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Document Preview -->
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-700 mb-2">Scanned Document</h4>
+                    <iframe id="ocr-preview" class="w-full h-64 border rounded-lg bg-gray-50"></iframe>
+                </div>
+                <!-- Extracted Fields -->
+                <div>
+                    <h4 class="text-sm font-semibold text-gray-700 mb-2">Extracted Information</h4>
+                    <div id="ocr-fields" class="space-y-3"></div>
+                </div>
+            </div>
+        </div>
+        <div class="px-6 py-4 border-t flex justify-end gap-3">
+            <button onclick="closeOcrModal()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">Cancel</button>
+            <button onclick="applyOcrResults()" class="px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">Apply</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let beneficiaries = {{ beneficiaries_json | safe }};
+let ocrBenIdx = -1; // which beneficiary is being scanned
+let ocrExtracted = {};
+
+function renderBeneficiaries() {
+    const list = document.getElementById('ben-list');
+    list.innerHTML = '';
+    beneficiaries.forEach((b, idx) => {
+        const card = document.createElement('div');
+        card.className = 'p-4 bg-gray-50 rounded-lg border border-gray-200';
+        card.innerHTML = `
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-gray-700">Beneficiary ${idx + 1}</h3>
+                <div class="flex items-center gap-2">
+                    <label class="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 cursor-pointer flex items-center gap-1">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        Scan IC
+                        <input type="file" accept=".jpg,.jpeg,.png,.pdf" onchange="scanIC(${idx}, this)" class="hidden">
+                    </label>
+                    <span id="ic-status-${idx}" class="text-xs text-gray-500"></span>
+                    ${beneficiaries.length > 1 ? `<button type="button" onclick="removeBeneficiary(${idx})" class="text-red-400 hover:text-red-600 text-xs font-medium">Remove</button>` : ''}
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
+                    <input type="text" data-idx="${idx}" data-field="full_name" value="${b.full_name || ''}"
+                           placeholder="As per IC" required
+                           class="ben-field w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport</label>
+                    <input type="text" data-idx="${idx}" data-field="nric_passport" value="${b.nric_passport || ''}"
+                           placeholder="e.g. 850101-01-1234"
+                           class="ben-field w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Deceased</label>
+                    <input type="text" data-idx="${idx}" data-field="relationship" value="${b.relationship || ''}"
+                           placeholder="e.g. Son, Daughter, Spouse"
+                           class="ben-field w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                    <input type="text" data-idx="${idx}" data-field="address" value="${b.address || ''}"
+                           placeholder="Current residential address"
+                           class="ben-field w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+            </div>
+        `;
+        list.appendChild(card);
+    });
+
+    // Bind input events for auto-save
+    document.querySelectorAll('.ben-field').forEach(el => {
+        el.addEventListener('input', function() {
+            const idx = parseInt(this.dataset.idx);
+            const field = this.dataset.field;
+            beneficiaries[idx][field] = this.value;
+            autosaveDebounced();
+        });
+    });
+}
+
+function addBeneficiary() {
+    beneficiaries.push({ full_name: '', nric_passport: '', relationship: '', address: '' });
+    renderBeneficiaries();
+    // Focus the new name field
+    setTimeout(() => {
+        const fields = document.querySelectorAll('.ben-field[data-field="full_name"]');
+        if (fields.length) fields[fields.length - 1].focus();
+    }, 50);
+}
+
+function removeBeneficiary(idx) {
+    if (!confirm('Remove this beneficiary?')) return;
+    beneficiaries.splice(idx, 1);
+    renderBeneficiaries();
+    autosaveDebounced();
+}
+
+// Auto-save with debounce
+let saveTimeout = null;
+function autosaveDebounced() {
+    clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(saveNow, 1500);
+}
+
+async function saveNow() {
+    const status = document.getElementById('save-status');
+    status.textContent = 'Saving...';
+    try {
+        const formData = new FormData();
+        formData.append('beneficiaries_json', JSON.stringify(beneficiaries));
+        const resp = await fetch('/probate/{{ probate_id }}/step/4', {
+            method: 'POST', body: formData, headers: { 'X-Save-Only': '1' }
+        });
+        if (resp.ok) {
+            status.textContent = 'Saved';
+            setTimeout(() => { status.textContent = ''; }, 2000);
+        }
+    } catch (e) {
+        status.textContent = 'Save failed';
+    }
+}
+
+// NRIC Scan
+async function scanIC(idx, fileInput) {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const ext = (file.name || '').split('.').pop().toLowerCase();
+    if (!['jpg', 'jpeg', 'png', 'pdf'].includes(ext)) {
+        alert('Please upload a JPG, PNG, or PDF file.');
+        return;
+    }
+    const statusEl = document.getElementById(`ic-status-${idx}`);
+    statusEl.textContent = 'Scanning...';
+    statusEl.className = 'text-xs text-blue-600';
+
+    const compressed = await compressImageIfNeeded(file);
+    const formData = new FormData();
+    formData.append('file', compressed);
+
+    try {
+        const resp = await fetch('/api/ocr/nric', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (data.ok && data.extracted) {
+            ocrBenIdx = idx;
+            ocrExtracted = data.extracted;
+            showOcrModal(idx, data.document_id, data.extracted);
+            statusEl.textContent = 'Review results';
+            statusEl.className = 'text-xs text-green-600';
+        } else {
+            statusEl.textContent = data.error || 'Scan failed';
+            statusEl.className = 'text-xs text-red-500';
+        }
+    } catch (e) {
+        statusEl.textContent = 'Scan error';
+        statusEl.className = 'text-xs text-red-500';
+    }
+    fileInput.value = '';
+}
+
+function showOcrModal(idx, docId, extracted) {
+    const modal = document.getElementById('ocr-modal');
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+
+    // Show document preview
+    if (docId) {
+        document.getElementById('ocr-preview').src = `/api/documents/${docId}/view`;
+    }
+
+    // Build comparison fields
+    const fieldsDiv = document.getElementById('ocr-fields');
+    const mapping = [
+        { key: 'full_name', label: 'Full Name', benField: 'full_name' },
+        { key: 'nric_number', label: 'NRIC Number', benField: 'nric_passport' },
+        { key: 'address', label: 'Address', benField: 'address' },
+    ];
+    const b = beneficiaries[idx];
+    let html = '';
+    mapping.forEach(m => {
+        const scanned = (extracted[m.key] || '').trim();
+        const current = (b[m.benField] || '').trim();
+        if (!scanned) return;
+
+        const norm = s => s.toUpperCase().replace(/\s+/g, ' ');
+        const isMatch = norm(scanned) === norm(current);
+        const isNew = !current;
+
+        let badge, action;
+        if (isNew) {
+            badge = '<span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-bold rounded">NEW</span>';
+            action = `<input type="hidden" class="ocr-choice" data-field="${m.benField}" data-value="${scanned.replace(/"/g, '&quot;')}" data-action="update">`;
+        } else if (isMatch) {
+            badge = '<span class="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded">MATCH</span>';
+            action = '';
+        } else {
+            badge = '<span class="px-1.5 py-0.5 bg-amber-100 text-amber-700 text-[10px] font-bold rounded">MISMATCH</span>';
+            action = `
+                <div class="mt-1 space-y-1 text-xs">
+                    <label class="flex items-center gap-1"><input type="radio" name="ocr_${m.benField}" class="ocr-radio" data-field="${m.benField}" data-value="${current.replace(/"/g, '&quot;')}" checked> Keep: ${current}</label>
+                    <label class="flex items-center gap-1"><input type="radio" name="ocr_${m.benField}" class="ocr-radio" data-field="${m.benField}" data-value="${scanned.replace(/"/g, '&quot;')}"> Use scanned: ${scanned}</label>
+                </div>`;
+        }
+        html += `<div class="p-2 bg-gray-50 rounded">${badge} <span class="text-xs font-medium text-gray-700">${m.label}</span><div class="text-sm text-gray-900 mt-0.5">${scanned}</div>${action}</div>`;
+    });
+    fieldsDiv.innerHTML = html || '<p class="text-sm text-gray-500">No data extracted from this document.</p>';
+}
+
+function closeOcrModal() {
+    const modal = document.getElementById('ocr-modal');
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    document.getElementById('ocr-preview').src = '';
+}
+
+function applyOcrResults() {
+    if (ocrBenIdx < 0 || ocrBenIdx >= beneficiaries.length) return;
+
+    // Apply auto-updates (NEW fields)
+    document.querySelectorAll('.ocr-choice').forEach(el => {
+        if (el.dataset.action === 'update') {
+            beneficiaries[ocrBenIdx][el.dataset.field] = el.dataset.value;
+        }
+    });
+    // Apply radio selections (MISMATCH fields)
+    document.querySelectorAll('.ocr-radio:checked').forEach(el => {
+        beneficiaries[ocrBenIdx][el.dataset.field] = el.dataset.value;
+    });
+
+    renderBeneficiaries();
+    autosaveDebounced();
+    closeOcrModal();
+}
+
+// Form submission
+document.getElementById('ben-form').addEventListener('submit', function(e) {
+    document.getElementById('ben-json-input').value = JSON.stringify(beneficiaries);
+});
+
+// Initial render
+renderBeneficiaries();
+if (beneficiaries.length === 0) {
+    addBeneficiary();
+}
+</script>
+{% endblock %}
