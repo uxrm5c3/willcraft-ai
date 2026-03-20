@@ -3826,12 +3826,48 @@ def probate_step5(probate_id):
         'created_at': d.created_at.strftime('%d %b %Y, %I:%M %p') if d.created_at else '',
     } for d in receipt_docs]
 
+    # Build filing checklist — auto-detect from probate/will data
+    form_data = json.loads(probate.form_data_json or '{}')
+    manual_checks = form_data.get('filing_checklist', {})
+    assets_list = json.loads(probate.assets_data or '[]')
+    has_property = any(a.get('asset_type') == 'property' for a in assets_list)
+    exec_nric = (exec_data.nric_passport if exec_data and hasattr(exec_data, 'nric_passport') else '') or ''
+
+    filing_checklist = [
+        {'key': 'death_cert', 'label': 'Certified copy of <strong>Death Certificate</strong> (Sijil Kematian)',
+         'exhibit': f'{exhibit_prefix}-1',
+         'auto': bool(probate.death_cert_document_id),
+         'checked': manual_checks.get('death_cert', bool(probate.death_cert_document_id))},
+        {'key': 'assets_schedule', 'label': '<strong>Schedule of Assets &amp; Liabilities</strong> (Jadual Aset)',
+         'exhibit': f'{exhibit_prefix}-2',
+         'auto': len(assets_list) > 0,
+         'checked': manual_checks.get('assets_schedule', len(assets_list) > 0)},
+        {'key': 'original_will', 'label': '<strong>Original Will</strong> (certified true copy)',
+         'exhibit': f'{exhibit_prefix}-3',
+         'auto': bool(will_record),
+         'checked': manual_checks.get('original_will', bool(will_record))},
+        {'key': 'beneficiary_list', 'label': '<strong>Beneficiary List</strong>',
+         'exhibit': f'{exhibit_prefix}-4',
+         'auto': bool(will_record),
+         'checked': manual_checks.get('beneficiary_list', bool(will_record))},
+        {'key': 'executor_nric', 'label': "Executor's <strong>NRIC</strong> (copy)",
+         'exhibit': None,
+         'auto': bool(exec_nric),
+         'checked': manual_checks.get('executor_nric', bool(exec_nric))},
+        {'key': 'property_titles', 'label': '<strong>Property title documents</strong> (Hakmilik)',
+         'exhibit': None, 'conditional': True, 'condition_met': has_property,
+         'auto': False,
+         'checked': manual_checks.get('property_titles', False)},
+    ]
+
     ctx['probate_step'] = 5
     ctx['recommendations'] = recommendations
     ctx['generated_forms'] = gen_list
     ctx['exhibit_prefix'] = exhibit_prefix
     ctx['validation_warnings'] = validation_warnings
     ctx['receipts'] = receipts
+    ctx['filing_checklist'] = filing_checklist
+    ctx['has_property'] = has_property
     return render_template('probate/step5_review.html', **ctx)
 
 
@@ -4013,6 +4049,22 @@ def api_ocr_asset_doc():
     db.session.commit()
 
     return jsonify({'ok': True, 'document_id': doc.id, 'extracted': extracted})
+
+
+@app.route('/api/probate/<probate_id>/checklist', methods=['POST'])
+@login_required
+def api_probate_checklist(probate_id):
+    """Save filing checklist state."""
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        return jsonify(ok=False, error='Not found'), 404
+    data = request.get_json(silent=True) or {}
+    form_data = json.loads(probate.form_data_json or '{}')
+    form_data['filing_checklist'] = data.get('checklist', {})
+    probate.form_data_json = json.dumps(form_data)
+    probate.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 @app.route('/api/probate/<probate_id>/upload-receipt', methods=['POST'])

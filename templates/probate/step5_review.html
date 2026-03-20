@@ -122,23 +122,49 @@
         </div>
     </div>
 
-    <!-- Documents Required from Executor -->
-    <div class="p-4 bg-amber-50 border border-amber-200 rounded-lg mb-6">
-        <h3 class="text-sm font-semibold text-amber-800 mb-2 flex items-center gap-2">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-            Documents Required from Executor for Filing
-        </h3>
-        <p class="text-xs text-amber-600 mb-2">Ensure the executor provides these documents before filing:</p>
-        <ul class="text-xs text-gray-700 space-y-1.5">
-            <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">1.</span> Certified copy of <strong>Death Certificate</strong> (Sijil Kematian) — Exhibit {{ exhibit_prefix }}-1</li>
-            <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">2.</span> <strong>Schedule of Assets & Liabilities</strong> (Jadual Aset) — Exhibit {{ exhibit_prefix }}-2</li>
-            {% if not is_la %}
-            <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">3.</span> <strong>Original Will</strong> (certified true copy) — Exhibit {{ exhibit_prefix }}-3</li>
-            <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">4.</span> <strong>Beneficiary List</strong> — Exhibit {{ exhibit_prefix }}-4</li>
+    <!-- Filing Checklist -->
+    <div class="p-4 border rounded-lg mb-6 {% if filing_checklist | selectattr('checked', 'false') | list %}bg-amber-50 border-amber-200{% else %}bg-green-50 border-green-200{% endif %}" id="checklist-container">
+        <div class="flex items-center justify-between mb-2">
+            <h3 class="text-sm font-semibold text-gray-800 flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                Filing Checklist — Documents Required from Executor
+            </h3>
+            <span id="checklist-count" class="text-xs font-medium px-2 py-0.5 rounded-full"></span>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">Tick each item once received and verified. All items must be completed before generating forms.</p>
+
+        <div class="space-y-1.5">
+            {% for item in filing_checklist %}
+            {% if not item.get('conditional') or item.get('condition_met') %}
+            <label class="flex items-center gap-3 p-2.5 rounded-lg border cursor-pointer transition-colors
+                          {% if item.checked %}bg-green-50 border-green-200{% else %}bg-white border-gray-200 hover:bg-gray-50{% endif %}"
+                   id="checklist-row-{{ item.key }}">
+                <input type="checkbox" class="checklist-box w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500"
+                       data-key="{{ item.key }}" {% if item.checked %}checked{% endif %}
+                       onchange="updateChecklist()">
+                <div class="flex-1 text-xs">
+                    <span class="{% if item.checked %}text-green-800{% else %}text-gray-700{% endif %}">
+                        {{ loop.index }}. {{ item.label | safe }}
+                    </span>
+                    {% if item.exhibit %}
+                    <span class="text-gray-400 ml-1">— Exhibit {{ item.exhibit }}</span>
+                    {% endif %}
+                    {% if item.get('conditional') %}
+                    <span class="text-amber-500 ml-1">(if estate includes property)</span>
+                    {% endif %}
+                </div>
+                {% if item.auto and item.checked %}
+                <span class="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded shrink-0">Auto-detected</span>
+                {% elif item.checked %}
+                <span class="px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded shrink-0">Received</span>
+                {% else %}
+                <span class="px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded shrink-0">Missing</span>
+                {% endif %}
+            </label>
             {% endif %}
-            <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">5.</span> Executor's <strong>NRIC</strong> (copy)</li>
-            <li class="flex items-start gap-2"><span class="text-amber-500 font-bold mt-px">6.</span> <strong>Property title documents</strong> (Hakmilik) — if estate includes property</li>
-        </ul>
+            {% endfor %}
+        </div>
+        <div id="checklist-save-status" class="text-[10px] text-gray-400 mt-2"></div>
     </div>
 
     <!-- Form Selection -->
@@ -179,12 +205,15 @@
                 {% endfor %}
             </div>
 
-            <div class="flex justify-between mt-6">
+            <div class="flex justify-between items-center mt-6">
                 <a href="/probate/{{ probate_id }}/step/4" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
-                <button type="submit" class="px-6 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 flex items-center gap-2">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                    Generate Selected Forms
-                </button>
+                <div class="flex items-center gap-3">
+                    <span id="generate-warning" class="text-xs text-red-500 hidden">Complete all checklist items first</span>
+                    <button type="submit" id="generate-btn" class="px-6 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                        Generate Selected Forms
+                    </button>
+                </div>
             </div>
         </form>
     </div>
@@ -300,7 +329,7 @@
 
 <script>
 async function uploadReceipt(category, fileInput) {
-    const file = fileInput.files[0];
+    let file = fileInput.files[0];
     if (!file) return;
 
     const descInput = document.getElementById(category + '-desc');
@@ -374,5 +403,70 @@ async function deleteReceipt(docId) {
 function escapeHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+/* ── Filing Checklist ── */
+function updateChecklist() {
+    const boxes = document.querySelectorAll('.checklist-box');
+    const checklist = {};
+    let total = 0, checked = 0;
+    boxes.forEach(box => {
+        checklist[box.dataset.key] = box.checked;
+        total++;
+        if (box.checked) checked++;
+        // Update row styling
+        const row = box.closest('label');
+        if (box.checked) {
+            row.classList.remove('bg-white', 'border-gray-200');
+            row.classList.add('bg-green-50', 'border-green-200');
+            const badge = row.querySelector('span:last-child');
+            if (badge) { badge.className = 'px-1.5 py-0.5 bg-green-100 text-green-700 text-[10px] font-bold rounded shrink-0'; badge.textContent = 'Received'; }
+        } else {
+            row.classList.remove('bg-green-50', 'border-green-200');
+            row.classList.add('bg-white', 'border-gray-200');
+            const badge = row.querySelector('span:last-child');
+            if (badge) { badge.className = 'px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded shrink-0'; badge.textContent = 'Missing'; }
+        }
+    });
+
+    // Update counter
+    const countEl = document.getElementById('checklist-count');
+    countEl.textContent = checked + '/' + total + ' completed';
+    countEl.className = checked === total
+        ? 'text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700'
+        : 'text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700';
+
+    // Update container bg
+    const container = document.getElementById('checklist-container');
+    if (checked === total) {
+        container.classList.remove('bg-amber-50', 'border-amber-200');
+        container.classList.add('bg-green-50', 'border-green-200');
+    } else {
+        container.classList.remove('bg-green-50', 'border-green-200');
+        container.classList.add('bg-amber-50', 'border-amber-200');
+    }
+
+    // Enable/disable generate button
+    const genBtn = document.getElementById('generate-btn');
+    const genWarn = document.getElementById('generate-warning');
+    if (genBtn) {
+        genBtn.disabled = checked < total;
+        genWarn.classList.toggle('hidden', checked >= total);
+    }
+
+    // Save to server
+    fetch('/api/probate/{{ probate_id }}/checklist', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checklist })
+    }).then(() => {
+        const s = document.getElementById('checklist-save-status');
+        s.textContent = '✓ Saved';
+        s.className = 'text-[10px] text-green-600 mt-2';
+        setTimeout(() => { s.textContent = ''; }, 2000);
+    });
+}
+
+// Initialize on load
+updateChecklist();
 </script>
 {% endblock %}
