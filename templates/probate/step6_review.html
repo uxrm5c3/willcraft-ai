@@ -372,7 +372,7 @@
 
     <!-- Generated Form Editor + Preview Panel -->
     <div id="generated-preview-panel" class="mt-4 hidden">
-        <div class="border border-gray-300 rounded-lg overflow-hidden bg-white shadow-lg">
+        <div id="editor-container" class="border border-gray-300 rounded-lg overflow-hidden bg-white shadow-lg transition-all">
             <!-- Header bar -->
             <div class="flex items-center justify-between px-4 py-2 bg-gray-800 text-white">
                 <h4 id="gen-preview-title" class="text-sm font-semibold"></h4>
@@ -381,15 +381,18 @@
                         Save Changes
                     </button>
                     <span id="edit-save-status" class="text-[10px] text-gray-400"></span>
-                    <button type="button" onclick="closeGeneratedPreview()" class="text-gray-300 hover:text-white text-lg font-bold ml-2">&times;</button>
+                    <button type="button" onclick="toggleFullscreen()" id="btn-fullscreen" class="text-gray-300 hover:text-white p-1" title="Toggle fullscreen">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
+                    </button>
+                    <button type="button" onclick="closeGeneratedPreview()" class="text-gray-300 hover:text-white text-lg font-bold ml-1">&times;</button>
                 </div>
             </div>
             <!-- Split view: Editor | Preview -->
-            <div class="flex" style="height:80vh;">
-                <!-- Left: Editable content -->
-                <div id="editor-pane" class="w-1/2 border-r border-gray-300 overflow-y-auto bg-gray-50 p-4">
+            <div class="flex" id="editor-split" style="height:80vh;">
+                <!-- Left: Editable content (document-like) -->
+                <div id="editor-pane" class="w-1/2 border-r border-gray-300 overflow-y-auto bg-gray-100">
                     <div id="editor-loading" class="text-center py-8 text-gray-400 text-sm">Loading document content...</div>
-                    <div id="editor-content" class="space-y-1 hidden"></div>
+                    <div id="editor-content" class="hidden max-w-[700px] mx-auto bg-white shadow-sm my-4 px-8 py-6 min-h-[90%]" style="font-family: 'Times New Roman', serif;"></div>
                 </div>
                 <!-- Right: PDF preview -->
                 <div class="w-1/2">
@@ -705,29 +708,36 @@ function renderEditor(items) {
         if (item.type === 'paragraph') {
             const isEmpty = !item.text.trim();
             if (isEmpty) {
-                container.innerHTML += '<div class="h-2"></div>'; // spacer for empty paragraphs
+                container.innerHTML += '<div class="h-3"></div>';
                 return;
             }
             const isMissing = item.text.includes('{{') && item.text.includes('}}');
             const div = document.createElement('div');
-            div.className = 'group relative';
+            div.className = 'group relative mb-0.5';
             const input = document.createElement('textarea');
             input.value = item.text;
+            input.dataset.originalValue = item.text;
             input.dataset.type = 'paragraph';
             input.dataset.index = item.index;
-            input.rows = Math.max(1, Math.ceil(item.text.length / 80));
-            input.className = 'w-full px-2 py-1 text-xs border rounded resize-y focus:ring-1 focus:ring-primary-500 focus:border-primary-500 '
-                + (isMissing ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white hover:border-gray-400')
+            input.rows = 1;
+            input.className = 'w-full px-1 py-0.5 text-[13px] leading-[1.4] border-0 border-b border-transparent rounded-none resize-none focus:ring-0 focus:border-b focus:border-blue-400 transition-colors '
+                + (isMissing ? 'bg-red-50 border-b-red-300' : 'bg-transparent hover:bg-blue-50/50')
                 + (item.bold ? ' font-bold' : '');
+            input.style.fontFamily = "'Times New Roman', serif";
+            input.style.overflow = 'hidden';
             input.addEventListener('input', () => { markEdited(); autoResize(input); });
+            input.addEventListener('focus', () => { input.classList.add('bg-blue-50'); });
+            input.addEventListener('blur', () => { input.classList.remove('bg-blue-50'); if (!isMissing) input.classList.add('bg-transparent'); });
             if (isMissing) {
                 const badge = document.createElement('span');
-                badge.className = 'absolute -top-2 right-1 px-1 py-0 text-[9px] font-bold bg-red-500 text-white rounded';
+                badge.className = 'absolute -top-1 right-0 px-1 py-0 text-[8px] font-bold bg-red-500 text-white rounded';
                 badge.textContent = 'MISSING';
                 div.appendChild(badge);
             }
             div.appendChild(input);
             container.appendChild(div);
+            // Auto-size after render
+            requestAnimationFrame(() => autoResize(input));
         } else if (item.type === 'table') {
             const wrapper = document.createElement('div');
             wrapper.className = 'my-2 overflow-x-auto';
@@ -741,6 +751,7 @@ function renderEditor(items) {
                     const isMissing = cellText.includes('{{') && cellText.includes('}}');
                     const inp = document.createElement('textarea');
                     inp.value = cellText;
+                    inp.dataset.originalValue = cellText;
                     inp.dataset.type = 'table';
                     inp.dataset.tableIndex = item.table_index;
                     inp.dataset.row = ri;
@@ -780,9 +791,10 @@ async function saveFormEdits() {
     btn.textContent = 'Saving...';
     status.textContent = '';
 
-    // Collect all edits
+    // Collect only changed edits
     const edits = [];
     document.querySelectorAll('#editor-content textarea').forEach(inp => {
+        if (inp.value === inp.dataset.originalValue) return; // skip unchanged
         if (inp.dataset.type === 'paragraph') {
             edits.push({ type: 'paragraph', index: parseInt(inp.dataset.index), text: inp.value });
         } else if (inp.dataset.type === 'table') {
@@ -795,6 +807,13 @@ async function saveFormEdits() {
             });
         }
     });
+    if (edits.length === 0) {
+        status.textContent = 'No changes to save';
+        status.className = 'text-[10px] text-gray-400';
+        btn.disabled = false;
+        btn.textContent = 'Save Changes';
+        return;
+    }
 
     try {
         const res = await fetch('/probate/{{ probate_id }}/form-content/' + _currentEditFormCode, {
@@ -808,6 +827,10 @@ async function saveFormEdits() {
             status.className = 'text-[10px] text-green-400';
             _hasEdits = false;
             btn.classList.add('hidden');
+            // Update original values so next save only diffs new changes
+            document.querySelectorAll('#editor-content textarea').forEach(inp => {
+                inp.dataset.originalValue = inp.value;
+            });
             // Refresh PDF preview
             const iframe = document.getElementById('gen-preview-iframe');
             iframe.src = '/probate/{{ probate_id }}/preview/' + _currentEditFormCode + '?t=' + Date.now();
@@ -824,11 +847,39 @@ async function saveFormEdits() {
     btn.textContent = 'Save Changes';
 }
 
+let _isFullscreen = false;
+
+function toggleFullscreen() {
+    _isFullscreen = !_isFullscreen;
+    const panel = document.getElementById('generated-preview-panel');
+    const container = document.getElementById('editor-container');
+    const split = document.getElementById('editor-split');
+    if (_isFullscreen) {
+        panel.className = 'fixed inset-0 z-50 bg-black/50';
+        container.className = 'fixed inset-2 z-50 rounded-lg overflow-hidden bg-white shadow-2xl flex flex-col';
+        split.style.height = 'calc(100vh - 50px)';
+        split.className = 'flex flex-1';
+        document.body.style.overflow = 'hidden';
+    } else {
+        panel.className = 'mt-4';
+        container.className = 'border border-gray-300 rounded-lg overflow-hidden bg-white shadow-lg transition-all';
+        split.style.height = '80vh';
+        split.className = 'flex';
+        document.body.style.overflow = '';
+    }
+}
+
 function closeGeneratedPreview() {
     if (_hasEdits && !confirm('You have unsaved changes. Close anyway?')) return;
     const panel = document.getElementById('generated-preview-panel');
+    const container = document.getElementById('editor-container');
     const iframe = document.getElementById('gen-preview-iframe');
-    if (panel) panel.classList.add('hidden');
+    if (_isFullscreen) {
+        _isFullscreen = false;
+        document.body.style.overflow = '';
+    }
+    if (panel) { panel.classList.add('hidden'); panel.className = 'mt-4 hidden'; }
+    if (container) container.className = 'border border-gray-300 rounded-lg overflow-hidden bg-white shadow-lg transition-all';
     if (iframe) iframe.src = '';
     _currentEditFormCode = null;
     _hasEdits = false;

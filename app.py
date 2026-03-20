@@ -4423,7 +4423,7 @@ def probate_download_all(probate_id):
 
     from documents.probate_generator import create_zip
     zip_path = os.path.join(tempfile.gettempdir(), f'probate_{probate_id[:8]}.zip')
-    form_files = [{'form_code': f.form_code, 'file_path': f.file_path} for f in forms]
+    form_files = [{'form_code': f.form_code, 'file_path': f.file_path, 'form_name': f.form_name} for f in forms]
     create_zip(form_files, zip_path, as_pdf=(fmt == 'pdf'))
     return send_file(zip_path, as_attachment=True, download_name=f'probate_forms_{probate_id[:8]}.zip')
 

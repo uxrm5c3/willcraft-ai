@@ -715,13 +715,15 @@ def create_zip(form_files, zip_path, as_pdf=False):
             fpath = f['file_path']
             if not os.path.exists(fpath):
                 continue
+            # Use proper form name for archive filename
+            form_name = f.get('form_name') or f.get('form_code', 'form')
+            safe_name = form_name.replace(' ', '_').replace('/', '_').replace('&', 'and')
             if as_pdf and fpath.lower().endswith(('.docx', '.doc')):
                 pdf_path = convert_to_pdf(fpath)
                 if pdf_path and os.path.exists(pdf_path):
-                    arcname = os.path.basename(pdf_path)
-                    zf.write(pdf_path, arcname)
+                    zf.write(pdf_path, f'{safe_name}.pdf')
                     continue
             # Fallback: add original file
-            arcname = os.path.basename(fpath)
-            zf.write(fpath, arcname)
+            ext = os.path.splitext(fpath)[1] or '.docx'
+            zf.write(fpath, f'{safe_name}{ext}')
     return zip_path
