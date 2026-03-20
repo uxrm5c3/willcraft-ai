@@ -332,6 +332,11 @@
                     <div class="min-w-0">
                         <span class="text-sm font-medium text-gray-800 block">{{ gf.form_name or gf.form_code }}</span>
                         <span class="text-[10px] text-gray-400">{{ gf.form_code }}</span>
+                        {% if gf.missing_fields %}
+                        <span class="text-[10px] text-red-500 block">{{ gf.missing_fields|length }} unfilled: {{ gf.missing_fields[:3]|join(', ') }}{% if gf.missing_fields|length > 3 %}...{% endif %}</span>
+                        {% else %}
+                        <span class="text-[10px] text-green-500 block">All fields filled</span>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
@@ -365,14 +370,32 @@
         </div>
     </div>
 
-    <!-- Generated Form Preview Panel (inline, below generated forms) -->
+    <!-- Generated Form Editor + Preview Panel -->
     <div id="generated-preview-panel" class="mt-4 hidden">
-        <div class="border border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
-            <div class="flex items-center justify-between px-4 py-2 bg-gray-100 border-b border-gray-300">
-                <h4 id="gen-preview-title" class="text-sm font-semibold text-gray-800"></h4>
-                <button type="button" onclick="closeGeneratedPreview()" class="text-gray-500 hover:text-gray-700 text-lg font-bold">&times;</button>
+        <div class="border border-gray-300 rounded-lg overflow-hidden bg-white shadow-lg">
+            <!-- Header bar -->
+            <div class="flex items-center justify-between px-4 py-2 bg-gray-800 text-white">
+                <h4 id="gen-preview-title" class="text-sm font-semibold"></h4>
+                <div class="flex items-center gap-2">
+                    <button type="button" id="btn-save-edits" onclick="saveFormEdits()" class="hidden px-3 py-1 bg-green-600 text-white text-xs font-semibold rounded hover:bg-green-700">
+                        Save Changes
+                    </button>
+                    <span id="edit-save-status" class="text-[10px] text-gray-400"></span>
+                    <button type="button" onclick="closeGeneratedPreview()" class="text-gray-300 hover:text-white text-lg font-bold ml-2">&times;</button>
+                </div>
             </div>
-            <iframe id="gen-preview-iframe" src="" class="w-full border-0" style="height:80vh;"></iframe>
+            <!-- Split view: Editor | Preview -->
+            <div class="flex" style="height:80vh;">
+                <!-- Left: Editable content -->
+                <div id="editor-pane" class="w-1/2 border-r border-gray-300 overflow-y-auto bg-gray-50 p-4">
+                    <div id="editor-loading" class="text-center py-8 text-gray-400 text-sm">Loading document content...</div>
+                    <div id="editor-content" class="space-y-1 hidden"></div>
+                </div>
+                <!-- Right: PDF preview -->
+                <div class="w-1/2">
+                    <iframe id="gen-preview-iframe" src="" class="w-full h-full border-0"></iframe>
+                </div>
+            </div>
         </div>
     </div>
     {% endif %}
@@ -633,23 +656,182 @@ async function reuploadForm(formCode, input) {
     input.value = '';
 }
 
-/* ── Preview generated form inline ── */
+/* ── Preview generated form with inline editor ── */
+let _currentEditFormCode = null;
+let _originalContent = [];
+let _hasEdits = false;
+
 function previewGenerated(formCode, formName) {
+    _currentEditFormCode = formCode;
+    _hasEdits = false;
     const panel = document.getElementById('generated-preview-panel');
     const iframe = document.getElementById('gen-preview-iframe');
     const title = document.getElementById('gen-preview-title');
+    const loading = document.getElementById('editor-loading');
+    const content = document.getElementById('editor-content');
+    const saveBtn = document.getElementById('btn-save-edits');
     if (!panel || !iframe) return;
+
     title.textContent = formName;
     iframe.src = '/probate/{{ probate_id }}/preview/' + formCode;
+    loading.classList.remove('hidden');
+    content.classList.add('hidden');
+    saveBtn.classList.add('hidden');
+    document.getElementById('edit-save-status').textContent = '';
     panel.classList.remove('hidden');
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // Load editable content
+    fetch('/probate/{{ probate_id }}/form-content/' + formCode)
+        .then(r => r.json())
+        .then(data => {
+            loading.classList.add('hidden');
+            if (!data.ok) { content.innerHTML = '<p class="text-red-500 text-xs">Failed to load</p>'; content.classList.remove('hidden'); return; }
+            _originalContent = data.content;
+            renderEditor(data.content);
+            content.classList.remove('hidden');
+        })
+        .catch(() => {
+            loading.classList.add('hidden');
+            content.innerHTML = '<p class="text-red-500 text-xs">Failed to load content</p>';
+            content.classList.remove('hidden');
+        });
+}
+
+function renderEditor(items) {
+    const container = document.getElementById('editor-content');
+    container.innerHTML = '';
+    items.forEach((item, idx) => {
+        if (item.type === 'paragraph') {
+            const isEmpty = !item.text.trim();
+            if (isEmpty) {
+                container.innerHTML += '<div class="h-2"></div>'; // spacer for empty paragraphs
+                return;
+            }
+            const isMissing = item.text.includes('{{') && item.text.includes('}}');
+            const div = document.createElement('div');
+            div.className = 'group relative';
+            const input = document.createElement('textarea');
+            input.value = item.text;
+            input.dataset.type = 'paragraph';
+            input.dataset.index = item.index;
+            input.rows = Math.max(1, Math.ceil(item.text.length / 80));
+            input.className = 'w-full px-2 py-1 text-xs border rounded resize-y focus:ring-1 focus:ring-primary-500 focus:border-primary-500 '
+                + (isMissing ? 'border-red-300 bg-red-50' : 'border-gray-200 bg-white hover:border-gray-400')
+                + (item.bold ? ' font-bold' : '');
+            input.addEventListener('input', () => { markEdited(); autoResize(input); });
+            if (isMissing) {
+                const badge = document.createElement('span');
+                badge.className = 'absolute -top-2 right-1 px-1 py-0 text-[9px] font-bold bg-red-500 text-white rounded';
+                badge.textContent = 'MISSING';
+                div.appendChild(badge);
+            }
+            div.appendChild(input);
+            container.appendChild(div);
+        } else if (item.type === 'table') {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'my-2 overflow-x-auto';
+            const table = document.createElement('table');
+            table.className = 'w-full text-[10px] border border-gray-300';
+            item.rows.forEach((row, ri) => {
+                const tr = document.createElement('tr');
+                row.forEach((cellText, ci) => {
+                    const td = document.createElement('td');
+                    td.className = 'border border-gray-200 p-0';
+                    const isMissing = cellText.includes('{{') && cellText.includes('}}');
+                    const inp = document.createElement('textarea');
+                    inp.value = cellText;
+                    inp.dataset.type = 'table';
+                    inp.dataset.tableIndex = item.table_index;
+                    inp.dataset.row = ri;
+                    inp.dataset.col = ci;
+                    inp.rows = Math.max(1, Math.ceil(cellText.length / 40));
+                    inp.className = 'w-full px-1 py-0.5 text-[10px] border-0 resize-y focus:ring-1 focus:ring-primary-500 '
+                        + (isMissing ? 'bg-red-50' : 'bg-white');
+                    inp.addEventListener('input', () => { markEdited(); autoResize(inp); });
+                    td.appendChild(inp);
+                    tr.appendChild(td);
+                });
+                table.appendChild(tr);
+            });
+            wrapper.appendChild(table);
+            container.appendChild(wrapper);
+        }
+    });
+}
+
+function autoResize(textarea) {
+    textarea.style.height = 'auto';
+    textarea.style.height = textarea.scrollHeight + 'px';
+}
+
+function markEdited() {
+    _hasEdits = true;
+    document.getElementById('btn-save-edits').classList.remove('hidden');
+    document.getElementById('edit-save-status').textContent = 'Unsaved changes';
+    document.getElementById('edit-save-status').className = 'text-[10px] text-amber-400';
+}
+
+async function saveFormEdits() {
+    if (!_currentEditFormCode) return;
+    const btn = document.getElementById('btn-save-edits');
+    const status = document.getElementById('edit-save-status');
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+    status.textContent = '';
+
+    // Collect all edits
+    const edits = [];
+    document.querySelectorAll('#editor-content textarea').forEach(inp => {
+        if (inp.dataset.type === 'paragraph') {
+            edits.push({ type: 'paragraph', index: parseInt(inp.dataset.index), text: inp.value });
+        } else if (inp.dataset.type === 'table') {
+            edits.push({
+                type: 'table',
+                table_index: parseInt(inp.dataset.tableIndex),
+                row: parseInt(inp.dataset.row),
+                col: parseInt(inp.dataset.col),
+                text: inp.value
+            });
+        }
+    });
+
+    try {
+        const res = await fetch('/probate/{{ probate_id }}/form-content/' + _currentEditFormCode, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ edits })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            status.textContent = 'Saved! Refreshing preview...';
+            status.className = 'text-[10px] text-green-400';
+            _hasEdits = false;
+            btn.classList.add('hidden');
+            // Refresh PDF preview
+            const iframe = document.getElementById('gen-preview-iframe');
+            iframe.src = '/probate/{{ probate_id }}/preview/' + _currentEditFormCode + '?t=' + Date.now();
+            setTimeout(() => { status.textContent = ''; }, 3000);
+        } else {
+            status.textContent = 'Save failed: ' + (data.error || 'Unknown error');
+            status.className = 'text-[10px] text-red-400';
+        }
+    } catch (e) {
+        status.textContent = 'Save failed: ' + e.message;
+        status.className = 'text-[10px] text-red-400';
+    }
+    btn.disabled = false;
+    btn.textContent = 'Save Changes';
 }
 
 function closeGeneratedPreview() {
+    if (_hasEdits && !confirm('You have unsaved changes. Close anyway?')) return;
     const panel = document.getElementById('generated-preview-panel');
     const iframe = document.getElementById('gen-preview-iframe');
     if (panel) panel.classList.add('hidden');
     if (iframe) iframe.src = '';
+    _currentEditFormCode = null;
+    _hasEdits = false;
 }
 
 /* ── View Template inline ── */

@@ -4000,12 +4000,35 @@ def probate_step6(probate_id):
     # Check for previously generated forms
     generated_forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
     gen_list = []
+    import re as _re
     for gf in generated_forms:
         tpl = tpl_map.get(gf.form_code)
+        # Scan for unfilled placeholders in generated file
+        missing_fields = []
+        if gf.file_path and os.path.exists(gf.file_path):
+            try:
+                from docx import Document as _DocxDoc
+                _doc = _DocxDoc(gf.file_path)
+                _seen = set()
+                for _p in _doc.paragraphs:
+                    for _m in _re.findall(r'\{\{(\w+)\}\}', _p.text):
+                        if _m not in _seen:
+                            _seen.add(_m)
+                            missing_fields.append(_m.replace('_', ' ').title())
+                for _t in _doc.tables:
+                    for _r in _t.rows:
+                        for _c in _r.cells:
+                            for _m in _re.findall(r'\{\{(\w+)\}\}', _c.text):
+                                if _m not in _seen:
+                                    _seen.add(_m)
+                                    missing_fields.append(_m.replace('_', ' ').title())
+            except Exception:
+                pass
         gen_list.append({
             'form_code': gf.form_code,
             'form_name': tpl.form_name if tpl else gf.form_code,
             'file_path': gf.file_path,
+            'missing_fields': missing_fields,
         })
 
     # Build exhibit prefix from applicant initials
@@ -4272,6 +4295,80 @@ def probate_preview(probate_id, form_code):
         return resp
     flash('PDF conversion failed.', 'error')
     return redirect(f'/probate/{probate_id}/step/6')
+
+
+@app.route('/probate/<probate_id>/form-content/<form_code>')
+@login_required
+def probate_form_content(probate_id, form_code):
+    """Return DOCX content as structured paragraphs + tables for inline editing."""
+    gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
+    if not gf or not os.path.exists(gf.file_path):
+        return jsonify(ok=False, error='Form not found'), 404
+    from docx import Document as DocxDocument
+    doc = DocxDocument(gf.file_path)
+    content = []
+    for i, p in enumerate(doc.paragraphs):
+        content.append({
+            'type': 'paragraph',
+            'index': i,
+            'text': p.text,
+            'bold': any(r.bold for r in p.runs if r.bold),
+            'alignment': str(p.alignment) if p.alignment else None,
+        })
+    for ti, table in enumerate(doc.tables):
+        rows = []
+        for ri, row in enumerate(table.rows):
+            cells = []
+            for ci, cell in enumerate(row.cells):
+                cells.append(cell.text)
+            rows.append(cells)
+        content.append({'type': 'table', 'table_index': ti, 'rows': rows})
+    return jsonify(ok=True, content=content)
+
+
+@app.route('/probate/<probate_id>/form-content/<form_code>', methods=['POST'])
+@login_required
+def probate_form_content_save(probate_id, form_code):
+    """Save edited paragraph text back to the DOCX file."""
+    gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
+    if not gf or not os.path.exists(gf.file_path):
+        return jsonify(ok=False, error='Form not found'), 404
+    data = request.get_json()
+    if not data or 'edits' not in data:
+        return jsonify(ok=False, error='No edits provided'), 400
+    from docx import Document as DocxDocument
+    doc = DocxDocument(gf.file_path)
+    edits = data['edits']  # list of {index, text} for paragraphs, or {table_index, row, col, text} for cells
+    for edit in edits:
+        if edit.get('type') == 'table':
+            ti, ri, ci = edit['table_index'], edit['row'], edit['col']
+            if ti < len(doc.tables) and ri < len(doc.tables[ti].rows) and ci < len(doc.tables[ti].rows[ri].cells):
+                cell = doc.tables[ti].rows[ri].cells[ci]
+                # Preserve formatting: update first paragraph text, clear rest
+                if cell.paragraphs:
+                    for run in cell.paragraphs[0].runs:
+                        run.text = ''
+                    if cell.paragraphs[0].runs:
+                        cell.paragraphs[0].runs[0].text = edit['text']
+                    else:
+                        cell.paragraphs[0].text = edit['text']
+        else:
+            idx = edit.get('index', -1)
+            if 0 <= idx < len(doc.paragraphs):
+                p = doc.paragraphs[idx]
+                new_text = edit['text']
+                # Preserve formatting: distribute text across existing runs
+                if p.runs:
+                    # Put all text in first run, clear others
+                    p.runs[0].text = new_text
+                    for run in p.runs[1:]:
+                        run.text = ''
+                else:
+                    p.text = new_text
+    doc.save(gf.file_path)
+    gf.generated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 @app.route('/probate/<probate_id>/download/<form_code>')
