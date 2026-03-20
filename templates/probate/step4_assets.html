@@ -10,68 +10,58 @@
 
         <!-- Properties -->
         <div class="mb-6">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
-                    Immovable Properties (Harta Tak Alih)
-                </h3>
-                <button type="button" onclick="addAsset('property')" class="px-3 py-1 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">+ Add Property</button>
-            </div>
+            <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-3">
+                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+                Immovable Properties (Harta Tak Alih)
+            </h3>
             <div id="property-list" class="space-y-3"></div>
             <div id="property-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No properties added yet.</div>
+            <button type="button" id="add-property-btn" onclick="addAsset('property')" class="mt-2 w-full px-3 py-2 border-2 border-dashed border-gray-300 text-gray-500 text-xs font-medium rounded-lg hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50 transition-colors">+ Add Property</button>
         </div>
 
         <!-- Bank Accounts -->
         <div class="mb-6">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
-                    Bank Accounts (Akaun Bank)
-                </h3>
-                <button type="button" onclick="addAsset('bank')" class="px-3 py-1 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">+ Add Account</button>
-            </div>
+            <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-3">
+                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+                Bank Accounts (Akaun Bank)
+            </h3>
             <div id="bank-list" class="space-y-3"></div>
             <div id="bank-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No bank accounts added yet.</div>
+            <button type="button" id="add-bank-btn" onclick="addAsset('bank')" class="mt-2 w-full px-3 py-2 border-2 border-dashed border-gray-300 text-gray-500 text-xs font-medium rounded-lg hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50 transition-colors">+ Add Account</button>
         </div>
 
         <!-- Vehicles -->
         <div class="mb-6">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h8m-8 4h4m6 4H6a2 2 0 01-2-2V6a2 2 0 012-2h12a2 2 0 012 2v7a2 2 0 01-2 2z"/></svg>
-                    Motor Vehicles (Kenderaan Bermotor)
-                </h3>
-                <button type="button" onclick="addAsset('vehicle')" class="px-3 py-1 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">+ Add Vehicle</button>
-            </div>
+            <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-3">
+                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h8m-8 4h4m6 4H6a2 2 0 01-2-2V6a2 2 0 012-2h12a2 2 0 012 2v7a2 2 0 01-2 2z"/></svg>
+                Motor Vehicles (Kenderaan Bermotor)
+            </h3>
             <div id="vehicle-list" class="space-y-3"></div>
             <div id="vehicle-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No vehicles added yet.</div>
+            <button type="button" id="add-vehicle-btn" onclick="addAsset('vehicle')" class="mt-2 w-full px-3 py-2 border-2 border-dashed border-gray-300 text-gray-500 text-xs font-medium rounded-lg hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50 transition-colors">+ Add Vehicle</button>
         </div>
 
         <!-- Other Assets -->
         <div class="mb-6">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
-                    Other Assets (Aset Lain)
-                </h3>
-                <button type="button" onclick="addAsset('other')" class="px-3 py-1 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">+ Add Asset</button>
-            </div>
-            <p class="text-xs text-gray-400 mb-2">Insurance policies, EPF, shares, jewellery, etc.</p>
+            <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-3">
+                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+                Other Assets (Aset Lain)
+                <span class="text-xs text-gray-400 font-normal">— Insurance, EPF, shares, jewellery, etc.</span>
+            </h3>
             <div id="other-list" class="space-y-3"></div>
             <div id="other-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No other assets added yet.</div>
+            <button type="button" id="add-other-btn" onclick="addAsset('other')" class="mt-2 w-full px-3 py-2 border-2 border-dashed border-gray-300 text-gray-500 text-xs font-medium rounded-lg hover:border-primary-400 hover:text-primary-600 hover:bg-primary-50 transition-colors">+ Add Asset</button>
         </div>
 
         <!-- Liabilities -->
         <div class="mb-6">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                    <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                    Liabilities (Liabiliti/Hutang)
-                </h3>
-                <button type="button" onclick="addAsset('liability')" class="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700">+ Add Liability</button>
-            </div>
+            <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2 mb-3">
+                <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                Liabilities (Liabiliti/Hutang)
+            </h3>
             <div id="liability-list" class="space-y-3"></div>
             <div id="liability-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No liabilities added.</div>
+            <button type="button" id="add-liability-btn" onclick="addAsset('liability')" class="mt-2 w-full px-3 py-2 border-2 border-dashed border-red-300 text-gray-500 text-xs font-medium rounded-lg hover:border-red-400 hover:text-red-600 hover:bg-red-50 transition-colors">+ Add Liability</button>
         </div>
 
     </form>
@@ -282,11 +272,56 @@ function assetFormHtml(type, idx, data) {
     </div>`;
 }
 
+/* ── Required fields per type ── */
+const REQUIRED_FIELDS = {
+    property: ['description'],
+    bank: ['bank_name'],
+    vehicle: ['description'],
+    other: ['description'],
+    liability: ['description'],
+};
+
+/* ── Check if last item of type has required fields filled ── */
+function isLastItemComplete(type) {
+    const items = assets.filter(a => a.asset_type === type);
+    if (items.length === 0) return true;
+    const last = items[items.length - 1];
+    const required = REQUIRED_FIELDS[type] || [];
+    // Check from DOM (live values) if rendered
+    const cards = document.querySelectorAll(`[data-type="${type}"]`);
+    if (cards.length > 0) {
+        const lastCard = cards[cards.length - 1];
+        for (const key of required) {
+            const field = lastCard.querySelector(`[data-field="${key}"]`);
+            if (field && !field.value.trim()) return false;
+        }
+        return true;
+    }
+    // Fallback to data
+    return required.every(key => (last[key] || '').trim());
+}
+
+function updateAddButtons() {
+    const types = ['property', 'bank', 'vehicle', 'other', 'liability'];
+    types.forEach(type => {
+        const btn = document.getElementById('add-' + type + '-btn');
+        if (!btn) return;
+        const complete = isLastItemComplete(type);
+        btn.disabled = !complete;
+        if (complete) {
+            btn.classList.remove('opacity-40', 'cursor-not-allowed');
+        } else {
+            btn.classList.add('opacity-40', 'cursor-not-allowed');
+        }
+    });
+}
+
 /* ── Render ── */
 let _autosaveTimer = null;
 function autosaveDebounced() {
     clearTimeout(_autosaveTimer);
     _autosaveTimer = setTimeout(() => saveAssets(), 1500);
+    updateAddButtons();
 }
 
 function renderAssets() {
@@ -306,13 +341,23 @@ function renderAssets() {
             field.addEventListener('change', autosaveDebounced);
         });
     });
+    updateAddButtons();
 }
 
 function addAsset(type) {
+    // Collect latest field values before checking
+    assets = collectAssetData();
+    if (!isLastItemComplete(type)) return;
     assets.push({ asset_type: type });
     renderAssets();
     const list = document.getElementById(type + '-list');
     list.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    // Focus the first field of the new item
+    const lastCard = list.lastElementChild;
+    if (lastCard) {
+        const firstField = lastCard.querySelector('.asset-field');
+        if (firstField) setTimeout(() => firstField.focus(), 100);
+    }
     saveAssets();
 }
 
