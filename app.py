@@ -2559,6 +2559,8 @@ def wizard_step_gifts():
 
         subject_to_trust = bool(request.form.get(f'gift_trust_{gi}'))
         subject_to_guardian_allowance = bool(request.form.get(f'gift_guardian_allowance_{gi}'))
+        sell_property = bool(request.form.get(f'gift_sell_property_{gi}'))
+        substitute_mode = request.form.get(f'gift_{gi}_sub_mode', 'equal')
 
         alloc_count = int(request.form.get(f'gift_{gi}_alloc_count', 0))
         allocations = []
@@ -2566,10 +2568,20 @@ def wizard_step_gifts():
             ben_name = request.form.get(f'gift_{gi}_alloc_name_{ai_idx}', '').strip()
             if not ben_name:
                 continue
+            # Parse per-MB substitutes (only used when substitute_mode == 'specific')
+            subs = []
+            if substitute_mode == 'specific':
+                sub_count = int(request.form.get(f'gift_{gi}_mb_{ai_idx}_sub_count', 0))
+                for si in range(sub_count):
+                    sub_name = request.form.get(f'gift_{gi}_mb_{ai_idx}_sub_name_{si}', '').strip()
+                    sub_share = request.form.get(f'gift_{gi}_mb_{ai_idx}_sub_share_{si}', '').strip()
+                    if sub_name:
+                        subs.append({'beneficiary_name': sub_name, 'share': sub_share or '100%'})
             allocations.append({
                 'beneficiary_name': ben_name,
                 'share': request.form.get(f'gift_{gi}_alloc_share_{ai_idx}', '').strip(),
                 'role': request.form.get(f'gift_{gi}_alloc_role_{ai_idx}', 'MB'),
+                'substitutes': subs,
             })
 
         gifts.append({
@@ -2580,6 +2592,8 @@ def wizard_step_gifts():
             'allocations': allocations,
             'subject_to_trust': subject_to_trust,
             'subject_to_guardian_allowance': subject_to_guardian_allowance,
+            'sell_property': sell_property,
+            'substitute_mode': substitute_mode,
         })
 
     session['step5_gifts'] = gifts

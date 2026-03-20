@@ -79,8 +79,10 @@ class Gift(BaseModel):
     allocations: List[GiftAllocation] = []
     subject_to_trust: bool = False
     subject_to_guardian_allowance: bool = False
+    # Sell property directive
+    sell_property: bool = False
     # Substitute mode: what happens if a main beneficiary predeceases testator
-    substitute_mode: Literal["survivorship", "individual"] = "survivorship"
+    substitute_mode: Literal["equal", "prorata", "specific", "survivorship", "individual"] = "equal"
     # Joint ownership fields
     ownership_type: Literal["sole", "joint"] = "sole"
     testator_share: Optional[str] = None   # e.g., "1/2", "1/3", "equal share"

@@ -335,8 +335,8 @@
                           placeholder="Describe the asset in your own words">{{ gift.get('description', '') }}</textarea>
             </div>
 
-            <!-- Trust & Guardian Allowance Checkboxes -->
-            <div class="flex flex-wrap gap-6 mb-4">
+            <!-- Trust, Guardian Allowance & Sell Property Checkboxes -->
+            <div class="flex flex-wrap gap-4 mb-4">
                 <label class="flex items-center">
                     <input type="checkbox" name="gift_trust_{{ loop.index0 }}" value="1"
                            {% if gift.get('subject_to_trust') %}checked{% endif %}
@@ -349,12 +349,18 @@
                            class="rounded border-gray-300 text-primary-600 mr-2">
                     <span class="text-sm text-gray-700">Subject to Guardian Allowance</span>
                 </label>
+                <label class="flex items-center gift-sell-option {% if gift.get('gift_type', 'property') != 'property' %}hidden{% endif %}" data-gift-index="{{ loop.index0 }}">
+                    <input type="checkbox" name="gift_sell_property_{{ loop.index0 }}" value="1"
+                           {% if gift.get('sell_property') %}checked{% endif %}
+                           class="rounded border-gray-300 text-primary-600 mr-2">
+                    <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
+                </label>
             </div>
 
-            <!-- Allocations -->
+            <!-- Allocations (Main Beneficiaries) -->
             <div class="border-t border-gray-100 pt-4">
-                <h4 class="text-sm font-semibold text-gray-600 mb-2">Who receives this gift?</h4>
-                <p class="text-xs text-gray-400 mb-3">Select the beneficiary and their share. Shares for main beneficiaries must total 100%.</p>
+                <h4 class="text-sm font-semibold text-gray-600 mb-2">Main Beneficiaries</h4>
+                <p class="text-xs text-gray-400 mb-3">Select beneficiaries and their shares. Shares must total 100%.</p>
                 <div class="allocations-container space-y-3" id="allocations-{{ loop.index0 }}">
                     {% set allocations = gift.get('allocations', [{}]) or [{}] %}
                     {% for alloc in allocations %}
@@ -367,29 +373,20 @@
                         </div>
                         <div class="mb-2">
                             <select name="gift_{{ gift_idx }}_alloc_name_{{ loop.index0 }}"
-                                    class="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm bg-white">
+                                    class="alloc-name-select w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm bg-white">
                                 <option value="">-- Select Beneficiary --</option>
                                 {% for b in beneficiaries %}
                                 <option value="{{ b.full_name }}" {% if alloc.get('beneficiary_name') == b.full_name %}selected{% endif %}>{{ b.full_name }} ({{ b.relationship }})</option>
                                 {% endfor %}
                             </select>
+                            <input type="hidden" name="gift_{{ gift_idx }}_alloc_role_{{ loop.index0 }}" value="MB">
                         </div>
-                        <div class="grid grid-cols-2 gap-2">
-                            <div>
-                                <label class="block text-xs font-medium text-gray-500 mb-1">Share %</label>
-                                <input type="text" name="gift_{{ gift_idx }}_alloc_share_{{ loop.index0 }}"
-                                       value="{{ alloc.get('share', '100%') }}"
-                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
-                                       placeholder="100%">
-                            </div>
-                            <div>
-                                <label class="block text-xs font-medium text-gray-500 mb-1">Role</label>
-                                <select name="gift_{{ gift_idx }}_alloc_role_{{ loop.index0 }}"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm bg-white">
-                                    <option value="MB" {% if alloc.get('role', 'MB') == 'MB' %}selected{% endif %}>Main Beneficiary</option>
-                                    <option value="SB" {% if alloc.get('role') == 'SB' %}selected{% endif %}>Substitute</option>
-                                </select>
-                            </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-500 mb-1">Share %</label>
+                            <input type="text" name="gift_{{ gift_idx }}_alloc_share_{{ loop.index0 }}"
+                                   value="{{ alloc.get('share', '100%') }}"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm"
+                                   placeholder="100%">
                         </div>
                     </div>
                     {% endfor %}
@@ -399,6 +396,67 @@
                         class="mt-3 w-full px-4 py-2.5 text-sm font-medium border-2 border-dashed border-primary-300 rounded-lg text-primary-600 hover:bg-primary-50 hover:border-primary-400 transition-colors">
                     + Add Another Beneficiary
                 </button>
+            </div>
+
+            <!-- Substitute Beneficiaries -->
+            <div class="border-t border-gray-100 pt-4 mt-4">
+                <h4 class="text-sm font-semibold text-gray-600 mb-2">If a beneficiary does not survive</h4>
+                {% set sub_mode = gift.get('substitute_mode', 'equal') %}
+                <div class="space-y-2 mb-3" id="sub-mode-{{ loop.index0 }}">
+                    <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                        <input type="radio" name="gift_{{ loop.index0 }}_sub_mode" value="equal"
+                               {% if sub_mode == 'equal' %}checked{% endif %}
+                               onchange="toggleSubstituteMode({{ loop.index0 }})"
+                               class="text-primary-600 mr-2">
+                        <span class="text-sm text-gray-700">Give to surviving beneficiaries in <strong>equal shares</strong></span>
+                    </label>
+                    <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                        <input type="radio" name="gift_{{ loop.index0 }}_sub_mode" value="prorata"
+                               {% if sub_mode == 'prorata' %}checked{% endif %}
+                               onchange="toggleSubstituteMode({{ loop.index0 }})"
+                               class="text-primary-600 mr-2">
+                        <span class="text-sm text-gray-700">Give to surviving beneficiaries in <strong>pro-rata shares</strong> (based on original ratio)</span>
+                    </label>
+                    <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                        <input type="radio" name="gift_{{ loop.index0 }}_sub_mode" value="specific"
+                               {% if sub_mode == 'specific' %}checked{% endif %}
+                               onchange="toggleSubstituteMode({{ loop.index0 }})"
+                               class="text-primary-600 mr-2">
+                        <span class="text-sm text-gray-700">Name <strong>specific substitute</strong> beneficiaries</span>
+                    </label>
+                </div>
+                <!-- Specific substitutes panel (shown when "specific" selected) -->
+                <div id="sub-specific-{{ loop.index0 }}" class="{% if sub_mode != 'specific' %}hidden{% endif %} space-y-4 pl-2 border-l-2 border-primary-200">
+                    {% for alloc in allocations %}
+                    {% if alloc.get('role', 'MB') == 'MB' and alloc.get('beneficiary_name') %}
+                    <div class="sub-group bg-blue-50/50 rounded-lg p-3" data-mb-name="{{ alloc.get('beneficiary_name', '') }}">
+                        <p class="text-xs font-semibold text-gray-600 mb-2">If <strong>{{ alloc.get('beneficiary_name', 'Beneficiary') }}</strong> does not survive:</p>
+                        <div class="sub-entries space-y-2">
+                            {% set subs = alloc.get('substitutes', []) %}
+                            {% for sub in subs %}
+                            <div class="sub-entry flex gap-2 items-center">
+                                <select name="gift_{{ gift_idx }}_mb_{{ loop.parent.loop.index0 }}_sub_name_{{ loop.index0 }}"
+                                        class="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-white">
+                                    <option value="">-- Select --</option>
+                                    {% for b in beneficiaries %}
+                                    <option value="{{ b.full_name }}" {% if sub.get('beneficiary_name') == b.full_name %}selected{% endif %}>{{ b.full_name }}</option>
+                                    {% endfor %}
+                                </select>
+                                <input type="text" name="gift_{{ gift_idx }}_mb_{{ loop.parent.loop.index0 }}_sub_share_{{ loop.index0 }}"
+                                       value="{{ sub.get('share', '100%') }}" placeholder="100%"
+                                       class="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm">
+                                <button type="button" onclick="this.closest('.sub-entry').remove(); updateSubCounts({{ gift_idx }})"
+                                        class="text-red-400 hover:text-red-600 text-xs">✕</button>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <input type="hidden" name="gift_{{ gift_idx }}_mb_{{ loop.index0 }}_sub_count" class="sub-count" value="{{ subs|length }}">
+                        <button type="button" onclick="addSubstitute({{ gift_idx }}, {{ loop.index0 }})"
+                                class="mt-2 text-xs text-primary-600 hover:text-primary-800 font-medium">+ Add substitute</button>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
             </div>
         </div>
         {% endfor %}
@@ -474,6 +532,9 @@ function switchGiftType(giftIndex, type) {
     document.getElementById('property-panel-' + giftIndex).classList.toggle('hidden', type !== 'property');
     document.getElementById('financial-panel-' + giftIndex).classList.toggle('hidden', type !== 'financial');
     document.getElementById('other-panel-' + giftIndex).classList.toggle('hidden', type !== 'other');
+    // Show/hide sell property checkbox
+    const sellOpt = document.querySelector(`.gift-sell-option[data-gift-index="${giftIndex}"]`);
+    if (sellOpt) sellOpt.classList.toggle('hidden', type !== 'property');
 }
 
 function toggleOwnership(giftIndex, type) {
@@ -664,7 +725,7 @@ function addGift() {
             <label class="block text-sm font-medium text-gray-700 mb-1">Asset Description (Free Text)</label>
             <textarea name="gift_desc_${idx}" rows="3" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500" placeholder="Describe the asset in your own words"></textarea>
         </div>
-        <div class="flex flex-wrap gap-6 mb-4">
+        <div class="flex flex-wrap gap-4 mb-4">
             <label class="flex items-center">
                 <input type="checkbox" name="gift_trust_${idx}" value="1" class="rounded border-gray-300 text-primary-600 mr-2">
                 <span class="text-sm text-gray-700">Subject to Testamentary Trust</span>
@@ -673,32 +734,28 @@ function addGift() {
                 <input type="checkbox" name="gift_guardian_allowance_${idx}" value="1" class="rounded border-gray-300 text-primary-600 mr-2">
                 <span class="text-sm text-gray-700">Subject to Guardian Allowance</span>
             </label>
+            <label class="flex items-center gift-sell-option" data-gift-index="${idx}">
+                <input type="checkbox" name="gift_sell_property_${idx}" value="1" class="rounded border-gray-300 text-primary-600 mr-2">
+                <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
+            </label>
         </div>
         <div class="border-t border-gray-100 pt-4">
-            <h4 class="text-sm font-semibold text-gray-600 mb-2">Who receives this gift?</h4>
-            <p class="text-xs text-gray-400 mb-3">Select the beneficiary and their share. Shares for main beneficiaries must total 100%.</p>
+            <h4 class="text-sm font-semibold text-gray-600 mb-2">Main Beneficiaries</h4>
+            <p class="text-xs text-gray-400 mb-3">Select beneficiaries and their shares. Shares must total 100%.</p>
             <div class="allocations-container space-y-3" id="allocations-${idx}">
                 <div class="allocation-entry bg-gray-50 rounded-lg p-3 border border-gray-200" data-alloc-index="0">
                     <div class="flex items-center justify-between mb-2">
                         <span class="text-xs font-semibold text-gray-500 uppercase">Beneficiary 1</span>
                     </div>
                     <div class="mb-2">
-                        <select name="gift_${idx}_alloc_name_0" class="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm bg-white">
+                        <select name="gift_${idx}_alloc_name_0" class="alloc-name-select w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm bg-white">
                             ${_buildGiftBenOptions()}
                         </select>
+                        <input type="hidden" name="gift_${idx}_alloc_role_0" value="MB">
                     </div>
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="block text-xs font-medium text-gray-500 mb-1">Share %</label>
-                            <input type="text" name="gift_${idx}_alloc_share_0" value="100%" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm" placeholder="100%">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-medium text-gray-500 mb-1">Role</label>
-                            <select name="gift_${idx}_alloc_role_0" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm bg-white">
-                                <option value="MB">Main Beneficiary</option>
-                                <option value="SB">Substitute</option>
-                            </select>
-                        </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">Share %</label>
+                        <input type="text" name="gift_${idx}_alloc_share_0" value="100%" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm" placeholder="100%">
                     </div>
                 </div>
             </div>
@@ -706,6 +763,24 @@ function addGift() {
             <button type="button" onclick="addAllocation(${idx})" class="mt-3 w-full px-4 py-2.5 text-sm font-medium border-2 border-dashed border-primary-300 rounded-lg text-primary-600 hover:bg-primary-50 hover:border-primary-400 transition-colors">
                 + Add Another Beneficiary
             </button>
+        </div>
+        <div class="border-t border-gray-100 pt-4 mt-4">
+            <h4 class="text-sm font-semibold text-gray-600 mb-2">If a beneficiary does not survive</h4>
+            <div class="space-y-2 mb-3" id="sub-mode-${idx}">
+                <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                    <input type="radio" name="gift_${idx}_sub_mode" value="equal" checked onchange="toggleSubstituteMode(${idx})" class="text-primary-600 mr-2">
+                    <span class="text-sm text-gray-700">Give to surviving beneficiaries in <strong>equal shares</strong></span>
+                </label>
+                <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                    <input type="radio" name="gift_${idx}_sub_mode" value="prorata" onchange="toggleSubstituteMode(${idx})" class="text-primary-600 mr-2">
+                    <span class="text-sm text-gray-700">Give to surviving beneficiaries in <strong>pro-rata shares</strong></span>
+                </label>
+                <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                    <input type="radio" name="gift_${idx}_sub_mode" value="specific" onchange="toggleSubstituteMode(${idx})" class="text-primary-600 mr-2">
+                    <span class="text-sm text-gray-700">Name <strong>specific substitute</strong> beneficiaries</span>
+                </label>
+            </div>
+            <div id="sub-specific-${idx}" class="hidden space-y-4 pl-2 border-l-2 border-primary-200"></div>
         </div>
     </div>`;
     container.insertAdjacentHTML('beforeend', html);
@@ -730,22 +805,14 @@ function addAllocation(giftIdx) {
             <button type="button" onclick="removeAllocation(this)" class="text-red-500 hover:text-red-700 text-xs font-medium">✕ Remove</button>
         </div>
         <div class="mb-2">
-            <select name="gift_${giftIdx}_alloc_name_${idx}" class="w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm bg-white">
+            <select name="gift_${giftIdx}_alloc_name_${idx}" class="alloc-name-select w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm bg-white">
                 ${_buildGiftBenOptions()}
             </select>
+            <input type="hidden" name="gift_${giftIdx}_alloc_role_${idx}" value="MB">
         </div>
-        <div class="grid grid-cols-2 gap-2">
-            <div>
-                <label class="block text-xs font-medium text-gray-500 mb-1">Share %</label>
-                <input type="text" name="gift_${giftIdx}_alloc_share_${idx}" value="50%" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm" placeholder="50%">
-            </div>
-            <div>
-                <label class="block text-xs font-medium text-gray-500 mb-1">Role</label>
-                <select name="gift_${giftIdx}_alloc_role_${idx}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm bg-white">
-                    <option value="MB">Main Beneficiary</option>
-                    <option value="SB">Substitute</option>
-                </select>
-            </div>
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Share %</label>
+            <input type="text" name="gift_${giftIdx}_alloc_share_${idx}" value="50%" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm" placeholder="50%">
         </div>
     </div>`;
     container.insertAdjacentHTML('beforeend', html);
@@ -763,6 +830,42 @@ function removeAllocation(btn) {
     allocCounts[giftIdx]--;
     const countField = giftEntry.querySelector(`input[name="gift_${giftIdx}_alloc_count"]`);
     if (countField) countField.value = allocCounts[giftIdx];
+}
+
+function toggleSubstituteMode(giftIdx) {
+    const mode = document.querySelector(`input[name="gift_${giftIdx}_sub_mode"]:checked`)?.value || 'equal';
+    const panel = document.getElementById('sub-specific-' + giftIdx);
+    if (panel) panel.classList.toggle('hidden', mode !== 'specific');
+}
+
+function addSubstitute(giftIdx, mbIdx) {
+    const group = document.querySelector(`#sub-specific-${giftIdx} .sub-group:nth-child(${mbIdx + 1}) .sub-entries`);
+    if (!group) return;
+    const subIdx = group.querySelectorAll('.sub-entry').length;
+    const html = `
+    <div class="sub-entry flex gap-2 items-center">
+        <select name="gift_${giftIdx}_mb_${mbIdx}_sub_name_${subIdx}"
+                class="flex-1 px-2 py-1.5 border border-gray-300 rounded-lg text-sm bg-white">
+            ${_buildGiftBenOptions()}
+        </select>
+        <input type="text" name="gift_${giftIdx}_mb_${mbIdx}_sub_share_${subIdx}"
+               value="100%" placeholder="100%"
+               class="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm">
+        <button type="button" onclick="this.closest('.sub-entry').remove(); updateSubCounts(${giftIdx})"
+                class="text-red-400 hover:text-red-600 text-xs">✕</button>
+    </div>`;
+    group.insertAdjacentHTML('beforeend', html);
+    updateSubCounts(giftIdx);
+}
+
+function updateSubCounts(giftIdx) {
+    const panel = document.getElementById('sub-specific-' + giftIdx);
+    if (!panel) return;
+    panel.querySelectorAll('.sub-group').forEach((group, mbIdx) => {
+        const count = group.querySelectorAll('.sub-entry').length;
+        const countField = group.querySelector('.sub-count');
+        if (countField) countField.value = count;
+    });
 }
 </script>
 {% endblock %}

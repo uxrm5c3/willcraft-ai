@@ -159,9 +159,21 @@ def format_will_data(will_data) -> str:
                 gift_lines.append(f"    (Subject to Testamentary Trust)")
             if g.subject_to_guardian_allowance:
                 gift_lines.append(f"    (Subject to Guardian Allowance)")
+            if getattr(g, 'sell_property', False) and g.gift_type == 'property':
+                gift_lines.append(f"    SELL DIRECTIVE: Direct executor to sell property and distribute nett proceeds of sale to beneficiaries")
             for a in g.allocations:
-                role_label = "Main Beneficiary" if a.role == "MB" else "Substitute Beneficiary"
-                gift_lines.append(f"    - {a.beneficiary_name}: {a.share} ({role_label})")
+                gift_lines.append(f"    - {a.beneficiary_name}: {a.share} (Main Beneficiary)")
+            # Substitute beneficiary instructions
+            sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
+            if sub_mode == 'equal':
+                gift_lines.append(f"    Substitute: If any beneficiary does not survive, give their share to surviving beneficiaries in EQUAL SHARES")
+            elif sub_mode == 'prorata':
+                gift_lines.append(f"    Substitute: If any beneficiary does not survive, give their share to surviving beneficiaries in PRO-RATA (same ratio as original shares)")
+            elif sub_mode == 'specific':
+                for a in g.allocations:
+                    if a.substitutes:
+                        sub_parts = [f"{s.beneficiary_name} ({s.share})" for s in a.substitutes]
+                        gift_lines.append(f"    Substitute for {a.beneficiary_name}: {', '.join(sub_parts)}")
         sections.append(f"""
 ## SPECIFIC GIFTS / BEQUESTS
 {chr(10).join(gift_lines)}""")
