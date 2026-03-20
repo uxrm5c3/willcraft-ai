@@ -3643,6 +3643,9 @@ def probate_step1(probate_id):
         probate.time_of_death = request.form.get('time_of_death', '').strip()
         probate.place_of_death = request.form.get('place_of_death', '').strip()
         probate.estate_value_estimate = request.form.get('estate_value_estimate', '').strip()
+        doc_id = request.form.get('death_cert_document_id', '').strip()
+        if doc_id:
+            probate.death_cert_document_id = doc_id
         # LA-specific fields
         if probate.application_type == 'la':
             probate.deceased_name = request.form.get('deceased_name', '').strip()
@@ -3826,38 +3829,88 @@ def probate_step5(probate_id):
         'created_at': d.created_at.strftime('%d %b %Y, %I:%M %p') if d.created_at else '',
     } for d in receipt_docs]
 
-    # Build filing checklist — auto-detect from probate/will data
+    # Build filing checklist — check actual data completeness for form generation
     form_data = json.loads(probate.form_data_json or '{}')
     manual_checks = form_data.get('filing_checklist', {})
     assets_list = json.loads(probate.assets_data or '[]')
     has_property = any(a.get('asset_type') == 'property' for a in assets_list)
+    property_assets = [a for a in assets_list if a.get('asset_type') == 'property']
+    has_property_docs = all(a.get('_doc_id') for a in property_assets) if property_assets else False
     exec_nric = (exec_data.nric_passport if exec_data and hasattr(exec_data, 'nric_passport') else '') or ''
+    testator = ctx.get('testator')
+
+    # Death cert info complete?
+    death_info_ok = bool(probate.date_of_death and probate.place_of_death)
+    death_missing = []
+    if not probate.date_of_death:
+        death_missing.append('Date of death')
+    if not probate.place_of_death:
+        death_missing.append('Place of death')
+    if not probate.death_cert_number:
+        death_missing.append('Death cert number')
+
+    # Assets info complete?
+    assets_ok = len(assets_list) > 0
+    assets_missing = [] if assets_ok else ['No assets entered']
+
+    # Will info complete?
+    will_ok = bool(will_record)
+    will_missing = [] if will_ok else ['No approved will linked']
+
+    # Beneficiary info?
+    beneficiaries = json.loads(will_record.step5_data or '[]') if will_record else []
+    ben_ok = len(beneficiaries) > 0
+    ben_missing = [] if ben_ok else ['No beneficiaries in will']
+
+    # Executor info?
+    exec_ok = bool(exec_nric and exec_data and exec_data.full_name)
+    exec_missing = []
+    if not exec_data or not exec_data.full_name:
+        exec_missing.append('Executor name')
+    if not exec_nric:
+        exec_missing.append('Executor NRIC')
+
+    # Property title info? Manual key-in (title_number) is sufficient
+    prop_missing = []
+    if has_property:
+        for i, p in enumerate(property_assets):
+            if not p.get('title_number'):
+                prop_missing.append(f'Property {i+1}: Title number missing')
+            if not p.get('description'):
+                prop_missing.append(f'Property {i+1}: Description missing')
+    prop_ok = has_property and not prop_missing
 
     filing_checklist = [
-        {'key': 'death_cert', 'label': 'Certified copy of <strong>Death Certificate</strong> (Sijil Kematian)',
+        {'key': 'death_cert', 'label': '<strong>Death Certificate</strong> — date, place, cert number',
          'exhibit': f'{exhibit_prefix}-1',
-         'auto': bool(probate.death_cert_document_id),
-         'checked': manual_checks.get('death_cert', bool(probate.death_cert_document_id))},
-        {'key': 'assets_schedule', 'label': '<strong>Schedule of Assets &amp; Liabilities</strong> (Jadual Aset)',
+         'complete': death_info_ok and not death_missing,
+         'missing': death_missing,
+         'checked': manual_checks.get('death_cert', death_info_ok)},
+        {'key': 'assets_schedule', 'label': '<strong>Schedule of Assets &amp; Liabilities</strong>',
          'exhibit': f'{exhibit_prefix}-2',
-         'auto': len(assets_list) > 0,
-         'checked': manual_checks.get('assets_schedule', len(assets_list) > 0)},
+         'complete': assets_ok,
+         'missing': assets_missing,
+         'checked': manual_checks.get('assets_schedule', assets_ok)},
         {'key': 'original_will', 'label': '<strong>Original Will</strong> (certified true copy)',
          'exhibit': f'{exhibit_prefix}-3',
-         'auto': bool(will_record),
-         'checked': manual_checks.get('original_will', bool(will_record))},
+         'complete': will_ok,
+         'missing': will_missing,
+         'checked': manual_checks.get('original_will', will_ok)},
         {'key': 'beneficiary_list', 'label': '<strong>Beneficiary List</strong>',
          'exhibit': f'{exhibit_prefix}-4',
-         'auto': bool(will_record),
-         'checked': manual_checks.get('beneficiary_list', bool(will_record))},
-        {'key': 'executor_nric', 'label': "Executor's <strong>NRIC</strong> (copy)",
+         'complete': ben_ok,
+         'missing': ben_missing,
+         'checked': manual_checks.get('beneficiary_list', ben_ok)},
+        {'key': 'executor_nric', 'label': 'Executor NRIC &amp; details',
          'exhibit': None,
-         'auto': bool(exec_nric),
-         'checked': manual_checks.get('executor_nric', bool(exec_nric))},
+         'complete': exec_ok,
+         'missing': exec_missing,
+         'checked': manual_checks.get('executor_nric', exec_ok)},
         {'key': 'property_titles', 'label': '<strong>Property title documents</strong> (Hakmilik)',
          'exhibit': None, 'conditional': True, 'condition_met': has_property,
-         'auto': False,
-         'checked': manual_checks.get('property_titles', False)},
+         'complete': prop_ok,
+         'missing': prop_missing,
+         'checked': manual_checks.get('property_titles', prop_ok)},
     ]
 
     ctx['probate_step'] = 5
@@ -3868,6 +3921,7 @@ def probate_step5(probate_id):
     ctx['receipts'] = receipts
     ctx['filing_checklist'] = filing_checklist
     ctx['has_property'] = has_property
+    ctx['beneficiaries'] = beneficiaries
     return render_template('probate/step5_review.html', **ctx)
 
 

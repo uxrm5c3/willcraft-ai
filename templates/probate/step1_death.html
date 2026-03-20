@@ -21,6 +21,7 @@
 
     <!-- Form -->
     <form method="POST" action="/probate/{{ probate_id }}/step/1" id="death-form">
+        <input type="hidden" name="death_cert_document_id" id="death-cert-doc-id" value="{{ probate.death_cert_document_id or '' }}">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">Death Certificate Number</label>
@@ -296,6 +297,7 @@ async function ocrDeathCert() {
         if (data.ok && data.extracted) {
             ocrDocumentId = data.document_id;
             ocrExtractedData = data.extracted;
+            document.getElementById('death-cert-doc-id').value = data.document_id;
 
             // Show verification modal
             document.getElementById('ocr-doc-iframe').src = '/api/documents/' + data.document_id;
