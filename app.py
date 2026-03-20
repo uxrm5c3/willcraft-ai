@@ -3769,7 +3769,7 @@ def api_ocr_death_cert():
     except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
 
-    abs_path = os.path.join(DATA_DIR, rel_path)
+    abs_path = os.path.join(UPLOAD_DIR, rel_path)
 
     from ai.ocr import extract_death_cert_data
     try:
