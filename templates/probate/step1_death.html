@@ -21,11 +21,40 @@
 
     <!-- OCR Confirmation Banner (hidden by default) -->
     <div id="ocr-confirm-banner" class="hidden mb-6 p-4 bg-amber-50 border border-amber-300 rounded-lg">
-        <div class="flex items-center gap-2 mb-1">
-            <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
-            <span class="text-sm font-semibold text-amber-800">AI-extracted data below. Please verify before saving.</span>
+        <div class="flex items-center justify-between mb-1">
+            <div class="flex items-center gap-2">
+                <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+                <span class="text-sm font-semibold text-amber-800">AI-extracted data below. Please verify before saving.</span>
+            </div>
+            <button type="button" id="view-cert-btn" onclick="viewDeathCert()" class="px-3 py-1 bg-amber-600 text-white text-xs font-medium rounded-lg hover:bg-amber-700 flex items-center gap-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                View Certificate
+            </button>
         </div>
         <p class="text-xs text-amber-600">OCR may contain errors. Check each field carefully, especially names and ID numbers.</p>
+    </div>
+
+    <!-- Side-by-side viewer modal (hidden by default) -->
+    <div id="cert-viewer-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col">
+            <div class="flex items-center justify-between p-4 border-b">
+                <h3 class="text-sm font-bold text-gray-800">Verify Extracted Data Against Certificate</h3>
+                <button onclick="closeCertViewer()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                </button>
+            </div>
+            <div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-0 overflow-hidden">
+                <!-- Left: Certificate image/PDF -->
+                <div class="border-r overflow-auto bg-gray-100 p-2 flex items-start justify-center">
+                    <iframe id="cert-iframe" class="w-full h-full min-h-[500px] rounded" style="border:none;"></iframe>
+                </div>
+                <!-- Right: Extracted data summary -->
+                <div class="overflow-auto p-4">
+                    <h4 class="text-xs font-semibold text-gray-500 uppercase mb-3">Extracted Fields</h4>
+                    <div id="cert-extracted-fields" class="space-y-3"></div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Form -->
@@ -137,6 +166,8 @@
 <script>
 const fileInput = document.getElementById('death-cert-file');
 const ocrBtn = document.getElementById('ocr-btn');
+let ocrDocumentId = null;
+let ocrExtractedData = null;
 
 fileInput.addEventListener('change', () => {
     ocrBtn.disabled = !fileInput.files.length;
@@ -158,6 +189,8 @@ async function ocrDeathCert() {
 
         if (data.ok && data.extracted) {
             const ex = data.extracted;
+            ocrDocumentId = data.document_id;
+            ocrExtractedData = ex;
             // Fill form fields with extracted data
             const fields = {
                 'death_cert_number': ex.death_cert_number,
@@ -172,7 +205,7 @@ async function ocrDeathCert() {
                 }
             }
             document.getElementById('ocr-confirm-banner').classList.remove('hidden');
-            document.getElementById('ocr-status').textContent = 'Data extracted. Please verify below.';
+            document.getElementById('ocr-status').innerHTML = '<span class="text-green-600 font-medium">&#10003; ' + file.name + '</span> — Data extracted. Please verify below.';
         } else {
             document.getElementById('ocr-status').textContent = data.error || 'Could not extract data. Please enter manually.';
         }
@@ -182,5 +215,44 @@ async function ocrDeathCert() {
         ocrBtn.disabled = false;
     }
 }
+
+function viewDeathCert() {
+    if (!ocrDocumentId) return;
+    const modal = document.getElementById('cert-viewer-modal');
+    const iframe = document.getElementById('cert-iframe');
+    iframe.src = '/api/documents/' + ocrDocumentId;
+
+    // Build extracted fields summary
+    const fieldsDiv = document.getElementById('cert-extracted-fields');
+    const fieldLabels = {
+        'death_cert_number': 'Death Certificate Number',
+        'full_name': 'Full Name',
+        'nric_number': 'NRIC Number',
+        'date_of_death': 'Date of Death',
+        'time_of_death': 'Time of Death',
+        'place_of_death': 'Place of Death',
+    };
+    let html = '';
+    for (const [key, label] of Object.entries(fieldLabels)) {
+        const val = ocrExtractedData[key] || '—';
+        html += `<div class="p-2 bg-gray-50 rounded-lg">
+            <div class="text-xs text-gray-500 mb-0.5">${label}</div>
+            <div class="text-sm font-medium text-gray-800">${val}</div>
+        </div>`;
+    }
+    fieldsDiv.innerHTML = html;
+    modal.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+function closeCertViewer() {
+    document.getElementById('cert-viewer-modal').classList.add('hidden');
+    document.body.style.overflow = '';
+}
+
+// Close modal on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeCertViewer();
+});
 </script>
 {% endblock %}
