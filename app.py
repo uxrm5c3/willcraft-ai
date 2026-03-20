@@ -3450,6 +3450,53 @@ MALAYSIAN_STATES = [
 ]
 
 
+def _validate_probate_data(probate, will_record, recommendations):
+    """Check for missing required data per form and return warnings."""
+    warnings = {}  # form_code -> list of missing field descriptions
+    rec_codes = {r['form_code'] for r in recommendations if r.get('recommended')}
+
+    for code in rec_codes:
+        missing = []
+        # Common: death details
+        if code in ('doc01', 'doc02', 'doc03'):
+            if not probate.date_of_death:
+                missing.append('Date of Death (Step 1)')
+            if not probate.place_of_death:
+                missing.append('Place of Death (Step 1)')
+        if code == 'doc02':
+            if not probate.death_cert_number:
+                missing.append('Death Certificate Number (Step 1)')
+        # Court/firm
+        if code in ('doc01', 'doc08'):
+            if not probate.court_location:
+                missing.append('Court Location (Step 2)')
+            if not probate.firm_name:
+                missing.append('Firm Name (Step 2)')
+        # Witnesses
+        if code == 'doc04':
+            if not probate.witness1_name:
+                missing.append('Witness 1 Name (Step 3)')
+            if not probate.witness1_nric:
+                missing.append('Witness 1 NRIC (Step 3)')
+            if not probate.witness1_address:
+                missing.append('Witness 1 Address (Step 3)')
+        if code == 'doc05':
+            if not probate.witness2_name:
+                missing.append('Witness 2 Name (Step 3)')
+            if not probate.witness2_nric:
+                missing.append('Witness 2 NRIC (Step 3)')
+            if not probate.witness2_address:
+                missing.append('Witness 2 Address (Step 3)')
+        # Assets
+        if code == 'doc06':
+            assets = json.loads(probate.assets_data or '[]')
+            if not assets:
+                missing.append('No assets entered (Step 4)')
+        if missing:
+            warnings[code] = missing
+    return warnings
+
+
 def _get_probate_context(probate_id):
     """Load probate app + will data for template context."""
     probate = db.session.get(ProbateApplication, probate_id)
@@ -3647,9 +3694,64 @@ def probate_step3(probate_id):
     return render_template('probate/step3_witnesses.html', **ctx)
 
 
-@app.route('/probate/<probate_id>/step/4', methods=['GET'])
+@app.route('/probate/<probate_id>/step/4', methods=['GET', 'POST'])
 @login_required
 def probate_step4(probate_id):
+    """Step 4: Assets & Liabilities schedule."""
+    probate, will_record, ctx = _get_probate_context(probate_id)
+    if not probate:
+        flash('Probate application not found.', 'error')
+        return redirect(url_for('probate_list'))
+
+    if request.method == 'POST':
+        assets_json = request.form.get('assets_json', '[]')
+        try:
+            assets = json.loads(assets_json)
+        except json.JSONDecodeError:
+            assets = []
+        probate.assets_data = json.dumps(assets)
+        probate.updated_at = datetime.utcnow()
+        db.session.commit()
+        return redirect(f'/probate/{probate_id}/step/5')
+
+    # Pre-populate from will gifts if assets_data is empty and will exists
+    existing_assets = json.loads(probate.assets_data or '[]')
+    if not existing_assets and will_record:
+        gifts = json.loads(will_record.step5_data or '[]')
+        for g in gifts:
+            if g.get('gift_type') == 'property':
+                details = g.get('property_details', {})
+                existing_assets.append({
+                    'asset_type': 'property',
+                    'description': details.get('address', g.get('description', '')),
+                    'title_number': details.get('title_number', ''),
+                    'lot_number': details.get('lot_number', ''),
+                    'mukim': details.get('mukim', ''),
+                    'value': '',
+                })
+            elif g.get('gift_type') == 'financial':
+                fin = g.get('financial_details', {})
+                existing_assets.append({
+                    'asset_type': 'bank',
+                    'bank_name': fin.get('institution', ''),
+                    'account_number': fin.get('account_number', ''),
+                    'value': '',
+                })
+
+    # Build exhibit prefix
+    exec_data = ctx.get('executor')
+    exec_name = exec_data.full_name if exec_data and hasattr(exec_data, 'full_name') else ''
+    exhibit_prefix = ''.join(w[0] for w in exec_name.split() if w) if exec_name else 'APP'
+
+    ctx['probate_step'] = 4
+    ctx['assets_json'] = json.dumps(existing_assets)
+    ctx['exhibit_prefix'] = exhibit_prefix
+    return render_template('probate/step4_assets.html', **ctx)
+
+
+@app.route('/probate/<probate_id>/step/5', methods=['GET'])
+@login_required
+def probate_step5(probate_id):
     probate, will_record, ctx = _get_probate_context(probate_id)
     if not probate:
         flash('Probate application not found.', 'error')
@@ -3684,11 +3786,15 @@ def probate_step4(probate_id):
     exec_name = exec_data.full_name if exec_data and hasattr(exec_data, 'full_name') else ''
     exhibit_prefix = ''.join(w[0] for w in exec_name.split() if w) if exec_name else 'APP'
 
-    ctx['probate_step'] = 4
+    # Validation: check for missing required info per form
+    validation_warnings = _validate_probate_data(probate, will_record, recommendations)
+
+    ctx['probate_step'] = 5
     ctx['recommendations'] = recommendations
     ctx['generated_forms'] = gen_list
     ctx['exhibit_prefix'] = exhibit_prefix
-    return render_template('probate/step4_review.html', **ctx)
+    ctx['validation_warnings'] = validation_warnings
+    return render_template('probate/step5_review.html', **ctx)
 
 
 @app.route('/probate/<probate_id>/generate', methods=['POST'])
@@ -3702,7 +3808,7 @@ def probate_generate(probate_id):
     selected_codes = request.form.getlist('forms')
     if not selected_codes:
         flash('Please select at least one form to generate.', 'error')
-        return redirect(f'/probate/{probate_id}/step/4')
+        return redirect(f'/probate/{probate_id}/step/5')
 
     # Build template paths map
     templates = ProbateFormTemplate.query.all()
@@ -3741,7 +3847,7 @@ def probate_generate(probate_id):
     db.session.commit()
 
     flash(f'Successfully generated {len(results)} probate form(s).', 'success')
-    return redirect(f'/probate/{probate_id}/step/4')
+    return redirect(f'/probate/{probate_id}/step/5')
 
 
 @app.route('/probate/<probate_id>/download/<form_code>')
@@ -3750,7 +3856,7 @@ def probate_download(probate_id, form_code):
     gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
     if not gf or not os.path.exists(gf.file_path):
         flash('Form not found.', 'error')
-        return redirect(f'/probate/{probate_id}/step/4')
+        return redirect(f'/probate/{probate_id}/step/5')
     return send_file(gf.file_path, as_attachment=True, download_name=os.path.basename(gf.file_path))
 
 
@@ -3760,7 +3866,7 @@ def probate_download_all(probate_id):
     forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
     if not forms:
         flash('No generated forms found.', 'error')
-        return redirect(f'/probate/{probate_id}/step/4')
+        return redirect(f'/probate/{probate_id}/step/5')
 
     from documents.probate_generator import create_zip
     zip_path = os.path.join(tempfile.gettempdir(), f'probate_{probate_id[:8]}.zip')

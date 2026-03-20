@@ -1,0 +1,302 @@
+{% extends "probate/layout.html" %}
+
+{% block step_content %}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+    <h2 class="text-lg font-bold text-gray-800 mb-1">Step 4: Schedule of Assets & Liabilities</h2>
+    <p class="text-sm text-gray-500 mb-6">List all assets and liabilities of the deceased. This will auto-fill the Assets & Liabilities Schedule (Exhibit {{ exhibit_prefix }}-2).</p>
+
+    <form method="POST" action="/probate/{{ probate_id }}/step/4" id="assets-form">
+        <input type="hidden" name="assets_json" id="assets-json-input">
+
+        <!-- Properties -->
+        <div class="mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+                    Immovable Properties (Harta Tak Alih)
+                </h3>
+                <button type="button" onclick="addAsset('property')" class="px-3 py-1 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">+ Add Property</button>
+            </div>
+            <div id="property-list" class="space-y-3"></div>
+            <div id="property-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No properties added yet.</div>
+        </div>
+
+        <!-- Bank Accounts -->
+        <div class="mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+                    Bank Accounts (Akaun Bank)
+                </h3>
+                <button type="button" onclick="addAsset('bank')" class="px-3 py-1 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">+ Add Account</button>
+            </div>
+            <div id="bank-list" class="space-y-3"></div>
+            <div id="bank-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No bank accounts added yet.</div>
+        </div>
+
+        <!-- Vehicles -->
+        <div class="mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h8m-8 4h4m6 4H6a2 2 0 01-2-2V6a2 2 0 012-2h12a2 2 0 012 2v7a2 2 0 01-2 2z"/></svg>
+                    Motor Vehicles (Kenderaan Bermotor)
+                </h3>
+                <button type="button" onclick="addAsset('vehicle')" class="px-3 py-1 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">+ Add Vehicle</button>
+            </div>
+            <div id="vehicle-list" class="space-y-3"></div>
+            <div id="vehicle-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No vehicles added yet.</div>
+        </div>
+
+        <!-- Other Assets -->
+        <div class="mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+                    Other Assets (Aset Lain)
+                </h3>
+                <button type="button" onclick="addAsset('other')" class="px-3 py-1 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">+ Add Asset</button>
+            </div>
+            <p class="text-xs text-gray-400 mb-2">Insurance policies, EPF, shares, jewellery, etc.</p>
+            <div id="other-list" class="space-y-3"></div>
+            <div id="other-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No other assets added yet.</div>
+        </div>
+
+        <!-- Liabilities -->
+        <div class="mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    Liabilities (Liabiliti/Hutang)
+                </h3>
+                <button type="button" onclick="addAsset('liability')" class="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700">+ Add Liability</button>
+            </div>
+            <div id="liability-list" class="space-y-3"></div>
+            <div id="liability-empty" class="text-xs text-gray-400 italic p-3 bg-gray-50 rounded-lg">No liabilities added.</div>
+        </div>
+
+        <!-- Supporting Documents Upload -->
+        <div class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <h3 class="text-sm font-semibold text-blue-800 mb-2 flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                Supporting Documents (Optional)
+            </h3>
+            <p class="text-xs text-blue-600 mb-3">Upload property title documents (Hakmilik), bank statements, or vehicle registration cards as reference.</p>
+            <div class="flex items-center gap-3">
+                <input type="file" id="support-doc-file" accept="image/*,.pdf" multiple
+                       class="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-700">
+                <button type="button" onclick="uploadSupportDoc()" id="upload-doc-btn" class="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50" disabled>
+                    Upload
+                </button>
+            </div>
+            <div id="uploaded-docs" class="mt-2 space-y-1"></div>
+        </div>
+
+        <div class="flex justify-between mt-6">
+            <a href="/probate/{{ probate_id }}/step/3" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
+            <button type="submit" class="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
+                Save & Next
+            </button>
+        </div>
+    </form>
+</div>
+
+<script>
+/* ── Asset data store ── */
+let assets = {{ assets_json | safe }};
+
+/* ── Templates for each asset type ── */
+function assetFormHtml(type, idx, data) {
+    data = data || {};
+    const rmBtn = `<button type="button" onclick="removeAsset('${type}', ${idx})" class="text-red-400 hover:text-red-600 ml-2" title="Remove"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></button>`;
+
+    if (type === 'property') {
+        return `<div class="p-3 bg-white border border-gray-200 rounded-lg" data-type="${type}" data-idx="${idx}">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-gray-500">Property ${idx + 1}</span>${rmBtn}
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div class="md:col-span-2"><label class="block text-xs text-gray-500 mb-0.5">Description / Address</label>
+                    <textarea data-field="description" rows="2" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., No. 12, Jalan Mewah 1, Taman Mewah, 81200 Johor Bahru">${data.description || ''}</textarea></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Title Number (Hakmilik)</label>
+                    <input type="text" data-field="title_number" value="${data.title_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., H.S.(D) 12345"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Lot Number</label>
+                    <input type="text" data-field="lot_number" value="${data.lot_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Lot 1234"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Mukim / District</label>
+                    <input type="text" data-field="mukim" value="${data.mukim || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Mukim Plentong"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
+                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 500,000"></div>
+            </div>
+        </div>`;
+    }
+    if (type === 'bank') {
+        return `<div class="p-3 bg-white border border-gray-200 rounded-lg" data-type="${type}" data-idx="${idx}">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-gray-500">Account ${idx + 1}</span>${rmBtn}
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div><label class="block text-xs text-gray-500 mb-0.5">Bank Name</label>
+                    <input type="text" data-field="bank_name" value="${data.bank_name || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Maybank"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Account Number</label>
+                    <input type="text" data-field="account_number" value="${data.account_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 1234-5678-9012"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Balance (RM)</label>
+                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 50,000"></div>
+            </div>
+        </div>`;
+    }
+    if (type === 'vehicle') {
+        return `<div class="p-3 bg-white border border-gray-200 rounded-lg" data-type="${type}" data-idx="${idx}">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-gray-500">Vehicle ${idx + 1}</span>${rmBtn}
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div><label class="block text-xs text-gray-500 mb-0.5">Description (Make/Model)</label>
+                    <input type="text" data-field="description" value="${data.description || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Toyota Vios 2020"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Registration Number</label>
+                    <input type="text" data-field="reg_number" value="${data.reg_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., JQK 1234"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Engine Number</label>
+                    <input type="text" data-field="engine_number" value="${data.engine_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="Optional"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Chassis Number</label>
+                    <input type="text" data-field="chassis_number" value="${data.chassis_number || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="Optional"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
+                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 30,000"></div>
+            </div>
+        </div>`;
+    }
+    if (type === 'other') {
+        return `<div class="p-3 bg-white border border-gray-200 rounded-lg" data-type="${type}" data-idx="${idx}">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-gray-500">Asset ${idx + 1}</span>${rmBtn}
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div><label class="block text-xs text-gray-500 mb-0.5">Type</label>
+                    <select data-field="sub_type" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+                        <option value="epf" ${data.sub_type==='epf'?'selected':''}>EPF / KWSP</option>
+                        <option value="insurance" ${data.sub_type==='insurance'?'selected':''}>Insurance Policy</option>
+                        <option value="shares" ${data.sub_type==='shares'?'selected':''}>Shares / Unit Trust</option>
+                        <option value="jewellery" ${data.sub_type==='jewellery'?'selected':''}>Jewellery</option>
+                        <option value="other" ${data.sub_type==='other'||!data.sub_type?'selected':''}>Other</option>
+                    </select></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Description</label>
+                    <input type="text" data-field="description" value="${data.description || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Policy No. ABC123"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Estimated Value (RM)</label>
+                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 10,000"></div>
+            </div>
+        </div>`;
+    }
+    if (type === 'liability') {
+        return `<div class="p-3 bg-white border border-red-200 rounded-lg" data-type="${type}" data-idx="${idx}">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-red-500">Liability ${idx + 1}</span>${rmBtn}
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div><label class="block text-xs text-gray-500 mb-0.5">Type</label>
+                    <select data-field="sub_type" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm">
+                        <option value="mortgage" ${data.sub_type==='mortgage'?'selected':''}>Housing Loan / Mortgage</option>
+                        <option value="car_loan" ${data.sub_type==='car_loan'?'selected':''}>Car Loan</option>
+                        <option value="personal_loan" ${data.sub_type==='personal_loan'?'selected':''}>Personal Loan</option>
+                        <option value="credit_card" ${data.sub_type==='credit_card'?'selected':''}>Credit Card</option>
+                        <option value="other" ${data.sub_type==='other'||!data.sub_type?'selected':''}>Other</option>
+                    </select></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Description</label>
+                    <input type="text" data-field="description" value="${data.description || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., Maybank housing loan"></div>
+                <div><label class="block text-xs text-gray-500 mb-0.5">Amount Owed (RM)</label>
+                    <input type="text" data-field="value" value="${data.value || ''}" class="asset-field w-full px-2 py-1.5 border border-gray-300 rounded text-sm" placeholder="e.g., 200,000"></div>
+            </div>
+        </div>`;
+    }
+}
+
+/* ── Render all assets ── */
+function renderAssets() {
+    const types = ['property', 'bank', 'vehicle', 'other', 'liability'];
+    types.forEach(type => {
+        const list = document.getElementById(type + '-list');
+        const empty = document.getElementById(type + '-empty');
+        const items = assets.filter(a => a.asset_type === type);
+        list.innerHTML = '';
+        items.forEach((item, i) => {
+            list.insertAdjacentHTML('beforeend', assetFormHtml(type, i, item));
+        });
+        empty.style.display = items.length ? 'none' : 'block';
+    });
+}
+
+function addAsset(type) {
+    assets.push({ asset_type: type });
+    renderAssets();
+    // Scroll to new item
+    const list = document.getElementById(type + '-list');
+    list.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function removeAsset(type, idx) {
+    const items = assets.filter(a => a.asset_type === type);
+    const item = items[idx];
+    const realIdx = assets.indexOf(item);
+    if (realIdx >= 0) assets.splice(realIdx, 1);
+    renderAssets();
+}
+
+/* ── Collect field data from DOM ── */
+function collectAssetData() {
+    const types = ['property', 'bank', 'vehicle', 'other', 'liability'];
+    const result = [];
+    types.forEach(type => {
+        const cards = document.querySelectorAll(`[data-type="${type}"]`);
+        cards.forEach(card => {
+            const item = { asset_type: type };
+            card.querySelectorAll('.asset-field').forEach(field => {
+                const key = field.dataset.field;
+                item[key] = field.value.trim();
+            });
+            result.push(item);
+        });
+    });
+    return result;
+}
+
+/* ── Form submit ── */
+document.getElementById('assets-form').addEventListener('submit', function(e) {
+    assets = collectAssetData();
+    document.getElementById('assets-json-input').value = JSON.stringify(assets);
+});
+
+/* ── Supporting document upload ── */
+const supportFileInput = document.getElementById('support-doc-file');
+const uploadDocBtn = document.getElementById('upload-doc-btn');
+supportFileInput.addEventListener('change', () => { uploadDocBtn.disabled = !supportFileInput.files.length; });
+
+async function uploadSupportDoc() {
+    const files = supportFileInput.files;
+    if (!files.length) return;
+    uploadDocBtn.disabled = true;
+    uploadDocBtn.textContent = 'Uploading...';
+    for (const file of files) {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const resp = await fetch('/api/ocr/nric', { method: 'POST', body: formData });
+            const data = await resp.json();
+            const docId = data.document_id;
+            const docsDiv = document.getElementById('uploaded-docs');
+            docsDiv.insertAdjacentHTML('beforeend', `
+                <div class="flex items-center gap-2 text-xs text-gray-600">
+                    <span class="text-green-500">&#10003;</span>
+                    <span>${file.name}</span>
+                    ${docId ? `<a href="/api/documents/${docId}" target="_blank" class="text-blue-600 hover:underline">View</a>` : ''}
+                </div>
+            `);
+        } catch (err) {
+            const docsDiv = document.getElementById('uploaded-docs');
+            docsDiv.insertAdjacentHTML('beforeend', `<div class="text-xs text-red-500">${file.name}: upload failed</div>`);
+        }
+    }
+    uploadDocBtn.disabled = false;
+    uploadDocBtn.textContent = 'Upload';
+    supportFileInput.value = '';
+}
+
+/* ── Initial render ── */
+renderAssets();
+</script>
+{% endblock %}

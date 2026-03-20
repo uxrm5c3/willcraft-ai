@@ -222,15 +222,68 @@ def build_replacements(probate_app, will_record):
             '{{PROPERTY2_MUKIM}}': details.get('mukim', ''),
         })
 
-    # Vehicle/bank placeholders (for Doc 06)
-    replacements.update({
-        '{{VEHICLE1_DESC}}': '',
-        '{{VEHICLE1_REGNO}}': '',
-        '{{VEHICLE1_ENGINE}}': '',
-        '{{VEHICLE1_CHASSIS}}': '',
-        '{{BANK1_ACCNO}}': '',
-        '{{BANK2_ACCNO}}': '',
-    })
+    # Populate from assets_data (Step 4 schedule)
+    all_assets = json.loads(probate_app.assets_data or '[]')
+
+    # Bank accounts
+    banks = [a for a in all_assets if a.get('asset_type') == 'bank']
+    for i, b in enumerate(banks[:5], 1):
+        replacements[f'{{{{BANK{i}_NAME}}}}'] = b.get('bank_name', '')
+        replacements[f'{{{{BANK{i}_ACCNO}}}}'] = b.get('account_number', '')
+        replacements[f'{{{{BANK{i}_VALUE}}}}'] = b.get('value', '')
+    # Ensure empty placeholders for unused slots
+    for i in range(1, 6):
+        for suffix in ('_NAME', '_ACCNO', '_VALUE'):
+            key = f'{{{{BANK{i}{suffix}}}}}'
+            if key not in replacements:
+                replacements[key] = ''
+
+    # Vehicles
+    vehicles = [a for a in all_assets if a.get('asset_type') == 'vehicle']
+    for i, v in enumerate(vehicles[:3], 1):
+        replacements[f'{{{{VEHICLE{i}_DESC}}}}'] = v.get('description', '')
+        replacements[f'{{{{VEHICLE{i}_REGNO}}}}'] = v.get('reg_number', '')
+        replacements[f'{{{{VEHICLE{i}_ENGINE}}}}'] = v.get('engine_number', '')
+        replacements[f'{{{{VEHICLE{i}_CHASSIS}}}}'] = v.get('chassis_number', '')
+        replacements[f'{{{{VEHICLE{i}_VALUE}}}}'] = v.get('value', '')
+    for i in range(1, 4):
+        for suffix in ('_DESC', '_REGNO', '_ENGINE', '_CHASSIS', '_VALUE'):
+            key = f'{{{{VEHICLE{i}{suffix}}}}}'
+            if key not in replacements:
+                replacements[key] = ''
+
+    # Other assets (EPF, insurance, shares, etc.)
+    others = [a for a in all_assets if a.get('asset_type') == 'other']
+    for i, o in enumerate(others[:5], 1):
+        replacements[f'{{{{OTHER{i}_DESC}}}}'] = o.get('description', '')
+        replacements[f'{{{{OTHER{i}_VALUE}}}}'] = o.get('value', '')
+    for i in range(1, 6):
+        for suffix in ('_DESC', '_VALUE'):
+            key = f'{{{{OTHER{i}{suffix}}}}}'
+            if key not in replacements:
+                replacements[key] = ''
+
+    # Liabilities
+    liabilities = [a for a in all_assets if a.get('asset_type') == 'liability']
+    for i, l in enumerate(liabilities[:5], 1):
+        replacements[f'{{{{LIABILITY{i}_DESC}}}}'] = l.get('description', '')
+        replacements[f'{{{{LIABILITY{i}_VALUE}}}}'] = l.get('value', '')
+    for i in range(1, 6):
+        for suffix in ('_DESC', '_VALUE'):
+            key = f'{{{{LIABILITY{i}{suffix}}}}}'
+            if key not in replacements:
+                replacements[key] = ''
+
+    # Also update property placeholders from assets_data if not already set from will
+    asset_properties = [a for a in all_assets if a.get('asset_type') == 'property']
+    if asset_properties and '{{PROPERTY1_TITLE}}' not in replacements:
+        p = asset_properties[0]
+        replacements.update({
+            '{{PROPERTY1_TITLE}}': p.get('title_number', ''),
+            '{{PROPERTY1_LOT}}': p.get('lot_number', ''),
+            '{{PROPERTY1_MUKIM}}': p.get('mukim', ''),
+            '{{PROPERTY1_ADDRESS}}': p.get('description', ''),
+        })
 
     return replacements
 
@@ -242,14 +295,17 @@ def recommend_forms(will_record, probate_app=None):
     """
     is_la = probate_app and probate_app.application_type == 'la'
 
+    # Check assets_data first (Step 4 schedule), fallback to will gifts
+    assets_data = json.loads(probate_app.assets_data or '[]') if probate_app else []
+    has_property_from_assets = any(a.get('asset_type') == 'property' for a in assets_data)
+
     if is_la:
-        assets = json.loads(probate_app.assets_data or '[]')
-        has_property = any(a.get('asset_type') == 'property' for a in assets)
+        has_property = has_property_from_assets
     elif will_record:
         gifts = json.loads(will_record.step5_data or '[]')
-        has_property = any(g.get('gift_type') == 'property' for g in gifts)
+        has_property = has_property_from_assets or any(g.get('gift_type') == 'property' for g in gifts)
     else:
-        has_property = False
+        has_property = has_property_from_assets
 
     recommendations = [
         {
