@@ -4210,6 +4210,31 @@ def probate_generate(probate_id):
     return redirect(f'/probate/{probate_id}/step/6')
 
 
+@app.route('/probate/<probate_id>/preview/<form_code>')
+@login_required
+def probate_preview(probate_id, form_code):
+    """Serve generated form as inline PDF for browser preview."""
+    gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
+    if not gf or not os.path.exists(gf.file_path):
+        flash('Form not found.', 'error')
+        return redirect(f'/probate/{probate_id}/step/6')
+    from documents.probate_generator import convert_to_pdf
+    import shutil
+    tmp_dir = tempfile.mkdtemp()
+    tmp_copy = os.path.join(tmp_dir, os.path.basename(gf.file_path))
+    shutil.copy2(gf.file_path, tmp_copy)
+    pdf_path = convert_to_pdf(tmp_copy)
+    if pdf_path and os.path.exists(pdf_path):
+        resp = send_file(pdf_path, mimetype='application/pdf',
+                         download_name=f'{gf.form_name or form_code}.pdf')
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        resp.headers['Expires'] = '0'
+        return resp
+    flash('PDF conversion failed.', 'error')
+    return redirect(f'/probate/{probate_id}/step/6')
+
+
 @app.route('/probate/<probate_id>/download/<form_code>')
 @login_required
 def probate_download(probate_id, form_code):
@@ -4219,14 +4244,36 @@ def probate_download(probate_id, form_code):
         flash('Form not found.', 'error')
         return redirect(f'/probate/{probate_id}/step/6')
 
+    # Use proper form name for download filename
+    safe_name = (gf.form_name or form_code).replace(' ', '_').replace('/', '_')
+
     if fmt == 'pdf':
         from documents.probate_generator import convert_to_pdf
         pdf_path = convert_to_pdf(gf.file_path)
         if pdf_path and os.path.exists(pdf_path):
-            return send_file(pdf_path, as_attachment=True, download_name=os.path.basename(pdf_path))
+            return send_file(pdf_path, as_attachment=True, download_name=f'{safe_name}.pdf')
         flash('PDF conversion failed. Downloading .docx instead.', 'error')
 
-    return send_file(gf.file_path, as_attachment=True, download_name=os.path.basename(gf.file_path))
+    return send_file(gf.file_path, as_attachment=True, download_name=f'{safe_name}.docx')
+
+
+@app.route('/probate/<probate_id>/reupload/<form_code>', methods=['POST'])
+@login_required
+def probate_reupload(probate_id, form_code):
+    """Replace a generated form with an edited DOCX upload."""
+    gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
+    if not gf:
+        return jsonify(ok=False, error='Form not found'), 404
+    if 'file' not in request.files:
+        return jsonify(ok=False, error='No file uploaded'), 400
+    file = request.files['file']
+    if not file.filename.endswith('.docx'):
+        return jsonify(ok=False, error='Only .docx files are accepted'), 400
+    # Overwrite the existing generated file
+    file.save(gf.file_path)
+    gf.generated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 @app.route('/probate/<probate_id>/download-all')

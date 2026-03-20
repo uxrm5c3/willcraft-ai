@@ -321,36 +321,58 @@
     {% if generated_forms %}
     <div class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
         <div class="flex items-center justify-between mb-3">
-            <h3 class="text-sm font-semibold text-green-800">Generated Forms</h3>
-            <span class="text-xs text-green-600">DOCX files are editable in Microsoft Word</span>
+            <h3 class="text-sm font-semibold text-green-800">Generated Forms ({{ generated_forms|length }})</h3>
+            <span class="text-xs text-green-600">Click Preview to view, or download as DOCX/PDF</span>
         </div>
         <div class="space-y-2">
             {% for gf in generated_forms %}
             <div class="flex items-center justify-between p-2 bg-white rounded border border-green-100">
-                <div class="flex items-center gap-2">
-                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
-                    <span class="text-sm font-medium text-gray-700">{{ gf.form_name }}</span>
+                <div class="flex items-center gap-2 min-w-0">
+                    <svg class="w-5 h-5 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    <div class="min-w-0">
+                        <span class="text-sm font-medium text-gray-800 block">{{ gf.form_name or gf.form_code }}</span>
+                        <span class="text-[10px] text-gray-400">{{ gf.form_code }}</span>
+                    </div>
                 </div>
-                <div class="flex items-center gap-1">
-                    <a href="/probate/{{ probate_id }}/download/{{ gf.form_code }}" class="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700" title="Editable Word document">
+                <div class="flex items-center gap-1 shrink-0">
+                    <button type="button" onclick="previewGenerated('{{ gf.form_code }}', '{{ gf.form_name or gf.form_code }}')"
+                       class="px-3 py-1 bg-green-600 text-white text-xs font-medium rounded hover:bg-green-700" title="Preview in browser">
+                        Preview
+                    </button>
+                    <a href="/probate/{{ probate_id }}/download/{{ gf.form_code }}" class="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700 no-underline" title="Download &amp; edit in Word">
                         DOCX
                     </a>
-                    <a href="/probate/{{ probate_id }}/download/{{ gf.form_code }}?format=pdf" class="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700" title="PDF format">
+                    <a href="/probate/{{ probate_id }}/download/{{ gf.form_code }}?format=pdf" class="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 no-underline" title="Download PDF">
                         PDF
                     </a>
+                    <label class="px-3 py-1 bg-amber-500 text-white text-xs font-medium rounded hover:bg-amber-600 cursor-pointer" title="Upload edited DOCX to replace">
+                        Re-upload
+                        <input type="file" accept=".docx" class="hidden" onchange="reuploadForm('{{ gf.form_code }}', this)">
+                    </label>
                 </div>
             </div>
             {% endfor %}
         </div>
         <div class="mt-3 flex items-center gap-2">
-            <a href="/probate/{{ probate_id }}/download-all" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700">
+            <a href="/probate/{{ probate_id }}/download-all" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 no-underline">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                 Download All DOCX (ZIP)
             </a>
-            <a href="/probate/{{ probate_id }}/download-all?format=pdf" class="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700">
+            <a href="/probate/{{ probate_id }}/download-all?format=pdf" class="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 no-underline">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                 Download All PDF (ZIP)
             </a>
+        </div>
+    </div>
+
+    <!-- Generated Form Preview Panel (inline, below generated forms) -->
+    <div id="generated-preview-panel" class="mt-4 hidden">
+        <div class="border border-gray-300 rounded-lg overflow-hidden bg-white shadow-sm">
+            <div class="flex items-center justify-between px-4 py-2 bg-gray-100 border-b border-gray-300">
+                <h4 id="gen-preview-title" class="text-sm font-semibold text-gray-800"></h4>
+                <button type="button" onclick="closeGeneratedPreview()" class="text-gray-500 hover:text-gray-700 text-lg font-bold">&times;</button>
+            </div>
+            <iframe id="gen-preview-iframe" src="" class="w-full border-0" style="height:80vh;"></iframe>
         </div>
     </div>
     {% endif %}
@@ -579,6 +601,55 @@ function closeDocumentViewer() {
 function closeTranslation() {
     const overlay = document.getElementById('doc-translate-overlay');
     if (overlay) overlay.classList.add('hidden');
+}
+
+/* ── Re-upload edited form ── */
+async function reuploadForm(formCode, input) {
+    if (!input.files || !input.files[0]) return;
+    const file = input.files[0];
+    if (!file.name.endsWith('.docx')) {
+        alert('Please upload a .docx file');
+        input.value = '';
+        return;
+    }
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+        const res = await fetch('/probate/{{ probate_id }}/reupload/' + formCode, { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.ok) {
+            alert('Form updated successfully. Preview will refresh.');
+            // Refresh preview if it's currently showing this form
+            const iframe = document.getElementById('gen-preview-iframe');
+            if (iframe && iframe.src.includes('/preview/' + formCode)) {
+                iframe.src = iframe.src.split('?')[0] + '?t=' + Date.now();
+            }
+        } else {
+            alert('Upload failed: ' + (data.error || 'Unknown error'));
+        }
+    } catch (e) {
+        alert('Upload failed: ' + e.message);
+    }
+    input.value = '';
+}
+
+/* ── Preview generated form inline ── */
+function previewGenerated(formCode, formName) {
+    const panel = document.getElementById('generated-preview-panel');
+    const iframe = document.getElementById('gen-preview-iframe');
+    const title = document.getElementById('gen-preview-title');
+    if (!panel || !iframe) return;
+    title.textContent = formName;
+    iframe.src = '/probate/{{ probate_id }}/preview/' + formCode;
+    panel.classList.remove('hidden');
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function closeGeneratedPreview() {
+    const panel = document.getElementById('generated-preview-panel');
+    const iframe = document.getElementById('gen-preview-iframe');
+    if (panel) panel.classList.add('hidden');
+    if (iframe) iframe.src = '';
 }
 
 /* ── View Template inline ── */
