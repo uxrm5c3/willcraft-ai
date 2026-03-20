@@ -485,6 +485,82 @@ def recommend_forms(will_record, probate_app=None):
     return recommendations
 
 
+def _clean_doc06_empty_rows(doc, probate_app):
+    """After placeholder replacement, clean up doc06 tables for empty asset categories.
+
+    - Remove rows where all placeholders resolved to empty (no data for that category)
+    - If an entire category is empty, show 'Tiada' (None)
+    """
+    all_assets = json.loads(probate_app.assets_data or '[]')
+    has_property = any(a.get('asset_type') == 'property' for a in all_assets)
+    has_vehicle = any(a.get('asset_type') == 'vehicle' for a in all_assets)
+    has_bank = any(a.get('asset_type') == 'bank' for a in all_assets)
+    has_other = any(a.get('asset_type') == 'other' for a in all_assets)
+    has_liability = any(a.get('asset_type') == 'liability' for a in all_assets)
+
+    for table in doc.tables:
+        rows_to_remove = []
+        for ri, row in enumerate(table.rows):
+            cell_text = ' '.join(cell.text.strip() for cell in row.cells)
+            # Skip header rows and total rows
+            if ri == 0 or 'JUMLAH' in cell_text:
+                continue
+            # Check if this is a data row that's now empty after replacement
+            # (placeholder was replaced with empty string)
+            content_cell = row.cells[1] if len(row.cells) > 1 else row.cells[0]
+            text = content_cell.text.strip()
+            # Row is effectively empty if it only has template text with no actual data
+            if not text or text in ('Akan ditaksir', '0'):
+                # Check if description column (cell 1) is empty
+                if not text:
+                    rows_to_remove.append(ri)
+            # Check for rows with pattern like "Kenderaan jenama \nNo. Pendaftaran: \n..."
+            # where all values are empty
+            if 'Kenderaan jenama' in text and not has_vehicle:
+                rows_to_remove.append(ri)
+            if 'Akaun Simpanan' in text and not has_bank:
+                rows_to_remove.append(ri)
+
+        # Remove empty rows from bottom up
+        for ri in sorted(set(rows_to_remove), reverse=True):
+            try:
+                row_elem = table.rows[ri]._tr
+                row_elem.getparent().remove(row_elem)
+            except Exception:
+                pass
+
+    # If Table 1 (immovable property) has no property rows, add "Tiada"
+    if len(doc.tables) > 1 and not has_property:
+        table1 = doc.tables[1]
+        # Clear data rows (keep header R0 and total row)
+        for ri in range(len(table1.rows) - 2, 0, -1):
+            content = table1.rows[ri].cells[1].text.strip() if len(table1.rows[ri].cells) > 1 else ''
+            if not content or 'JUMLAH' not in content:
+                for cell in table1.rows[ri].cells:
+                    for para in cell.paragraphs:
+                        for run in para.runs:
+                            run.text = ''
+                if ri == 1 and len(table1.rows[ri].cells) > 1:
+                    table1.rows[ri].cells[0].paragraphs[0].add_run('1.')
+                    table1.rows[ri].cells[1].paragraphs[0].add_run('Tiada')
+                    table1.rows[ri].cells[2].paragraphs[0].add_run('0')
+
+    # If Table 2 (movable property) has no movable assets at all, add "Tiada"
+    if len(doc.tables) > 2 and not (has_vehicle or has_bank or has_other):
+        table2 = doc.tables[2]
+        for ri in range(len(table2.rows) - 2, 0, -1):
+            content = table2.rows[ri].cells[1].text.strip() if len(table2.rows[ri].cells) > 1 else ''
+            if 'JUMLAH' not in content:
+                for cell in table2.rows[ri].cells:
+                    for para in cell.paragraphs:
+                        for run in para.runs:
+                            run.text = ''
+                if ri == 1 and len(table2.rows[ri].cells) > 1:
+                    table2.rows[ri].cells[0].paragraphs[0].add_run('1.')
+                    table2.rows[ri].cells[1].paragraphs[0].add_run('Tiada')
+                    table2.rows[ri].cells[2].paragraphs[0].add_run('0')
+
+
 def generate_probate_forms(probate_app, will_record, selected_codes, templates_map, output_dir):
     """Generate all selected probate forms.
 
@@ -511,6 +587,14 @@ def generate_probate_forms(probate_app, will_record, selected_codes, templates_m
 
         try:
             fill_template(template_path, replacements, output_path)
+            # Special handling for doc06: clean up empty asset rows
+            if code == 'doc06':
+                try:
+                    doc = Document(output_path)
+                    _clean_doc06_empty_rows(doc, probate_app)
+                    doc.save(output_path)
+                except Exception as e2:
+                    print(f"Warning: doc06 cleanup failed: {e2}")
             results.append({
                 'form_code': code,
                 'file_path': output_path,
