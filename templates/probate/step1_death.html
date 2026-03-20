@@ -8,9 +8,9 @@
     <!-- Upload Section -->
     <div class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
         <h3 class="text-sm font-semibold text-blue-800 mb-2">Upload Death Certificate (Optional)</h3>
-        <p class="text-xs text-blue-600 mb-3">Upload an image or PDF of the death certificate. AI will read and fill the form below. You can review and correct any errors.</p>
+        <p class="text-xs text-blue-600 mb-3">Upload an image or PDF of the death certificate. AI will read and fill the form below. You can review and correct any errors. <span class="text-gray-400">(Accepted: JPG, PNG, PDF)</span></p>
         <div class="flex items-center gap-3">
-            <input type="file" id="death-cert-file" accept="image/*,.pdf"
+            <input type="file" id="death-cert-file" accept=".jpg,.jpeg,.png,.pdf"
                    class="text-sm text-gray-600 file:mr-3 file:py-1.5 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white file:cursor-pointer hover:file:bg-blue-700">
             <button onclick="ocrDeathCert()" id="ocr-btn" class="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50" disabled>
                 Scan & Extract
@@ -272,6 +272,14 @@ function buildCompareFields(extracted) {
 async function ocrDeathCert() {
     const file = fileInput.files[0];
     if (!file) return;
+
+    const allowed = ['jpg','jpeg','png','pdf'];
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (!allowed.includes(ext)) {
+        alert('Unsupported file format: .' + ext + '\n\nAccepted formats: JPG, PNG, PDF');
+        fileInput.value = '';
+        return;
+    }
 
     ocrBtn.disabled = true;
     document.getElementById('ocr-status').textContent = 'Scanning... please wait';

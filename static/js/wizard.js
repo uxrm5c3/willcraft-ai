@@ -564,8 +564,7 @@ function handleDrop(event, uploadId, category) {
 // CLIENT-SIDE FILE VALIDATION
 // ===========================================================================
 const MAX_FILE_SIZE_MB = 10;
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif', 'image/bmp', 'image/tiff'];
-const ALLOWED_DOC_TYPES = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+const OCR_ALLOWED_EXTS = ['jpg', 'jpeg', 'png', 'pdf'];
 
 function validateFile(file) {
     if (!file) return { valid: false, error: 'No file selected.' };
@@ -573,12 +572,9 @@ function validateFile(file) {
     if (sizeMB > MAX_FILE_SIZE_MB) {
         return { valid: false, error: `File too large (${sizeMB.toFixed(1)}MB). Maximum is ${MAX_FILE_SIZE_MB}MB.` };
     }
-    if (file.type && !ALLOWED_IMAGE_TYPES.includes(file.type) && !ALLOWED_DOC_TYPES.includes(file.type)) {
-        const ext = (file.name || '').split('.').pop().toLowerCase();
-        const allowedExts = ['png','jpg','jpeg','gif','pdf','docx','doc','heic','heif','webp','bmp','tiff','tif'];
-        if (ext && !allowedExts.includes(ext)) {
-            return { valid: false, error: `File type not supported: .${ext}` };
-        }
+    const ext = (file.name || '').split('.').pop().toLowerCase();
+    if (!OCR_ALLOWED_EXTS.includes(ext)) {
+        return { valid: false, error: `Unsupported file format: .${ext}\n\nAccepted formats: JPG, PNG, PDF` };
     }
     return { valid: true };
 }

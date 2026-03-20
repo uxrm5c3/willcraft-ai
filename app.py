@@ -26,6 +26,18 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max upload
 
 db.init_app(app)
 
+# Accepted file formats for OCR scanning
+OCR_ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'pdf'}
+
+def _validate_ocr_file(file):
+    """Validate uploaded file is an accepted format for OCR. Returns error message or None."""
+    if not file or not file.filename:
+        return 'No file selected'
+    ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+    if ext not in OCR_ALLOWED_EXTENSIONS:
+        return f'Unsupported file format: .{ext}. Accepted formats: JPG, PNG, PDF'
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Jinja2 filters
@@ -2020,6 +2032,9 @@ def api_ocr_nric():
     if 'file' not in request.files:
         return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
     file = request.files['file']
+    fmt_err = _validate_ocr_file(file)
+    if fmt_err:
+        return jsonify({'ok': False, 'error': fmt_err}), 400
     client_id = session.get('client_id')
     if not client_id:
         client_id = ensure_client()
@@ -2122,6 +2137,9 @@ def api_ocr_property():
     if 'file' not in request.files:
         return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
     file = request.files['file']
+    fmt_err = _validate_ocr_file(file)
+    if fmt_err:
+        return jsonify({'ok': False, 'error': fmt_err}), 400
     client_id = session.get('client_id')
     if not client_id:
         client_id = ensure_client()
@@ -2165,6 +2183,9 @@ def api_ocr_asset():
     if 'file' not in request.files:
         return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
     file = request.files['file']
+    fmt_err = _validate_ocr_file(file)
+    if fmt_err:
+        return jsonify({'ok': False, 'error': fmt_err}), 400
     client_id = session.get('client_id')
     if not client_id:
         client_id = ensure_client()
@@ -3906,8 +3927,9 @@ def api_ocr_death_cert():
     if 'file' not in request.files:
         return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
     file = request.files['file']
-    if not file.filename:
-        return jsonify({'ok': False, 'error': 'No file selected'}), 400
+    fmt_err = _validate_ocr_file(file)
+    if fmt_err:
+        return jsonify({'ok': False, 'error': fmt_err}), 400
 
     from uploads import save_uploaded_file
     client_id = session.get('client_id', 'temp')
@@ -3951,8 +3973,9 @@ def api_ocr_asset_doc():
     if 'file' not in request.files:
         return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
     file = request.files['file']
-    if not file.filename:
-        return jsonify({'ok': False, 'error': 'No file selected'}), 400
+    fmt_err = _validate_ocr_file(file)
+    if fmt_err:
+        return jsonify({'ok': False, 'error': fmt_err}), 400
 
     asset_type = request.form.get('asset_type', 'other')
 

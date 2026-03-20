@@ -1,9 +1,65 @@
 """OCR extraction using Claude Vision API — chain-of-thought accuracy mode."""
 import base64
+import io
 import json
+import os
 import re
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
+
+# Formats that need conversion to JPEG before sending to Claude API
+_NEEDS_CONVERSION = {'heic', 'heif', 'webp', 'bmp', 'tiff', 'tif'}
+
+
+def _prepare_image_for_api(image_path: str):
+    """Read an image file and return (base64_data, media_type) suitable for Claude API.
+
+    Converts HEIC, HEIF, WebP, BMP, TIFF to JPEG automatically.
+    Returns (base64_str, media_type_str).
+    """
+    ext = image_path.rsplit('.', 1)[-1].lower()
+
+    if ext == 'pdf':
+        with open(image_path, 'rb') as f:
+            data = base64.standard_b64encode(f.read()).decode('utf-8')
+        return data, 'application/pdf'
+
+    if ext in _NEEDS_CONVERSION:
+        try:
+            from PIL import Image
+            img = Image.open(image_path)
+            if img.mode in ('RGBA', 'P', 'LA'):
+                img = img.convert('RGB')
+            buf = io.BytesIO()
+            img.save(buf, format='JPEG', quality=90)
+            data = base64.standard_b64encode(buf.getvalue()).decode('utf-8')
+            return data, 'image/jpeg'
+        except ImportError:
+            # Pillow not available — try sending raw (may fail for HEIC)
+            pass
+
+    # Standard image formats
+    with open(image_path, 'rb') as f:
+        data = base64.standard_b64encode(f.read()).decode('utf-8')
+
+    media_type = {
+        'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
+        'png': 'image/png', 'gif': 'image/gif',
+        'webp': 'image/webp',
+    }.get(ext, 'image/jpeg')
+
+    return data, media_type
+
+
+def _make_content_block(image_path: str):
+    """Create the content block dict for Claude API from an image path."""
+    data, media_type = _prepare_image_for_api(image_path)
+    ext = image_path.rsplit('.', 1)[-1].lower()
+
+    if ext == 'pdf':
+        return {"type": "document", "source": {"type": "base64", "media_type": media_type, "data": data}}
+    else:
+        return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
 
 
 def extract_nric_data(image_path: str) -> dict:
@@ -16,37 +72,7 @@ def extract_nric_data(image_path: str) -> dict:
     Returns dict with keys: full_name, nric_number, date_of_birth, address, gender, nationality
     """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    with open(image_path, 'rb') as f:
-        image_data = base64.standard_b64encode(f.read()).decode('utf-8')
-
-    ext = image_path.rsplit('.', 1)[-1].lower()
-    if ext == 'pdf':
-        media_type = 'application/pdf'
-    else:
-        media_type = {
-            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-            'png': 'image/png', 'gif': 'image/gif',
-        }.get(ext, 'image/jpeg')
-
-    if ext == 'pdf':
-        content_block = {
-            "type": "document",
-            "source": {
-                "type": "base64",
-                "media_type": "application/pdf",
-                "data": image_data,
-            }
-        }
-    else:
-        content_block = {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": media_type,
-                "data": image_data,
-            }
-        }
+    content_block = _make_content_block(image_path)
 
     message = client.messages.create(
         model=CLAUDE_MODEL_FAST,
@@ -407,25 +433,7 @@ def extract_death_cert_data(image_path: str) -> dict:
     date_of_death, time_of_death, place_of_death, cause_of_death
     """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    with open(image_path, 'rb') as f:
-        image_data = base64.standard_b64encode(f.read()).decode('utf-8')
-
-    ext = image_path.rsplit('.', 1)[-1].lower()
-    if ext == 'pdf':
-        content_block = {
-            "type": "document",
-            "source": {"type": "base64", "media_type": "application/pdf", "data": image_data}
-        }
-    else:
-        media_type = {
-            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-            'png': 'image/png', 'gif': 'image/gif',
-        }.get(ext, 'image/jpeg')
-        content_block = {
-            "type": "image",
-            "source": {"type": "base64", "media_type": media_type, "data": image_data}
-        }
+    content_block = _make_content_block(image_path)
 
     message = client.messages.create(
         model=CLAUDE_MODEL_FAST,
@@ -557,22 +565,7 @@ def extract_asset_document(image_path: str, asset_type: str) -> dict:
     Returns dict with extracted fields matching the asset type.
     """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    with open(image_path, 'rb') as f:
-        image_data = base64.standard_b64encode(f.read()).decode('utf-8')
-
-    ext = image_path.rsplit('.', 1)[-1].lower()
-    if ext == 'pdf':
-        content_block = {
-            "type": "document",
-            "source": {"type": "base64", "media_type": "application/pdf", "data": image_data}
-        }
-    else:
-        media_type = {'jpg': 'image/jpeg', 'jpeg': 'image/jpeg', 'png': 'image/png', 'gif': 'image/gif'}.get(ext, 'image/jpeg')
-        content_block = {
-            "type": "image",
-            "source": {"type": "base64", "media_type": media_type, "data": image_data}
-        }
+    content_block = _make_content_block(image_path)
 
     prompts = {
         'property': """Read this Malaysian property title document (Hakmilik / Geran / Land Title).
@@ -738,33 +731,7 @@ def translate_document(image_path: str) -> str:
     Returns the English translation as plain text.
     """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
-    with open(image_path, 'rb') as f:
-        image_data = base64.standard_b64encode(f.read()).decode('utf-8')
-
-    ext = image_path.rsplit('.', 1)[-1].lower()
-    if ext == 'pdf':
-        content_block = {
-            "type": "document",
-            "source": {
-                "type": "base64",
-                "media_type": "application/pdf",
-                "data": image_data,
-            }
-        }
-    else:
-        media_type = {
-            'jpg': 'image/jpeg', 'jpeg': 'image/jpeg',
-            'png': 'image/png', 'gif': 'image/gif',
-        }.get(ext, 'image/jpeg')
-        content_block = {
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": media_type,
-                "data": image_data,
-            }
-        }
+    content_block = _make_content_block(image_path)
 
     message = client.messages.create(
         model=CLAUDE_MODEL_FAST,
