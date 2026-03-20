@@ -3654,7 +3654,8 @@ def probate_new_la():
         firm_name='Tetuan Alan Tan & Associates',
         firm_address='24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor',
         firm_phone='07-588 5979',
-        lawyer_name='ALAN TAN JEN BOON',
+        lawyer_name='FAIZUL HANAFI BIN TOKIRAN',
+        lawyer_bar_number='BC/F/167',
     )
     db.session.add(probate)
     db.session.commit()
@@ -3685,7 +3686,8 @@ def probate_new(will_id):
         firm_name='Tetuan Alan Tan & Associates',
         firm_address='24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor',
         firm_phone='07-588 5979',
-        lawyer_name='ALAN TAN JEN BOON',
+        lawyer_name='FAIZUL HANAFI BIN TOKIRAN',
+        lawyer_bar_number='BC/F/167',
     )
     db.session.add(probate)
     db.session.commit()
