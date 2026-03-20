@@ -2698,6 +2698,18 @@ def wizard_step_gifts():
             'documents': gift_docs,
         })
 
+    # Reorder gifts if user changed order via drag-and-drop or sort
+    gift_order_str = request.form.get('gift_order', '')
+    if gift_order_str:
+        order = [int(x) for x in gift_order_str.split(',') if x.strip().isdigit()]
+        gift_map = {i: g for i, g in enumerate(gifts)}
+        reordered = [gift_map[i] for i in order if i in gift_map]
+        # Include any gifts not in order list (safety)
+        for i, g in enumerate(gifts):
+            if i not in order:
+                reordered.append(g)
+        gifts = reordered
+
     session['step5_gifts'] = gifts
     session.modified = True
     mark_step_complete(6)

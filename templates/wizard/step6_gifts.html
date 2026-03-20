@@ -18,8 +18,9 @@
         {% for gift in gifts %}
         {% set gift_idx = loop.index0 %}
         <div class="gift-entry border border-gray-200 rounded-lg mb-4" data-gift-index="{{ gift_idx }}">
-            <div class="flex justify-between items-center p-5 pb-0 cursor-pointer" onclick="toggleGiftCollapse({{ gift_idx }})">
+            <div class="flex justify-between items-center p-5 pb-0 cursor-pointer gift-header" onclick="toggleGiftCollapse({{ gift_idx }})">
                 <div class="flex items-center gap-2">
+                    <span class="drag-handle cursor-grab text-gray-300 hover:text-gray-500 select-none text-lg leading-none" title="Drag to reorder" onmousedown="event.stopPropagation()">⠿</span>
                     <svg class="w-4 h-4 text-gray-400 transition-transform gift-chevron" id="gift-chevron-{{ gift_idx }}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                     <h3 class="font-semibold text-gray-700">Gift No. {{ loop.index }}</h3>
                 </div>
@@ -548,11 +549,18 @@
     </div>
 
     <input type="hidden" name="gift_count" id="gift-count" value="{{ gifts|length }}">
+    <input type="hidden" name="gift_order" id="gift-order" value="">
 
-    <button type="button" onclick="addGift()" id="add-gift-btn"
-            class="mb-6 px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 w-full transition-colors">
-        + Add Another Gift
-    </button>
+    <div class="flex gap-2 mb-6">
+        <button type="button" onclick="addGift()" id="add-gift-btn"
+                class="flex-1 px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+            + Add Another Gift
+        </button>
+        <button type="button" onclick="sortGiftsByType()"
+                class="px-4 py-2 border border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 text-sm transition-colors" title="Sort gifts by type: Property, Financial, Free Text">
+            Sort by Type
+        </button>
+    </div>
 
     <!-- Navigation -->
     <div class="flex flex-col-reverse sm:flex-row justify-between items-stretch sm:items-center gap-3 pt-6 border-t border-gray-200">
@@ -919,8 +927,9 @@ function addGift() {
     allocCounts[idx] = 1;
     const html = `
     <div class="gift-entry border border-gray-200 rounded-lg mb-4" data-gift-index="${idx}">
-        <div class="flex justify-between items-center p-5 pb-0 cursor-pointer" onclick="toggleGiftCollapse(${idx})">
+        <div class="flex justify-between items-center p-5 pb-0 cursor-pointer gift-header" onclick="toggleGiftCollapse(${idx})">
             <div class="flex items-center gap-2">
+                <span class="drag-handle cursor-grab text-gray-300 hover:text-gray-500 select-none text-lg leading-none" title="Drag to reorder" onmousedown="event.stopPropagation()">&#x2807;</span>
                 <svg class="w-4 h-4 text-gray-400 transition-transform gift-chevron" id="gift-chevron-${idx}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 <h3 class="font-semibold text-gray-700">Gift No. ${idx + 1}</h3>
             </div>
@@ -1044,16 +1053,78 @@ function addGift() {
 }
 
 function removeGift(btn) {
-    if (!confirm('Are you sure you want to remove this gift?')) return;
+    if (!confirm('This will permanently remove this gift and all its data.\n\nAre you sure you want to continue?')) return;
     btn.closest('.gift-entry').remove();
     giftCount--;
     document.getElementById('gift-count').value = giftCount;
-    // Renumber gift headings
-    document.querySelectorAll('.gift-entry').forEach((entry, i) => {
+    renumberGifts();
+}
+
+function renumberGifts() {
+    const entries = document.querySelectorAll('#gifts-container .gift-entry');
+    const order = [];
+    entries.forEach((entry, i) => {
         const h3 = entry.querySelector('h3');
         if (h3) h3.textContent = 'Gift No. ' + (i + 1);
+        order.push(entry.dataset.giftIndex);
     });
+    document.getElementById('gift-order').value = order.join(',');
 }
+
+function sortGiftsByType() {
+    const container = document.getElementById('gifts-container');
+    const entries = [...container.querySelectorAll('.gift-entry')];
+    if (entries.length < 2) return;
+    const typeOrder = { property: 0, financial: 1, other: 2 };
+    entries.sort((a, b) => {
+        const typeA = a.querySelector('input[name^="gift_type_"]:checked')?.value || 'other';
+        const typeB = b.querySelector('input[name^="gift_type_"]:checked')?.value || 'other';
+        return (typeOrder[typeA] || 2) - (typeOrder[typeB] || 2);
+    });
+    entries.forEach(e => container.appendChild(e));
+    renumberGifts();
+}
+
+// Drag-and-drop gift reordering
+(function initGiftDragDrop() {
+    const container = document.getElementById('gifts-container');
+    if (!container) return;
+    let draggedEl = null;
+
+    container.addEventListener('dragstart', e => {
+        const entry = e.target.closest('.gift-entry');
+        if (!entry) return;
+        draggedEl = entry;
+        entry.style.opacity = '0.4';
+        e.dataTransfer.effectAllowed = 'move';
+    });
+    container.addEventListener('dragover', e => {
+        e.preventDefault();
+        const entry = e.target.closest('.gift-entry');
+        if (!entry || entry === draggedEl) return;
+        const rect = entry.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (e.clientY < midY) container.insertBefore(draggedEl, entry);
+        else container.insertBefore(draggedEl, entry.nextSibling);
+    });
+    container.addEventListener('dragend', e => {
+        if (draggedEl) draggedEl.style.opacity = '1';
+        draggedEl = null;
+        renumberGifts();
+    });
+
+    // Only make draggable via the drag handle
+    document.addEventListener('mousedown', e => {
+        const handle = e.target.closest('.drag-handle');
+        if (handle) {
+            const entry = handle.closest('.gift-entry');
+            if (entry) entry.draggable = true;
+        }
+    });
+    document.addEventListener('mouseup', () => {
+        document.querySelectorAll('.gift-entry[draggable]').forEach(el => el.draggable = false);
+    });
+})();
 
 function addAllocation(giftIdx) {
     const container = document.getElementById('allocations-' + giftIdx);

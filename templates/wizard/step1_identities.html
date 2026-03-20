@@ -80,7 +80,7 @@
 <script>
 // Delete identity (Step 1 only)
 async function deleteIdentity(personId) {
-    if (!confirm('Are you sure you want to delete this identity?')) return;
+    if (!confirm('This will permanently delete this identity and all its data.\n\nAre you sure you want to continue?')) return;
     try {
         const resp = await fetch(`/api/persons/${personId}`, { method: 'DELETE' });
         const result = await resp.json();
