@@ -359,7 +359,15 @@
 
             <!-- Allocations (Main Beneficiaries) -->
             <div class="border-t border-gray-100 pt-4">
-                <h4 class="text-sm font-semibold text-gray-600 mb-2">Main Beneficiaries</h4>
+                <div class="flex items-center justify-between mb-2">
+                    <h4 class="text-sm font-semibold text-gray-600">Main Beneficiaries</h4>
+                    {% if loop.index0 > 0 %}
+                    <button type="button" onclick="copyDistributionFrom({{ loop.index0 }})"
+                            class="text-xs text-primary-600 hover:text-primary-800 font-medium px-2 py-1 bg-primary-50 rounded-md hover:bg-primary-100 transition-colors">
+                        Copy from Gift 1
+                    </button>
+                    {% endif %}
+                </div>
                 <p class="text-xs text-gray-400 mb-3">Select beneficiaries and their shares. Shares must total 100%.</p>
                 <div class="allocations-container space-y-3" id="allocations-{{ loop.index0 }}">
                     {% set allocations = gift.get('allocations', [{}]) or [{}] %}
@@ -751,7 +759,13 @@ function addGift() {
             </label>
         </div>
         <div class="border-t border-gray-100 pt-4">
-            <h4 class="text-sm font-semibold text-gray-600 mb-2">Main Beneficiaries</h4>
+            <div class="flex items-center justify-between mb-2">
+                <h4 class="text-sm font-semibold text-gray-600">Main Beneficiaries</h4>
+                <button type="button" onclick="copyDistributionFrom(${idx})"
+                        class="text-xs text-primary-600 hover:text-primary-800 font-medium px-2 py-1 bg-primary-50 rounded-md hover:bg-primary-100 transition-colors">
+                    Copy from Gift 1
+                </button>
+            </div>
             <p class="text-xs text-gray-400 mb-3">Select beneficiaries and their shares. Shares must total 100%.</p>
             <div class="allocations-container space-y-3" id="allocations-${idx}">
                 <div class="allocation-entry bg-gray-50 rounded-lg p-3 border border-gray-200" data-alloc-index="0">
@@ -991,6 +1005,89 @@ document.addEventListener('change', function(e) {
         if (mode === 'specific') rebuildSubstitutePanel(giftIdx);
     }
 });
+
+/**
+ * Copy beneficiary distribution from Gift 1 (index 0) to target gift.
+ * Copies: all MB allocations (names + shares), substitute mode, and specific substitutes.
+ */
+function copyDistributionFrom(targetGiftIdx) {
+    const sourceIdx = 0; // Always copy from Gift 1
+    const sourceContainer = document.getElementById('allocations-' + sourceIdx);
+    const targetContainer = document.getElementById('allocations-' + targetGiftIdx);
+    if (!sourceContainer || !targetContainer) return;
+
+    // Read source MBs
+    const sourceMBs = [];
+    sourceContainer.querySelectorAll('.allocation-entry').forEach(entry => {
+        const sel = entry.querySelector('.alloc-name-select');
+        const share = entry.querySelector('input[name*="_alloc_share_"]');
+        if (sel && sel.value) sourceMBs.push({ name: sel.value, share: share?.value || '100%' });
+    });
+    if (sourceMBs.length === 0) { alert('Gift 1 has no beneficiaries to copy.'); return; }
+
+    // Clear target and rebuild
+    targetContainer.innerHTML = '';
+    allocCounts[targetGiftIdx] = sourceMBs.length;
+    sourceMBs.forEach((mb, i) => {
+        const canRemove = i > 0 ? `<button type="button" onclick="removeAllocation(this)" class="text-red-500 hover:text-red-700 text-xs font-medium">✕ Remove</button>` : '';
+        targetContainer.innerHTML += `
+        <div class="allocation-entry bg-gray-50 rounded-lg p-3 border border-gray-200" data-alloc-index="${i}">
+            <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-semibold text-gray-500 uppercase">Beneficiary ${i + 1}</span>
+                ${canRemove}
+            </div>
+            <div class="mb-2">
+                <select name="gift_${targetGiftIdx}_alloc_name_${i}" class="alloc-name-select w-full px-3 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm bg-white">
+                    ${_buildGiftBenOptions(mb.name)}
+                </select>
+                <input type="hidden" name="gift_${targetGiftIdx}_alloc_role_${i}" value="MB">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Share %</label>
+                <input type="text" name="gift_${targetGiftIdx}_alloc_share_${i}" value="${mb.share}" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 text-sm" placeholder="100%">
+            </div>
+        </div>`;
+    });
+    // Update count
+    const countField = targetContainer.closest('.gift-entry')?.querySelector(`input[name="gift_${targetGiftIdx}_alloc_count"]`);
+    if (countField) countField.value = sourceMBs.length;
+
+    // Copy substitute mode
+    const sourceMode = document.querySelector(`input[name="gift_${sourceIdx}_sub_mode"]:checked`)?.value || 'equal';
+    const targetRadio = document.querySelector(`input[name="gift_${targetGiftIdx}_sub_mode"][value="${sourceMode}"]`);
+    if (targetRadio) targetRadio.checked = true;
+    toggleSubstituteMode(targetGiftIdx);
+
+    // If specific mode, rebuild and copy subs
+    if (sourceMode === 'specific') {
+        rebuildSubstitutePanel(targetGiftIdx);
+        // Copy sub entries from source
+        const sourcePanel = document.getElementById('sub-specific-' + sourceIdx);
+        const targetPanel = document.getElementById('sub-specific-' + targetGiftIdx);
+        if (sourcePanel && targetPanel) {
+            sourcePanel.querySelectorAll('.sub-group').forEach((srcGroup, mbIdx) => {
+                const tgtGroup = targetPanel.querySelectorAll('.sub-group')[mbIdx];
+                if (!tgtGroup) return;
+                srcGroup.querySelectorAll('.sub-entry').forEach(srcEntry => {
+                    const srcSel = srcEntry.querySelector('select');
+                    const srcShare = srcEntry.querySelector('input[type="text"]');
+                    if (srcSel?.value) {
+                        addSubstitute(targetGiftIdx, mbIdx);
+                        const newEntries = tgtGroup.querySelectorAll('.sub-entry');
+                        const lastEntry = newEntries[newEntries.length - 1];
+                        if (lastEntry) {
+                            lastEntry.querySelector('select').value = srcSel.value;
+                            lastEntry.querySelector('input[type="text"]').value = srcShare?.value || '100%';
+                        }
+                    }
+                });
+            });
+            updateSubCounts(targetGiftIdx);
+        }
+    }
+
+    validateShareTotal(targetGiftIdx);
+}
 
 /**
  * Set equal shares across all beneficiaries for a gift.
