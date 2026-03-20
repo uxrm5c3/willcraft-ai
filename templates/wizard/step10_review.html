@@ -269,12 +269,12 @@
                     {% set allocs = gift.get('allocations', []) %}
                     {% if allocs %}
                     <div class="mt-1 space-y-0.5">
-                        <p class="text-gray-500">To: {% for a in allocs %}{{ a.get('beneficiary_name', '?') }} ({{ a.get('share', '?') }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+                        <p class="text-gray-500">To: {% for a in allocs %}{{ a.get('beneficiary_name', '?') }} ({{ a.get('share', '?')|to_fraction }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
                         {% set sub_mode = gift.get('substitute_mode', 'equal') %}
                         {% if sub_mode == 'specific' %}
                             {% for a in allocs %}
                                 {% if a.get('substitutes') %}
-                                <p class="text-gray-400 text-xs ml-3">↳ If {{ a.get('beneficiary_name', '?') }} does not survive: {% for s in a.get('substitutes', []) %}{{ s.get('beneficiary_name', '?') }} ({{ s.get('share', '100%') }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+                                <p class="text-gray-400 text-xs ml-3">↳ If {{ a.get('beneficiary_name', '?') }} does not survive: {% for s in a.get('substitutes', []) %}{{ s.get('beneficiary_name', '?') }} ({{ s.get('share', '1/1')|to_fraction }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
                                 {% endif %}
                             {% endfor %}
                         {% elif sub_mode == 'prorata' %}
@@ -310,7 +310,7 @@
                 {% for ben in main_bens %}
                 <div class="text-sm flex justify-between">
                     <span class="font-medium text-gray-900">{{ ben.get('beneficiary_name', '-') }}</span>
-                    <span class="text-gray-600">{{ ben.get('share', '-') }}</span>
+                    <span class="text-gray-600">{{ ben.get('share', '-')|to_fraction }}</span>
                 </div>
                 {% endfor %}
             </div>
@@ -323,7 +323,7 @@
                 {% for sub in group %}
                 <div class="text-sm flex justify-between ml-5">
                     <span class="text-gray-900">{{ sub.get('beneficiary_name', '-') }}</span>
-                    <span class="text-gray-600">{{ sub.get('share', '-') }}</span>
+                    <span class="text-gray-600">{{ sub.get('share', '-')|to_fraction }}</span>
                 </div>
                 {% endfor %}
             </div>
@@ -356,7 +356,7 @@
                 <div class="text-sm flex items-center gap-3">
                     <span class="px-1.5 py-0.5 bg-gray-100 text-gray-600 text-xs font-mono rounded">{{ ben.get('role', 'MB') }}</span>
                     <span class="font-medium text-gray-900">{{ ben.get('beneficiary_name', '-') }}</span>
-                    <span class="text-gray-500">{{ ben.get('share', '-') }}</span>
+                    <span class="text-gray-500">{{ ben.get('share', '-')|to_fraction }}</span>
                 </div>
                 {% endfor %}
             </div>

@@ -28,6 +28,27 @@ db.init_app(app)
 
 
 # ---------------------------------------------------------------------------
+# Jinja2 filters
+# ---------------------------------------------------------------------------
+from fractions import Fraction
+
+@app.template_filter('to_fraction')
+def to_fraction_filter(value):
+    """Convert a share value to fraction display. '40' -> '2/5', '1/3' -> '1/3'."""
+    if not value or value == '-':
+        return value
+    s = str(value).strip().rstrip('%')
+    if '/' in s:
+        return s
+    try:
+        num = float(s)
+        frac = Fraction(num / 100).limit_denominator(100)
+        return f"{frac.numerator}/{frac.denominator}"
+    except (ValueError, ZeroDivisionError):
+        return s
+
+
+# ---------------------------------------------------------------------------
 # Multi-tenant configuration
 # ---------------------------------------------------------------------------
 TENANT_CONFIG = {
