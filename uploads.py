@@ -7,7 +7,7 @@ from werkzeug.utils import secure_filename
 from config import UPLOAD_DIR
 
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'pdf', 'docx', 'doc', 'heic', 'heif', 'webp', 'bmp', 'tiff', 'tif'}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
 
 
 def allowed_file(filename):
