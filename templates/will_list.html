@@ -105,12 +105,22 @@
                                 </div>
                             </div>
                         </div>
-                        <span class="text-xs text-gray-400 flex-shrink-0">Click to view</span>
+                        <!-- Always-visible action buttons -->
+                        <div class="flex gap-2 flex-shrink-0 items-center" onclick="event.stopPropagation()">
+                            {% if will.status in ('generated', 'pending_approval', 'approved') %}
+                            <a href="/wills/{{ will.id }}/load?goto=preview" class="px-3 py-1.5 bg-green-600 text-white text-xs sm:text-sm font-medium rounded-lg hover:bg-green-700 transition-colors">Open</a>
+                            {% endif %}
+                            <a href="/wills/{{ will.id }}/load" class="px-3 py-1.5 bg-primary-600 text-white text-xs sm:text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">Edit</a>
+                            {% if will.generated_will_text %}
+                            <button type="button" onclick="toggleWillPanel('{{ will.id }}')" class="px-2 py-1.5 text-gray-400 hover:text-gray-600 text-xs rounded-lg hover:bg-gray-100" title="Preview & more">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                            </button>
+                            {% endif %}
+                        </div>
                     </div>
 
                     <!-- Expanded panel (hidden by default) -->
                     <div id="panel-{{ will.id }}" class="hidden">
-                        <!-- Will preview text -->
                         {% if will.generated_will_text %}
                         <div class="px-4 pb-2">
                             <div class="p-4 bg-white rounded-lg border border-gray-200 max-h-72 overflow-y-auto shadow-inner">
@@ -120,26 +130,9 @@
 Open will to see full text and edit.{% endif %}</pre>
                             </div>
                         </div>
-                        {% else %}
-                        <div class="px-4 pb-2">
-                            <p class="text-sm text-gray-400 italic p-4 bg-gray-50 rounded-lg border border-gray-200">No will generated yet. Click "Edit" to complete the wizard and generate.</p>
-                        </div>
                         {% endif %}
-
-                        <!-- Action buttons -->
-                        <div class="px-4 pb-4 pt-2 flex flex-wrap items-center gap-2">
-                            {% if will.status in ('generated', 'pending_approval', 'approved') %}
-                            <a href="/wills/{{ will.id }}/load?goto=preview"
-                               class="inline-flex items-center px-4 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 transition-colors">
-                                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
-                                Open Will
-                            </a>
-                            {% endif %}
-                            <a href="/wills/{{ will.id }}/load"
-                               class="inline-flex items-center px-4 py-2 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">
-                                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                                Edit
-                            </a>
+                        <div class="px-4 pb-4 pt-2 flex items-center justify-between">
+                            <button onclick="toggleWillPanel('{{ will.id }}')" class="text-xs text-gray-400 hover:text-gray-600">Collapse</button>
                             <form method="POST" action="/wills/{{ will.id }}/delete" class="inline"
                                   onsubmit="return confirm('Permanently delete this will?\n\nTitle: {{ will.title }}\nStatus: {{ will.status }}\nLast updated: {{ will.updated_at.strftime('%d %b %Y') }}\n\nThis cannot be undone.')">
                                 <button type="submit"

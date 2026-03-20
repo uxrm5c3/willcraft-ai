@@ -236,11 +236,15 @@
                         </p>
                     </div>
                 </div>
-                <div class="flex-shrink-0">
-                    {% if loop.first and not viewing_version %}
-                    <span class="text-xs text-green-600 font-medium">Viewing</span>
-                    {% elif viewing_version and viewing_version.version_number == v.version_number %}
-                    <span class="text-xs text-blue-600 font-medium">Viewing</span>
+                <div class="flex-shrink-0 flex items-center gap-2">
+                    {% set is_viewing = (loop.first and not viewing_version) or (viewing_version and viewing_version.version_number == v.version_number) %}
+                    {% if is_viewing %}
+                    <span class="text-xs {% if loop.first and not viewing_version %}text-green-600{% else %}text-blue-600{% endif %} font-medium">Viewing</span>
+                    {% if versions|length > 1 %}
+                    <button onclick="deleteVersion({{ v.id }}, {{ v.version_number }})" class="px-2 py-1 text-red-400 hover:text-red-600 hover:bg-red-50 text-xs rounded-lg transition-colors" title="Delete this version">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                    </button>
+                    {% endif %}
                     {% else %}
                     <a href="/preview?version={{ v.version_number }}" class="px-3 py-1 bg-gray-100 text-gray-600 text-xs font-medium rounded-lg hover:bg-gray-200 transition-colors">
                         View
@@ -707,6 +711,25 @@ async function deleteGeneratedWill() {
             window.location.href = '/wizard/step/10';
         } else {
             alert('Error: ' + (data.error || 'Failed to delete'));
+        }
+    } catch (err) {
+        alert('Network error. Please try again.');
+    }
+}
+
+/* Delete a specific version */
+async function deleteVersion(versionId, versionNum) {
+    if (!confirm('Permanently delete Version ' + versionNum + '?\n\nThis cannot be undone.')) return;
+    try {
+        var resp = await fetch('/api/will/version/' + versionId + '/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        var data = await resp.json();
+        if (data.ok) {
+            window.location.href = '/preview';
+        } else {
+            alert('Error: ' + (data.error || 'Failed to delete version'));
         }
     } catch (err) {
         alert('Network error. Please try again.');

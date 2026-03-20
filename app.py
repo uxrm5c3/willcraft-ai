@@ -1470,6 +1470,40 @@ def api_will_delete_generated():
     return jsonify({'ok': True})
 
 
+@app.route('/api/will/version/<int:version_id>/delete', methods=['POST'])
+@login_required
+def api_will_delete_version(version_id):
+    """Delete a specific version from version history."""
+    will_id = session.get('will_id')
+    if not will_id:
+        return jsonify({'ok': False, 'error': 'No will in session'}), 400
+    version = db.session.get(WillVersion, version_id)
+    if not version or version.will_id != will_id:
+        return jsonify({'ok': False, 'error': 'Version not found'}), 404
+    # Don't allow deleting if it's the only version
+    total = WillVersion.query.filter_by(will_id=will_id).count()
+    if total <= 1:
+        return jsonify({'ok': False, 'error': 'Cannot delete the only version'}), 400
+    # Check if deleting the latest version
+    latest = WillVersion.query.filter_by(will_id=will_id).order_by(
+        WillVersion.version_number.desc()
+    ).first()
+    is_latest = (version.id == latest.id)
+    db.session.delete(version)
+    db.session.flush()
+    # If we deleted the latest, update will's generated_will_text to the new latest
+    if is_latest:
+        new_latest = WillVersion.query.filter_by(will_id=will_id).order_by(
+            WillVersion.version_number.desc()
+        ).first()
+        if new_latest:
+            wr = db.session.get(Will, will_id)
+            if wr:
+                wr.generated_will_text = new_latest.will_text
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
 @app.route('/api/feedback', methods=['POST'])
 @login_required
 def api_feedback():
