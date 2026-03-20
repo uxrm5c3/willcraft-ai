@@ -319,11 +319,7 @@
             <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Substitute Beneficiaries</h4>
             {% for group in sub_groups %}
             <div class="mb-2">
-                {% if main_bens|length > 1 %}
-                <p class="text-xs text-gray-400 mb-1">↳ If {{ main_bens[loop.index0].get('beneficiary_name', 'Beneficiary ' ~ loop.index) if loop.index0 < main_bens|length else 'Beneficiary ' ~ loop.index }} does not survive:</p>
-                {% else %}
-                <p class="text-xs text-gray-400 mb-1">↳ If {{ main_bens[0].get('beneficiary_name', 'beneficiary') }} does not survive:</p>
-                {% endif %}
+                <p class="text-xs text-gray-400 mb-1">↳ Group {{ loop.index }}:</p>
                 {% for sub in group %}
                 <div class="text-sm flex justify-between ml-5">
                     <span class="text-gray-900">{{ sub.get('beneficiary_name', '-') }}</span>

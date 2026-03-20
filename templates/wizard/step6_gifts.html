@@ -571,7 +571,7 @@
     </div>
     <!-- Reorder mode banner (hidden by default) -->
     <div id="reorder-banner" class="hidden mb-6 p-3 bg-primary-50 border border-primary-200 rounded-lg flex items-center justify-between">
-        <span class="text-sm text-primary-700 font-medium">Reorder mode — use ▲ ▼ arrows or drag to rearrange gifts</span>
+        <span class="text-sm text-primary-700 font-medium" id="reorder-hint">Tap a gift to select it, then use ▲ ▼ to move</span>
         <button type="button" onclick="toggleReorderMode()" class="px-4 py-1.5 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700 transition-colors">
             Done
         </button>
@@ -596,26 +596,29 @@
 
 {% block wizard_scripts %}
 <style>
-@keyframes wiggle {
-    0%, 100% { transform: rotate(0deg); }
-    25% { transform: rotate(-0.5deg); }
-    75% { transform: rotate(0.5deg); }
-}
 .reorder-active .gift-entry {
-    animation: wiggle 0.3s ease-in-out infinite;
+    cursor: pointer;
+    border-color: #d1d5db;
+    transition: all 0.15s ease;
+}
+.reorder-active .gift-entry:hover {
+    border-color: #6366f1;
+    background-color: #f5f3ff;
+}
+.reorder-active .gift-entry.reorder-selected {
     border-color: #6366f1 !important;
-    box-shadow: 0 0 0 1px rgba(99,102,241,0.3);
-    cursor: grab;
+    background-color: #eef2ff !important;
+    box-shadow: 0 0 0 2px rgba(99,102,241,0.3);
 }
-.reorder-active .gift-entry:nth-child(even) {
-    animation-delay: 0.15s;
-}
-.reorder-active .gift-entry .reorder-arrows {
+.reorder-active .gift-entry.reorder-selected .reorder-arrows {
     display: flex !important;
 }
-.reorder-active .gift-entry .drag-handle {
-    color: #6366f1 !important;
+.reorder-active .gift-entry.reorder-selected {
     cursor: grab;
+}
+.reorder-active .gift-entry .drag-handle,
+.reorder-active .gift-entry button[onclick*="removeGift"] {
+    display: none;
 }
 </style>
 <script>
@@ -658,8 +661,12 @@ allocCounts[{{ loop.index0 }}] = {{ gift.get('allocations', [{}])|length }};
 
 // Collapse/expand gifts
 function toggleGiftCollapse(giftIdx) {
-    // Prevent expand/collapse while in reorder mode
-    if (_reorderMode) return;
+    // In reorder mode, click selects the gift instead
+    if (_reorderMode) {
+        const entry = document.querySelector(`.gift-entry[data-gift-index="${giftIdx}"]`);
+        if (entry) selectGiftForReorder(entry);
+        return;
+    }
     const body = document.getElementById('gift-body-' + giftIdx);
     const summary = document.getElementById('gift-summary-' + giftIdx);
     const chevron = document.getElementById('gift-chevron-' + giftIdx);
@@ -1130,7 +1137,7 @@ function sortGiftsByType() {
     renumberGifts();
 }
 
-// Drag-and-drop gift reordering
+// Drag-and-drop gift reordering (works in reorder mode for selected gift)
 (function initGiftDragDrop() {
     const container = document.getElementById('gifts-container');
     if (!container) return;
@@ -1138,12 +1145,13 @@ function sortGiftsByType() {
 
     container.addEventListener('dragstart', e => {
         const entry = e.target.closest('.gift-entry');
-        if (!entry) return;
+        if (!entry || !_reorderMode) { e.preventDefault(); return; }
         draggedEl = entry;
         entry.style.opacity = '0.4';
         e.dataTransfer.effectAllowed = 'move';
     });
     container.addEventListener('dragover', e => {
+        if (!draggedEl) return;
         e.preventDefault();
         const entry = e.target.closest('.gift-entry');
         if (!entry || entry === draggedEl) return;
@@ -1158,20 +1166,67 @@ function sortGiftsByType() {
         renumberGifts();
     });
 
-    // Only make draggable via the drag handle
-    document.addEventListener('mousedown', e => {
-        const handle = e.target.closest('.drag-handle');
-        if (handle) {
-            const entry = handle.closest('.gift-entry');
-            if (entry) entry.draggable = true;
+    // In reorder mode, selected gift is draggable anywhere (not just handle)
+    container.addEventListener('mousedown', e => {
+        if (!_reorderMode) return;
+        const entry = e.target.closest('.gift-entry');
+        if (entry && entry === _selectedGift && !e.target.closest('.reorder-arrows')) {
+            entry.draggable = true;
         }
     });
-    document.addEventListener('mouseup', () => {
-        document.querySelectorAll('.gift-entry[draggable]').forEach(el => el.draggable = false);
+    container.addEventListener('mouseup', () => {
+        container.querySelectorAll('.gift-entry[draggable]').forEach(el => el.draggable = false);
+    });
+
+    // Touch drag support for mobile
+    let touchDragEl = null;
+    let touchStartY = 0;
+    let placeholder = null;
+
+    container.addEventListener('touchstart', e => {
+        if (!_reorderMode) return;
+        const entry = e.target.closest('.gift-entry');
+        if (!entry || entry !== _selectedGift || e.target.closest('.reorder-arrows')) return;
+        touchDragEl = entry;
+        touchStartY = e.touches[0].clientY;
+        entry.style.opacity = '0.5';
+        entry.style.zIndex = '50';
+    }, { passive: true });
+
+    container.addEventListener('touchmove', e => {
+        if (!touchDragEl) return;
+        e.preventDefault();
+        const touchY = e.touches[0].clientY;
+        const entries = [...container.querySelectorAll('.gift-entry')];
+        for (const target of entries) {
+            if (target === touchDragEl) continue;
+            const rect = target.getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            if (touchY < midY && target.compareDocumentPosition(touchDragEl) & Node.DOCUMENT_POSITION_FOLLOWING) {
+                container.insertBefore(touchDragEl, target);
+                renumberGifts();
+                break;
+            } else if (touchY > midY && target.compareDocumentPosition(touchDragEl) & Node.DOCUMENT_POSITION_PRECEDING) {
+                container.insertBefore(touchDragEl, target.nextSibling);
+                renumberGifts();
+                break;
+            }
+        }
+    }, { passive: false });
+
+    container.addEventListener('touchend', () => {
+        if (touchDragEl) {
+            touchDragEl.style.opacity = '1';
+            touchDragEl.style.zIndex = '';
+            touchDragEl = null;
+            renumberGifts();
+        }
     });
 })();
 
-// Reorder mode (iPhone-style with wiggle + up/down arrows)
+// Reorder mode — tap to select, arrows to move
+let _selectedGift = null;
+
 function toggleReorderMode() {
     _reorderMode = !_reorderMode;
     const container = document.getElementById('gifts-container');
@@ -1180,23 +1235,19 @@ function toggleReorderMode() {
     const reorderBtn = document.getElementById('reorder-btn');
 
     if (_reorderMode) {
-        // Collapse all gifts first for easy reordering
+        // Collapse all gifts and update summaries
         container.querySelectorAll('.gift-entry').forEach((entry) => {
-            const body = entry.querySelector('[id^="gift-body-"]');
-            const summary = entry.querySelector('[id^="gift-summary-"]');
-            const chevron = entry.querySelector('.gift-chevron');
-            const arrows = entry.querySelector('.reorder-arrows');
-            if (body) body.classList.add('hidden');
-            if (summary) summary.classList.remove('hidden');
-            if (chevron) chevron.style.transform = 'rotate(-90deg)';
-            if (arrows) { arrows.classList.remove('hidden'); arrows.style.display = 'flex'; }
+            const idx = entry.dataset.giftIndex;
+            collapseGift(parseInt(idx));
         });
         container.classList.add('reorder-active');
         banner.classList.remove('hidden');
         actionBtns.classList.add('hidden');
-        reorderBtn.textContent = 'Done';
-        reorderBtn.classList.add('bg-primary-600', 'text-white', 'border-primary-600');
+        _selectedGift = null;
     } else {
+        // Deselect and clean up
+        if (_selectedGift) _selectedGift.classList.remove('reorder-selected');
+        _selectedGift = null;
         container.querySelectorAll('.gift-entry .reorder-arrows').forEach((arrows) => {
             arrows.classList.add('hidden');
             arrows.style.display = '';
@@ -1204,10 +1255,30 @@ function toggleReorderMode() {
         container.classList.remove('reorder-active');
         banner.classList.add('hidden');
         actionBtns.classList.remove('hidden');
-        reorderBtn.textContent = '↕ Reorder';
-        reorderBtn.classList.remove('bg-primary-600', 'text-white', 'border-primary-600');
         renumberGifts();
     }
+}
+
+function selectGiftForReorder(entry) {
+    if (!_reorderMode) return;
+    // Deselect previous
+    if (_selectedGift) {
+        _selectedGift.classList.remove('reorder-selected');
+        const oldArrows = _selectedGift.querySelector('.reorder-arrows');
+        if (oldArrows) { oldArrows.classList.add('hidden'); oldArrows.style.display = ''; }
+    }
+    // Select new (or deselect if same)
+    if (_selectedGift === entry) {
+        _selectedGift = null;
+        document.getElementById('reorder-hint').textContent = 'Tap a gift to select it, then use ▲ ▼ to move';
+        return;
+    }
+    _selectedGift = entry;
+    entry.classList.add('reorder-selected');
+    const arrows = entry.querySelector('.reorder-arrows');
+    if (arrows) { arrows.classList.remove('hidden'); arrows.style.display = 'flex'; }
+    document.getElementById('reorder-hint').textContent = 'Use ▲ ▼ to move, tap another gift to switch';
+    entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function moveGiftUp(btn) {
