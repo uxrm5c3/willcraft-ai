@@ -236,9 +236,9 @@
                             {% if rec.form_code in validation_warnings %}
                             <span class="px-1.5 py-0.5 bg-red-100 text-red-700 text-[10px] font-bold rounded">Missing Info</span>
                             {% endif %}
-                            <a href="/probate/template/{{ rec.form_code }}/view" target="_blank"
-                               class="px-1.5 py-0.5 bg-gray-100 text-gray-600 text-[10px] font-medium rounded hover:bg-gray-200 hover:text-gray-800 transition-colors no-underline"
-                               title="View blank template as PDF">View</a>
+                            <button type="button" onclick="viewTemplate('{{ rec.form_code }}', '{{ rec.form_name }}')"
+                               class="px-1.5 py-0.5 bg-gray-100 text-gray-600 text-[10px] font-medium rounded hover:bg-gray-200 hover:text-gray-800 transition-colors"
+                               title="View blank template">View</button>
                             <a href="/probate/template/{{ rec.form_code }}/view?format=docx"
                                class="px-1.5 py-0.5 bg-blue-50 text-blue-600 text-[10px] font-medium rounded hover:bg-blue-100 transition-colors no-underline"
                                title="Download editable DOCX template">DOCX</a>
@@ -538,6 +538,80 @@ function updateChecklist() {
         s.className = 'text-[10px] text-green-600 mt-2';
         setTimeout(() => { s.textContent = ''; }, 2000);
     });
+}
+
+/* ── Document viewer helpers (not loaded from wizard.js on probate pages) ── */
+function closeDocumentViewer() {
+    const viewer = document.getElementById('document-viewer');
+    if (viewer) viewer.classList.add('hidden');
+    document.body.style.overflow = '';
+    _currentTemplateCode = null;
+    closeTranslation();
+    const imgEl = document.getElementById('doc-viewer-img');
+    const pdfEl = document.getElementById('doc-viewer-pdf');
+    if (imgEl) imgEl.src = '';
+    if (pdfEl) { pdfEl.src = ''; pdfEl.classList.add('hidden'); }
+}
+
+function closeTranslation() {
+    const overlay = document.getElementById('doc-translate-overlay');
+    if (overlay) overlay.classList.add('hidden');
+}
+
+/* ── View Template inline ── */
+let _currentTemplateCode = null;
+
+function viewTemplate(formCode, formName) {
+    _currentTemplateCode = formCode;
+    const viewer = document.getElementById('document-viewer');
+    if (!viewer) return;
+
+    const imgEl = document.getElementById('doc-viewer-img');
+    const pdfEl = document.getElementById('doc-viewer-pdf');
+    const titleEl = document.getElementById('doc-viewer-title');
+
+    if (titleEl) titleEl.textContent = formName + ' (Template)';
+    if (imgEl) imgEl.classList.add('hidden');
+    if (pdfEl) {
+        pdfEl.classList.remove('hidden');
+        pdfEl.src = '/probate/template/' + formCode + '/view';
+    }
+
+    viewer.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+
+    // Override translate button for template mode
+    const translateBtn = document.getElementById('doc-translate-btn');
+    if (translateBtn) {
+        translateBtn.onclick = function() { translateTemplate(); };
+    }
+}
+
+async function translateTemplate() {
+    if (!_currentTemplateCode) return;
+    const btn = document.getElementById('doc-translate-btn');
+    const overlay = document.getElementById('doc-translate-overlay');
+    const content = document.getElementById('doc-translate-content');
+    if (!overlay || !content) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Translating...';
+
+    try {
+        const resp = await fetch('/probate/template/' + _currentTemplateCode + '/translate', { method: 'POST' });
+        const data = await resp.json();
+        if (data.ok) {
+            content.textContent = data.translation;
+            overlay.classList.remove('hidden');
+        } else {
+            alert(data.error || 'Translation failed');
+        }
+    } catch (err) {
+        alert('Translation failed: ' + err.message);
+    }
+
+    btn.disabled = false;
+    btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/></svg> Translate';
 }
 
 /* ── Replace Template ── */

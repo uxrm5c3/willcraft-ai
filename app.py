@@ -4422,6 +4422,34 @@ def probate_template_view(form_code):
                      download_name=f'{form_code}_template.docx')
 
 
+@app.route('/probate/template/<form_code>/translate', methods=['POST'])
+@login_required
+def probate_template_translate(form_code):
+    """Translate a probate form template from Malay to English using AI."""
+    tpl = ProbateFormTemplate.query.filter_by(form_code=form_code).first()
+    if not tpl:
+        return jsonify(ok=False, error='Template not found'), 404
+    template_path = os.path.join(os.path.dirname(__file__), tpl.file_path)
+    if not os.path.exists(template_path):
+        return jsonify(ok=False, error='File not found'), 404
+    # Convert to PDF first, then translate using vision
+    from documents.probate_generator import convert_to_pdf
+    import shutil
+    tmp_dir = tempfile.mkdtemp()
+    tmp_docx = os.path.join(tmp_dir, os.path.basename(template_path))
+    shutil.copy2(template_path, tmp_docx)
+    pdf_path = convert_to_pdf(tmp_docx)
+    if not pdf_path or not os.path.exists(pdf_path):
+        return jsonify(ok=False, error='Could not convert template to PDF'), 500
+    try:
+        from ai.ocr import translate_document
+        translation = translate_document(pdf_path)
+        return jsonify(ok=True, translation=translation)
+    except Exception as e:
+        app.logger.error(f'Template translate error: {e}')
+        return jsonify(ok=False, error='Translation failed. Please try again.'), 500
+
+
 @app.route('/probate/template/<form_code>/replace', methods=['POST'])
 @login_required
 def probate_template_replace(form_code):
