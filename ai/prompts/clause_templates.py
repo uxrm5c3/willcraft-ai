@@ -16,7 +16,7 @@ PREAMBLE_TEMPLATE = """This Will is made by me {testator_name} MALAYSIA NRIC No.
 
 REVOCATION_TEMPLATE = """Revocation
 
-1.  By signing this Will, I revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have made a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly. I hereby declare that I am domiciled in Malaysia."""
+1.  By signing this Will, I revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have made a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly."""
 
 # ============================================================
 # APPOINTMENT OF EXECUTOR(S) (Clause 2)

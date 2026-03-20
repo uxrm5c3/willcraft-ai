@@ -31,7 +31,7 @@ Draft the will following this professional professional standard format. Use EXA
 ### 2. REVOCATION (Clause 1)
 Section heading: "Revocation"
 
-"1. By signing this Will, I revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly. I hereby declare that I am domiciled in Malaysia."
+"1. By signing this Will, I revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly."
 
 ### 3. APPOINTMENT OF EXECUTOR(S) (Clause 2)
 Section heading: "Appointment of Executor(s)"
