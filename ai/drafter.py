@@ -165,15 +165,21 @@ def format_will_data(will_data) -> str:
                 gift_lines.append(f"    - {a.beneficiary_name}: {a.share} (Main Beneficiary)")
             # Substitute beneficiary instructions
             sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
+            mb_allocs = [a for a in g.allocations if a.role == 'MB']
             if sub_mode == 'equal':
-                gift_lines.append(f"    Substitute: If any beneficiary does not survive, give their share to surviving beneficiaries in EQUAL SHARES")
+                if len(mb_allocs) > 1:
+                    gift_lines.append(f"    Substitute: If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares or to the survivor of them if one of them does not survive me.")
+                else:
+                    gift_lines.append(f"    Substitute: (single beneficiary — use specific substitutes if needed)")
             elif sub_mode == 'prorata':
-                gift_lines.append(f"    Substitute: If any beneficiary does not survive, give their share to surviving beneficiaries in PRO-RATA (same ratio as original shares)")
+                gift_lines.append(f"    Substitute: If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio as their respective shares.")
             elif sub_mode == 'specific':
                 for a in g.allocations:
                     if a.substitutes:
-                        sub_parts = [f"{s.beneficiary_name} ({s.share})" for s in a.substitutes]
-                        gift_lines.append(f"    Substitute for {a.beneficiary_name}: {', '.join(sub_parts)}")
+                        sub_parts = []
+                        for s in a.substitutes:
+                            sub_parts.append(f"{s.beneficiary_name} ({s.share})")
+                        gift_lines.append(f"    Substitute for {a.beneficiary_name}: If {a.beneficiary_name} does not survive me, then the benefit would be given to {', '.join(sub_parts)}")
         sections.append(f"""
 ## SPECIFIC GIFTS / BEQUESTS
 {chr(10).join(gift_lines)}""")

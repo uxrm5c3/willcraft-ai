@@ -99,8 +99,12 @@ Unless specifically stated to the contrary in this Will, I direct that any sums 
 (i) my [relationship] [NAME] MALAYSIA NRIC No. [number] ([X]% share)
 (ii) ..."
 
-### 10. SUBSTITUTE BENEFICIARIES (if applicable, as separate clauses)
-"[N]. With reference to Clause [X] above, if my [relationship] [NAME] MALAYSIA NRIC No. [number] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] MALAYSIA NRIC No. [number]."
+### 10. SUBSTITUTE BENEFICIARIES (if applicable)
+Use the substitute mode specified in the gift data:
+— **Equal shares**: "If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares or to the survivor of them if one of them does not survive me."
+— **Pro-rata**: "If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio as their respective shares."
+— **Specific substitutes**: "[N]. If my [relationship] [NAME] MALAYSIA NRIC No. [number] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] ([X]% share) and my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] ([Y]% share) or to the survivor of them if one of them does not survive me."
+— **Sell directive**: When SELL DIRECTIVE is specified, use: "I direct my Executor(s) to sell [property description] and distribute the nett proceeds of the sale to [beneficiary clause]."
 
 ### 11. RESIDUARY ESTATE
 Section heading: "Residuary Estate"
