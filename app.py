@@ -821,6 +821,7 @@ def login():
         session['user_id'] = user.id
         session['user_role'] = user.role
         session['user_name'] = user.name
+        session['user_email'] = user.email
         session.permanent = remember
         return redirect(url_for('index'))
 
@@ -1376,7 +1377,7 @@ def send_will_email(to_email, subject, body_html, attachments=None, tenant=None)
 @app.route('/api/will/<will_id>/send-email', methods=['POST'])
 @login_required
 def api_will_send_email(will_id):
-    """Email the approved will (PDF) to the client."""
+    """Email the approved will (PDF) to a recipient."""
     will_record = db.session.get(Will, will_id)
     if not will_record:
         return jsonify({'ok': False, 'error': 'Will not found'}), 404
@@ -1384,27 +1385,30 @@ def api_will_send_email(will_id):
     if will_record.status != 'approved':
         return jsonify({'ok': False, 'error': 'Only approved wills can be emailed'}), 403
 
-    # Check permission (approver always can, admin/advisor for approved wills)
-    user_perms = ROLE_PERMS.get(session.get('user_role', ''), {})
-    if not user_perms.get('canEmail') and will_record.status != 'approved':
-        return jsonify({'ok': False, 'error': 'You do not have permission to email wills'}), 403
-
-    # Get client email
+    # Get recipient email — prefer custom to_email from request body, fallback to client email
+    data = request.get_json(silent=True) or {}
+    to_email = (data.get('to_email') or '').strip()
     client = db.session.get(Client, will_record.client_id)
-    if not client or not client.email:
-        return jsonify({'ok': False, 'error': 'Client email address not found. Please update the client profile.'}), 400
+
+    if not to_email:
+        if client and client.email:
+            to_email = client.email
+        else:
+            return jsonify({'ok': False, 'error': 'Please enter a recipient email address'}), 400
+
+    if '@' not in to_email:
+        return jsonify({'ok': False, 'error': 'Please enter a valid email address'}), 400
 
     # Generate PDF attachment
     will_text = will_record.generated_will_text or ''
     if not will_text:
         return jsonify({'ok': False, 'error': 'No will text to send'}), 400
 
-    testator_name = client.full_name or 'Client'
+    testator_name = (client.full_name if client else '') or 'Client'
     safe_name = "".join(c for c in testator_name if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_') or 'Will'
 
     try:
         from documents.pdf_generator import generate_pdf
-        # Respect will's include_logo preference
         logo = None
         if will_record.include_logo:
             logo = _get_logo_path()
@@ -1418,16 +1422,27 @@ def api_will_send_email(will_id):
     # Build email
     tenant = get_tenant()
     brand = tenant.get('brand', 'WillCraft AI')
+    user_name = session.get('user_name', 'Unknown')
+    user_role = session.get('user_role', '')
+
+    # CC approver if sender is admin or advisor
+    cc_list = list(tenant.get('email_cc', []))
+    if user_role in ('admin', 'advisor'):
+        approvers = User.query.filter_by(role='approver', is_active=True).all()
+        for ap in approvers:
+            if ap.email and ap.email not in cc_list:
+                cc_list.append(ap.email)
+
     subject = f"Your Last Will and Testament - {testator_name}"
     body_html = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
         <h2 style="color: #1a365d;">Your Last Will and Testament</h2>
-        <p>Dear {testator_name},</p>
-        <p>Please find attached your Last Will and Testament document in PDF format.</p>
+        <p>Dear Sir/Madam,</p>
+        <p>Please find attached the Last Will and Testament for <strong>{testator_name}</strong> in PDF format.</p>
         <p>Kindly review the document carefully. If you have any questions or require
         any amendments, please do not hesitate to contact us.</p>
         <br>
-        <p>Best regards,<br><strong>{brand}</strong></p>
+        <p>Best regards,<br><strong>{user_name}</strong><br>{brand}</p>
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
         <p style="font-size: 12px; color: #718096;">
             This email and its attachment are confidential and intended solely for the addressee.
@@ -1435,30 +1450,54 @@ def api_will_send_email(will_id):
     </div>
     """
 
+    from_email = tenant.get('email_from')
+    if not from_email:
+        user = db.session.get(User, session.get('user_id'))
+        from_email = user.email if user else None
+    if not from_email:
+        return jsonify({'ok': False, 'error': 'No sender email configured. Contact admin.'}), 400
+
     try:
-        send_will_email(
-            to_email=client.email,
-            subject=subject,
-            body_html=body_html,
-            attachments=[{
-                'filename': f'{safe_name}_Will.pdf',
-                'data': pdf_data,
-            }],
-            tenant=tenant,
-        )
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+        from email.mime.base import MIMEBase
+        from email import encoders
+
+        msg = MIMEMultipart()
+        msg['From'] = from_email
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        if cc_list:
+            msg['Cc'] = ', '.join(cc_list)
+        msg.attach(MIMEText(body_html, 'html'))
+
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(pdf_data)
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename="{safe_name}_Will.pdf"')
+        msg.attach(part)
+
+        all_recipients = [to_email] + cc_list
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if SMTP_USER and SMTP_PASSWORD:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(from_email, all_recipients, msg.as_string())
     except Exception as e:
         app.logger.error(f'Email sending failed: {e}')
         return jsonify({'ok': False, 'error': f'Failed to send email: {str(e)}'}), 500
 
-    # Log the email send
     sender_name = session.get('user_name', 'Unknown')
-    app.logger.info(f'Will {will_id} emailed to {client.email} by {sender_name}')
+    app.logger.info(f'Will {will_id} emailed to {to_email} by {sender_name} (cc: {cc_list})')
 
     return jsonify({
         'ok': True,
-        'sent_to': client.email,
-        'cc': tenant.get('email_cc', []),
-        'message': f'Will emailed to {client.email}',
+        'sent_to': to_email,
+        'cc': cc_list,
+        'message': f'Will emailed to {to_email}',
     })
 
 
@@ -3434,11 +3473,13 @@ def reset():
     user_id = session.get('user_id')
     user_role = session.get('user_role')
     user_name = session.get('user_name')
+    user_email = session.get('user_email')
     session.clear()
     if user_id:
         session['user_id'] = user_id
         session['user_role'] = user_role
         session['user_name'] = user_name
+        session['user_email'] = user_email
     flash('Your session has been reset. You can start a new will.', 'info')
     return redirect(url_for('index'))
 
@@ -3451,11 +3492,13 @@ def wizard_new():
     user_id = session.get('user_id')
     user_role = session.get('user_role')
     user_name = session.get('user_name')
+    user_email = session.get('user_email')
     session.clear()
     if user_id:
         session['user_id'] = user_id
         session['user_role'] = user_role
         session['user_name'] = user_name
+        session['user_email'] = user_email
     return redirect(url_for('wizard_step_identities'))
 
 
@@ -4581,6 +4624,115 @@ def probate_download_all(probate_id):
     form_files = [{'form_code': f.form_code, 'file_path': f.file_path, 'form_name': f.form_name} for f in forms]
     create_zip(form_files, zip_path, as_pdf=(fmt == 'pdf'))
     return send_file(zip_path, as_attachment=True, download_name=f'probate_forms_{probate_id[:8]}.zip')
+
+
+@app.route('/api/probate/<probate_id>/send-email', methods=['POST'])
+@login_required
+def api_probate_send_email(probate_id):
+    """Email all generated probate forms as a ZIP attachment."""
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        return jsonify({'ok': False, 'error': 'Probate application not found'}), 404
+
+    forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
+    if not forms:
+        return jsonify({'ok': False, 'error': 'No generated forms to send'}), 400
+
+    data = request.get_json(silent=True) or {}
+    to_email = (data.get('to_email') or '').strip()
+    if not to_email or '@' not in to_email:
+        return jsonify({'ok': False, 'error': 'Please enter a valid email address'}), 400
+
+    fmt = data.get('format', 'pdf')  # pdf or docx
+
+    # Build ZIP attachment
+    from documents.probate_generator import create_zip
+    zip_path = os.path.join(tempfile.gettempdir(), f'probate_email_{probate_id[:8]}.zip')
+    form_files = [{'form_code': f.form_code, 'file_path': f.file_path, 'form_name': f.form_name} for f in forms]
+    create_zip(form_files, zip_path, as_pdf=(fmt == 'pdf'))
+    with open(zip_path, 'rb') as f:
+        zip_data = f.read()
+
+    # Determine sender & CC
+    tenant = get_tenant()
+    user_role = session.get('user_role', '')
+    user_name = session.get('user_name', 'Unknown')
+    brand = tenant.get('brand', 'WillCraft AI')
+
+    # CC approver if sender is admin or advisor
+    cc_list = list(tenant.get('email_cc', []))
+    if user_role in ('admin', 'advisor'):
+        approvers = User.query.filter_by(role='approver', is_active=True).all()
+        for ap in approvers:
+            if ap.email and ap.email not in cc_list:
+                cc_list.append(ap.email)
+
+    deceased_name = probate.deceased_name or 'the estate'
+    subject = f"Probate Forms — {deceased_name}"
+    body_html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1a365d;">Probate Application Forms</h2>
+        <p>Dear Sir/Madam,</p>
+        <p>Please find attached the probate court forms for the estate of <strong>{deceased_name}</strong>.</p>
+        <p>The attached ZIP file contains {len(forms)} form(s) in {fmt.upper()} format.</p>
+        <br>
+        <p>Best regards,<br><strong>{user_name}</strong><br>{brand}</p>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+        <p style="font-size: 12px; color: #718096;">
+            This email and its attachments are confidential and intended solely for the addressee.
+        </p>
+    </div>
+    """
+
+    from_email = tenant.get('email_from')
+    if not from_email:
+        # Fallback: use logged-in user's email
+        user = db.session.get(User, session.get('user_id'))
+        from_email = user.email if user else None
+    if not from_email:
+        return jsonify({'ok': False, 'error': 'No sender email configured. Contact admin.'}), 400
+
+    try:
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+        from email.mime.base import MIMEBase
+        from email import encoders
+
+        msg = MIMEMultipart()
+        msg['From'] = from_email
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        if cc_list:
+            msg['Cc'] = ', '.join(cc_list)
+        msg.attach(MIMEText(body_html, 'html'))
+
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(zip_data)
+        encoders.encode_base64(part)
+        ext = 'pdf' if fmt == 'pdf' else 'docx'
+        part.add_header('Content-Disposition', f'attachment; filename="probate_forms_{probate_id[:8]}.zip"')
+        msg.attach(part)
+
+        all_recipients = [to_email] + cc_list
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if SMTP_USER and SMTP_PASSWORD:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(from_email, all_recipients, msg.as_string())
+
+        app.logger.info(f'Probate {probate_id} forms emailed to {to_email} by {user_name} (cc: {cc_list})')
+        return jsonify({
+            'ok': True,
+            'sent_to': to_email,
+            'cc': cc_list,
+            'message': f'Forms emailed to {to_email}',
+        })
+    except Exception as e:
+        app.logger.error(f'Probate email failed: {e}')
+        return jsonify({'ok': False, 'error': f'Failed to send email: {str(e)}'}), 500
 
 
 @app.route('/api/ocr/death-cert', methods=['POST'])

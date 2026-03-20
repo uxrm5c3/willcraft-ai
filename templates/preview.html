@@ -435,22 +435,15 @@
             </a>
             {% endif %}
 
-            <!-- Email to Client button (approved wills only) -->
-            {% if will_record and will_record.status == 'approved' and client_email %}
-            <button id="email-will-btn" onclick="sendWillEmail('{{ will_record.id }}')"
+            <!-- Email Will button (approved wills only) -->
+            {% if will_record and will_record.status == 'approved' %}
+            <button type="button" onclick="document.getElementById('email-will-panel').classList.toggle('hidden')"
                class="inline-flex items-center px-5 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 transition-colors shadow-sm">
                 <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                 </svg>
-                <span id="email-btn-text">Email to Client</span>
+                Email Will
             </button>
-            {% elif will_record and will_record.status == 'approved' and not client_email %}
-            <span class="inline-flex items-center px-5 py-2 bg-gray-200 text-gray-500 font-medium rounded-lg cursor-not-allowed text-sm" title="No client email on file">
-                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                </svg>
-                No client email
-            </span>
             {% endif %}
 
             <!-- Probate Application button (approved wills, admin/approver only) -->
@@ -464,6 +457,29 @@
             </a>
             {% endif %}
         </div>
+
+        <!-- Email Will Panel (toggleable) -->
+        {% if will_record and will_record.status == 'approved' %}
+        <div id="email-will-panel" class="hidden mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+            <h4 class="text-sm font-semibold text-purple-800 mb-2 flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                Email Will as PDF
+            </h4>
+            <div class="flex flex-wrap gap-2 items-end">
+                <div class="flex-1 min-w-[200px]">
+                    <input type="email" id="will-email-to" value="{{ client_email or '' }}" placeholder="Recipient email address"
+                           class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                </div>
+                <button type="button" onclick="sendWillEmail('{{ will_record.id }}')" id="email-will-btn"
+                        class="px-4 py-1.5 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700 flex items-center gap-1 whitespace-nowrap">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    <span id="email-btn-text">Send</span>
+                </button>
+            </div>
+            <div id="will-email-status" class="text-xs mt-1.5 hidden"></div>
+            <p class="text-[10px] text-gray-400 mt-1">From: {{ session.get('user_email', 'your profile email') }}{% if session.get('user_role') in ('admin', 'advisor') %} &middot; CC: approver(s) will be auto-added{% endif %}</p>
+        </div>
+        {% endif %}
     </div>
 
     <!-- New Will Link -->
@@ -659,43 +675,48 @@ async function aiRedraft() {
 }
 {% endif %}
 
-/* Email will to client */
+/* Email will */
 async function sendWillEmail(willId) {
+    var toEmail = document.getElementById('will-email-to').value.trim();
     var btn = document.getElementById('email-will-btn');
     var btnText = document.getElementById('email-btn-text');
-    if (!confirm('Send this will as PDF to the client ({{ client_email }})?')) return;
+    var statusEl = document.getElementById('will-email-status');
+
+    if (!toEmail || !toEmail.includes('@')) {
+        statusEl.className = 'text-xs mt-1.5 text-red-500';
+        statusEl.textContent = 'Please enter a valid email address';
+        statusEl.classList.remove('hidden');
+        return;
+    }
 
     btn.disabled = true;
     btnText.textContent = 'Sending...';
+    statusEl.className = 'text-xs mt-1.5 text-blue-600';
+    statusEl.textContent = 'Sending email...';
+    statusEl.classList.remove('hidden');
 
     try {
         var resp = await fetch('/api/will/' + willId + '/send-email', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ to_email: toEmail })
         });
         var data = await resp.json();
         if (data.ok) {
-            btnText.textContent = 'Sent!';
-            btn.classList.remove('bg-purple-600', 'hover:bg-purple-700');
-            btn.classList.add('bg-green-600');
-            var cc = data.cc && data.cc.length ? ' (CC: ' + data.cc.join(', ') + ')' : '';
-            alert('Will emailed to ' + data.sent_to + cc);
-            setTimeout(function() {
-                btnText.textContent = 'Email to Client';
-                btn.classList.remove('bg-green-600');
-                btn.classList.add('bg-purple-600', 'hover:bg-purple-700');
-                btn.disabled = false;
-            }, 3000);
+            statusEl.className = 'text-xs mt-1.5 text-green-600';
+            var msg = 'Sent to ' + data.sent_to;
+            if (data.cc && data.cc.length) msg += ' (CC: ' + data.cc.join(', ') + ')';
+            statusEl.textContent = msg;
         } else {
-            alert('Error: ' + (data.error || 'Failed to send email'));
-            btnText.textContent = 'Email to Client';
-            btn.disabled = false;
+            statusEl.className = 'text-xs mt-1.5 text-red-500';
+            statusEl.textContent = data.error || 'Send failed';
         }
     } catch (err) {
-        alert('Network error. Please try again.');
-        btnText.textContent = 'Email to Client';
-        btn.disabled = false;
+        statusEl.className = 'text-xs mt-1.5 text-red-500';
+        statusEl.textContent = 'Network error. Please try again.';
     }
+    btn.disabled = false;
+    btnText.textContent = 'Send';
 }
 
 /* Delete generated will text */

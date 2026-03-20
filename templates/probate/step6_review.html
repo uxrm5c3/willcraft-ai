@@ -2,30 +2,6 @@
 
 {% block step_content %}
 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-    <h2 class="text-lg font-bold text-gray-800 mb-1">Step 6: Review & Generate Forms</h2>
-    <p class="text-sm text-gray-500 mb-6">Review all information and select which court forms to generate.</p>
-
-    <!-- Validation Warnings -->
-    {% if validation_warnings %}
-    <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-        <h3 class="text-sm font-semibold text-red-800 mb-2 flex items-center gap-2">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
-            Missing Information Required for Some Forms
-        </h3>
-        {% for form_code, missing_fields in validation_warnings.items() %}
-        <div class="mt-2">
-            <span class="text-xs font-semibold text-red-700">{{ form_code | upper }}:</span>
-            <ul class="text-xs text-red-600 ml-4 list-disc">
-                {% for field in missing_fields %}
-                <li>{{ field }}</li>
-                {% endfor %}
-            </ul>
-        </div>
-        {% endfor %}
-        <p class="text-xs text-red-500 mt-2">Please go back and fill in the missing information, or uncheck the affected forms below.</p>
-    </div>
-    {% endif %}
-
     {# ── Macro for field display with red highlight when empty ── #}
     {% macro field_val(label, value, required=false) %}
     <div class="{% if required and not value %}bg-red-50 border border-red-200 rounded px-2 py-1{% endif %}">
@@ -37,6 +13,9 @@
         {% endif %}
     </div>
     {% endmacro %}
+
+    <h2 class="text-lg font-bold text-gray-800 mb-1">Review All Information</h2>
+    <p class="text-sm text-gray-500 mb-6">Review the data collected from Steps 1–5, then scroll down to generate forms.</p>
 
     <!-- Data Summary -->
     <div class="mb-6 space-y-4">
@@ -266,6 +245,31 @@
         <div id="checklist-save-status" class="text-[10px] text-gray-400 mt-2"></div>
     </div>
 
+    <!-- Step 6: Generate Forms -->
+    <h2 class="text-lg font-bold text-gray-800 mb-1 mt-2">Step 6: Generate Forms</h2>
+    <p class="text-sm text-gray-500 mb-4">Select which court forms to generate and download.</p>
+
+    <!-- Validation Warnings -->
+    {% if validation_warnings %}
+    <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+        <h3 class="text-sm font-semibold text-red-800 mb-2 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/></svg>
+            Missing Information Required for Some Forms
+        </h3>
+        {% for form_code, missing_fields in validation_warnings.items() %}
+        <div class="mt-2">
+            <span class="text-xs font-semibold text-red-700">{{ form_code | upper }}:</span>
+            <ul class="text-xs text-red-600 ml-4 list-disc">
+                {% for field in missing_fields %}
+                <li>{{ field }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endfor %}
+        <p class="text-xs text-red-500 mt-2">Please go back and fill in the missing information, or uncheck the affected forms below.</p>
+    </div>
+    {% endif %}
+
     <!-- Form Selection -->
     <div class="mb-6">
         <h3 class="text-sm font-bold text-gray-800 mb-3">Select Forms to Generate</h3>
@@ -400,6 +404,31 @@
                 Download All PDF (ZIP)
             </a>
         </div>
+
+        <!-- Email Forms -->
+        <div class="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <h4 class="text-xs font-semibold text-blue-800 mb-2 flex items-center gap-1">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                Email Forms
+            </h4>
+            <div class="flex flex-wrap gap-2 items-end">
+                <div class="flex-1 min-w-[200px]">
+                    <input type="email" id="email-to" placeholder="Recipient email address"
+                           class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <select id="email-fmt" class="px-3 py-1.5 border border-gray-300 rounded text-sm">
+                    <option value="pdf">PDF</option>
+                    <option value="docx">DOCX</option>
+                </select>
+                <button type="button" onclick="emailProbateForms()" id="email-send-btn"
+                        class="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 flex items-center gap-1 whitespace-nowrap">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    Send
+                </button>
+            </div>
+            <div id="email-status" class="text-xs mt-1.5 hidden"></div>
+            <p class="text-[10px] text-gray-400 mt-1">From: {{ session.get('user_email', 'your profile email') }}{% if session.get('user_role') in ('admin', 'advisor') %} &middot; CC: approver(s) will be auto-added{% endif %}</p>
+        </div>
     </div>
 
     <!-- Generated Form Editor Panel (full-width editable HTML) -->
@@ -493,6 +522,49 @@
 </div>
 
 <script>
+async function emailProbateForms() {
+    const toEmail = document.getElementById('email-to').value.trim();
+    const fmt = document.getElementById('email-fmt').value;
+    const btn = document.getElementById('email-send-btn');
+    const statusEl = document.getElementById('email-status');
+
+    if (!toEmail || !toEmail.includes('@')) {
+        statusEl.className = 'text-xs mt-1.5 text-red-500';
+        statusEl.textContent = 'Please enter a valid email address';
+        statusEl.classList.remove('hidden');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    statusEl.className = 'text-xs mt-1.5 text-blue-600';
+    statusEl.textContent = 'Sending email...';
+    statusEl.classList.remove('hidden');
+
+    try {
+        const resp = await fetch('/api/probate/{{ probate_id }}/send-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ to_email: toEmail, format: fmt })
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            statusEl.className = 'text-xs mt-1.5 text-green-600';
+            let msg = 'Sent to ' + data.sent_to;
+            if (data.cc && data.cc.length) msg += ' (CC: ' + data.cc.join(', ') + ')';
+            statusEl.textContent = msg;
+        } else {
+            statusEl.className = 'text-xs mt-1.5 text-red-500';
+            statusEl.textContent = data.error || 'Send failed';
+        }
+    } catch (e) {
+        statusEl.className = 'text-xs mt-1.5 text-red-500';
+        statusEl.textContent = 'Network error';
+    }
+    btn.disabled = false;
+    btn.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> Send';
+}
+
 async function uploadReceipt(category, fileInput) {
     let file = fileInput.files[0];
     if (!file) return;
