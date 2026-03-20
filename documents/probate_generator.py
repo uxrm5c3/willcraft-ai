@@ -485,6 +485,75 @@ def recommend_forms(will_record, probate_app=None):
     return recommendations
 
 
+def _cleanup_empty_placeholders(doc):
+    """Final cleanup pass — handle empty values like a seasoned probate lawyer.
+
+    - Fill blanks with underscores for fields that need to be filled manually
+    - Remove lines that are entirely empty after replacement
+    - Clean dangling colons/punctuation where values are empty
+    - Handle optional fields gracefully (fax, reference, time of death, etc.)
+    """
+    def _clean_text(text):
+        """Apply cleanup rules to a text string."""
+        if not text or not text.strip():
+            return text
+        changed = text
+        # NRIC/IC patterns with empty value: "No. K/P: )" -> fill blank
+        changed = re.sub(r'(No\.\s*K/?P:?\s*)\)', r'\1__________)', changed)
+        changed = re.sub(r'(No\.\s*K/?P:?\s*)([,\s]*(?:yang|adalah|$))', r'\1__________\2', changed)
+        # Phone/fax with empty value
+        changed = re.sub(r'(Tel\.?:?\s*)([,\s]*Fax|$)', r'\1__________\2', changed)
+        changed = re.sub(r'(Fax\.?:?\s*)$', r'\1__________', changed)
+        changed = re.sub(r'(Fax\.?:?\s*)(\n)', r'\1__________\2', changed)
+        # Vehicle details with empty values
+        changed = re.sub(r'(No\. Pendaftaran:?\s*)(\n|$)', r'\1__________\2', changed)
+        changed = re.sub(r'(No\. Enjin:?\s*)(\n|$)', r'\1__________\2', changed)
+        changed = re.sub(r'(No\. Casis:?\s*)(\n|$)', r'\1__________\2', changed)
+        # Kenderaan jenama with empty desc
+        changed = re.sub(r'(Kenderaan jenama)\s*\n', r'\1 __________\n', changed)
+        # Clean empty "Ruj. Kami:" or "Ruj:" (firm reference)
+        changed = re.sub(r'(Ruj\.?\s*(?:Kami)?:?\s*)(\n|$)', r'\1__________\2', changed)
+        # Account number patterns
+        changed = re.sub(r'(No:?\s*)(\n|$)', r'\1__________\2', changed)
+        # Remove lines that are just whitespace between non-empty content
+        # (don't remove intentional spacing)
+        return changed
+
+    # Process paragraphs
+    for para in doc.paragraphs:
+        full = ''.join(r.text for r in para.runs)
+        changed = _clean_text(full)
+        if changed != full and para.runs:
+            para.runs[0].text = changed
+            for r in para.runs[1:]:
+                r.text = ''
+
+    # Process tables
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for para in cell.paragraphs:
+                    full = ''.join(r.text for r in para.runs)
+                    changed = _clean_text(full)
+                    if changed != full and para.runs:
+                        para.runs[0].text = changed
+                        for r in para.runs[1:]:
+                            r.text = ''
+
+    # Process headers/footers
+    for section in doc.sections:
+        for part in (section.header, section.footer):
+            if not part:
+                continue
+            for para in part.paragraphs:
+                full = ''.join(r.text for r in para.runs)
+                changed = _clean_text(full)
+                if changed != full and para.runs:
+                    para.runs[0].text = changed
+                    for r in para.runs[1:]:
+                        r.text = ''
+
+
 def _clean_doc06_empty_rows(doc, probate_app):
     """After placeholder replacement, clean up doc06 tables for empty asset categories.
 
@@ -587,14 +656,15 @@ def generate_probate_forms(probate_app, will_record, selected_codes, templates_m
 
         try:
             fill_template(template_path, replacements, output_path)
-            # Special handling for doc06: clean up empty asset rows
-            if code == 'doc06':
-                try:
-                    doc = Document(output_path)
+            # Post-processing: clean up empty values in generated form
+            try:
+                doc = Document(output_path)
+                _cleanup_empty_placeholders(doc)
+                if code == 'doc06':
                     _clean_doc06_empty_rows(doc, probate_app)
-                    doc.save(output_path)
-                except Exception as e2:
-                    print(f"Warning: doc06 cleanup failed: {e2}")
+                doc.save(output_path)
+            except Exception as e2:
+                print(f"Warning: post-processing {code} failed: {e2}")
             results.append({
                 'form_code': code,
                 'file_path': output_path,
