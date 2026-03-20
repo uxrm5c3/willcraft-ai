@@ -315,8 +315,8 @@
                 {% endfor %}
             </div>
             {% set sub_groups = residuary.get('substitute_groups', []) %}
+            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 mt-3">Substitute Beneficiaries</h4>
             {% if sub_groups %}
-            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Substitute Beneficiaries</h4>
             {% for group in sub_groups %}
             <div class="mb-2">
                 <p class="text-xs text-gray-400 mb-1">↳ Group {{ loop.index }}:</p>
@@ -328,6 +328,8 @@
                 {% endfor %}
             </div>
             {% endfor %}
+            {% else %}
+            <p class="text-sm text-gray-400 italic">No substitute beneficiaries added. <a href="/wizard/step/7" class="text-primary-600 hover:text-primary-800 underline">Add in Step 7</a></p>
             {% endif %}
             {% if residuary.get('additional_notes') %}
             <p class="text-sm text-gray-500 mt-3"><strong>Notes:</strong> {{ residuary.get('additional_notes') }}</p>
