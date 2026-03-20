@@ -1425,30 +1425,51 @@ def api_will_send_email(will_id):
     user_name = session.get('user_name', 'Unknown')
     user_role = session.get('user_role', '')
 
-    # CC approver if sender is admin or advisor
+    # CC: merge user-provided CC, tenant CC, and auto-CC approver for admin/advisor
     cc_list = list(tenant.get('email_cc', []))
+    user_cc = (data.get('cc') or '').strip()
+    if user_cc:
+        for addr in user_cc.split(','):
+            addr = addr.strip()
+            if addr and '@' in addr and addr not in cc_list:
+                cc_list.append(addr)
     if user_role in ('admin', 'advisor'):
         approvers = User.query.filter_by(role='approver', is_active=True).all()
         for ap in approvers:
             if ap.email and ap.email not in cc_list:
                 cc_list.append(ap.email)
 
-    subject = f"Your Last Will and Testament - {testator_name}"
-    body_html = f"""
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #1a365d;">Your Last Will and Testament</h2>
-        <p>Dear Sir/Madam,</p>
-        <p>Please find attached the Last Will and Testament for <strong>{testator_name}</strong> in PDF format.</p>
-        <p>Kindly review the document carefully. If you have any questions or require
-        any amendments, please do not hesitate to contact us.</p>
-        <br>
-        <p>Best regards,<br><strong>{user_name}</strong><br>{brand}</p>
-        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
-        <p style="font-size: 12px; color: #718096;">
-            This email and its attachment are confidential and intended solely for the addressee.
-        </p>
-    </div>
-    """
+    # Use user-provided subject and body, with defaults
+    subject = (data.get('subject') or '').strip() or f"Last Will and Testament — {testator_name}"
+    user_body = (data.get('body') or '').strip()
+
+    if user_body:
+        import html as html_mod
+        body_escaped = html_mod.escape(user_body).replace('\n', '<br>')
+        body_html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <p>{body_escaped}</p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+            <p style="font-size: 12px; color: #718096;">
+                This email and its attachment are confidential and intended solely for the addressee.
+            </p>
+        </div>
+        """
+    else:
+        body_html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <p>Dear {testator_name},</p>
+            <p>Please find attached the Last Will and Testament in PDF format.</p>
+            <p>Kindly review the document carefully. If you have any questions or require
+            any amendments, please do not hesitate to contact us.</p>
+            <br>
+            <p>Best regards,<br><strong>{user_name}</strong><br>{brand}</p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+            <p style="font-size: 12px; color: #718096;">
+                This email and its attachment are confidential and intended solely for the addressee.
+            </p>
+        </div>
+        """
 
     from_email = tenant.get('email_from')
     if not from_email:
@@ -4663,34 +4684,55 @@ def api_probate_send_email(probate_id):
     user_name = session.get('user_name', 'Unknown')
     brand = tenant.get('brand', 'WillCraft AI')
 
-    # CC approver if sender is admin or advisor
+    # CC: merge user-provided CC, tenant CC, and auto-CC approver for admin/advisor
     cc_list = list(tenant.get('email_cc', []))
+    user_cc = (data.get('cc') or '').strip()
+    if user_cc:
+        for addr in user_cc.split(','):
+            addr = addr.strip()
+            if addr and '@' in addr and addr not in cc_list:
+                cc_list.append(addr)
     if user_role in ('admin', 'advisor'):
         approvers = User.query.filter_by(role='approver', is_active=True).all()
         for ap in approvers:
             if ap.email and ap.email not in cc_list:
                 cc_list.append(ap.email)
 
+    # Use user-provided subject and body, with defaults
     deceased_name = probate.deceased_name or 'the estate'
-    subject = f"Probate Forms — {deceased_name}"
-    body_html = f"""
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2 style="color: #1a365d;">Probate Application Forms</h2>
-        <p>Dear Sir/Madam,</p>
-        <p>Please find attached the probate court forms for the estate of <strong>{deceased_name}</strong>.</p>
-        <p>The attached ZIP file contains {len(forms)} form(s) in {fmt.upper()} format.</p>
-        <br>
-        <p>Best regards,<br><strong>{user_name}</strong><br>{brand}</p>
-        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
-        <p style="font-size: 12px; color: #718096;">
-            This email and its attachments are confidential and intended solely for the addressee.
-        </p>
-    </div>
-    """
+    subject = (data.get('subject') or '').strip() or f"Probate Forms — {deceased_name}"
+    user_body = (data.get('body') or '').strip()
+
+    if user_body:
+        # Convert plain text body to HTML (preserve line breaks)
+        import html as html_mod
+        body_escaped = html_mod.escape(user_body).replace('\n', '<br>')
+        body_html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <p>{body_escaped}</p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+            <p style="font-size: 12px; color: #718096;">
+                This email and its attachments are confidential and intended solely for the addressee.
+            </p>
+        </div>
+        """
+    else:
+        body_html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <p>Dear Sir/Madam,</p>
+            <p>Please find attached the probate court forms for the estate of <strong>{deceased_name}</strong>.</p>
+            <p>The attached ZIP file contains {len(forms)} form(s) in {fmt.upper()} format.</p>
+            <br>
+            <p>Best regards,<br><strong>{user_name}</strong><br>{brand}</p>
+            <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;">
+            <p style="font-size: 12px; color: #718096;">
+                This email and its attachments are confidential and intended solely for the addressee.
+            </p>
+        </div>
+        """
 
     from_email = tenant.get('email_from')
     if not from_email:
-        # Fallback: use logged-in user's email
         user = db.session.get(User, session.get('user_id'))
         from_email = user.email if user else None
     if not from_email:

@@ -406,28 +406,55 @@
         </div>
 
         <!-- Email Forms -->
-        <div class="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <h4 class="text-xs font-semibold text-blue-800 mb-2 flex items-center gap-1">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-                Email Forms
+        <div class="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <h4 class="text-sm font-semibold text-blue-800 mb-3 flex items-center gap-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                Email Forms as Attachment
             </h4>
-            <div class="flex flex-wrap gap-2 items-end">
-                <div class="flex-1 min-w-[200px]">
-                    <input type="email" id="email-to" placeholder="Recipient email address"
+            <div class="space-y-2">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-[10px] font-medium text-gray-600 mb-0.5">To <span class="text-red-500">*</span></label>
+                        <input type="email" id="email-to" placeholder="recipient@example.com"
+                               class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-medium text-gray-600 mb-0.5">CC <span class="text-[10px] text-gray-400 font-normal">(optional, comma-separated)</span></label>
+                        <input type="text" id="email-cc" placeholder="cc1@example.com, cc2@example.com"
+                               class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-[10px] font-medium text-gray-600 mb-0.5">Subject</label>
+                    <input type="text" id="email-subject" value="Probate Forms — {{ probate.deceased_name or 'Estate' }}"
                            class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                 </div>
-                <select id="email-fmt" class="px-3 py-1.5 border border-gray-300 rounded text-sm">
-                    <option value="pdf">PDF</option>
-                    <option value="docx">DOCX</option>
-                </select>
-                <button type="button" onclick="emailProbateForms()" id="email-send-btn"
-                        class="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 flex items-center gap-1 whitespace-nowrap">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                    Send
-                </button>
+                <div>
+                    <label class="block text-[10px] font-medium text-gray-600 mb-0.5">Message</label>
+                    <textarea id="email-body" rows="4"
+                              class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500">Dear Sir/Madam,
+
+Please find attached the probate court forms for the estate of {{ probate.deceased_name or 'the deceased' }}.
+
+Kindly review the documents. If you have any questions or require any amendments, please do not hesitate to contact us.
+
+Best regards,
+{{ session.get('user_name', '') }}</textarea>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <select id="email-fmt" class="px-3 py-1.5 border border-gray-300 rounded text-sm">
+                        <option value="pdf">Attach as PDF</option>
+                        <option value="docx">Attach as DOCX</option>
+                    </select>
+                    <button type="button" onclick="emailProbateForms()" id="email-send-btn"
+                            class="px-4 py-1.5 bg-blue-600 text-white text-sm font-medium rounded hover:bg-blue-700 flex items-center gap-1 whitespace-nowrap">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                        Send Email
+                    </button>
+                    <span id="email-status" class="text-xs hidden"></span>
+                </div>
+                <p class="text-[10px] text-gray-400">From: {{ session.get('user_email', 'your profile email') }}{% if session.get('user_role') in ('admin', 'advisor') %} &middot; Approver(s) auto-CC'd{% endif %} &middot; Attachment: {{ generated_forms|length }} form(s) in ZIP</p>
             </div>
-            <div id="email-status" class="text-xs mt-1.5 hidden"></div>
-            <p class="text-[10px] text-gray-400 mt-1">From: {{ session.get('user_email', 'your profile email') }}{% if session.get('user_role') in ('admin', 'advisor') %} &middot; CC: approver(s) will be auto-added{% endif %}</p>
         </div>
     </div>
 
@@ -524,12 +551,15 @@
 <script>
 async function emailProbateForms() {
     const toEmail = document.getElementById('email-to').value.trim();
+    const ccEmail = document.getElementById('email-cc').value.trim();
+    const subject = document.getElementById('email-subject').value.trim();
+    const body = document.getElementById('email-body').value.trim();
     const fmt = document.getElementById('email-fmt').value;
     const btn = document.getElementById('email-send-btn');
     const statusEl = document.getElementById('email-status');
 
     if (!toEmail || !toEmail.includes('@')) {
-        statusEl.className = 'text-xs mt-1.5 text-red-500';
+        statusEl.className = 'text-xs text-red-500';
         statusEl.textContent = 'Please enter a valid email address';
         statusEl.classList.remove('hidden');
         return;
@@ -537,7 +567,7 @@ async function emailProbateForms() {
 
     btn.disabled = true;
     btn.textContent = 'Sending...';
-    statusEl.className = 'text-xs mt-1.5 text-blue-600';
+    statusEl.className = 'text-xs text-blue-600';
     statusEl.textContent = 'Sending email...';
     statusEl.classList.remove('hidden');
 
@@ -545,7 +575,7 @@ async function emailProbateForms() {
         const resp = await fetch('/api/probate/{{ probate_id }}/send-email', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to_email: toEmail, format: fmt })
+            body: JSON.stringify({ to_email: toEmail, cc: ccEmail, subject: subject, body: body, format: fmt })
         });
         const data = await resp.json();
         if (data.ok) {

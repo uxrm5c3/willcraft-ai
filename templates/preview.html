@@ -461,23 +461,50 @@
         <!-- Email Will Panel (toggleable) -->
         {% if will_record and will_record.status == 'approved' %}
         <div id="email-will-panel" class="hidden mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-            <h4 class="text-sm font-semibold text-purple-800 mb-2 flex items-center gap-1">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-                Email Will as PDF
+            <h4 class="text-sm font-semibold text-purple-800 mb-3 flex items-center gap-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                Email Will as PDF Attachment
             </h4>
-            <div class="flex flex-wrap gap-2 items-end">
-                <div class="flex-1 min-w-[200px]">
-                    <input type="email" id="will-email-to" value="{{ client_email or '' }}" placeholder="Recipient email address"
+            <div class="space-y-2">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div>
+                        <label class="block text-[10px] font-medium text-gray-600 mb-0.5">To <span class="text-red-500">*</span></label>
+                        <input type="email" id="will-email-to" value="{{ client_email or '' }}" placeholder="recipient@example.com"
+                               class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-medium text-gray-600 mb-0.5">CC <span class="text-[10px] text-gray-400 font-normal">(optional, comma-separated)</span></label>
+                        <input type="text" id="will-email-cc" placeholder="cc1@example.com, cc2@example.com"
+                               class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-[10px] font-medium text-gray-600 mb-0.5">Subject</label>
+                    <input type="text" id="will-email-subject" value="Last Will and Testament — {{ testator_name }}"
                            class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
                 </div>
-                <button type="button" onclick="sendWillEmail('{{ will_record.id }}')" id="email-will-btn"
-                        class="px-4 py-1.5 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700 flex items-center gap-1 whitespace-nowrap">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                    <span id="email-btn-text">Send</span>
-                </button>
+                <div>
+                    <label class="block text-[10px] font-medium text-gray-600 mb-0.5">Message</label>
+                    <textarea id="will-email-body" rows="4"
+                              class="w-full px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500">Dear {{ testator_name }},
+
+Please find attached your Last Will and Testament document in PDF format.
+
+Kindly review the document carefully. If you have any questions or require any amendments, please do not hesitate to contact us.
+
+Best regards,
+{{ session.get('user_name', '') }}</textarea>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button type="button" onclick="sendWillEmail('{{ will_record.id }}')" id="email-will-btn"
+                            class="px-4 py-1.5 bg-purple-600 text-white text-sm font-medium rounded hover:bg-purple-700 flex items-center gap-1 whitespace-nowrap">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                        <span id="email-btn-text">Send Email</span>
+                    </button>
+                    <span id="will-email-status" class="text-xs hidden"></span>
+                </div>
+                <p class="text-[10px] text-gray-400">From: {{ session.get('user_email', 'your profile email') }}{% if session.get('user_role') in ('admin', 'advisor') %} &middot; Approver(s) auto-CC'd{% endif %} &middot; Attachment: Will PDF</p>
             </div>
-            <div id="will-email-status" class="text-xs mt-1.5 hidden"></div>
-            <p class="text-[10px] text-gray-400 mt-1">From: {{ session.get('user_email', 'your profile email') }}{% if session.get('user_role') in ('admin', 'advisor') %} &middot; CC: approver(s) will be auto-added{% endif %}</p>
         </div>
         {% endif %}
     </div>
@@ -678,12 +705,15 @@ async function aiRedraft() {
 /* Email will */
 async function sendWillEmail(willId) {
     var toEmail = document.getElementById('will-email-to').value.trim();
+    var ccEmail = document.getElementById('will-email-cc').value.trim();
+    var subject = document.getElementById('will-email-subject').value.trim();
+    var body = document.getElementById('will-email-body').value.trim();
     var btn = document.getElementById('email-will-btn');
     var btnText = document.getElementById('email-btn-text');
     var statusEl = document.getElementById('will-email-status');
 
     if (!toEmail || !toEmail.includes('@')) {
-        statusEl.className = 'text-xs mt-1.5 text-red-500';
+        statusEl.className = 'text-xs text-red-500';
         statusEl.textContent = 'Please enter a valid email address';
         statusEl.classList.remove('hidden');
         return;
@@ -691,7 +721,7 @@ async function sendWillEmail(willId) {
 
     btn.disabled = true;
     btnText.textContent = 'Sending...';
-    statusEl.className = 'text-xs mt-1.5 text-blue-600';
+    statusEl.className = 'text-xs text-blue-600';
     statusEl.textContent = 'Sending email...';
     statusEl.classList.remove('hidden');
 
@@ -699,7 +729,7 @@ async function sendWillEmail(willId) {
         var resp = await fetch('/api/will/' + willId + '/send-email', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ to_email: toEmail })
+            body: JSON.stringify({ to_email: toEmail, cc: ccEmail, subject: subject, body: body })
         });
         var data = await resp.json();
         if (data.ok) {
