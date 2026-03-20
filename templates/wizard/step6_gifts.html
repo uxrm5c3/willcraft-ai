@@ -471,8 +471,12 @@
                             {% endfor %}
                         </div>
                         <input type="hidden" name="gift_{{ gift_idx }}_mb_{{ mb_idx }}_sub_count" class="sub-count" value="{{ subs|length }}">
-                        <button type="button" onclick="addSubstitute({{ gift_idx }}, {{ mb_idx }})"
-                                class="mt-2 text-xs text-primary-600 hover:text-primary-800 font-medium">+ Add substitute</button>
+                        <div class="flex gap-2 mt-2">
+                            <button type="button" onclick="addSubstitute({{ gift_idx }}, {{ mb_idx }})"
+                                    class="text-xs text-primary-600 hover:text-primary-800 font-medium">+ Add substitute</button>
+                            <button type="button" onclick="setEqualSubShares({{ gift_idx }}, {{ mb_idx }})"
+                                    class="text-xs text-gray-500 hover:text-gray-700 font-medium">= Equal shares</button>
+                        </div>
                     </div>
                     {% set mb_counter.idx = mb_counter.idx + 1 %}
                     {% endif %}
@@ -1325,20 +1329,58 @@ document.addEventListener('input', function(e) {
     }
 });
 
-// Auto-convert decimal/percentage to fraction on blur
+// Auto-convert decimal/percentage to fraction on blur (main + substitute shares)
 document.addEventListener('focusout', function(e) {
-    if (e.target.name && e.target.name.includes('_alloc_share_')) {
+    if (e.target.name && (e.target.name.includes('_alloc_share_') || e.target.name.includes('_sub_share_'))) {
         const val = (e.target.value || '').trim();
         if (!val) return;
-        // Already a fraction — keep as is
         if (val.includes('/')) return;
-        // Convert percentage/decimal to fraction
         const pct = parseFloat(val.replace('%', ''));
         if (!isNaN(pct) && pct > 0) {
             e.target.value = toFraction(pct);
             const giftEntry = e.target.closest('.gift-entry');
-            if (giftEntry) validateShareTotal(giftEntry.dataset.giftIndex);
+            if (giftEntry) {
+                validateShareTotal(giftEntry.dataset.giftIndex);
+                validateSubShareTotals(giftEntry.dataset.giftIndex);
+            }
         }
+    }
+});
+
+/**
+ * Validate substitute shares total 100% per MB group.
+ */
+function validateSubShareTotals(giftIdx) {
+    const panel = document.getElementById('sub-specific-' + giftIdx);
+    if (!panel || panel.classList.contains('hidden')) return true;
+    let valid = true;
+    panel.querySelectorAll('.sub-group').forEach(group => {
+        const shareInputs = group.querySelectorAll('.sub-entry input[type="text"]');
+        if (shareInputs.length === 0) return;
+        let total = 0;
+        shareInputs.forEach(input => { total += parseShareValue(input.value); });
+        const rounded = Math.round(total * 100) / 100;
+        // Remove old error
+        group.querySelectorAll('.sub-share-error').forEach(el => el.remove());
+        if (Math.abs(rounded - 100) > 0.01) {
+            const errEl = document.createElement('div');
+            errEl.className = 'sub-share-error text-xs text-red-600 font-medium mt-1 p-1.5 bg-red-50 rounded';
+            errEl.textContent = `Substitute shares total ${toFraction(rounded)} — must equal 1/1 (100%)`;
+            group.querySelector('.sub-entries').after(errEl);
+            shareInputs.forEach(i => i.classList.add('border-red-400'));
+            valid = false;
+        } else {
+            shareInputs.forEach(i => i.classList.remove('border-red-400'));
+        }
+    });
+    return valid;
+}
+
+// Validate sub shares on input change
+document.addEventListener('input', function(e) {
+    if (e.target.name && e.target.name.includes('_sub_share_')) {
+        const giftEntry = e.target.closest('.gift-entry');
+        if (giftEntry) validateSubShareTotals(giftEntry.dataset.giftIndex);
     }
 });
 
@@ -1350,10 +1392,11 @@ document.addEventListener('DOMContentLoaded', function() {
             let valid = true;
             document.querySelectorAll('.gift-entry').forEach(entry => {
                 if (!validateShareTotal(entry.dataset.giftIndex)) valid = false;
+                if (!validateSubShareTotals(entry.dataset.giftIndex)) valid = false;
             });
             if (!valid) {
                 e.preventDefault();
-                alert('Beneficiary shares must total 100% for each gift. Please correct the highlighted fields.');
+                alert('Shares must total 100% for each beneficiary group. Please correct the highlighted fields.');
             }
         });
     }
