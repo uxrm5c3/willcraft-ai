@@ -3555,6 +3555,19 @@ def _get_probate_context(probate_id):
         will_title = will_record.title
         client_name = will_record.client.full_name if will_record.client else ''
 
+    # Determine max completed step based on data presence
+    max_step = 0
+    if probate.date_of_death or probate.place_of_death or (is_la and probate.deceased_name):
+        max_step = 1
+    if probate.court_location or probate.firm_name:
+        max_step = max(max_step, 2)
+    if probate.witness1_name or probate.witness2_name:
+        max_step = max(max_step, 3)
+    if probate.assets_data and probate.assets_data != '[]':
+        max_step = max(max_step, 4)
+    if probate.status == 'generated':
+        max_step = 5
+
     return probate, will_record, {
         'probate': probate,
         'probate_id': probate_id,
@@ -3563,6 +3576,7 @@ def _get_probate_context(probate_id):
         'client_name': client_name,
         'testator': testator,
         'executor': type('Obj', (), executor) if executor else None,
+        'max_completed_step': max_step,
     }
 
 
@@ -3786,6 +3800,56 @@ def probate_step5(probate_id):
     from documents.probate_generator import recommend_forms, FORM_FIELDS
     recommendations = recommend_forms(will_record, probate)
 
+    # Build actual values lookup for form field display
+    exec_data = ctx.get('executor')
+    testator = ctx.get('testator') or {}
+    field_values = {
+        'Deceased name & NRIC': f"{testator.get('full_name', '')} ({testator.get('nric_passport', '')})" if testator.get('full_name') else '',
+        'Deceased name': testator.get('full_name', ''),
+        'Deceased address': testator.get('residential_address', ''),
+        'Date of death': probate.date_of_death or '',
+        'Time of death': probate.time_of_death or '',
+        'Place of death': probate.place_of_death or '',
+        'Death certificate number': probate.death_cert_number or '',
+        'Applicant (Executor) name & NRIC': f"{exec_data.full_name} ({exec_data.nric_passport})" if exec_data and exec_data.full_name else '',
+        'Applicant name & NRIC': f"{exec_data.full_name} ({exec_data.nric_passport})" if exec_data and exec_data.full_name else '',
+        'Applicant address': (exec_data.address if exec_data and hasattr(exec_data, 'address') else '') or '',
+        'Applicant relationship': (exec_data.relationship if exec_data and hasattr(exec_data, 'relationship') else '') or '',
+        'Court location': probate.court_location or '',
+        'Court location & case number': f"{probate.court_location or ''} — {probate.case_number or ''}",
+        'Court case number': probate.case_number or '',
+        'Case number': probate.case_number or '',
+        'Firm name & address': f"{probate.firm_name or ''}, {probate.firm_address or ''}" if probate.firm_name else '',
+        'Firm phone & fax': f"Tel: {probate.firm_phone or ''}, Fax: {probate.firm_fax or ''}",
+        'Firm reference': probate.firm_reference or '',
+        'Witness 1 name & NRIC': f"{probate.witness1_name or ''} ({probate.witness1_nric or ''})" if probate.witness1_name else '',
+        'Witness 1 address': probate.witness1_address or '',
+        'Witness 2 name & NRIC': f"{probate.witness2_name or ''} ({probate.witness2_nric or ''})" if probate.witness2_name else '',
+        'Witness 2 address': probate.witness2_address or '',
+        'Estate value': probate.estate_value_estimate or '',
+        'Exhibit references': 'Auto-generated',
+    }
+    # Assets summary values
+    _assets = json.loads(probate.assets_data or '[]')
+    _props = [a for a in _assets if a.get('asset_type') == 'property']
+    _banks = [a for a in _assets if a.get('asset_type') == 'bank']
+    _vehicles = [a for a in _assets if a.get('asset_type') == 'vehicle']
+    _others = [a for a in _assets if a.get('asset_type') == 'other']
+    _liabs = [a for a in _assets if a.get('asset_type') == 'liability']
+    field_values['Properties (title, lot, mukim, address)'] = f'{len(_props)} properties' if _props else ''
+    field_values['Bank accounts (bank, account no., value)'] = f'{len(_banks)} accounts' if _banks else ''
+    field_values['Vehicles (desc, reg no., engine, chassis)'] = f'{len(_vehicles)} vehicles' if _vehicles else ''
+    field_values['Other assets (description, value)'] = f'{len(_others)} items' if _others else ''
+    field_values['Liabilities (description, value)'] = f'{len(_liabs)} items' if _liabs else ''
+    _bens = json.loads(will_record.step5_data or '[]') if will_record else json.loads(probate.beneficiaries_data or '[]') if hasattr(probate, 'beneficiaries_data') else []
+    field_values['Beneficiary names & NRIC'] = f'{len(_bens)} beneficiaries' if _bens else ''
+    field_values['Beneficiary relationships'] = ', '.join(b.get('relationship', '') for b in _bens[:5]) if _bens else ''
+    if _props:
+        p0 = _props[0]
+        field_values['Property title number'] = p0.get('title_number', '')
+        field_values['Property lot number'] = p0.get('lot_number', '')
+        field_values['Property mukim'] = p0.get('mukim', '')
+
     # Merge with template info and field mapping
     templates = ProbateFormTemplate.query.order_by(ProbateFormTemplate.sort_order).all()
     tpl_map = {t.form_code: t for t in templates}
@@ -3796,7 +3860,10 @@ def probate_step5(probate_id):
             rec['form_name_malay'] = tpl.form_name_malay
             rec['description'] = tpl.description
         ff = FORM_FIELDS.get(rec['form_code'])
-        rec['fields'] = ff['fields'] if ff else []
+        if ff:
+            rec['fields'] = [(name, source, field_values.get(name, '')) for name, source in ff['fields']]
+        else:
+            rec['fields'] = []
 
     # Check for previously generated forms
     generated_forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
@@ -3841,15 +3908,16 @@ def probate_step5(probate_id):
     exec_nric = (exec_data.nric_passport if exec_data and hasattr(exec_data, 'nric_passport') else '') or ''
     testator = ctx.get('testator')
 
-    # Death cert info complete?
+    # Death cert info complete? (cert number optional — nice to have)
     death_info_ok = bool(probate.date_of_death and probate.place_of_death)
     death_missing = []
     if not probate.date_of_death:
         death_missing.append('Date of death')
     if not probate.place_of_death:
         death_missing.append('Place of death')
+    death_warnings = []
     if not probate.death_cert_number:
-        death_missing.append('Death cert number')
+        death_warnings.append('Death cert number (optional)')
 
     # Assets info complete?
     assets_ok = len(assets_list) > 0
@@ -3885,8 +3953,9 @@ def probate_step5(probate_id):
     filing_checklist = [
         {'key': 'death_cert', 'label': '<strong>Death Certificate</strong> — date, place, cert number',
          'exhibit': f'{exhibit_prefix}-1',
-         'complete': death_info_ok and not death_missing,
+         'complete': death_info_ok,
          'missing': death_missing,
+         'warnings': death_warnings,
          'checked': manual_checks.get('death_cert', death_info_ok)},
         {'key': 'assets_schedule', 'label': '<strong>Schedule of Assets &amp; Liabilities</strong>',
          'exhibit': f'{exhibit_prefix}-2',
@@ -4257,7 +4326,7 @@ def admin_probate_template_reset(form_code):
 @app.route('/probate/template/<form_code>/view')
 @login_required
 def probate_template_view(form_code):
-    """Serve the blank template file for viewing/download."""
+    """Convert template to PDF and serve inline for browser viewing."""
     tpl = ProbateFormTemplate.query.filter_by(form_code=form_code).first()
     if not tpl:
         flash('Template not found.', 'error')
@@ -4266,8 +4335,48 @@ def probate_template_view(form_code):
     if not os.path.exists(template_path):
         flash('Template file not found on disk.', 'error')
         return redirect(url_for('probate_list'))
+    fmt = request.args.get('format', 'pdf')
+    if fmt == 'docx':
+        return send_file(template_path, as_attachment=True,
+                         download_name=f'{form_code}_template.docx')
+    # Convert to PDF for in-browser viewing
+    from documents.probate_generator import convert_to_pdf
+    import shutil
+    tmp_dir = tempfile.mkdtemp()
+    tmp_docx = os.path.join(tmp_dir, os.path.basename(template_path))
+    shutil.copy2(template_path, tmp_docx)
+    pdf_path = convert_to_pdf(tmp_docx)
+    if pdf_path and os.path.exists(pdf_path):
+        return send_file(pdf_path, mimetype='application/pdf',
+                         download_name=f'{form_code}_template.pdf')
+    # Fallback: download docx
     return send_file(template_path, as_attachment=True,
                      download_name=f'{form_code}_template.docx')
+
+
+@app.route('/probate/template/<form_code>/replace', methods=['POST'])
+@login_required
+def probate_template_replace(form_code):
+    """Upload a replacement template for a form (admin/approver only)."""
+    role = session.get('user_role')
+    if role not in ('admin', 'approver'):
+        return jsonify(ok=False, error='Access denied'), 403
+    tpl = ProbateFormTemplate.query.filter_by(form_code=form_code).first()
+    if not tpl:
+        return jsonify(ok=False, error='Template not found'), 404
+    file = request.files.get('template')
+    if not file or not file.filename:
+        return jsonify(ok=False, error='No file selected'), 400
+    custom_dir = os.path.join(os.path.dirname(__file__), 'probate_templates', 'custom')
+    os.makedirs(custom_dir, exist_ok=True)
+    ext = file.filename.rsplit('.', 1)[-1].lower()
+    custom_path = os.path.join(custom_dir, f'{form_code}.{ext}')
+    file.save(custom_path)
+    tpl.file_path = f'probate_templates/custom/{form_code}.{ext}'
+    tpl.is_default = False
+    tpl.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify(ok=True, message=f'Template for {tpl.form_name} updated.')
 
 
 # ---------------------------------------------------------------------------

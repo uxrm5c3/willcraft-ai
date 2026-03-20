@@ -33,17 +33,18 @@
                         (4, "Assets & Liabilities", "Schedule of estate assets"),
                         (5, "Review & Generate", "Select forms and download")
                     ] %}
+                    {% set max_done = max_completed_step | default(0) %}
                     {% for num, name, desc in steps %}
                     <a href="/probate/{{ probate_id }}/step/{{ num }}"
                        class="flex items-start gap-2 px-3 py-2 rounded-lg text-sm transition-colors
                               {% if probate_step == num %}bg-primary-50 text-primary-700 font-semibold
-                              {% elif num < probate_step %}text-green-700 hover:bg-green-50
-                              {% else %}text-gray-400{% endif %}">
+                              {% elif num <= max_done %}text-green-700 hover:bg-green-50
+                              {% else %}text-gray-400 hover:bg-gray-50{% endif %}">
                         <span class="w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold flex-shrink-0 mt-0.5
-                              {% if num < probate_step %}bg-green-100 text-green-700
+                              {% if num <= max_done and probate_step != num %}bg-green-100 text-green-700
                               {% elif probate_step == num %}bg-primary-600 text-white
                               {% else %}bg-gray-200 text-gray-400{% endif %}">
-                            {% if num < probate_step %}&#10003;{% else %}{{ num }}{% endif %}
+                            {% if num <= max_done and probate_step != num %}&#10003;{% else %}{{ num }}{% endif %}
                         </span>
                         <div>
                             <div>{{ name }}</div>
