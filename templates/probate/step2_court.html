@@ -1,6 +1,10 @@
 {% extends "probate/layout.html" %}
 
 {% block step_content %}
+<style>
+    .field-missing { border-color: #ef4444 !important; background-color: #fef2f2 !important; }
+    .field-missing:focus { border-color: #ef4444 !important; ring-color: #ef4444 !important; }
+</style>
 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
     <h2 class="text-lg font-bold text-gray-800 mb-1">Step 2: Court & Law Firm Details</h2>
     <p class="text-sm text-gray-500 mb-6">Enter the court where the probate will be filed and the law firm handling the case.</p>
@@ -15,7 +19,7 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Court Location <span class="text-red-500">*</span></label>
-                    <select name="court_location" required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <select name="court_location" required class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.court_location %}field-missing{% endif %}">
                         <option value="">-- Select Court --</option>
                         {% for court in courts %}
                         <option value="{{ court }}" {% if probate.court_location == court %}selected{% endif %}>{{ court }}</option>
@@ -32,11 +36,11 @@
                     </select>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Case Number <span class="text-xs text-gray-400 font-normal">(leave blank if not yet filed)</span></label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Case Number <span class="text-red-500">*</span> <span class="text-xs text-gray-400 font-normal">(leave blank if not yet filed)</span></label>
                     <input type="text" name="case_number" value="{{ probate.case_number or '' }}"
                            placeholder="Assigned by court after filing"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                    <p class="text-xs text-gray-400 mt-1">The case number is assigned by the court registry when you file. You can fill this in later.</p>
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.case_number %}field-missing{% endif %}">
+                    <p class="text-xs text-gray-400 mt-1">Required for all forms. Assigned by court registry when you file — fill in later.</p>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Filing Year</label>
@@ -55,27 +59,32 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Firm Name <span class="text-red-500">*</span></label>
-                    <input type="text" name="firm_name" value="{{ probate.firm_name or 'Tetuan Alan Tan & Associates' }}" required
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <input type="text" name="firm_name" value="{{ probate.firm_name or '' }}" required
+                           placeholder="Tetuan Alan Tan & Associates"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.firm_name %}field-missing{% endif %}">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">File Reference <span class="text-xs text-gray-400 font-normal">(firm's internal ref)</span></label>
-                    <input type="text" name="firm_reference" value="{{ probate.firm_reference or '01051-ATJB-KY-PBT-TANLL' }}"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">File Reference <span class="text-red-500">*</span> <span class="text-xs text-gray-400 font-normal">(firm's internal ref — unique per case)</span></label>
+                    <input type="text" name="firm_reference" value="{{ probate.firm_reference or '' }}"
+                           placeholder="e.g., 01051-ATJB-KY-PBT-TANLL"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.firm_reference %}field-missing{% endif %}">
                 </div>
                 <div class="md:col-span-2">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Firm Address <span class="text-red-500">*</span></label>
                     <textarea name="firm_address" rows="3" required
-                              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">{{ probate.firm_address or '24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor' }}</textarea>
+                              placeholder="24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor"
+                              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.firm_address %}field-missing{% endif %}">{{ probate.firm_address or '' }}</textarea>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                    <input type="text" name="firm_phone" value="{{ probate.firm_phone or '07-5585979' }}"
+                    <input type="text" name="firm_phone" value="{{ probate.firm_phone or '' }}"
+                           placeholder="07-5585979"
                            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Fax</label>
-                    <input type="text" name="firm_fax" value="{{ probate.firm_fax or '07-5585972' }}"
+                    <input type="text" name="firm_fax" value="{{ probate.firm_fax or '' }}"
+                           placeholder="07-5585972"
                            class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                 </div>
             </div>
@@ -91,19 +100,15 @@
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Lawyer Name <span class="text-red-500">*</span></label>
-                    <input type="text" name="lawyer_name" value="{{ probate.lawyer_name or 'FAIZUL HANAFI BIN TOKIRAN' }}" required
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <input type="text" name="lawyer_name" value="{{ probate.lawyer_name or '' }}" required
+                           placeholder="FAIZUL HANAFI BIN TOKIRAN"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.lawyer_name %}field-missing{% endif %}">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Bar Council No. <span class="text-red-500">*</span></label>
-                    <input type="text" name="lawyer_bar_number" value="{{ probate.lawyer_bar_number or 'BC/F/167' }}" required
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Lawyer NRIC</label>
-                    <input type="text" name="lawyer_nric" value="{{ probate.lawyer_nric or '' }}"
-                           placeholder="e.g., 800101-01-1234"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <input type="text" name="lawyer_bar_number" value="{{ probate.lawyer_bar_number or '' }}" required
+                           placeholder="BC/F/167"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.lawyer_bar_number %}field-missing{% endif %}">
                 </div>
             </div>
         </div>

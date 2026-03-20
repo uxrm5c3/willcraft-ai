@@ -88,25 +88,25 @@ function renderBeneficiaries() {
                     <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
                     <input type="text" data-idx="${idx}" data-field="full_name" value="${b.full_name || ''}"
                            placeholder="As per IC" required
-                           class="ben-field w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                           class="ben-field w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${b.full_name ? 'border-gray-300' : 'border-red-400 bg-red-50'}">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport <span class="text-red-500">*</span></label>
                     <input type="text" data-idx="${idx}" data-field="nric_passport" value="${b.nric_passport || ''}"
                            placeholder="e.g. 850101-01-1234"
-                           class="ben-field w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                           class="ben-field w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${b.nric_passport ? 'border-gray-300' : 'border-red-400 bg-red-50'}">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Deceased</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship <span class="text-red-500">*</span></label>
                     <input type="text" data-idx="${idx}" data-field="relationship" value="${b.relationship || ''}"
                            placeholder="e.g. Son, Daughter, Spouse"
-                           class="ben-field w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                           class="ben-field w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${b.relationship ? 'border-gray-300' : 'border-red-400 bg-red-50'}">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Address <span class="text-red-500">*</span> <span class="text-xs text-gray-400 font-normal">(required for Doc 07)</span></label>
                     <input type="text" data-idx="${idx}" data-field="address" value="${b.address || ''}"
                            placeholder="Current residential address"
-                           class="ben-field w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                           class="ben-field w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${b.address ? 'border-gray-300' : 'border-red-400 bg-red-50'}">
                 </div>
             </div>
         `;

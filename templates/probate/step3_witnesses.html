@@ -1,6 +1,9 @@
 {% extends "probate/layout.html" %}
 
 {% block step_content %}
+<style>
+    .field-missing { border-color: #ef4444 !important; background-color: #fef2f2 !important; }
+</style>
 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
     {% if is_la %}
     <h2 class="text-lg font-bold text-gray-800 mb-1">Step 3: Witnesses</h2>
@@ -43,19 +46,19 @@
                     <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
                     <input type="text" name="witness1_name" value="{{ probate.witness1_name or '' }}" required
                            placeholder="As per IC"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.witness1_name %}field-missing{% endif %}">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">NRIC <span class="text-red-500">*</span></label>
                     <input type="text" name="witness1_nric" value="{{ probate.witness1_nric or '' }}" required
                            placeholder="YYMMDD-SS-NNNN"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.witness1_nric %}field-missing{% endif %}">
                 </div>
                 <div class="md:col-span-2">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Address <span class="text-red-500">*</span></label>
-                    <textarea name="witness1_address" rows="2" required
+                    <textarea name="witness1_address" rows="3" required
                               placeholder="Full residential address"
-                              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">{{ probate.witness1_address or '' }}</textarea>
+                              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.witness1_address %}field-missing{% endif %}">{{ probate.witness1_address or '' }}</textarea>
                 </div>
             </div>
         </div>
@@ -78,19 +81,19 @@
                     <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
                     <input type="text" name="witness2_name" value="{{ probate.witness2_name or '' }}" required
                            placeholder="As per IC"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.witness2_name %}field-missing{% endif %}">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">NRIC <span class="text-red-500">*</span></label>
                     <input type="text" name="witness2_nric" value="{{ probate.witness2_nric or '' }}" required
                            placeholder="YYMMDD-SS-NNNN"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.witness2_nric %}field-missing{% endif %}">
                 </div>
                 <div class="md:col-span-2">
                     <label class="block text-sm font-medium text-gray-700 mb-1">Address <span class="text-red-500">*</span></label>
-                    <textarea name="witness2_address" rows="2" required
+                    <textarea name="witness2_address" rows="3" required
                               placeholder="Full residential address"
-                              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">{{ probate.witness2_address or '' }}</textarea>
+                              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.witness2_address %}field-missing{% endif %}">{{ probate.witness2_address or '' }}</textarea>
                 </div>
             </div>
         </div>

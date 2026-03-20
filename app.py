@@ -3878,12 +3878,22 @@ def probate_step4(probate_id):
     existing_bens = json.loads(probate.beneficiaries_data or '[]')
     if not existing_bens and will_record:
         will_bens = json.loads(will_record.step4_data or '[]')
+        # Build identity lookup from will's person registry for address extraction
+        identity_lookup = {}
+        will_identities = json.loads(will_record.identities_data or '[]')
+        for person in will_identities:
+            identity_lookup[person.get('id', '')] = person
         for b in will_bens:
+            # Look up address from will's identity registry via person_id
+            addr = b.get('address', '')
+            if not addr and b.get('person_id'):
+                person = identity_lookup.get(b['person_id'], {})
+                addr = person.get('address', '')
             existing_bens.append({
                 'full_name': b.get('full_name', b.get('beneficiary_name', '')),
                 'nric_passport': b.get('nric_passport_birthcert', b.get('nric_passport', '')),
                 'relationship': b.get('relationship', ''),
-                'address': '',
+                'address': addr,
             })
 
     ctx['probate_step'] = 4
