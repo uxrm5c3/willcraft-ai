@@ -403,12 +403,33 @@ def generate_probate_forms(probate_app, will_record, selected_codes, templates_m
     return results
 
 
-def create_zip(form_files, zip_path):
+def convert_to_pdf(docx_path):
+    """Convert a .docx file to PDF using LibreOffice headless.
+
+    Returns the PDF file path, or None on failure.
+    """
+    import subprocess
+    output_dir = os.path.dirname(docx_path)
+    try:
+        subprocess.run(
+            ['libreoffice', '--headless', '--convert-to', 'pdf', '--outdir', output_dir, docx_path],
+            capture_output=True, timeout=60, check=True
+        )
+        pdf_path = os.path.splitext(docx_path)[0] + '.pdf'
+        if os.path.exists(pdf_path):
+            return pdf_path
+    except Exception as e:
+        print(f'PDF conversion failed for {docx_path}: {e}')
+    return None
+
+
+def create_zip(form_files, zip_path, as_pdf=False):
     """Create a ZIP file containing all generated forms.
 
     Args:
         form_files: List of dicts with 'form_code' and 'file_path'
         zip_path: Path for the output ZIP file
+        as_pdf: If True, convert .docx files to PDF before zipping
 
     Returns:
         zip_path on success
@@ -416,7 +437,16 @@ def create_zip(form_files, zip_path):
     os.makedirs(os.path.dirname(zip_path), exist_ok=True)
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         for f in form_files:
-            if os.path.exists(f['file_path']):
-                arcname = os.path.basename(f['file_path'])
-                zf.write(f['file_path'], arcname)
+            fpath = f['file_path']
+            if not os.path.exists(fpath):
+                continue
+            if as_pdf and fpath.lower().endswith(('.docx', '.doc')):
+                pdf_path = convert_to_pdf(fpath)
+                if pdf_path and os.path.exists(pdf_path):
+                    arcname = os.path.basename(pdf_path)
+                    zf.write(pdf_path, arcname)
+                    continue
+            # Fallback: add original file
+            arcname = os.path.basename(fpath)
+            zf.write(fpath, arcname)
     return zip_path

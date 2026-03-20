@@ -192,7 +192,10 @@
     <!-- Generated Forms (shown after generation) -->
     {% if generated_forms %}
     <div class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-        <h3 class="text-sm font-semibold text-green-800 mb-3">Generated Forms</h3>
+        <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-green-800">Generated Forms</h3>
+            <span class="text-xs text-green-600">DOCX files are editable in Microsoft Word</span>
+        </div>
         <div class="space-y-2">
             {% for gf in generated_forms %}
             <div class="flex items-center justify-between p-2 bg-white rounded border border-green-100">
@@ -200,16 +203,25 @@
                     <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
                     <span class="text-sm font-medium text-gray-700">{{ gf.form_name }}</span>
                 </div>
-                <a href="/probate/{{ probate_id }}/download/{{ gf.form_code }}" class="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700">
-                    Download
-                </a>
+                <div class="flex items-center gap-1">
+                    <a href="/probate/{{ probate_id }}/download/{{ gf.form_code }}" class="px-3 py-1 bg-blue-600 text-white text-xs font-medium rounded hover:bg-blue-700" title="Editable Word document">
+                        DOCX
+                    </a>
+                    <a href="/probate/{{ probate_id }}/download/{{ gf.form_code }}?format=pdf" class="px-3 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700" title="PDF format">
+                        PDF
+                    </a>
+                </div>
             </div>
             {% endfor %}
         </div>
-        <div class="mt-3">
-            <a href="/probate/{{ probate_id }}/download-all" class="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
+        <div class="mt-3 flex items-center gap-2">
+            <a href="/probate/{{ probate_id }}/download-all" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                Download All as ZIP
+                Download All DOCX (ZIP)
+            </a>
+            <a href="/probate/{{ probate_id }}/download-all?format=pdf" class="inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                Download All PDF (ZIP)
             </a>
         </div>
     </div>

@@ -3853,16 +3853,26 @@ def probate_generate(probate_id):
 @app.route('/probate/<probate_id>/download/<form_code>')
 @login_required
 def probate_download(probate_id, form_code):
+    fmt = request.args.get('format', 'docx')  # docx or pdf
     gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
     if not gf or not os.path.exists(gf.file_path):
         flash('Form not found.', 'error')
         return redirect(f'/probate/{probate_id}/step/5')
+
+    if fmt == 'pdf':
+        from documents.probate_generator import convert_to_pdf
+        pdf_path = convert_to_pdf(gf.file_path)
+        if pdf_path and os.path.exists(pdf_path):
+            return send_file(pdf_path, as_attachment=True, download_name=os.path.basename(pdf_path))
+        flash('PDF conversion failed. Downloading .docx instead.', 'error')
+
     return send_file(gf.file_path, as_attachment=True, download_name=os.path.basename(gf.file_path))
 
 
 @app.route('/probate/<probate_id>/download-all')
 @login_required
 def probate_download_all(probate_id):
+    fmt = request.args.get('format', 'docx')  # docx or pdf
     forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
     if not forms:
         flash('No generated forms found.', 'error')
@@ -3871,7 +3881,7 @@ def probate_download_all(probate_id):
     from documents.probate_generator import create_zip
     zip_path = os.path.join(tempfile.gettempdir(), f'probate_{probate_id[:8]}.zip')
     form_files = [{'form_code': f.form_code, 'file_path': f.file_path} for f in forms]
-    create_zip(form_files, zip_path)
+    create_zip(form_files, zip_path, as_pdf=(fmt == 'pdf'))
     return send_file(zip_path, as_attachment=True, download_name=f'probate_forms_{probate_id[:8]}.zip')
 
 
