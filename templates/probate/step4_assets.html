@@ -190,7 +190,10 @@ function assetFormHtml(type, idx, data) {
             </label>`;
     if (docId) {
         actionBtns += `
-            <button type="button" onclick="viewAssetDoc('${docId}')" class="px-2 py-1 bg-gray-500 text-white text-[10px] font-medium rounded hover:bg-gray-600" title="View scanned document">View</button>`;
+            <button type="button" onclick="viewAssetDoc('${docId}')" class="px-2 py-1 bg-gray-500 text-white text-[10px] font-medium rounded hover:bg-gray-600" title="View scanned document">View</button>
+            <button type="button" onclick="removeDoc('${type}', ${idx})" class="px-2 py-1 bg-amber-500 text-white text-[10px] font-medium rounded hover:bg-amber-600" title="Remove scanned document">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M3 3l18 18"/></svg>
+            </button>`;
     }
     actionBtns += `
             <button type="button" onclick="removeAsset('${type}', ${idx})" class="px-2 py-1 bg-red-500 text-white text-[10px] font-medium rounded hover:bg-red-600" title="Delete">
@@ -280,6 +283,12 @@ function assetFormHtml(type, idx, data) {
 }
 
 /* ── Render ── */
+let _autosaveTimer = null;
+function autosaveDebounced() {
+    clearTimeout(_autosaveTimer);
+    _autosaveTimer = setTimeout(() => saveAssets(), 1500);
+}
+
 function renderAssets() {
     const types = ['property', 'bank', 'vehicle', 'other', 'liability'];
     types.forEach(type => {
@@ -291,6 +300,11 @@ function renderAssets() {
             list.insertAdjacentHTML('beforeend', assetFormHtml(type, i, item));
         });
         empty.style.display = items.length ? 'none' : 'block';
+        // Autosave when user edits any field
+        list.querySelectorAll('.asset-field').forEach(field => {
+            field.addEventListener('input', autosaveDebounced);
+            field.addEventListener('change', autosaveDebounced);
+        });
     });
 }
 
@@ -299,6 +313,7 @@ function addAsset(type) {
     renderAssets();
     const list = document.getElementById(type + '-list');
     list.lastElementChild?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    saveAssets();
 }
 
 function removeAsset(type, idx) {
@@ -306,6 +321,18 @@ function removeAsset(type, idx) {
     const realIdx = assets.indexOf(items[idx]);
     if (realIdx >= 0) assets.splice(realIdx, 1);
     renderAssets();
+    saveAssets();
+}
+
+function removeDoc(type, idx) {
+    assets = collectAssetData();
+    const items = assets.filter(a => a.asset_type === type);
+    if (items[idx]) {
+        delete items[idx]._doc_id;
+        delete items[idx]._doc_name;
+    }
+    renderAssets();
+    saveAssets();
 }
 
 function collectAssetData() {
@@ -445,6 +472,7 @@ function applyOcrChoices() {
 
     closeOcrModal();
     renderAssets();
+    saveAssets();
 }
 
 /* ── View document ── */
