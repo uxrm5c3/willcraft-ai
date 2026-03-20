@@ -1034,12 +1034,7 @@ function setEqualSubShares(giftIdx, mbIdx) {
     const shareInputs = group.querySelectorAll('.sub-entry input[type="text"]');
     const count = shareInputs.length;
     if (count === 0) return;
-    const pct = Math.floor(10000 / count) / 100;
-    const remainder = 100 - (pct * count);
-    shareInputs.forEach((input, i) => {
-        const val = (i === count - 1) ? (pct + remainder).toFixed(2) : pct.toFixed(2);
-        input.value = parseFloat(val) + '%';
-    });
+    shareInputs.forEach(input => { input.value = '1/' + count; });
 }
 
 function updateSubCounts(giftIdx) {
