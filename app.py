@@ -3522,6 +3522,9 @@ def probate_new_la():
         application_type='la',
         filing_year=str(datetime.now().year),
         created_by=session.get('user_id'),
+        firm_name='Tetuan Alan Tan & Associates',
+        firm_address='24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor',
+        firm_phone='07-588 5979',
     )
     db.session.add(probate)
     db.session.commit()
@@ -3549,6 +3552,9 @@ def probate_new(will_id):
         client_id=will_record.client_id,
         filing_year=str(datetime.now().year),
         created_by=session.get('user_id'),
+        firm_name='Tetuan Alan Tan & Associates',
+        firm_address='24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor',
+        firm_phone='07-588 5979',
     )
     db.session.add(probate)
     db.session.commit()
