@@ -322,10 +322,13 @@ CRITICAL: You MUST include the following substitute beneficiary clause(s) in the
 
 def _inject_missing_substitutes(will_text: str, will_data) -> str:
     """Post-process AI-generated will to inject any missing specific substitute clauses.
-    The AI drafter sometimes omits these, so we deterministically add them."""
+    Only injects if the AI drafter omitted them. Deduplicates by MB name."""
     import re as re_mod
 
-    # Find all gifts with specific substitute mode
+    will_upper = will_text.upper()
+    # Track MB names we've already processed to avoid duplicates across gifts
+    processed_mbs = set()
+
     sub_entries = []
     for gi, g in enumerate(will_data.gifts):
         sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
@@ -334,6 +337,24 @@ def _inject_missing_substitutes(will_text: str, will_data) -> str:
         for a in g.allocations:
             if not a.substitutes:
                 continue
+
+            mb_key = a.beneficiary_name.upper()
+            # Skip if we already processed this MB (same person across multiple gifts)
+            if mb_key in processed_mbs:
+                continue
+            processed_mbs.add(mb_key)
+
+            # Check if a substitute clause already exists for this MB
+            # Pattern: "[MB NAME] ... does not survive me ... shall be given to"
+            mb_escaped = re_mod.escape(mb_key)
+            already_has = re_mod.search(
+                mb_escaped + r'.*?DOES NOT SURVIVE ME.*?SHALL BE GIVEN TO',
+                will_upper,
+                re_mod.DOTALL
+            )
+            if already_has:
+                continue
+
             # Look up MB info
             mb_nric, mb_nat, mb_rel = "", "Malaysian", ""
             for b in will_data.beneficiaries:
@@ -345,24 +366,6 @@ def _inject_missing_substitutes(will_text: str, will_data) -> str:
             mb_id_str = f" {format_id_for_will(mb_nric, mb_nat)}" if mb_nric else ""
             mb_rel_str = f"my {mb_rel} " if mb_rel else ""
             he_she = "she" if mb_rel in ("sister", "daughter", "mother", "niece", "aunt", "grandmother", "wife") else "he"
-
-            # Check if substitute is already mentioned in the will
-            sub_names_upper = [s.beneficiary_name.upper() for s in a.substitutes]
-            all_present = all(name in will_text.upper() for name in sub_names_upper)
-            # Check if it's mentioned in a substitute context (not just as MB)
-            mb_name_upper = a.beneficiary_name.upper()
-            has_substitute_clause = False
-            for s in a.substitutes:
-                # Check for "Pursuant to" or "does not survive" patterns mentioning the substitute
-                if s.beneficiary_name.upper() in will_text.upper():
-                    # Check if it appears after "shall be given to" or similar substitute language
-                    pattern = f"(?:shall be given to|benefit.*given to).*{re_mod.escape(s.beneficiary_name.upper())}"
-                    if re_mod.search(pattern, will_text.upper()):
-                        has_substitute_clause = True
-                        break
-
-            if has_substitute_clause:
-                continue
 
             # Build substitute parts
             sub_parts = []
@@ -385,23 +388,21 @@ def _inject_missing_substitutes(will_text: str, will_data) -> str:
                 sub_text = " and ".join(sub_parts)
                 trailing = " in equal shares or to the survivor of them if one of them does not survive me."
 
-            # Find the clause number that references this gift's MB
-            ref_clause = None
-            clause_pattern = re_mod.compile(r'(\d+)\.\s+I give.*?' + re_mod.escape(mb_name_upper), re_mod.DOTALL)
-            match = clause_pattern.search(will_text.upper().replace(will_text[:0], ''))
-            # Search in the actual text
+            # Find clause numbers that reference this gift's MB
+            ref_clauses = []
             for m in re_mod.finditer(r'(\d+)\.\s+I give', will_text):
-                clause_num = m.group(1)
-                # Check if this clause mentions the MB name
                 clause_start = m.start()
-                clause_end = will_text.find(f'\n\n', clause_start + 1)
+                clause_end = will_text.find('\n\n', clause_start + 1)
                 if clause_end == -1:
                     clause_end = len(will_text)
                 clause_text = will_text[clause_start:clause_end]
-                if a.beneficiary_name.upper() in clause_text.upper():
-                    ref_clause = clause_num
+                if mb_key in clause_text.upper():
+                    ref_clauses.append(m.group(1))
 
-            ref_text = f"Pursuant to Clause {ref_clause} above, if" if ref_clause else "If"
+            if ref_clauses:
+                ref_text = f"Pursuant to Clause{'s' if len(ref_clauses) > 1 else ''} {' and '.join(ref_clauses)} above, if"
+            else:
+                ref_text = "If"
 
             sub_entries.append(
                 f"{ref_text} {mb_rel_str}{a.beneficiary_name.upper()}{mb_id_str} does not survive me, then the benefit {he_she} would have received shall be given to {sub_text}{trailing}"
@@ -410,7 +411,7 @@ def _inject_missing_substitutes(will_text: str, will_data) -> str:
     if not sub_entries:
         return will_text
 
-    # Find the highest clause number before "Residuary Estate" or "Declaration"
+    # Find insertion point before "Residuary Estate" or "Declaration"
     insert_before = None
     for marker in ["Residuary Estate", "Declaration"]:
         idx = will_text.find(marker)
@@ -421,30 +422,25 @@ def _inject_missing_substitutes(will_text: str, will_data) -> str:
     if insert_before is None:
         return will_text
 
-    # Find the last clause number before the insertion point
+    # Find the last clause number before insertion point
     last_clause = 0
     for m in re_mod.finditer(r'^(\d+)\.', will_text[:insert_before], re_mod.MULTILINE):
         last_clause = int(m.group(1))
 
-    # Build the substitute clauses text
+    # Build and inject
     inject_lines = []
     for i, entry in enumerate(sub_entries):
-        clause_num = last_clause + 1 + i
-        inject_lines.append(f"{clause_num}.  {entry}")
+        inject_lines.append(f"{last_clause + 1 + i}.  {entry}")
 
     inject_text = "\n\n".join(inject_lines) + "\n\n"
-
-    # Inject before the marker and renumber subsequent clauses
     before = will_text[:insert_before]
     after = will_text[insert_before:]
 
-    # Renumber clauses after injection
+    # Renumber subsequent clauses
     offset = len(sub_entries)
     def _renumber(match):
         old_num = int(match.group(1))
-        if old_num > last_clause:
-            return f"{old_num + offset}."
-        return match.group(0)
+        return f"{old_num + offset}." if old_num > last_clause else match.group(0)
 
     after = re_mod.sub(r'^(\d+)\.', _renumber, after, flags=re_mod.MULTILINE)
 

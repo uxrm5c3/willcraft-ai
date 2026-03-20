@@ -134,8 +134,11 @@ For MULTIPLE residuary beneficiaries (WITH trustee):
 (b) To divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated.
     (i) my [relationship] [NAME] [ID] ([share])
     (ii) ..."
-If substitute beneficiaries are provided, add:
-"(c) But if any beneficiary named above does not survive me, to divide [his/her] share of the residue ('my residuary estate') equally between [substitute names with IDs]. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift."
+If substitute beneficiaries are provided, add a SEPARATE sub-clause for EACH main beneficiary who has substitutes:
+"(c) But if my [relationship] [NAME] [ID] does not survive me, to divide [his/her] share of the residue ('my residuary estate') equally between [substitute names with IDs]. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift.
+(d) But if my [relationship] [NAME2] [ID] does not survive me, to give [his/her] share of the residue ('my residuary estate') to [substitute name with ID].
+(e) ..."
+IMPORTANT: Each main beneficiary's substitute clause must be a separate lettered sub-clause (c), (d), (e), etc. Do NOT combine multiple beneficiaries' substitute provisions into a single paragraph.
 
 For MULTIPLE residuary beneficiaries (WITHOUT trustee):
 "[N]. I give the rest of my estate ('my residuary estate') to the following beneficiaries in the shares indicated.
