@@ -1344,10 +1344,14 @@ def send_will_email(to_email, subject, body_html, attachments=None, tenant=None)
         raise ValueError('No email_from configured for this tenant')
     cc_list = tenant.get('email_cc', [])
 
+    # Use SMTP_USER as envelope sender (required for SMTP AUTH), Reply-To for the logical sender
+    sender_addr = SMTP_USER or from_email
     msg = MIMEMultipart()
-    msg['From'] = from_email
+    msg['From'] = sender_addr
     msg['To'] = to_email
     msg['Subject'] = subject
+    if from_email and from_email != sender_addr:
+        msg['Reply-To'] = from_email
     if cc_list:
         msg['Cc'] = ', '.join(cc_list)
 
@@ -1366,10 +1370,9 @@ def send_will_email(to_email, subject, body_html, attachments=None, tenant=None)
         server.ehlo()
         server.starttls()
         server.ehlo()
-        # IP-based relay: login only if credentials are configured
         if SMTP_USER and SMTP_PASSWORD:
             server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(from_email, all_recipients, msg.as_string())
+        server.sendmail(sender_addr, all_recipients, msg.as_string())
 
     return True
 
@@ -1485,10 +1488,13 @@ def api_will_send_email(will_id):
         from email.mime.base import MIMEBase
         from email import encoders
 
+        sender_addr = SMTP_USER or from_email
         msg = MIMEMultipart()
-        msg['From'] = from_email
+        msg['From'] = sender_addr
         msg['To'] = to_email
         msg['Subject'] = subject
+        if from_email and from_email != sender_addr:
+            msg['Reply-To'] = from_email
         if cc_list:
             msg['Cc'] = ', '.join(cc_list)
         msg.attach(MIMEText(body_html, 'html'))
@@ -1506,7 +1512,7 @@ def api_will_send_email(will_id):
             server.ehlo()
             if SMTP_USER and SMTP_PASSWORD:
                 server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(from_email, all_recipients, msg.as_string())
+            server.sendmail(sender_addr, all_recipients, msg.as_string())
     except Exception as e:
         app.logger.error(f'Email sending failed: {e}')
         return jsonify({'ok': False, 'error': f'Failed to send email: {str(e)}'}), 500
@@ -4745,10 +4751,13 @@ def api_probate_send_email(probate_id):
         from email.mime.base import MIMEBase
         from email import encoders
 
+        sender_addr = SMTP_USER or from_email
         msg = MIMEMultipart()
-        msg['From'] = from_email
+        msg['From'] = sender_addr
         msg['To'] = to_email
         msg['Subject'] = subject
+        if from_email and from_email != sender_addr:
+            msg['Reply-To'] = from_email
         if cc_list:
             msg['Cc'] = ', '.join(cc_list)
         msg.attach(MIMEText(body_html, 'html'))
@@ -4767,7 +4776,7 @@ def api_probate_send_email(probate_id):
             server.ehlo()
             if SMTP_USER and SMTP_PASSWORD:
                 server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(from_email, all_recipients, msg.as_string())
+            server.sendmail(sender_addr, all_recipients, msg.as_string())
 
         app.logger.info(f'Probate {probate_id} forms emailed to {to_email} by {user_name} (cc: {cc_list})')
         return jsonify({
