@@ -31,7 +31,7 @@
             </div>
             {% endif %}
         </div>
-        <p class="text-sm text-gray-500 mb-4">Select beneficiaries from your list and allocate shares (percentages). Shares must total 100%.</p>
+        <p class="text-sm text-gray-500 mb-4">Select beneficiaries from your list and allocate shares. Shares must total 100%.</p>
 
         <div id="main-beneficiaries-container">
             {% set main_beneficiaries = data.get('main_beneficiaries', [{}]) %}
@@ -61,11 +61,10 @@
                         <input type="hidden" name="main_ben_name_{{ loop.index0 }}" value="{{ ben.get('beneficiary_name', '') }}">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">Share (%) <span class="text-red-500">*</span></label>
-                        <input type="number" name="main_ben_share_{{ loop.index0 }}" value="{{ ben.get('share', '') }}" required
-                               min="1" max="100" step="0.01"
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Share (fraction) <span class="text-red-500">*</span></label>
+                        <input type="text" name="main_ben_share_{{ loop.index0 }}" value="{{ ben.get('share', '') }}" required
                                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                               placeholder="e.g., 50" onchange="updateShareTotal()">
+                               placeholder="e.g., 1/3" oninput="updateShareTotal()">
                     </div>
                 </div>
             </div>
@@ -75,10 +74,16 @@
         <input type="hidden" name="main_beneficiary_count" id="main-beneficiary-count" value="{{ main_beneficiaries|length }}">
 
         <div class="flex items-center justify-between">
-            <button type="button" onclick="addMainBeneficiary()"
-                    class="px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
-                + Add Main Beneficiary
-            </button>
+            <div class="flex items-center gap-2">
+                <button type="button" onclick="addMainBeneficiary()"
+                        class="px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+                    + Add Main Beneficiary
+                </button>
+                <button type="button" onclick="equalSharesMain()"
+                        class="px-4 py-2 border border-gray-300 rounded-lg text-gray-600 hover:border-primary-400 hover:text-primary-600 transition-colors text-sm font-medium">
+                    = Equal Shares
+                </button>
+            </div>
             <div id="share-total" class="text-sm font-medium text-gray-600">
                 Total: <span id="share-total-value">0</span>%
             </div>
@@ -129,11 +134,10 @@
                             <input type="hidden" name="sub_group_{{ loop.parent.loop.index0 }}_name_{{ loop.index0 }}" value="{{ sub.get('beneficiary_name', '') }}">
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
-                            <input type="number" name="sub_group_{{ loop.parent.loop.index0 }}_share_{{ loop.index0 }}" value="{{ sub.get('share', '') }}"
-                                   min="1" max="100" step="0.01"
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Share (fraction)</label>
+                            <input type="text" name="sub_group_{{ loop.parent.loop.index0 }}_share_{{ loop.index0 }}" value="{{ sub.get('share', '') }}"
                                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                                   placeholder="e.g., 50">
+                                   placeholder="e.g., 1/2">
                         </div>
                     </div>
                     {% endfor %}
@@ -215,15 +219,39 @@ document.addEventListener('change', function(e) {
     }
 });
 
+function _parseFraction(val) {
+    if (!val) return 0;
+    val = val.toString().trim();
+    if (val.includes('/')) {
+        const parts = val.split('/');
+        const num = parseFloat(parts[0]) || 0;
+        const den = parseFloat(parts[1]) || 1;
+        return den === 0 ? 0 : num / den;
+    }
+    // Try percentage (e.g. "50" or "33.33")
+    const n = parseFloat(val);
+    if (!isNaN(n)) return n / 100;
+    return 0;
+}
+
 function updateShareTotal() {
     let total = 0;
     document.querySelectorAll('input[name^="main_ben_share_"]').forEach(input => {
-        total += parseFloat(input.value) || 0;
+        total += _parseFraction(input.value);
     });
     const el = document.getElementById('share-total-value');
-    el.textContent = total.toFixed(2);
-    el.classList.toggle('text-red-600', Math.abs(total - 100) > 0.01);
-    el.classList.toggle('text-green-600', Math.abs(total - 100) <= 0.01);
+    const pct = Math.round(total * 10000) / 100;
+    el.textContent = pct.toFixed(2);
+    el.classList.toggle('text-red-600', Math.abs(pct - 100) > 0.01);
+    el.classList.toggle('text-green-600', Math.abs(pct - 100) <= 0.01);
+}
+
+function equalSharesMain() {
+    const inputs = document.querySelectorAll('input[name^="main_ben_share_"]');
+    const count = inputs.length;
+    if (count === 0) return;
+    inputs.forEach(inp => { inp.value = '1/' + count; });
+    updateShareTotal();
 }
 
 function addMainBeneficiary() {
@@ -246,10 +274,10 @@ function addMainBeneficiary() {
                 <input type="hidden" name="main_ben_name_${idx}" value="">
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Share (%) <span class="text-red-500">*</span></label>
-                <input type="number" name="main_ben_share_${idx}" required min="1" max="100" step="0.01"
+                <label class="block text-sm font-medium text-gray-700 mb-1">Share (fraction) <span class="text-red-500">*</span></label>
+                <input type="text" name="main_ben_share_${idx}" required
                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                       placeholder="e.g., 50" onchange="updateShareTotal()">
+                       placeholder="e.g., 1/3" oninput="updateShareTotal()">
             </div>
         </div>
     </div>`;
@@ -288,10 +316,10 @@ function addSubstituteGroup() {
                     <input type="hidden" name="sub_group_${gIdx}_name_0" value="">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
-                    <input type="number" name="sub_group_${gIdx}_share_0" min="1" max="100" step="0.01"
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Share (fraction)</label>
+                    <input type="text" name="sub_group_${gIdx}_share_0"
                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="e.g., 50">
+                           placeholder="e.g., 1/2">
                 </div>
             </div>
         </div>
@@ -329,10 +357,10 @@ function addSubstituteToGroup(btn, groupIdx) {
             <input type="hidden" name="sub_group_${groupIdx}_name_${subIdx}" value="">
         </div>
         <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
-            <input type="number" name="sub_group_${groupIdx}_share_${subIdx}" min="1" max="100" step="0.01"
+            <label class="block text-sm font-medium text-gray-700 mb-1">Share (fraction)</label>
+            <input type="text" name="sub_group_${groupIdx}_share_${subIdx}"
                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                   placeholder="e.g., 50">
+                   placeholder="e.g., 1/2">
         </div>
     </div>`;
     btn.closest('.substitute-group').querySelector('.substitute-entries').insertAdjacentHTML('beforeend', html);
@@ -372,20 +400,8 @@ function _giftLabel(gift, idx) {
         label += 'Other' + (gift.description ? ' - ' + gift.description.substring(0, 40) : '');
     }
     const bens = (gift.allocations || []).map(a => a.beneficiary_name).join(', ');
-    if (bens) label += ' → ' + bens.substring(0, 50) + (bens.length > 50 ? '...' : '');
+    if (bens) label += ' \u2192 ' + bens.substring(0, 50) + (bens.length > 50 ? '...' : '');
     return label;
-}
-
-function _fractionToPercent(frac) {
-    if (!frac) return 0;
-    frac = frac.toString().trim();
-    if (frac.includes('/')) {
-        const parts = frac.split('/');
-        const num = parseFloat(parts[0]) || 0;
-        const den = parseFloat(parts[1]) || 1;
-        return den === 0 ? 0 : Math.round((num / den) * 10000) / 100;
-    }
-    return parseFloat(frac) || 0;
 }
 
 function showFollowGiftMenu(mode) {
@@ -396,12 +412,10 @@ function showFollowGiftMenu(mode) {
     const relevantGifts = [];
     _giftsList.forEach((gift, i) => {
         if (mode === 'main') {
-            // Show gifts that have allocations
             if (gift.allocations && gift.allocations.length > 0) {
                 relevantGifts.push({gift, index: i});
             }
         } else {
-            // Show gifts that have substitute beneficiaries
             const hasSubs = (gift.allocations || []).some(a => a.substitutes && a.substitutes.length > 0);
             if (hasSubs) {
                 relevantGifts.push({gift, index: i});
@@ -432,8 +446,8 @@ function showFollowGiftMenu(mode) {
     menu.innerHTML = `
         <div class="bg-white rounded-lg shadow-xl border border-gray-200 max-w-lg w-full max-h-80 overflow-y-auto">
             <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
-                <h4 class="font-semibold text-gray-800">${mode === 'main' ? 'Follow Gift — Main Beneficiaries' : 'Follow Gift — Substitute Beneficiaries'}</h4>
-                <button type="button" class="text-gray-400 hover:text-gray-600 text-lg" onclick="this.closest('.follow-gift-menu').remove()">×</button>
+                <h4 class="font-semibold text-gray-800">${mode === 'main' ? 'Follow Gift \u2014 Main Beneficiaries' : 'Follow Gift \u2014 Substitute Beneficiaries'}</h4>
+                <button type="button" class="text-gray-400 hover:text-gray-600 text-lg" onclick="this.closest('.follow-gift-menu').remove()">\u00d7</button>
             </div>
             ${itemsHtml}
         </div>
@@ -470,9 +484,8 @@ function followGiftMain(giftIdx) {
     container.innerHTML = '';
     mainBenCount = 0;
 
-    gift.allocations.forEach((alloc, i) => {
-        const pct = _fractionToPercent(alloc.share);
-        _addMainBenWithData(alloc.beneficiary_name, pct);
+    gift.allocations.forEach((alloc) => {
+        _addMainBenWithData(alloc.beneficiary_name, alloc.share || '');
     });
 
     document.getElementById('main-beneficiary-count').value = mainBenCount;
@@ -480,16 +493,15 @@ function followGiftMain(giftIdx) {
 }
 
 function followAllGiftsMain() {
-    // Collect unique beneficiaries across all gifts with total shares
-    const benMap = {};
-    let totalParts = 0;
+    // Collect unique beneficiaries across all gifts
+    const seen = {};
+    const names = [];
     _giftsList.forEach(gift => {
         (gift.allocations || []).forEach(alloc => {
             const name = alloc.beneficiary_name;
-            if (!name) return;
-            if (!benMap[name]) benMap[name] = 0;
-            benMap[name]++;
-            totalParts++;
+            if (!name || seen[name]) return;
+            seen[name] = true;
+            names.push(name);
         });
     });
 
@@ -497,17 +509,16 @@ function followAllGiftsMain() {
     container.innerHTML = '';
     mainBenCount = 0;
 
-    const names = Object.keys(benMap);
-    const equalShare = names.length > 0 ? Math.round((100 / names.length) * 100) / 100 : 100;
+    const count = names.length;
     names.forEach(name => {
-        _addMainBenWithData(name, equalShare);
+        _addMainBenWithData(name, count > 0 ? '1/' + count : '1/1');
     });
 
     document.getElementById('main-beneficiary-count').value = mainBenCount;
     updateShareTotal();
 }
 
-function _addMainBenWithData(beneficiaryName, sharePct) {
+function _addMainBenWithData(beneficiaryName, share) {
     const idx = mainBenCount;
     const options = _buildBeneficiaryOptions();
     const html = `
@@ -527,10 +538,10 @@ function _addMainBenWithData(beneficiaryName, sharePct) {
                 <input type="hidden" name="main_ben_name_${idx}" value="${beneficiaryName}">
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Share (%) <span class="text-red-500">*</span></label>
-                <input type="number" name="main_ben_share_${idx}" value="${sharePct}" required min="1" max="100" step="0.01"
+                <label class="block text-sm font-medium text-gray-700 mb-1">Share (fraction) <span class="text-red-500">*</span></label>
+                <input type="text" name="main_ben_share_${idx}" value="${share}" required
                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                       placeholder="e.g., 50" onchange="updateShareTotal()">
+                       placeholder="e.g., 1/3" oninput="updateShareTotal()">
             </div>
         </div>
     </div>`;
@@ -570,7 +581,8 @@ function followGiftSubstitutes(giftIdx) {
 
         let subsHtml = '';
         alloc.substitutes.forEach((sub, sIdx) => {
-            const pct = _fractionToPercent(sub.share);
+            const subName = sub.beneficiary_name || sub.name || '';
+            const subShare = sub.share || '';
             subsHtml += `
             <div class="substitute-entry grid md:grid-cols-3 gap-4" data-sub-index="${sIdx}">
                 <div class="md:col-span-2">
@@ -580,13 +592,13 @@ function followGiftSubstitutes(giftIdx) {
                             class="person-select w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
                         ${options}
                     </select>
-                    <input type="hidden" name="sub_group_${gIdx}_name_${sIdx}" value="${sub.name}">
+                    <input type="hidden" name="sub_group_${gIdx}_name_${sIdx}" value="${subName}">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
-                    <input type="number" name="sub_group_${gIdx}_share_${sIdx}" value="${pct}" min="1" max="100" step="0.01"
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Share (fraction)</label>
+                    <input type="text" name="sub_group_${gIdx}_share_${sIdx}" value="${subShare}"
                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-                           placeholder="e.g., 50">
+                           placeholder="e.g., 1/2">
                 </div>
             </div>`;
         });
@@ -616,9 +628,10 @@ function followGiftSubstitutes(giftIdx) {
         const currentGroup = groups[gIdx];
         const selects = currentGroup.querySelectorAll('select');
         alloc.substitutes.forEach((sub, sIdx) => {
-            if (selects[sIdx]) {
+            const subName = sub.beneficiary_name || sub.name || '';
+            if (selects[sIdx] && subName) {
                 for (let i = 0; i < selects[sIdx].options.length; i++) {
-                    if (selects[sIdx].options[i].dataset.name === sub.name) {
+                    if (selects[sIdx].options[i].dataset.name === subName) {
                         selects[sIdx].selectedIndex = i;
                         break;
                     }
