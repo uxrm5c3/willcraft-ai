@@ -633,7 +633,7 @@ async function reuploadForm(formCode, input) {
             alert('Form updated successfully. Preview will refresh.');
             // Refresh preview if it's currently showing this form
             const iframe = document.getElementById('gen-preview-iframe');
-            if (iframe && iframe.src.includes('/preview/' + formCode)) {
+            if (iframe && iframe.src.includes('/form-html/' + formCode)) {
                 iframe.src = iframe.src.split('?')[0] + '?t=' + Date.now();
             }
         } else {
@@ -645,10 +645,8 @@ async function reuploadForm(formCode, input) {
     input.value = '';
 }
 
-/* ── Preview generated form with inline editor ── */
+/* ── Preview generated form with WYSIWYG editor ── */
 let _currentEditFormCode = null;
-let _originalContent = [];
-let _hasEdits = false;
 
 function previewGenerated(formCode, formName) {
     _currentEditFormCode = formCode;
@@ -656,181 +654,12 @@ function previewGenerated(formCode, formName) {
     const panel = document.getElementById('generated-preview-panel');
     const iframe = document.getElementById('gen-preview-iframe');
     const title = document.getElementById('gen-preview-title');
-    const loading = document.getElementById('editor-loading');
-    const content = document.getElementById('editor-content');
-    const saveBtn = document.getElementById('btn-save-edits');
     if (!panel || !iframe) return;
 
     title.textContent = formName;
-    iframe.src = '/probate/{{ probate_id }}/preview/' + formCode;
-    loading.classList.remove('hidden');
-    content.classList.add('hidden');
-    saveBtn.classList.add('hidden');
-    document.getElementById('edit-save-status').textContent = '';
+    iframe.src = '/probate/{{ probate_id }}/form-html/' + formCode;
     panel.classList.remove('hidden');
     panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-    // Load editable content
-    fetch('/probate/{{ probate_id }}/form-content/' + formCode)
-        .then(r => r.json())
-        .then(data => {
-            loading.classList.add('hidden');
-            if (!data.ok) { content.innerHTML = '<p class="text-red-500 text-xs">Failed to load</p>'; content.classList.remove('hidden'); return; }
-            _originalContent = data.content;
-            renderEditor(data.content);
-            content.classList.remove('hidden');
-        })
-        .catch(() => {
-            loading.classList.add('hidden');
-            content.innerHTML = '<p class="text-red-500 text-xs">Failed to load content</p>';
-            content.classList.remove('hidden');
-        });
-}
-
-function renderEditor(items) {
-    const container = document.getElementById('editor-content');
-    container.innerHTML = '';
-    items.forEach((item, idx) => {
-        if (item.type === 'paragraph') {
-            const isEmpty = !item.text.trim();
-            if (isEmpty) {
-                container.innerHTML += '<div class="h-3"></div>';
-                return;
-            }
-            const isMissing = item.text.includes('{{') && item.text.includes('}}');
-            const div = document.createElement('div');
-            div.className = 'group relative mb-0.5';
-            const input = document.createElement('textarea');
-            input.value = item.text;
-            input.dataset.originalValue = item.text;
-            input.dataset.type = 'paragraph';
-            input.dataset.index = item.index;
-            input.rows = 1;
-            input.className = 'w-full px-1 py-0.5 text-[13px] leading-[1.4] border-0 border-b border-transparent rounded-none resize-none focus:ring-0 focus:border-b focus:border-blue-400 transition-colors '
-                + (isMissing ? 'bg-red-50 border-b-red-300' : 'bg-transparent hover:bg-blue-50/50')
-                + (item.bold ? ' font-bold' : '');
-            input.style.fontFamily = "'Times New Roman', serif";
-            input.style.overflow = 'hidden';
-            input.addEventListener('input', () => { markEdited(); autoResize(input); });
-            input.addEventListener('focus', () => { input.classList.add('bg-blue-50'); });
-            input.addEventListener('blur', () => { input.classList.remove('bg-blue-50'); if (!isMissing) input.classList.add('bg-transparent'); });
-            if (isMissing) {
-                const badge = document.createElement('span');
-                badge.className = 'absolute -top-1 right-0 px-1 py-0 text-[8px] font-bold bg-red-500 text-white rounded';
-                badge.textContent = 'MISSING';
-                div.appendChild(badge);
-            }
-            div.appendChild(input);
-            container.appendChild(div);
-            // Auto-size after render
-            requestAnimationFrame(() => autoResize(input));
-        } else if (item.type === 'table') {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'my-2 overflow-x-auto';
-            const table = document.createElement('table');
-            table.className = 'w-full text-[10px] border border-gray-300';
-            item.rows.forEach((row, ri) => {
-                const tr = document.createElement('tr');
-                row.forEach((cellText, ci) => {
-                    const td = document.createElement('td');
-                    td.className = 'border border-gray-200 p-0';
-                    const isMissing = cellText.includes('{{') && cellText.includes('}}');
-                    const inp = document.createElement('textarea');
-                    inp.value = cellText;
-                    inp.dataset.originalValue = cellText;
-                    inp.dataset.type = 'table';
-                    inp.dataset.tableIndex = item.table_index;
-                    inp.dataset.row = ri;
-                    inp.dataset.col = ci;
-                    inp.rows = Math.max(1, Math.ceil(cellText.length / 40));
-                    inp.className = 'w-full px-1 py-0.5 text-[10px] border-0 resize-y focus:ring-1 focus:ring-primary-500 '
-                        + (isMissing ? 'bg-red-50' : 'bg-white');
-                    inp.addEventListener('input', () => { markEdited(); autoResize(inp); });
-                    td.appendChild(inp);
-                    tr.appendChild(td);
-                });
-                table.appendChild(tr);
-            });
-            wrapper.appendChild(table);
-            container.appendChild(wrapper);
-        }
-    });
-}
-
-function autoResize(textarea) {
-    textarea.style.height = 'auto';
-    textarea.style.height = textarea.scrollHeight + 'px';
-}
-
-function markEdited() {
-    _hasEdits = true;
-    document.getElementById('btn-save-edits').classList.remove('hidden');
-    document.getElementById('edit-save-status').textContent = 'Unsaved changes';
-    document.getElementById('edit-save-status').className = 'text-[10px] text-amber-400';
-}
-
-async function saveFormEdits() {
-    if (!_currentEditFormCode) return;
-    const btn = document.getElementById('btn-save-edits');
-    const status = document.getElementById('edit-save-status');
-    btn.disabled = true;
-    btn.textContent = 'Saving...';
-    status.textContent = '';
-
-    // Collect only changed edits
-    const edits = [];
-    document.querySelectorAll('#editor-content textarea').forEach(inp => {
-        if (inp.value === inp.dataset.originalValue) return; // skip unchanged
-        if (inp.dataset.type === 'paragraph') {
-            edits.push({ type: 'paragraph', index: parseInt(inp.dataset.index), text: inp.value });
-        } else if (inp.dataset.type === 'table') {
-            edits.push({
-                type: 'table',
-                table_index: parseInt(inp.dataset.tableIndex),
-                row: parseInt(inp.dataset.row),
-                col: parseInt(inp.dataset.col),
-                text: inp.value
-            });
-        }
-    });
-    if (edits.length === 0) {
-        status.textContent = 'No changes to save';
-        status.className = 'text-[10px] text-gray-400';
-        btn.disabled = false;
-        btn.textContent = 'Save Changes';
-        return;
-    }
-
-    try {
-        const res = await fetch('/probate/{{ probate_id }}/form-content/' + _currentEditFormCode, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ edits })
-        });
-        const data = await res.json();
-        if (data.ok) {
-            status.textContent = 'Saved! Refreshing preview...';
-            status.className = 'text-[10px] text-green-400';
-            _hasEdits = false;
-            btn.classList.add('hidden');
-            // Update original values so next save only diffs new changes
-            document.querySelectorAll('#editor-content textarea').forEach(inp => {
-                inp.dataset.originalValue = inp.value;
-            });
-            // Refresh PDF preview
-            const iframe = document.getElementById('gen-preview-iframe');
-            iframe.src = '/probate/{{ probate_id }}/preview/' + _currentEditFormCode + '?t=' + Date.now();
-            setTimeout(() => { status.textContent = ''; }, 3000);
-        } else {
-            status.textContent = 'Save failed: ' + (data.error || 'Unknown error');
-            status.className = 'text-[10px] text-red-400';
-        }
-    } catch (e) {
-        status.textContent = 'Save failed: ' + e.message;
-        status.className = 'text-[10px] text-red-400';
-    }
-    btn.disabled = false;
-    btn.textContent = 'Save Changes';
 }
 
 let _isFullscreen = false;
@@ -839,27 +668,30 @@ function toggleFullscreen() {
     _isFullscreen = !_isFullscreen;
     const panel = document.getElementById('generated-preview-panel');
     const container = document.getElementById('editor-container');
-    const split = document.getElementById('editor-split');
+    const iframe = document.getElementById('gen-preview-iframe');
     if (_isFullscreen) {
         panel.className = 'fixed inset-0 z-50 bg-black/50';
         container.className = 'fixed inset-2 z-50 rounded-lg overflow-hidden bg-white shadow-2xl flex flex-col';
-        split.style.height = 'calc(100vh - 50px)';
-        split.className = 'flex flex-1';
+        iframe.style.height = 'calc(100vh - 50px)';
         document.body.style.overflow = 'hidden';
     } else {
         panel.className = 'mt-4';
         container.className = 'border border-gray-300 rounded-lg overflow-hidden bg-white shadow-lg transition-all';
-        split.style.height = '80vh';
-        split.className = 'flex';
+        iframe.style.height = '85vh';
         document.body.style.overflow = '';
     }
 }
 
 function closeGeneratedPreview() {
-    if (_hasEdits && !confirm('You have unsaved changes. Close anyway?')) return;
+    const iframe = document.getElementById('gen-preview-iframe');
+    // Check if iframe has unsaved changes
+    try {
+        if (iframe && iframe.contentWindow && iframe.contentWindow._dirty) {
+            if (!confirm('You have unsaved changes. Close anyway?')) return;
+        }
+    } catch(e) {} // cross-origin safety
     const panel = document.getElementById('generated-preview-panel');
     const container = document.getElementById('editor-container');
-    const iframe = document.getElementById('gen-preview-iframe');
     if (_isFullscreen) {
         _isFullscreen = false;
         document.body.style.overflow = '';
@@ -868,7 +700,11 @@ function closeGeneratedPreview() {
     if (container) container.className = 'border border-gray-300 rounded-lg overflow-hidden bg-white shadow-lg transition-all';
     if (iframe) iframe.src = '';
     _currentEditFormCode = null;
-    _hasEdits = false;
+}
+
+// Called by iframe after successful save
+function onFormSaved() {
+    // Could refresh missing field counts etc.
 }
 
 /* ── View Template inline ── */
