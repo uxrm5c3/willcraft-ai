@@ -4297,75 +4297,180 @@ def probate_preview(probate_id, form_code):
     return redirect(f'/probate/{probate_id}/step/6')
 
 
-@app.route('/probate/<probate_id>/form-content/<form_code>')
+@app.route('/probate/<probate_id>/form-html/<form_code>')
 @login_required
-def probate_form_content(probate_id, form_code):
-    """Return DOCX content as structured paragraphs + tables for inline editing."""
+def probate_form_html(probate_id, form_code):
+    """Convert generated DOCX to editable HTML."""
     gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
     if not gf or not os.path.exists(gf.file_path):
-        return jsonify(ok=False, error='Form not found'), 404
-    from docx import Document as DocxDocument
-    doc = DocxDocument(gf.file_path)
-    content = []
-    for i, p in enumerate(doc.paragraphs):
-        content.append({
-            'type': 'paragraph',
-            'index': i,
-            'text': p.text,
-            'bold': any(r.bold for r in p.runs if r.bold),
-            'alignment': str(p.alignment) if p.alignment else None,
-        })
-    for ti, table in enumerate(doc.tables):
-        rows = []
-        for ri, row in enumerate(table.rows):
-            cells = []
-            for ci, cell in enumerate(row.cells):
-                cells.append(cell.text)
-            rows.append(cells)
-        content.append({'type': 'table', 'table_index': ti, 'rows': rows})
-    return jsonify(ok=True, content=content)
+        return '<p>Form not found</p>', 404
+    import shutil, subprocess
+    tmp_dir = tempfile.mkdtemp()
+    tmp_copy = os.path.join(tmp_dir, os.path.basename(gf.file_path))
+    shutil.copy2(gf.file_path, tmp_copy)
+    # Convert DOCX to HTML using LibreOffice
+    result = subprocess.run(
+        ['libreoffice', '--headless', '--convert-to', 'html', tmp_copy, '--outdir', tmp_dir],
+        capture_output=True, text=True, timeout=30
+    )
+    html_file = os.path.splitext(tmp_copy)[0] + '.html'
+    if not os.path.exists(html_file):
+        return '<p>Conversion failed</p>', 500
+    with open(html_file, 'r', encoding='utf-8', errors='replace') as f:
+        html_content = f.read()
+    # Wrap in editable page with save functionality
+    page_html = f'''<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body {{
+    font-family: 'Times New Roman', serif;
+    margin: 0; padding: 20px 40px;
+    background: white;
+  }}
+  /* Highlight unfilled placeholders */
+  .missing-field {{
+    background: #fef2f2;
+    border: 1px dashed #ef4444;
+    padding: 1px 4px;
+    border-radius: 3px;
+    color: #dc2626;
+    font-weight: bold;
+  }}
+  /* Toolbar */
+  #toolbar {{
+    position: sticky; top: 0; z-index: 100;
+    background: #1f2937; color: white;
+    padding: 8px 16px;
+    margin: -20px -40px 20px -40px;
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: system-ui, sans-serif;
+  }}
+  #toolbar button {{
+    padding: 4px 12px; border: none; border-radius: 4px;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+  }}
+  #toolbar .save-btn {{ background: #16a34a; color: white; }}
+  #toolbar .save-btn:hover {{ background: #15803d; }}
+  #toolbar .save-btn:disabled {{ background: #6b7280; cursor: not-allowed; }}
+  #toolbar .status {{ font-size: 11px; color: #9ca3af; margin-left: 8px; }}
+  #toolbar .title {{ font-size: 13px; font-weight: 600; }}
+  /* Make content editable look nice */
+  #doc-content {{ outline: none; min-height: 80vh; }}
+  #doc-content:focus {{ outline: none; }}
+  #doc-content table {{ border-collapse: collapse; }}
+  #doc-content td, #doc-content th {{ border: 1px solid #ccc; padding: 4px 8px; }}
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <span class="title">{gf.form_name or form_code}</span>
+  <div style="display:flex;align-items:center;gap:8px;">
+    <span id="status" class="status"></span>
+    <button class="save-btn" id="save-btn" onclick="saveChanges()">Save</button>
+  </div>
+</div>
+<div id="doc-content" contenteditable="true">
+''' + html_content + '''
+</div>
+<script>
+let _dirty = false;
+const docEl = document.getElementById('doc-content');
+
+// Highlight {{PLACEHOLDERS}}
+function highlightMissing() {
+  const walker = document.createTreeWalker(docEl, NodeFilter.SHOW_TEXT, null, false);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(node => {
+    if (/\\{\\{\\w+\\}\\}/.test(node.textContent)) {
+      const span = document.createElement('span');
+      span.innerHTML = node.textContent.replace(/\\{\\{(\\w+)\\}\\}/g,
+        '<span class="missing-field">{{$1}}</span>');
+      node.parentNode.replaceChild(span, node);
+    }
+  });
+}
+highlightMissing();
+
+docEl.addEventListener('input', () => {
+  _dirty = true;
+  document.getElementById('status').textContent = 'Unsaved changes';
+  document.getElementById('status').style.color = '#fbbf24';
+});
+
+async function saveChanges() {
+  const btn = document.getElementById('save-btn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  status.textContent = '';
+
+  // Get the edited HTML content
+  const html = docEl.innerHTML;
+  try {
+    const res = await fetch('/probate/''' + probate_id + '''/form-html/''' + form_code + '''', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html: html })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      status.textContent = 'Saved successfully!';
+      status.style.color = '#4ade80';
+      _dirty = false;
+      // Notify parent to refresh if needed
+      if (window.parent && window.parent.onFormSaved) window.parent.onFormSaved();
+    } else {
+      status.textContent = 'Save failed: ' + (data.error || 'Unknown');
+      status.style.color = '#f87171';
+    }
+  } catch(e) {
+    status.textContent = 'Save failed: ' + e.message;
+    status.style.color = '#f87171';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Save';
+}
+
+window.addEventListener('beforeunload', (e) => {
+  if (_dirty) { e.preventDefault(); e.returnValue = ''; }
+});
+</script>
+</body></html>'''
+    resp = make_response(page_html)
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
 
 
-@app.route('/probate/<probate_id>/form-content/<form_code>', methods=['POST'])
+@app.route('/probate/<probate_id>/form-html/<form_code>', methods=['POST'])
 @login_required
-def probate_form_content_save(probate_id, form_code):
-    """Save edited paragraph text back to the DOCX file."""
+def probate_form_html_save(probate_id, form_code):
+    """Save edited HTML back to DOCX."""
     gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
     if not gf or not os.path.exists(gf.file_path):
         return jsonify(ok=False, error='Form not found'), 404
     data = request.get_json()
-    if not data or 'edits' not in data:
-        return jsonify(ok=False, error='No edits provided'), 400
-    from docx import Document as DocxDocument
-    doc = DocxDocument(gf.file_path)
-    edits = data['edits']  # list of {index, text} for paragraphs, or {table_index, row, col, text} for cells
-    for edit in edits:
-        if edit.get('type') == 'table':
-            ti, ri, ci = edit['table_index'], edit['row'], edit['col']
-            if ti < len(doc.tables) and ri < len(doc.tables[ti].rows) and ci < len(doc.tables[ti].rows[ri].cells):
-                cell = doc.tables[ti].rows[ri].cells[ci]
-                # Preserve formatting: update first paragraph text, clear rest
-                if cell.paragraphs:
-                    for run in cell.paragraphs[0].runs:
-                        run.text = ''
-                    if cell.paragraphs[0].runs:
-                        cell.paragraphs[0].runs[0].text = edit['text']
-                    else:
-                        cell.paragraphs[0].text = edit['text']
-        else:
-            idx = edit.get('index', -1)
-            if 0 <= idx < len(doc.paragraphs):
-                p = doc.paragraphs[idx]
-                new_text = edit['text']
-                # Preserve formatting: distribute text across existing runs
-                if p.runs:
-                    # Put all text in first run, clear others
-                    p.runs[0].text = new_text
-                    for run in p.runs[1:]:
-                        run.text = ''
-                else:
-                    p.text = new_text
-    doc.save(gf.file_path)
+    if not data or 'html' not in data:
+        return jsonify(ok=False, error='No HTML content provided'), 400
+    import subprocess
+    # Write edited HTML to temp file
+    tmp_dir = tempfile.mkdtemp()
+    html_path = os.path.join(tmp_dir, 'edited.html')
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(f'''<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>{data['html']}</body></html>''')
+    # Convert HTML back to DOCX using LibreOffice
+    result = subprocess.run(
+        ['libreoffice', '--headless', '--convert-to', 'docx', html_path, '--outdir', tmp_dir],
+        capture_output=True, text=True, timeout=30
+    )
+    new_docx = os.path.join(tmp_dir, 'edited.docx')
+    if not os.path.exists(new_docx):
+        return jsonify(ok=False, error='Conversion failed'), 500
+    # Replace the generated file
+    import shutil
+    shutil.copy2(new_docx, gf.file_path)
     gf.generated_at = datetime.utcnow()
     db.session.commit()
     return jsonify(ok=True)

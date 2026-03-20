@@ -370,35 +370,21 @@
         </div>
     </div>
 
-    <!-- Generated Form Editor + Preview Panel -->
+    <!-- Generated Form Editor Panel (full-width editable HTML) -->
     <div id="generated-preview-panel" class="mt-4 hidden">
         <div id="editor-container" class="border border-gray-300 rounded-lg overflow-hidden bg-white shadow-lg transition-all">
             <!-- Header bar -->
             <div class="flex items-center justify-between px-4 py-2 bg-gray-800 text-white">
                 <h4 id="gen-preview-title" class="text-sm font-semibold"></h4>
                 <div class="flex items-center gap-2">
-                    <button type="button" id="btn-save-edits" onclick="saveFormEdits()" class="hidden px-3 py-1 bg-green-600 text-white text-xs font-semibold rounded hover:bg-green-700">
-                        Save Changes
-                    </button>
-                    <span id="edit-save-status" class="text-[10px] text-gray-400"></span>
                     <button type="button" onclick="toggleFullscreen()" id="btn-fullscreen" class="text-gray-300 hover:text-white p-1" title="Toggle fullscreen">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
                     </button>
                     <button type="button" onclick="closeGeneratedPreview()" class="text-gray-300 hover:text-white text-lg font-bold ml-1">&times;</button>
                 </div>
             </div>
-            <!-- Split view: Editor | Preview -->
-            <div class="flex" id="editor-split" style="height:80vh;">
-                <!-- Left: Editable content (document-like) -->
-                <div id="editor-pane" class="w-1/2 border-r border-gray-300 overflow-y-auto bg-gray-100">
-                    <div id="editor-loading" class="text-center py-8 text-gray-400 text-sm">Loading document content...</div>
-                    <div id="editor-content" class="hidden max-w-[700px] mx-auto bg-white shadow-sm my-4 px-8 py-6 min-h-[90%]" style="font-family: 'Times New Roman', serif;"></div>
-                </div>
-                <!-- Right: PDF preview -->
-                <div class="w-1/2">
-                    <iframe id="gen-preview-iframe" src="" class="w-full h-full border-0"></iframe>
-                </div>
-            </div>
+            <!-- Editable HTML document -->
+            <iframe id="gen-preview-iframe" src="" class="w-full border-0" style="height:85vh;"></iframe>
         </div>
     </div>
     {% endif %}
