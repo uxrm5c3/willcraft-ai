@@ -152,6 +152,20 @@
                 <!-- Property Address -->
                 <div class="mb-3">
                     <label class="block text-xs font-medium text-gray-600 mb-1">Property Address <span class="text-red-500">*</span></label>
+                    <div class="mb-2">
+                        <button type="button" onclick="toggleAddressList({{ loop.index0 }})" class="text-xs text-primary-600 hover:text-primary-800 font-medium">Select from existing addresses ▾</button>
+                        <div id="addr-list-{{ loop.index0 }}" class="hidden mt-1 space-y-1 max-h-32 overflow-y-auto">
+                            {% for person in persons %}
+                            {% if person.get('address') %}
+                            <button type="button" onclick="fillPropertyAddress({{ loop.index0 }}, this.dataset.addr)"
+                                    data-addr="{{ person.get('address', '') }}"
+                                    class="w-full text-left text-xs px-2 py-1.5 bg-gray-50 hover:bg-primary-50 rounded border border-gray-200 truncate">
+                                <span class="font-medium text-gray-700">{{ person.get('full_name', '') }}</span>: {{ person.get('address', '') }}
+                            </button>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                    </div>
                     <input type="text" name="gift_prop_address_{{ loop.index0 }}"
                            value="{{ pd.get('property_address', '') }}"
                            class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 mb-2"
@@ -562,6 +576,20 @@ function onGiftHandlingChange(giftIndex) {
     if (trustField) trustField.value = (selected === 'trust') ? '1' : '';
     if (sellField) sellField.value = (selected === 'sell') ? '1' : '';
     // Update property preview
+    updatePropertyPreview(giftIndex);
+}
+
+function toggleAddressList(giftIndex) {
+    const list = document.getElementById('addr-list-' + giftIndex);
+    if (list) list.classList.toggle('hidden');
+}
+
+function fillPropertyAddress(giftIndex, addr) {
+    if (!addr) return;
+    const field = document.querySelector(`[name="gift_prop_address_${giftIndex}"]`);
+    if (field) { field.value = addr; field.classList.add('bg-green-50'); setTimeout(() => field.classList.remove('bg-green-50'), 2000); }
+    const list = document.getElementById('addr-list-' + giftIndex);
+    if (list) list.classList.add('hidden');
     updatePropertyPreview(giftIndex);
 }
 
