@@ -952,6 +952,7 @@ function rebuildSubstitutePanel(giftIdx) {
     if (mbNames.length === 0) {
         panel.innerHTML = '<p class="text-xs text-gray-400 italic p-2">Add main beneficiaries above first.</p>';
     }
+    filterUsedSubstitutes(giftIdx);
 }
 
 function addSubstitute(giftIdx, mbIdx) {
@@ -974,6 +975,7 @@ function addSubstitute(giftIdx, mbIdx) {
     </div>`;
     entries.insertAdjacentHTML('beforeend', html);
     updateSubCounts(giftIdx);
+    filterUsedSubstitutes(giftIdx);
 }
 
 /**
@@ -1004,15 +1006,85 @@ function updateSubCounts(giftIdx) {
     });
 }
 
-// Rebuild substitute panel when MB beneficiary names change
+// When any beneficiary dropdown changes, update filters and rebuild subs
 document.addEventListener('change', function(e) {
     if (e.target.classList.contains('alloc-name-select')) {
         const giftEntry = e.target.closest('.gift-entry');
         if (!giftEntry) return;
         const giftIdx = giftEntry.dataset.giftIndex;
+        filterUsedBeneficiaries(giftIdx);
         const mode = document.querySelector(`input[name="gift_${giftIdx}_sub_mode"]:checked`)?.value;
         if (mode === 'specific') rebuildSubstitutePanel(giftIdx);
     }
+    if (e.target.classList.contains('sub-name-select')) {
+        const giftEntry = e.target.closest('.gift-entry');
+        if (!giftEntry) return;
+        const giftIdx = giftEntry.dataset.giftIndex;
+        filterUsedSubstitutes(giftIdx);
+    }
+});
+
+/**
+ * Disable already-selected main beneficiaries in other MB dropdowns within the same gift.
+ */
+function filterUsedBeneficiaries(giftIdx) {
+    const container = document.getElementById('allocations-' + giftIdx);
+    if (!container) return;
+    const selects = container.querySelectorAll('.alloc-name-select');
+    // Collect all selected names
+    const used = new Set();
+    selects.forEach(sel => { if (sel.value) used.add(sel.value); });
+    // Disable used options in each dropdown (except the one selected in that dropdown)
+    selects.forEach(sel => {
+        const currentVal = sel.value;
+        sel.querySelectorAll('option').forEach(opt => {
+            if (!opt.value) return; // skip placeholder
+            opt.disabled = (opt.value !== currentVal && used.has(opt.value));
+        });
+    });
+}
+
+/**
+ * For substitute dropdowns within a gift:
+ * 1. Disable the parent MB name (substitute can't be same as their MB)
+ * 2. Disable already-selected substitutes within the same MB group
+ */
+function filterUsedSubstitutes(giftIdx) {
+    const panel = document.getElementById('sub-specific-' + giftIdx);
+    if (!panel) return;
+    // Also get all MB names to exclude from subs
+    const container = document.getElementById('allocations-' + giftIdx);
+    const mbNames = new Set();
+    if (container) {
+        container.querySelectorAll('.alloc-name-select').forEach(sel => {
+            if (sel.value) mbNames.add(sel.value);
+        });
+    }
+    panel.querySelectorAll('.sub-group').forEach(group => {
+        const parentMB = group.dataset.mbName || '';
+        const subSelects = group.querySelectorAll('.sub-name-select');
+        // Collect used sub names in this group
+        const usedSubs = new Set();
+        subSelects.forEach(sel => { if (sel.value) usedSubs.add(sel.value); });
+        // Filter each sub dropdown
+        subSelects.forEach(sel => {
+            const currentVal = sel.value;
+            sel.querySelectorAll('option').forEach(opt => {
+                if (!opt.value) return;
+                // Disable if: same as parent MB, or already used by another sub in this group
+                const isParentMB = (opt.value === parentMB);
+                const isUsedBySibling = (opt.value !== currentVal && usedSubs.has(opt.value));
+                opt.disabled = isParentMB || isUsedBySibling;
+            });
+        });
+    });
+}
+
+// Run filtering on page load for existing data
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.gift-entry').forEach(entry => {
+        filterUsedBeneficiaries(entry.dataset.giftIndex);
+    });
 });
 
 /**
