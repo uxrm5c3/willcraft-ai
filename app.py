@@ -703,6 +703,7 @@ def build_will_data():
             beneficiaries=trust_bens,
             purposes=trust_data.get('purposes', []),
             duration=trust_data.get('duration') or None,
+            assets_from_gifts=trust_data.get('assets_from_gifts', []),
             payment_mode=trust_data.get('payment_mode') or None,
             payment_amount=trust_data.get('payment_amount') or None,
             balance_beneficiaries=balance_bens,
