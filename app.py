@@ -4510,9 +4510,9 @@ def probate_form_html_save(probate_id, form_code):
     html_path = os.path.join(tmp_dir, 'edited.html')
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(f'''<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>{data['html']}</body></html>''')
-    # Convert HTML back to DOCX using LibreOffice
+    # Convert HTML back to DOCX using LibreOffice (requires explicit filter)
     result = subprocess.run(
-        ['libreoffice', '--headless', '--convert-to', 'docx', html_path, '--outdir', tmp_dir],
+        ['libreoffice', '--headless', '--convert-to', 'docx:MS Word 2007 XML', html_path, '--outdir', tmp_dir],
         capture_output=True, text=True, timeout=30
     )
     new_docx = os.path.join(tmp_dir, 'edited.docx')
