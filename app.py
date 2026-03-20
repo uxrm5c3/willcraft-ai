@@ -3733,6 +3733,8 @@ def probate_step4(probate_id):
         probate.assets_data = json.dumps(assets)
         probate.updated_at = datetime.utcnow()
         db.session.commit()
+        if request.headers.get('X-Save-Only'):
+            return jsonify(ok=True)
         return redirect(f'/probate/{probate_id}/step/5')
 
     # Pre-populate from will gifts if assets_data is empty and will exists

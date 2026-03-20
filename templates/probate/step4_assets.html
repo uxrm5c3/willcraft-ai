@@ -80,9 +80,15 @@
 <!-- Sticky Save & Next bar -->
 <div class="sticky bottom-0 bg-white border-t border-gray-200 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] px-6 py-3 -mx-4 sm:-mx-6 mt-4 flex justify-between items-center z-10">
     <a href="/probate/{{ probate_id }}/step/3" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
-    <button type="submit" form="assets-form" class="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
-        Save & Next
-    </button>
+    <div class="flex items-center gap-2">
+        <span id="save-status" class="text-xs text-gray-400"></span>
+        <button type="button" onclick="saveAssets()" class="px-5 py-2 bg-gray-600 text-white text-sm font-semibold rounded-lg hover:bg-gray-700">
+            Save
+        </button>
+        <button type="submit" form="assets-form" class="px-5 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
+            Save & Next →
+        </button>
+    </div>
 </div>
 
 <!-- OCR Verification Modal -->
@@ -457,6 +463,30 @@ function closeOcrModal() {
 }
 
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOcrModal(); });
+
+/* ── Save without navigating ── */
+async function saveAssets() {
+    assets = collectAssetData();
+    const statusEl = document.getElementById('save-status');
+    statusEl.textContent = 'Saving...';
+    statusEl.className = 'text-xs text-blue-500';
+    try {
+        const formData = new FormData();
+        formData.append('assets_json', JSON.stringify(assets));
+        const resp = await fetch('/probate/{{ probate_id }}/step/4', { method: 'POST', body: formData, headers: { 'X-Save-Only': '1' } });
+        if (resp.redirected || resp.ok) {
+            statusEl.textContent = '✓ Saved';
+            statusEl.className = 'text-xs text-green-600 font-medium';
+            setTimeout(() => { statusEl.textContent = ''; }, 3000);
+        } else {
+            statusEl.textContent = 'Save failed';
+            statusEl.className = 'text-xs text-red-600';
+        }
+    } catch (err) {
+        statusEl.textContent = 'Error: ' + err.message;
+        statusEl.className = 'text-xs text-red-600';
+    }
+}
 
 /* ── Form submit ── */
 document.getElementById('assets-form').addEventListener('submit', function() {
