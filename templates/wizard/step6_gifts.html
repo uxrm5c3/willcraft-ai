@@ -1182,13 +1182,14 @@ function toggleReorderMode() {
     if (_reorderMode) {
         // Collapse all gifts first for easy reordering
         container.querySelectorAll('.gift-entry').forEach((entry) => {
-            const idx = entry.dataset.giftIndex;
             const body = entry.querySelector('[id^="gift-body-"]');
             const summary = entry.querySelector('[id^="gift-summary-"]');
             const chevron = entry.querySelector('.gift-chevron');
+            const arrows = entry.querySelector('.reorder-arrows');
             if (body) body.classList.add('hidden');
             if (summary) summary.classList.remove('hidden');
             if (chevron) chevron.style.transform = 'rotate(-90deg)';
+            if (arrows) { arrows.classList.remove('hidden'); arrows.style.display = 'flex'; }
         });
         container.classList.add('reorder-active');
         banner.classList.remove('hidden');
@@ -1196,6 +1197,10 @@ function toggleReorderMode() {
         reorderBtn.textContent = 'Done';
         reorderBtn.classList.add('bg-primary-600', 'text-white', 'border-primary-600');
     } else {
+        container.querySelectorAll('.gift-entry .reorder-arrows').forEach((arrows) => {
+            arrows.classList.add('hidden');
+            arrows.style.display = '';
+        });
         container.classList.remove('reorder-active');
         banner.classList.add('hidden');
         actionBtns.classList.remove('hidden');
