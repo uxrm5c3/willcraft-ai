@@ -272,11 +272,11 @@ def build_replacements(probate_app, will_record):
         '{{FIRM_FAX}}': probate_app.firm_fax or '',
         '{{FIRM_REFERENCE}}': probate_app.firm_reference or '',
 
-        # Lawyer — in Doc 08 the "appointing person" is the APPLICANT, not the lawyer
-        # The lawyer name/NRIC only appears for physical attestation (Form 14A/346)
-        '{{LAWYER_NAME}}': primary_exec.get('full_name', ''),
-        '{{LAWYER_NRIC}}': primary_exec.get('nric_passport', ''),
-        '{{LAWYER_BAR_NO}}': '',
+        # Lawyer details (for Form 14A/346 attestation)
+        '{{LAWYER_NAME}}': probate_app.lawyer_name or primary_exec.get('full_name', ''),
+        '{{LAWYER_NRIC}}': probate_app.lawyer_nric or primary_exec.get('nric_passport', ''),
+        '{{LAWYER_BAR_NO}}': probate_app.lawyer_bar_number or '',
+        '{{BAR_COUNCIL_NO}}': probate_app.lawyer_bar_number or '',
 
         # Witnesses
         '{{WITNESS1_NAME}}': probate_app.witness1_name or '',
@@ -329,18 +329,32 @@ def build_replacements(probate_app, will_record):
         replacements['{{BENEFICIARY1_RELATIONSHIP}}'] = ben_lines[0].split('), ')[-1].rstrip('.') if ben_lines else ''
 
     # Property placeholders (for Form 14A/346)
+    # Check both will gifts and probate assets for property data
     properties = [g for g in gifts if g.get('gift_type') == 'property']
-    if properties:
-        p = properties[0]
-        details = p.get('property_details', {})
+    # Also check probate assets_data
+    all_assets = json.loads(probate_app.assets_data or '[]')
+    prop_assets = [a for a in all_assets if a.get('asset_type') == 'property']
+    # Prefer probate assets (entered in step 5), fall back to will gifts
+    prop_source = prop_assets[0] if prop_assets else (properties[0] if properties else None)
+    if prop_source:
+        # Handle both nested (will) and flat (probate) formats
+        details = prop_source.get('property_details', prop_source)
+        prop_title = details.get('title_number', '')
+        prop_lot = details.get('lot_number', '')
+        prop_mukim = details.get('mukim', '')
+        prop_addr = details.get('address', details.get('description', ''))
         replacements.update({
-            '{{PROPERTY1_TITLE}}': details.get('title_number', ''),
-            '{{PROPERTY1_LOT}}': details.get('lot_number', ''),
-            '{{PROPERTY1_MUKIM}}': details.get('mukim', ''),
-            '{{PROPERTY1_ADDRESS}}': details.get('address', ''),
-            '{{PROPERTY2_TITLE}}': details.get('title_number', ''),
-            '{{PROPERTY2_LOT}}': details.get('lot_number', ''),
-            '{{PROPERTY2_MUKIM}}': details.get('mukim', ''),
+            '{{PROPERTY1_TITLE}}': prop_title,
+            '{{PROPERTY1_LOT}}': prop_lot,
+            '{{PROPERTY1_MUKIM}}': prop_mukim,
+            '{{PROPERTY1_ADDRESS}}': prop_addr,
+            '{{PROPERTY2_TITLE}}': prop_title,
+            '{{PROPERTY2_LOT}}': prop_lot,
+            '{{PROPERTY2_MUKIM}}': prop_mukim,
+            # Aliases used by form346
+            '{{PROPERTY_TITLE_NO}}': prop_title,
+            '{{PROPERTY_LOT}}': prop_lot,
+            '{{PROPERTY_MUKIM}}': prop_mukim,
         })
 
     # Populate from assets_data (Step 4 schedule)
@@ -485,6 +499,39 @@ def recommend_forms(will_record, probate_app=None):
         },
     ]
     return recommendations
+
+
+def _fix_signing_alignment(doc):
+    """Fix signing name lines that use excessive spaces/tabs for right-alignment.
+
+    After placeholder replacement, lines like:
+        '                                    \t    PARAMSOTHY A/P V APPUKUDDY'
+    overflow because the spaces+name is too wide. Fix by trimming leading
+    whitespace and using right-alignment on the paragraph instead.
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    for para in doc.paragraphs:
+        if not para.runs:
+            continue
+        full_text = ''.join(r.text for r in para.runs)
+        stripped = full_text.strip()
+        if not stripped:
+            continue
+        leading_ws = len(full_text) - len(full_text.lstrip())
+        # Target: lines with 20+ leading spaces that contain a name (no {{ }})
+        # These are signing name lines like "                    JOHN DOE"
+        if leading_ws >= 20 and '{{' not in stripped and len(stripped) < 100:
+            # Check it's a name-like line (mostly uppercase, short)
+            words = stripped.replace('[', '').replace(']', '').split()
+            if words and not any(kw in stripped.lower() for kw in [
+                'mahkamah', 'dalam', 'negeri', 'saman', 'afidavit', 'borang',
+                'peguambela', 'difailkan', 'setem', 'pembayaran'
+            ]):
+                # Right-align the paragraph and remove leading whitespace
+                para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                para.runs[0].text = stripped
+                for run in para.runs[1:]:
+                    run.text = ''
 
 
 def _cleanup_empty_placeholders(doc):
@@ -658,10 +705,11 @@ def generate_probate_forms(probate_app, will_record, selected_codes, templates_m
 
         try:
             fill_template(template_path, replacements, output_path)
-            # Post-processing: clean up empty values in generated form
+            # Post-processing: clean up empty values and fix alignment
             try:
                 doc = Document(output_path)
                 _cleanup_empty_placeholders(doc)
+                _fix_signing_alignment(doc)
                 if code == 'doc06':
                     _clean_doc06_empty_rows(doc, probate_app)
                 doc.save(output_path)
