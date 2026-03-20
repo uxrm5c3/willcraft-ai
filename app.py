@@ -123,6 +123,11 @@ TENANT_CONFIG = {
         'email_domain': '@alantanjb.com',
         'email_from': 'enquiry@alantanjb.com',
         'email_cc': ['kylie.tan@alantanjb.com'],
+        'firm_name': 'Tetuan Alan Tan & Associates',
+        'firm_address': '24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor',
+        'firm_phone': '07-588 5979',
+        'lawyer_name': 'FAIZUL HANAFI BIN TOKIRAN',
+        'lawyer_bar_number': 'BC/F/167',
         'default_users': [
             {'email': 'accounts@alantanjb.com', 'password': 'Finance88#', 'name': 'Accounts', 'role': 'admin'},
             {'email': 'enquiry@alantanjb.com', 'password': 'Enquiry88#', 'name': 'Enquiry', 'role': 'advisor'},
@@ -3741,22 +3746,26 @@ def probate_delete(probate_id):
 
 
 @app.route('/probate/new-la')
+@app.route('/probate/new-probate')  # External will (no WillCraft will linked)
 @login_required
 def probate_new_la():
-    """Create a new Letters of Administration application (no will)."""
+    """Create a new LA or external-will probate application."""
     role = session.get('user_role')
     if role not in ('admin', 'approver'):
         flash('Access denied.', 'error')
         return redirect(url_for('index'))
+    # Determine type from URL
+    app_type = 'probate' if request.path.endswith('new-probate') else 'la'
+    tenant = get_tenant()
     probate = ProbateApplication(
-        application_type='la',
+        application_type=app_type,
         filing_year=str(datetime.now().year),
         created_by=session.get('user_id'),
-        firm_name='Tetuan Alan Tan & Associates',
-        firm_address='24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor',
-        firm_phone='07-588 5979',
-        lawyer_name='FAIZUL HANAFI BIN TOKIRAN',
-        lawyer_bar_number='BC/F/167',
+        firm_name=tenant.get('firm_name', 'Tetuan Alan Tan & Associates'),
+        firm_address=tenant.get('firm_address', '24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor'),
+        firm_phone=tenant.get('firm_phone', '07-588 5979'),
+        lawyer_name=tenant.get('lawyer_name', 'FAIZUL HANAFI BIN TOKIRAN'),
+        lawyer_bar_number=tenant.get('lawyer_bar_number', 'BC/F/167'),
     )
     db.session.add(probate)
     db.session.commit()
@@ -3779,16 +3788,17 @@ def probate_new(will_id):
     if existing:
         return redirect(f'/probate/{existing.id}/step/1')
     # Create new probate application
+    tenant = get_tenant()
     probate = ProbateApplication(
         will_id=will_id,
         client_id=will_record.client_id,
         filing_year=str(datetime.now().year),
         created_by=session.get('user_id'),
-        firm_name='Tetuan Alan Tan & Associates',
-        firm_address='24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor',
-        firm_phone='07-588 5979',
-        lawyer_name='FAIZUL HANAFI BIN TOKIRAN',
-        lawyer_bar_number='BC/F/167',
+        firm_name=tenant.get('firm_name', 'Tetuan Alan Tan & Associates'),
+        firm_address=tenant.get('firm_address', '24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor'),
+        firm_phone=tenant.get('firm_phone', '07-588 5979'),
+        lawyer_name=tenant.get('lawyer_name', 'FAIZUL HANAFI BIN TOKIRAN'),
+        lawyer_bar_number=tenant.get('lawyer_bar_number', 'BC/F/167'),
     )
     db.session.add(probate)
     db.session.commit()
