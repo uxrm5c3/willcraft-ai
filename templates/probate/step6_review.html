@@ -26,81 +26,127 @@
     </div>
     {% endif %}
 
+    {# ── Macro for field display with red highlight when empty ── #}
+    {% macro field_val(label, value, required=false) %}
+    <div class="{% if required and not value %}bg-red-50 border border-red-200 rounded px-2 py-1{% endif %}">
+        <span class="text-gray-500">{{ label }}:</span><br>
+        {% if value %}
+        <span class="font-medium">{{ value }}</span>
+        {% else %}
+        <span class="font-medium text-red-500 italic">Not set</span>
+        {% endif %}
+    </div>
+    {% endmacro %}
+
     <!-- Data Summary -->
     <div class="mb-6 space-y-4">
         <!-- Deceased -->
-        <div class="p-4 bg-gray-50 rounded-lg">
+        <div class="p-4 {% if not probate.date_of_death or not probate.place_of_death or not probate.death_cert_number %}bg-red-50/50 border border-red-100{% else %}bg-gray-50{% endif %} rounded-lg">
             <div class="flex justify-between items-center mb-2">
                 <h3 class="text-sm font-semibold text-gray-700">Step 1 — Deceased Person &amp; Death Details</h3>
                 <a href="/probate/{{ probate_id }}/step/1" class="text-xs text-primary-600 hover:underline">Edit</a>
             </div>
             <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                <div><span class="text-gray-500">Name:</span><br><span class="font-medium">{{ testator.full_name }}</span></div>
-                <div><span class="text-gray-500">NRIC:</span><br><span class="font-medium">{{ testator.nric_passport }}</span></div>
-                <div><span class="text-gray-500">Date of Death:</span><br><span class="font-medium">{{ probate.date_of_death or 'Not set' }}</span></div>
-                <div><span class="text-gray-500">Place of Death:</span><br><span class="font-medium">{{ probate.place_of_death or 'Not set' }}</span></div>
+                {{ field_val('Name', testator.full_name, true) }}
+                {{ field_val('NRIC', testator.nric_passport, true) }}
+                {{ field_val('Date of Death', probate.date_of_death, true) }}
+                {{ field_val('Place of Death', probate.place_of_death, true) }}
+                {{ field_val('Death Cert No', probate.death_cert_number, true) }}
+                {{ field_val('Time of Death', probate.time_of_death) }}
+                {{ field_val('Estate Value', probate.estate_value_estimate) }}
             </div>
+            {% set step1_missing = [] %}
+            {% if not probate.date_of_death %}{% set _ = step1_missing.append('Date of Death') %}{% endif %}
+            {% if not probate.place_of_death %}{% set _ = step1_missing.append('Place of Death') %}{% endif %}
+            {% if not probate.death_cert_number %}{% set _ = step1_missing.append('Death Cert Number') %}{% endif %}
+            {% if step1_missing %}
+            <div class="mt-2 text-[10px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                <strong>Required for forms:</strong> {{ step1_missing|join(', ') }} — needed in Doc 01, Doc 02, Doc 03
+            </div>
+            {% endif %}
         </div>
 
         <!-- Executor/Applicant -->
-        <div class="p-4 bg-gray-50 rounded-lg">
-            <h3 class="text-sm font-semibold text-gray-700 mb-2">Executor / Applicant (from Will)</h3>
-            <div class="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+        <div class="p-4 {% if not executor or not executor.full_name %}bg-red-50/50 border border-red-100{% else %}bg-gray-50{% endif %} rounded-lg">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Executor / Applicant</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
                 {% if executor %}
-                <div><span class="text-gray-500">Name:</span><br><span class="font-medium">{{ executor.full_name }}</span></div>
-                <div><span class="text-gray-500">NRIC:</span><br><span class="font-medium">{{ executor.nric_passport }}</span></div>
-                <div><span class="text-gray-500">Relationship:</span><br><span class="font-medium">{{ executor.relationship }}</span></div>
+                {{ field_val('Name', executor.full_name, true) }}
+                {{ field_val('NRIC', executor.nric_passport, true) }}
+                {{ field_val('Address', executor.address if executor.address is defined else executor.get('address', ''), true) }}
+                {{ field_val('Relationship', executor.relationship) }}
                 {% else %}
-                <div class="text-red-500">No executor found in will data</div>
+                <div class="col-span-4 bg-red-50 border border-red-200 rounded px-2 py-1 text-red-500 font-medium">No executor found</div>
                 {% endif %}
             </div>
+            {% if not executor or not executor.full_name %}
+            <div class="mt-2 text-[10px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                <strong>Required for forms:</strong> Executor details — needed in all forms
+            </div>
+            {% endif %}
         </div>
 
-        <!-- Court & Firm -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="p-4 bg-gray-50 rounded-lg">
-                <div class="flex justify-between items-center mb-2">
-                    <h3 class="text-sm font-semibold text-gray-700">Step 2 — Court</h3>
-                    <a href="/probate/{{ probate_id }}/step/2" class="text-xs text-primary-600 hover:underline">Edit</a>
-                </div>
-                <div class="text-xs space-y-1">
-                    <div><span class="text-gray-500">Location:</span> {{ probate.court_location or 'Not set' }}</div>
-                    <div><span class="text-gray-500">Case No:</span> {{ probate.case_number or 'Not set' }}</div>
-                </div>
+        <!-- Court & Firm & Lawyer -->
+        <div class="p-4 {% if not probate.case_number or not probate.lawyer_name %}bg-amber-50/50 border border-amber-100{% else %}bg-gray-50{% endif %} rounded-lg">
+            <div class="flex justify-between items-center mb-2">
+                <h3 class="text-sm font-semibold text-gray-700">Step 2 — Court, Law Firm &amp; Lawyer</h3>
+                <a href="/probate/{{ probate_id }}/step/2" class="text-xs text-primary-600 hover:underline">Edit</a>
             </div>
-            <div class="p-4 bg-gray-50 rounded-lg">
-                <div class="flex justify-between items-center mb-2">
-                    <h3 class="text-sm font-semibold text-gray-700">Step 2 — Law Firm</h3>
-                    <a href="/probate/{{ probate_id }}/step/2" class="text-xs text-primary-600 hover:underline">Edit</a>
-                </div>
-                <div class="text-xs space-y-1">
-                    <div><span class="text-gray-500">Firm:</span> {{ probate.firm_name or 'Not set' }}</div>
-                </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                {{ field_val('Court', probate.court_location, true) }}
+                {{ field_val('State', probate.court_state) }}
+                {{ field_val('Case No', probate.case_number, true) }}
+                {{ field_val('Filing Year', probate.filing_year) }}
+                {{ field_val('Firm', probate.firm_name, true) }}
+                {{ field_val('Firm Ref', probate.firm_reference) }}
+                {{ field_val('Phone', probate.firm_phone) }}
+                {{ field_val('Fax', probate.firm_fax) }}
+                {{ field_val('Lawyer', probate.lawyer_name, true) }}
+                {{ field_val('Bar Council No', probate.lawyer_bar_number, true) }}
+                {{ field_val('Lawyer NRIC', probate.lawyer_nric) }}
             </div>
+            {% set step2_missing = [] %}
+            {% if not probate.case_number %}{% set _ = step2_missing.append('Case Number') %}{% endif %}
+            {% if not probate.lawyer_name %}{% set _ = step2_missing.append('Lawyer Name') %}{% endif %}
+            {% if not probate.lawyer_bar_number %}{% set _ = step2_missing.append('Bar Council No') %}{% endif %}
+            {% if not probate.court_location %}{% set _ = step2_missing.append('Court Location') %}{% endif %}
+            {% if step2_missing %}
+            <div class="mt-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+                <strong>Missing:</strong> {{ step2_missing|join(', ') }} — Case No assigned after filing; lawyer details needed in Form 14A, Form 346
+            </div>
+            {% endif %}
         </div>
 
         <!-- Witnesses -->
-        <div class="p-4 bg-gray-50 rounded-lg">
+        <div class="p-4 {% if not probate.witness1_name or not probate.witness2_name %}bg-red-50/50 border border-red-100{% else %}bg-gray-50{% endif %} rounded-lg">
             <div class="flex justify-between items-center mb-2">
                 <h3 class="text-sm font-semibold text-gray-700">Step 3 — Witnesses</h3>
                 <a href="/probate/{{ probate_id }}/step/3" class="text-xs text-primary-600 hover:underline">Edit</a>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                <div>
-                    <span class="text-gray-500">Witness 1:</span><br>
-                    <span class="font-medium">{{ probate.witness1_name or 'Not set' }}</span>
-                    {% if probate.witness1_nric %}<span class="text-gray-400 ml-1">({{ probate.witness1_nric }})</span>{% endif %}
+                <div class="space-y-1">
+                    {{ field_val('Witness 1 Name', probate.witness1_name, true) }}
+                    {{ field_val('Witness 1 NRIC', probate.witness1_nric, true) }}
+                    {{ field_val('Witness 1 Address', probate.witness1_address, true) }}
                 </div>
-                <div>
-                    <span class="text-gray-500">Witness 2:</span><br>
-                    <span class="font-medium">{{ probate.witness2_name or 'Not set' }}</span>
-                    {% if probate.witness2_nric %}<span class="text-gray-400 ml-1">({{ probate.witness2_nric }})</span>{% endif %}
+                <div class="space-y-1">
+                    {{ field_val('Witness 2 Name', probate.witness2_name, true) }}
+                    {{ field_val('Witness 2 NRIC', probate.witness2_nric, true) }}
+                    {{ field_val('Witness 2 Address', probate.witness2_address, true) }}
                 </div>
             </div>
+            {% set step3_missing = [] %}
+            {% if not probate.witness1_name %}{% set _ = step3_missing.append('Witness 1') %}{% endif %}
+            {% if not probate.witness2_name %}{% set _ = step3_missing.append('Witness 2') %}{% endif %}
+            {% if step3_missing %}
+            <div class="mt-2 text-[10px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                <strong>Required for forms:</strong> {{ step3_missing|join(', ') }} — needed in Doc 04, Doc 05
+            </div>
+            {% endif %}
         </div>
 
         <!-- Beneficiaries Summary -->
-        <div class="p-4 bg-gray-50 rounded-lg">
+        <div class="p-4 {% if not beneficiaries %}bg-red-50/50 border border-red-100{% else %}bg-gray-50{% endif %} rounded-lg">
             <div class="flex justify-between items-center mb-2">
                 <h3 class="text-sm font-semibold text-gray-700">Step 4 — Beneficiaries</h3>
                 <a href="/probate/{{ probate_id }}/step/4" class="text-xs text-primary-600 hover:underline">Edit</a>
@@ -117,9 +163,14 @@
                     {% endfor %}
                     </div>
                 {% else %}
-                    <span class="text-amber-600">No beneficiaries entered</span>
+                    <div class="bg-red-50 border border-red-200 rounded px-2 py-1 text-red-500 font-medium">No beneficiaries entered</div>
                 {% endif %}
             </div>
+            {% if not beneficiaries %}
+            <div class="mt-2 text-[10px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1">
+                <strong>Required for forms:</strong> Beneficiary list — needed in Doc 07 (Beneficiary List)
+            </div>
+            {% endif %}
         </div>
 
         <!-- Assets Summary -->
@@ -135,31 +186,13 @@
                         const assets = {{ assets | safe }};
                         const counts = {};
                         assets.forEach(a => { counts[a.asset_type] = (counts[a.asset_type]||0) + 1; });
-                        const labels = {property:'Properties',bank:'Bank Accounts',vehicle:'Vehicles',other:'Other Assets',liability:'Liabilities'};
+                        const labels = {property:'Properties',bank:'Bank Accounts',vehicle:'Vehicles',investment:'Investment Accounts',other:'Other Assets',liability:'Liabilities'};
                         const parts = [];
                         for (const [k,v] of Object.entries(labels)) { if (counts[k]) parts.push(counts[k] + ' ' + v); }
                         document.getElementById('assets-summary').textContent = parts.length ? parts.join(', ') : 'No assets entered';
                     })();
                 </script>
             </div>
-        </div>
-
-        <!-- Beneficiaries Summary -->
-        <div class="p-4 bg-gray-50 rounded-lg">
-            <h3 class="text-sm font-semibold text-gray-700 mb-2">Beneficiaries</h3>
-            {% if beneficiaries %}
-            <div class="text-xs text-gray-600 space-y-1">
-                {% for b in beneficiaries %}
-                <div class="flex items-center gap-2">
-                    <span class="font-medium">{{ b.full_name or b.beneficiary_name or b.get('name', 'Unknown') }}</span>
-                    {% if b.nric_passport_birthcert or b.nric_passport %}<span class="text-gray-400">({{ b.nric_passport_birthcert or b.nric_passport }})</span>{% endif %}
-                    {% if b.relationship %}<span class="text-gray-400">{{ b.relationship }}</span>{% endif %}
-                </div>
-                {% endfor %}
-            </div>
-            {% else %}
-            <div class="text-xs text-red-500">No beneficiaries found in will data</div>
-            {% endif %}
         </div>
     </div>
 

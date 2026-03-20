@@ -3488,12 +3488,22 @@ def _validate_probate_data(probate, will_record, recommendations):
         if code == 'doc02':
             if not probate.death_cert_number:
                 missing.append('Death Certificate Number (Step 1)')
+        # Case number (all forms use it)
+        if code in ('doc01', 'doc02', 'doc03', 'doc06', 'doc07', 'doc08'):
+            if not probate.case_number:
+                missing.append('Case Number (Step 2) — assigned after filing')
         # Court/firm
         if code in ('doc01', 'doc08'):
             if not probate.court_location:
                 missing.append('Court Location (Step 2)')
             if not probate.firm_name:
                 missing.append('Firm Name (Step 2)')
+        # Lawyer details
+        if code in ('form14a', 'form346'):
+            if not probate.lawyer_name:
+                missing.append('Lawyer Name (Step 2)')
+            if not probate.lawyer_bar_number:
+                missing.append('Bar Council Number (Step 2)')
         # Witnesses
         if code == 'doc04':
             if not probate.witness1_name:
@@ -3509,6 +3519,20 @@ def _validate_probate_data(probate, will_record, recommendations):
                 missing.append('Witness 2 NRIC (Step 3)')
             if not probate.witness2_address:
                 missing.append('Witness 2 Address (Step 3)')
+        # Property details for form14a / form346
+        if code in ('form14a', 'form346'):
+            assets = json.loads(probate.assets_data or '[]')
+            props = [a for a in assets if a.get('asset_type') == 'property']
+            if props:
+                p0 = props[0]
+                if not p0.get('title_number'):
+                    missing.append('Property Title Number (Step 5)')
+                if not p0.get('lot_number'):
+                    missing.append('Property Lot Number (Step 5)')
+                if not p0.get('mukim'):
+                    missing.append('Property Mukim (Step 5)')
+            else:
+                missing.append('No properties entered (Step 5)')
         # Beneficiaries
         if code == 'doc07':
             bens = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data else []
@@ -3963,6 +3987,10 @@ def probate_step6(probate_id):
         'Witness 2 address': probate.witness2_address or '',
         'Estate value': probate.estate_value_estimate or '',
         'Exhibit references': 'Auto-generated',
+        'Lawyer name': probate.lawyer_name or '',
+        'Lawyer bar council number': probate.lawyer_bar_number or '',
+        'Lawyer NRIC': probate.lawyer_nric or '',
+        'Filing year': probate.filing_year or '',
     }
     # Assets summary values
     _assets = json.loads(probate.assets_data or '[]')
@@ -3970,10 +3998,12 @@ def probate_step6(probate_id):
     _banks = [a for a in _assets if a.get('asset_type') == 'bank']
     _vehicles = [a for a in _assets if a.get('asset_type') == 'vehicle']
     _others = [a for a in _assets if a.get('asset_type') == 'other']
+    _investments = [a for a in _assets if a.get('asset_type') == 'investment']
     _liabs = [a for a in _assets if a.get('asset_type') == 'liability']
     field_values['Properties (title, lot, mukim, address)'] = f'{len(_props)} properties' if _props else ''
     field_values['Bank accounts (bank, account no., value)'] = f'{len(_banks)} accounts' if _banks else ''
     field_values['Vehicles (desc, reg no., engine, chassis)'] = f'{len(_vehicles)} vehicles' if _vehicles else ''
+    field_values['Investment accounts (CDS, unit trust, etc.)'] = f'{len(_investments)} accounts' if _investments else ''
     field_values['Other assets (description, value)'] = f'{len(_others)} items' if _others else ''
     field_values['Liabilities (description, value)'] = f'{len(_liabs)} items' if _liabs else ''
     # Prefer probate.beneficiaries_data (populated in step 4), fall back to will data
