@@ -3,7 +3,7 @@ WillCraft AI - Malaysian AI Will Writing System
 Flask application with multi-step wizard for will drafting.
 """
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify, g
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify, g, make_response
 from functools import wraps
 import difflib
 import json
