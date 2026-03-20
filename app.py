@@ -54,6 +54,13 @@ def myt_filter(dt, fmt='%d %b %Y, %I:%M %p'):
         return ''
     return dt.replace(tzinfo=timezone.utc).astimezone(MYT).strftime(fmt)
 
+@app.template_filter('oneline')
+def oneline_filter(value):
+    """Flatten multiline text to a single line, joining with commas."""
+    if not value:
+        return value
+    return ', '.join(line.strip() for line in str(value).splitlines() if line.strip())
+
 @app.template_filter('to_fraction')
 def to_fraction_filter(value):
     """Convert a share value to fraction display. '40' -> '4/10', '31' -> '31/100'."""
