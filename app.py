@@ -3841,8 +3841,8 @@ def probate_step5(probate_id):
     field_values['Vehicles (desc, reg no., engine, chassis)'] = f'{len(_vehicles)} vehicles' if _vehicles else ''
     field_values['Other assets (description, value)'] = f'{len(_others)} items' if _others else ''
     field_values['Liabilities (description, value)'] = f'{len(_liabs)} items' if _liabs else ''
-    _bens = json.loads(will_record.step5_data or '[]') if will_record else json.loads(probate.beneficiaries_data or '[]') if hasattr(probate, 'beneficiaries_data') else []
-    field_values['Beneficiary names & NRIC'] = f'{len(_bens)} beneficiaries' if _bens else ''
+    _bens = json.loads(will_record.step4_data or '[]') if will_record else json.loads(probate.beneficiaries_data or '[]') if hasattr(probate, 'beneficiaries_data') else []
+    field_values['Beneficiary names & NRIC'] = ', '.join(b.get('full_name', b.get('beneficiary_name', '')) for b in _bens[:5]) if _bens else ''
     field_values['Beneficiary relationships'] = ', '.join(b.get('relationship', '') for b in _bens[:5]) if _bens else ''
     if _props:
         p0 = _props[0]
@@ -3928,7 +3928,7 @@ def probate_step5(probate_id):
     will_missing = [] if will_ok else ['No approved will linked']
 
     # Beneficiary info?
-    beneficiaries = json.loads(will_record.step5_data or '[]') if will_record else []
+    beneficiaries = json.loads(will_record.step4_data or '[]') if will_record else []
     ben_ok = len(beneficiaries) > 0
     ben_missing = [] if ben_ok else ['No beneficiaries in will']
 
@@ -3988,10 +3988,11 @@ def probate_step5(probate_id):
 
     ben_details = []
     for b in beneficiaries:
-        bname = b.get('beneficiary_name', b.get('full_name', b.get('name', '')))
+        bname = b.get('full_name', b.get('beneficiary_name', b.get('name', '')))
+        bnric = b.get('nric_passport_birthcert', b.get('nric_passport', ''))
         brel = b.get('relationship', '')
-        bshare = b.get('share', '')
-        ben_details.append((bname, f"{brel} — {bshare}%" if bshare else brel))
+        detail = f"{brel} — NRIC: {bnric}" if bnric else brel
+        ben_details.append((bname, detail))
     if not ben_details:
         ben_details.append(('', 'No beneficiaries in will'))
 

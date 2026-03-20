@@ -128,9 +128,9 @@
             <div class="text-xs text-gray-600 space-y-1">
                 {% for b in beneficiaries %}
                 <div class="flex items-center gap-2">
-                    <span class="font-medium">{{ b.beneficiary_name or b.get('name', 'Unknown') }}</span>
-                    {% if b.relationship %}<span class="text-gray-400">({{ b.relationship }})</span>{% endif %}
-                    {% if b.share %}<span class="text-primary-600 font-medium">{{ b.share }}%</span>{% endif %}
+                    <span class="font-medium">{{ b.full_name or b.beneficiary_name or b.get('name', 'Unknown') }}</span>
+                    {% if b.nric_passport_birthcert or b.nric_passport %}<span class="text-gray-400">({{ b.nric_passport_birthcert or b.nric_passport }})</span>{% endif %}
+                    {% if b.relationship %}<span class="text-gray-400">{{ b.relationship }}</span>{% endif %}
                 </div>
                 {% endfor %}
             </div>
