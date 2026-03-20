@@ -1114,6 +1114,27 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
         }
     }
 
+    // If existing data provided, check if all extracted fields match — no confirmation needed
+    const hasExisting = Object.values(existing).some(v => v && v.toString().trim() !== '');
+    if (hasExisting && !hasError) {
+        let anyConflict = false;
+        for (const [key, value] of Object.entries(extracted)) {
+            if (key === 'error' || key === 'raw' || key === 'assets') continue;
+            const ocrVal = (value||'').toString().trim();
+            const existVal = (existing[key]||'').toString().trim();
+            if (existVal !== '' && ocrVal !== '' && existVal !== ocrVal) { anyConflict = true; break; }
+        }
+        if (!anyConflict) {
+            // All data matches — show brief toast and skip confirmation modal
+            const toast = document.createElement('div');
+            toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-green-600 text-white px-6 py-3 rounded-lg shadow-lg text-sm font-medium transition-opacity duration-500';
+            toast.innerHTML = '✓ Scanned data matches your existing input';
+            document.body.appendChild(toast);
+            setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 500); }, 2500);
+            return;
+        }
+    }
+
     const container = document.getElementById('ocr-fields-container');
     container.innerHTML = '';
     for (const [key, value] of Object.entries(extracted)) {
