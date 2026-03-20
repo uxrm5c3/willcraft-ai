@@ -3595,9 +3595,48 @@ def probate_list():
     if role not in ('admin', 'approver'):
         flash('Access denied.', 'error')
         return redirect(url_for('index'))
-    applications = ProbateApplication.query.order_by(ProbateApplication.created_at.desc()).all()
+    q = request.args.get('q', '').strip()
+    if q:
+        applications = ProbateApplication.query.filter(
+            db.or_(
+                ProbateApplication.deceased_name.ilike(f'%{q}%'),
+                ProbateApplication.deceased_nric.ilike(f'%{q}%'),
+                ProbateApplication.applicant_name.ilike(f'%{q}%'),
+                ProbateApplication.case_number.ilike(f'%{q}%'),
+            )
+        ).order_by(ProbateApplication.created_at.desc()).all()
+    else:
+        applications = ProbateApplication.query.order_by(ProbateApplication.created_at.desc()).all()
     approved_wills = Will.query.filter_by(status='approved').order_by(Will.approved_at.desc()).all()
-    return render_template('probate/list.html', applications=applications, approved_wills=approved_wills)
+    return render_template('probate/list.html', applications=applications, approved_wills=approved_wills, search_query=q)
+
+
+@app.route('/probate/<probate_id>/delete', methods=['POST'])
+@login_required
+def probate_delete(probate_id):
+    """Delete a probate application and its generated forms."""
+    role = session.get('user_role')
+    if role not in ('admin', 'approver'):
+        flash('Access denied.', 'error')
+        return redirect(url_for('probate_list'))
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        flash('Application not found.', 'error')
+        return redirect(url_for('probate_list'))
+    # Delete generated form files from disk
+    gen_forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
+    for gf in gen_forms:
+        if gf.file_path and os.path.exists(gf.file_path):
+            try:
+                os.remove(gf.file_path)
+            except OSError:
+                pass
+    ProbateGeneratedForm.query.filter_by(probate_id=probate_id).delete()
+    deceased = probate.deceased_name or 'Unknown'
+    db.session.delete(probate)
+    db.session.commit()
+    flash(f'Probate application for "{deceased}" has been deleted.', 'success')
+    return redirect(url_for('probate_list'))
 
 
 @app.route('/probate/new-la')

@@ -2,7 +2,7 @@
 
 {% block content %}
 <div class="max-w-5xl mx-auto px-4 py-6 sm:py-8">
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex items-center justify-between mb-4">
         <div>
             <h1 class="text-xl font-bold text-gray-800">Probate Applications</h1>
             <p class="text-sm text-gray-500 mt-1">Manage probate and letters of administration applications.</p>
@@ -14,20 +14,41 @@
         </button>
     </div>
 
+    <!-- Search Bar -->
+    <form method="GET" action="/probate" class="mb-4">
+        <div class="flex gap-2">
+            <div class="relative flex-1">
+                <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                <input type="text" name="q" value="{{ search_query or '' }}" placeholder="Search by deceased name, IC, applicant, or case number..."
+                       class="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+            </div>
+            <button type="submit" class="px-4 py-2 bg-gray-800 text-white text-sm font-medium rounded-lg hover:bg-gray-900">Search</button>
+            {% if search_query %}
+            <a href="/probate" class="px-4 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300 no-underline flex items-center">Clear</a>
+            {% endif %}
+        </div>
+    </form>
+
+    {% if search_query %}
+    <p class="text-xs text-gray-500 mb-3">Showing results for "<strong>{{ search_query }}</strong>" ({{ applications|length }} found)</p>
+    {% endif %}
+
     {% if applications %}
-    <div class="space-y-4">
+    <div class="space-y-3">
         {% for app in applications %}
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:border-primary-200 transition-colors">
             <div class="flex items-start justify-between">
-                <div class="flex-1">
-                    <div class="flex items-center gap-2 mb-1">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1 flex-wrap">
                         <span class="px-1.5 py-0.5 text-[10px] font-bold rounded
                               {% if app.application_type == 'la' %}bg-purple-100 text-purple-700{% else %}bg-blue-100 text-blue-700{% endif %}">
                             {{ 'LA' if app.application_type == 'la' else 'Probate' }}
                         </span>
                         <h3 class="text-sm font-bold text-gray-800">
-                            {% if app.application_type == 'la' %}
-                                {{ app.deceased_name or 'Unnamed' }} (Letters of Administration)
+                            {% if app.deceased_name %}
+                                {{ app.deceased_name }}
+                            {% elif app.application_type == 'la' %}
+                                Unnamed (Letters of Administration)
                             {% else %}
                                 {{ app.will.title if app.will else 'Unknown Will' }}
                             {% endif %}
@@ -39,11 +60,14 @@
                         </span>
                     </div>
                     <div class="text-xs text-gray-500 space-y-0.5">
+                        {% if app.deceased_nric %}
+                        <div>IC: <span class="font-medium text-gray-700">{{ app.deceased_nric }}</span></div>
+                        {% endif %}
                         {% if app.client %}
                         <div>Client: <span class="font-medium text-gray-700">{{ app.client.full_name }}</span></div>
                         {% endif %}
-                        {% if app.deceased_name %}
-                        <div>Deceased: <span class="font-medium text-gray-700">{{ app.deceased_name }}</span></div>
+                        {% if app.applicant_name %}
+                        <div>Applicant: <span class="font-medium text-gray-700">{{ app.applicant_name }}</span></div>
                         {% endif %}
                         {% if app.date_of_death %}
                         <div>Date of Death: <span class="font-medium text-gray-700">{{ app.date_of_death }}</span></div>
@@ -51,19 +75,30 @@
                         {% if app.court_location %}
                         <div>Court: <span class="font-medium text-gray-700">{{ app.court_location }}</span></div>
                         {% endif %}
+                        {% if app.case_number %}
+                        <div>Case No: <span class="font-medium text-gray-700">{{ app.case_number }}</span></div>
+                        {% endif %}
                         <div>Created: <span class="text-gray-400">{{ app.created_at.strftime('%d %b %Y') }}</span>
                              {% if app.creator %} by {{ app.creator.name }}{% endif %}</div>
                     </div>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 shrink-0 ml-3">
                     {% if app.status == 'generated' %}
-                    <a href="/probate/{{ app.id }}/step/4" class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700">
-                        Download Forms
+                    <a href="/probate/{{ app.id }}/download-all" class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 no-underline" title="Download all generated forms as ZIP">
+                        Download All
+                    </a>
+                    <a href="/probate/{{ app.id }}/step/6" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 no-underline" title="View and download individual forms">
+                        View Forms
                     </a>
                     {% endif %}
-                    <a href="/probate/{{ app.id }}/step/1" class="px-3 py-1.5 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700">
-                        {% if app.status == 'draft' %}Continue{% else %}View{% endif %}
+                    <a href="/probate/{{ app.id }}/step/1" class="px-3 py-1.5 bg-primary-600 text-white text-xs font-medium rounded-lg hover:bg-primary-700 no-underline">
+                        {% if app.status == 'draft' %}Continue{% else %}Edit{% endif %}
                     </a>
+                    <form method="POST" action="/probate/{{ app.id }}/delete" onsubmit="return confirm('Delete this probate application? This cannot be undone.')" class="inline">
+                        <button type="submit" class="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-medium rounded-lg hover:bg-red-200" title="Delete application">
+                            Delete
+                        </button>
+                    </form>
                 </div>
             </div>
         </div>
@@ -71,9 +106,15 @@
     </div>
     {% else %}
     <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-12 text-center">
+        {% if search_query %}
+        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <h3 class="text-sm font-semibold text-gray-500 mb-1">No Results</h3>
+        <p class="text-xs text-gray-400">No applications match "{{ search_query }}". <a href="/probate" class="text-primary-600 hover:underline">Clear search</a></p>
+        {% else %}
         <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
         <h3 class="text-sm font-semibold text-gray-500 mb-1">No Applications Yet</h3>
         <p class="text-xs text-gray-400">Click "New Application" to start a probate or LA application.</p>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -115,13 +156,27 @@
             <div id="probate-section">
                 <h3 class="text-sm font-semibold text-gray-700 mb-2">Select an Approved Will</h3>
                 {% if approved_wills %}
-                <div class="space-y-2 max-h-60 overflow-y-auto">
+                <!-- Search within approved wills -->
+                <input type="text" id="will-search" placeholder="Search by testator name or IC..."
+                       oninput="filterWills(this.value)"
+                       class="w-full px-3 py-2 mb-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                <div class="space-y-2 max-h-60 overflow-y-auto" id="will-list">
                     {% for w in approved_wills %}
-                    <label class="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer">
+                    {% set testator_name = '' %}
+                    {% if w.step1_data %}
+                    {% set s1 = w.step1_data | tojson %}
+                    {% endif %}
+                    <label class="will-item flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:bg-gray-50 cursor-pointer"
+                           data-name="{{ w.client.full_name if w.client else w.title }}"
+                           data-nric="{{ w.client.nric_passport if w.client else '' }}">
                         <input type="radio" name="will_id" value="{{ w.id }}" class="w-4 h-4 text-primary-600">
                         <div>
                             <div class="text-sm font-medium text-gray-800">{{ w.title }}</div>
-                            <div class="text-xs text-gray-400">{{ w.client.full_name if w.client else '' }} &middot; Approved {{ w.approved_at.strftime('%d %b %Y') if w.approved_at else '' }}</div>
+                            <div class="text-xs text-gray-400">
+                                {{ w.client.full_name if w.client else '' }}
+                                {% if w.client and w.client.nric_passport %} &middot; {{ w.client.nric_passport }}{% endif %}
+                                &middot; Approved {{ w.approved_at.strftime('%d %b %Y') if w.approved_at else '' }}
+                            </div>
                         </div>
                     </label>
                     {% endfor %}
@@ -139,7 +194,7 @@
             <!-- LA: Start directly -->
             <div id="la-section" class="hidden">
                 <p class="text-sm text-gray-500 mb-3">You'll enter the deceased person's details, next-of-kin information, assets, and beneficiaries in the next steps.</p>
-                <a href="/probate/new-la" class="block w-full px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg hover:bg-purple-700 text-center">
+                <a href="/probate/new-la" class="block w-full px-4 py-2 bg-purple-600 text-white text-sm font-semibold rounded-lg hover:bg-purple-700 text-center no-underline">
                     Start LA Application
                 </a>
             </div>
@@ -168,6 +223,17 @@ function selectAppType(type) {
         laSec.classList.remove('hidden');
         probSec.classList.add('hidden');
     }
+}
+
+function filterWills(query) {
+    const items = document.querySelectorAll('.will-item');
+    const q = query.toLowerCase();
+    items.forEach(item => {
+        const name = (item.dataset.name || '').toLowerCase();
+        const nric = (item.dataset.nric || '').toLowerCase();
+        const text = item.textContent.toLowerCase();
+        item.style.display = (!q || name.includes(q) || nric.includes(q) || text.includes(q)) ? '' : 'none';
+    });
 }
 
 function startProbate() {
