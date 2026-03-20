@@ -103,7 +103,10 @@ Unless specifically stated to the contrary in this Will, I direct that any sums 
 Use the substitute mode specified in the gift data:
 — **Equal shares**: "If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares or to the survivor of them if one of them does not survive me."
 — **Pro-rata**: "If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio as their respective shares."
-— **Specific substitutes**: "[N]. If my [relationship] [NAME] MALAYSIA NRIC No. [number] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] ([X]% share) and my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] ([Y]% share) or to the survivor of them if one of them does not survive me."
+— **Specific substitutes**: Create a CONSOLIDATED substitute clause that references the gift clause numbers. For each main beneficiary who has specific substitutes:
+  "[N]. Pursuant to Clauses [X, Y, Z] above, if my [relationship] [MAIN BEN NAME] [ID] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] [ID]."
+  If multiple substitutes: "...shall be given to my [relationship] [SUB1 NAME] [ID] and my [relationship] [SUB2 NAME] [ID] in equal shares or to the survivor of them if one of them does not survive me."
+  For foreign nationals, use "[COUNTRY] Identification No. [number]" format (e.g., "FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9").
 — **Sell directive**: When SELL DIRECTIVE is specified, use: "I direct my Executor(s) to sell [property description] and distribute the nett proceeds of the sale to [beneficiary clause]."
 
 ### 11. RESIDUARY ESTATE
@@ -115,19 +118,28 @@ Section heading: "Residuary Estate"
 - Do NOT include lien/charge discharge language in the residuary clause unless the user has encumbered properties — the charge discharge clause goes with each specific property gift, not the residuary.
 
 For SINGLE residuary beneficiary (WITH trustee):
-"[N]. Unless specifically stated to the contrary in this Will, my Trustee shall hold the rest of my estate on trust to retain or sell any part thereof and to give the residue ('my residuary estate') to my [relationship] [NAME] MALAYSIA NRIC No. [number]."
+"[N]. My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and:
+(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
+(b) To give the residue ('my residuary estate') to my [relationship] [NAME] [ID]."
+If substitute beneficiaries are provided for a single residuary beneficiary, add:
+"(c) But if [he/she] does not survive me, to divide the residue ('my residuary estate') equally between my [relationship] [SUB1 NAME] [ID] and my [relationship] [SUB2 NAME] [ID]. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift."
 
 For SINGLE residuary beneficiary (WITHOUT trustee):
-"[N]. I give the rest of my estate ('my residuary estate') to my [relationship] [NAME] MALAYSIA NRIC No. [number]."
+"[N]. I give the rest of my estate ('my residuary estate') to my [relationship] [NAME] [ID]."
+If substitute beneficiaries are provided, add the same (c) pattern as above.
 
 For MULTIPLE residuary beneficiaries (WITH trustee):
-"[N]. Unless specifically stated to the contrary in this Will, my Trustee shall hold the rest of my estate on trust to retain or sell any part thereof and to divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated. If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio.
-    (i) my [relationship] [NAME] MALAYSIA NRIC No. [number] ([X]% share)
+"[N]. My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and:
+(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
+(b) To divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated.
+    (i) my [relationship] [NAME] [ID] ([share])
     (ii) ..."
+If substitute beneficiaries are provided, add:
+"(c) But if any beneficiary named above does not survive me, to divide [his/her] share of the residue ('my residuary estate') equally between [substitute names with IDs]. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift."
 
 For MULTIPLE residuary beneficiaries (WITHOUT trustee):
-"[N]. I give the rest of my estate ('my residuary estate') to the following beneficiaries in the shares indicated. If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio.
-    (i) my [relationship] [NAME] MALAYSIA NRIC No. [number] ([X]% share)
+"[N]. I give the rest of my estate ('my residuary estate') to the following beneficiaries in the shares indicated.
+    (i) my [relationship] [NAME] [ID] ([share])
     (ii) ..."
 
 ### 12. TESTAMENTARY TRUST (if applicable)
@@ -182,9 +194,9 @@ Second Witness Contact Number: _________________________________________________
 1. Use FORMAL LEGAL ENGLISH appropriate for Malaysian courts, following the professional Malaysian will drafting standard
 2. Be PRECISE and UNAMBIGUOUS - every clause must have clear, definite meaning
 3. Use DEFINED TERMS consistently (e.g., "my Executor", "The Moneys", "my residuary estate")
-4. Include FULL NAMES and NRIC/PASSPORT NUMBERS for all named persons:
+4. Include FULL NAMES and NRIC/IDENTIFICATION NUMBERS for all named persons:
    - For Malaysian NRIC holders: use "MALAYSIA NRIC No." format (e.g., "MALAYSIA NRIC No. 880515-01-5678")
-   - For passport holders: use "[COUNTRY] Passport No." format (e.g., "SINGAPORE Passport No. E1234567")
+   - For foreign nationals: use "[COUNTRY] Identification No." format (e.g., "FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9", "SINGAPORE Identification No. E1234567")
 5. Use professional legal phrasing following these conventions:
    - "I give to my [relationship] [NAME]..." for direct gifts
    - "I give my undivided share in the property known as..." for property gifts

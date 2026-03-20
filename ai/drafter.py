@@ -15,7 +15,7 @@ def _is_malaysian_nric(id_str: str) -> bool:
 def format_id_for_will(nric_passport: str, nationality: str = "Malaysian") -> str:
     """Format person ID for will text.
     - Malaysian NRIC: 'MALAYSIA NRIC No. 123456-01-1234'
-    - Passport: '[NATIONALITY] Passport No. AB1234567'
+    - Foreign ID: '[COUNTRY] Identification No. AB1234567'
     """
     if _is_malaysian_nric(nric_passport):
         return f"MALAYSIA NRIC No. {nric_passport}"
@@ -29,9 +29,13 @@ def format_id_for_will(nric_passport: str, nationality: str = "Malaysian") -> st
             'AUSTRALIAN': 'AUSTRALIA', 'INDIAN': 'INDIA', 'CHINESE': 'CHINA',
             'JAPANESE': 'JAPAN', 'KOREAN': 'SOUTH KOREA',
             'FILIPINO': 'PHILIPPINES', 'VIETNAMESE': 'VIETNAM',
+            'GERMAN': 'FEDERAL REPUBLIC OF GERMANY',
+            'FRENCH': 'FRANCE', 'ITALIAN': 'ITALY', 'SPANISH': 'SPAIN',
+            'DUTCH': 'NETHERLANDS', 'SWISS': 'SWITZERLAND',
+            'CANADIAN': 'CANADA', 'NEW ZEALANDER': 'NEW ZEALAND',
         }
         country = nat_map.get(nat, nat)
-        return f"{country} Passport No. {nric_passport}"
+        return f"{country} Identification No. {nric_passport}"
 
 
 def format_will_data(will_data) -> str:
@@ -174,12 +178,25 @@ def format_will_data(will_data) -> str:
             elif sub_mode == 'prorata':
                 gift_lines.append(f"    Substitute: If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio as their respective shares.")
             elif sub_mode == 'specific':
+                # Helper to look up beneficiary ID and relationship
+                def _lookup(name):
+                    for b in will_data.beneficiaries:
+                        if b.full_name.lower() == name.lower():
+                            return format_id_for_will(b.nric_passport_birthcert, getattr(b, 'nationality', 'Malaysian')), b.relationship.lower()
+                    return "", ""
+
                 for a in g.allocations:
                     if a.substitutes:
+                        mb_id, mb_rel = _lookup(a.beneficiary_name)
+                        mb_id_str = f" {mb_id}" if mb_id else ""
+                        mb_rel_str = f"my {mb_rel} " if mb_rel else ""
                         sub_parts = []
                         for s in a.substitutes:
-                            sub_parts.append(f"{s.beneficiary_name} ({s.share})")
-                        gift_lines.append(f"    Substitute for {a.beneficiary_name}: If {a.beneficiary_name} does not survive me, then the benefit would be given to {', '.join(sub_parts)}")
+                            s_id, s_rel = _lookup(s.beneficiary_name)
+                            s_id_str = f" {s_id}" if s_id else ""
+                            s_rel_str = f"my {s_rel} " if s_rel else ""
+                            sub_parts.append(f"{s_rel_str}{s.beneficiary_name.upper()}{s_id_str} ({s.share})")
+                        gift_lines.append(f"    Substitute for {mb_rel_str}{a.beneficiary_name.upper()}{mb_id_str}: the benefit shall be given to {', '.join(sub_parts)}")
         sections.append(f"""
 ## SPECIFIC GIFTS / BEQUESTS
 {chr(10).join(gift_lines)}""")
@@ -188,14 +205,30 @@ def format_will_data(will_data) -> str:
     if will_data.residuary_estate:
         re = will_data.residuary_estate
         res_lines = ["  Main Beneficiaries:"]
+
+        def _lookup_res_ben(name):
+            """Look up NRIC/passport, nationality, and relationship from beneficiary list."""
+            for b in will_data.beneficiaries:
+                if b.full_name.lower() == name.lower():
+                    return b.nric_passport_birthcert, getattr(b, 'nationality', 'Malaysian'), b.relationship.lower()
+            return "", "Malaysian", ""
+
         for rb in re.main_beneficiaries:
-            res_lines.append(f"    - {rb.beneficiary_name}: {rb.share}")
+            nric, nat, rel = _lookup_res_ben(rb.beneficiary_name)
+            id_str = f" {format_id_for_will(nric, nat)}" if nric else ""
+            rel_str = f"my {rel} " if rel else ""
+            res_lines.append(f"    - {rel_str}{rb.beneficiary_name.upper()}{id_str}: {rb.share}")
 
         if re.substitute_groups:
+            res_lines.append("  Substitute Beneficiaries (for residuary clause (c)):")
             for i, group in enumerate(re.substitute_groups, 1):
-                res_lines.append(f"  Substitute Group {i}:")
+                res_lines.append(f"    Substitute Group {i}:")
                 for rb in group:
-                    res_lines.append(f"    - {rb.beneficiary_name}: {rb.share}")
+                    nric, nat, rel = _lookup_res_ben(rb.beneficiary_name)
+                    id_str = f" {format_id_for_will(nric, nat)}" if nric else ""
+                    rel_str = f"my {rel} " if rel else ""
+                    res_lines.append(f"      - {rel_str}{rb.beneficiary_name.upper()}{id_str}: {rb.share}")
+            res_lines.append("  Use clause (c) pattern: 'But if [he/she] does not survive me, to divide the residue equally between [substitute names with IDs]. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift.'")
 
         if re.additional_notes:
             res_lines.append(f"  Notes: {re.additional_notes}")
@@ -272,7 +305,7 @@ IMPORTANT DRAFTING INSTRUCTIONS:
 - Include the testator declaration clause at the end
 - End with "THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK"
 - Include proper attestation with testator and two witness signature blocks
-- Use "MALAYSIA NRIC No." format (not just "NRIC No.")
+- Use "MALAYSIA NRIC No." format for Malaysian IDs, "[COUNTRY] Identification No." for foreign nationals
 
 {format_will_data(will_data)}
 
@@ -407,6 +440,29 @@ def draft_will_mock(will_data) -> str:
             rel_str = f"my {relationship} " if relationship else ""
             ben_lines.append(f"    ({numeral}) {rel_str}{rb.beneficiary_name.upper()}{nric_str} ({rb.share} share)")
 
+        # Build substitute clause (c) if substitute groups exist
+        sub_clause_c = ""
+        re_data = will_data.residuary_estate
+        if re_data.substitute_groups:
+            # Flatten all substitute groups into a list of substitute beneficiaries
+            all_subs = []
+            for group in re_data.substitute_groups:
+                for rb in group:
+                    nric, nat, rel = _lookup_ben(rb.beneficiary_name)
+                    id_str = f" {format_id_for_will(nric, nat)}" if nric else ""
+                    rel_str = f"my {rel} " if rel else ""
+                    all_subs.append(f"{rel_str}{rb.beneficiary_name.upper()}{id_str}")
+
+            if len(all_subs) == 1:
+                sub_clause_c = f"""
+
+(c) But if {'he' if t.gender == 'Male' else 'she'} does not survive me, to give the residue ('my residuary estate') to {all_subs[0]}."""
+            elif len(all_subs) >= 2:
+                sub_names = " and ".join(all_subs)
+                sub_clause_c = f"""
+
+(c) But if {'he' if t.gender == 'Male' else 'she'} does not survive me, to divide the residue ('my residuary estate') equally between {sub_names}. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift."""
+
         if len(ben_lines) == 1:
             # Single residuary beneficiary
             rb = will_data.residuary_estate.main_beneficiaries[0]
@@ -415,22 +471,22 @@ def draft_will_mock(will_data) -> str:
             rel_str = f"my {relationship} " if relationship else ""
             residuary_text = f"""Residuary Estate
 
-{next_clause}.  Unless specifically stated to the contrary in this Will, my Trustee(s) shall hold the rest of my estate on trust to retain or sell any part thereof and:
+{next_clause}.  My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and :
 
 (a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
 
-(b) To give the residue ('my residuary estate') to {rel_str}{rb.beneficiary_name.upper()}{nric_str}."""
+(b) To give the residue ('my residuary estate') to {rel_str}{rb.beneficiary_name.upper()}{nric_str}.{sub_clause_c}"""
         else:
             # Multiple residuary beneficiaries
             residuary_text = f"""Residuary Estate
 
-{next_clause}.  Unless specifically stated to the contrary in this Will, my Trustee(s) shall hold the rest of my estate on trust to retain or sell any part thereof and:
+{next_clause}.  My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and :
 
 (a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
 
-(b) To divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated. If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares.
+(b) To divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated.
 
-{chr(10).join(ben_lines)}"""
+{chr(10).join(ben_lines)}{sub_clause_c}"""
         next_clause += 1
 
     # Non-residuary gifts
