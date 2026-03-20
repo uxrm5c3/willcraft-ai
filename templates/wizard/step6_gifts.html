@@ -118,7 +118,28 @@
                         <span id="prop-status-{{ loop.index0 }}" class="text-xs"></span>
                     </div>
                     <!-- Uploaded Documents Preview -->
-                    <div id="gift-docs-{{ loop.index0 }}" class="hidden mt-2 space-y-1"></div>
+                    {% set saved_docs = gift.get('documents', []) %}
+                    <div id="gift-docs-{{ gift_idx }}" class="{% if not saved_docs %}hidden{% endif %} mt-2 space-y-1">
+                        {% for doc in saved_docs %}
+                        {% set doc_type = doc.get('doctype', 'document') %}
+                        {% set type_label = 'Title' if doc_type == 'title' else 'Cukai Harta' if doc_type == 'cukai_harta' else 'Cukai Pintu' if doc_type == 'cukai_pintu' else 'SPA' if doc_type == 'spa' else 'Financial' if doc_type == 'financial' else 'Document' %}
+                        {% set fname = doc.get('filename', '') %}
+                        {% set fext = fname.rsplit('.', 1)[-1]|upper if '.' in fname else '' %}
+                        {% set durl = doc.get('url', '') %}
+                        {% set did = 'gift-doc-' ~ gift_idx ~ '-r' ~ loop.index0 %}
+                        <div id="{{ did }}" class="gift-doc-item flex items-center gap-2 p-2 bg-white border border-gray-200 rounded-lg text-xs"
+                             data-filename="{{ fname }}" data-url="{{ durl }}" data-doctype="{{ doc_type }}">
+                            <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium flex-shrink-0">{{ type_label }}</span>
+                            <span class="text-gray-500 flex-shrink-0">{{ fext }}</span>
+                            {% if durl %}
+                            <button type="button" onclick="viewGiftDocument('{{ durl }}', '{{ fname }}')" class="px-2.5 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium flex-shrink-0">View</button>
+                            {% endif %}
+                            <button type="button" onclick="_removeGiftDoc('{{ did }}', {{ gift_idx }})"
+                                    class="px-2.5 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 font-medium flex-shrink-0">Delete</button>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <input type="hidden" name="gift_docs_{{ gift_idx }}" value='{{ saved_docs | tojson }}'>
                 </div>
 
                 <!-- Ownership Type -->
@@ -805,6 +826,7 @@ function buildPropertyPanelHtml(idx) {
                 <span id="prop-status-${idx}" class="text-xs"></span>
             </div>
             <div id="gift-docs-${idx}" class="hidden mt-2 space-y-1"></div>
+            <input type="hidden" name="gift_docs_${idx}" value="[]">
         </div>
         <div class="mb-3 p-3 bg-white rounded-lg border border-blue-200">
             <label class="block text-xs font-semibold text-gray-700 mb-2">Ownership</label>

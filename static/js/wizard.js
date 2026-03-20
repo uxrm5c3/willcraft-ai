@@ -2642,6 +2642,7 @@ async function uploadAndExtractAsset(inputOrFile, statusElId, giftIndex) {
 
 /**
  * Add a document preview entry to the gift's document list.
+ * Also persists the doc reference in a hidden JSON field so it survives page reload.
  */
 function _addGiftDocPreview(giftIndex, fileName, docUrl, docType) {
     const container = document.getElementById('gift-docs-' + giftIndex);
@@ -2659,12 +2660,48 @@ function _addGiftDocPreview(giftIndex, fileName, docUrl, docType) {
     const ext = fileName.split('.').pop().toUpperCase();
 
     const html = `
-    <div id="${docId}" class="flex items-center gap-2 p-2 bg-white border border-gray-200 rounded-lg text-xs">
+    <div id="${docId}" class="gift-doc-item flex items-center gap-2 p-2 bg-white border border-gray-200 rounded-lg text-xs"
+         data-filename="${fileName.replace(/"/g, '&quot;')}" data-url="${(docUrl||'').replace(/"/g, '&quot;')}" data-doctype="${docType||'document'}">
         <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium flex-shrink-0">${typeLabel}</span>
         <span class="text-gray-500 flex-shrink-0">${ext}</span>
         ${docUrl ? `<button type="button" onclick="viewGiftDocument('${docUrl}', '${fileName.replace(/'/g, "\\'")}')" class="px-2.5 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium flex-shrink-0">View</button>` : ''}
-        <button type="button" onclick="if(confirm('Delete this document?')){document.getElementById('${docId}').remove(); var c=document.getElementById('gift-docs-${giftIndex}'); if(c && !c.children.length) c.classList.add('hidden');}"
+        <button type="button" onclick="_removeGiftDoc('${docId}', ${giftIndex})"
                 class="px-2.5 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 font-medium flex-shrink-0">Delete</button>
     </div>`;
     container.insertAdjacentHTML('beforeend', html);
+    _syncGiftDocsField(giftIndex);
+}
+
+/** Remove a gift doc preview and update the hidden field */
+function _removeGiftDoc(docId, giftIndex) {
+    if (!confirm('Delete this document?')) return;
+    const el = document.getElementById(docId);
+    if (el) el.remove();
+    const c = document.getElementById('gift-docs-' + giftIndex);
+    if (c && !c.children.length) c.classList.add('hidden');
+    _syncGiftDocsField(giftIndex);
+}
+
+/** Sync the visible doc preview items into a hidden JSON field for form submission */
+function _syncGiftDocsField(giftIndex) {
+    const container = document.getElementById('gift-docs-' + giftIndex);
+    if (!container) return;
+    const items = container.querySelectorAll('.gift-doc-item');
+    const docs = [];
+    items.forEach(item => {
+        docs.push({
+            filename: item.dataset.filename || '',
+            url: item.dataset.url || '',
+            doctype: item.dataset.doctype || 'document',
+        });
+    });
+    // Find or create the hidden field
+    let field = document.querySelector(`input[name="gift_docs_${giftIndex}"]`);
+    if (!field) {
+        field = document.createElement('input');
+        field.type = 'hidden';
+        field.name = `gift_docs_${giftIndex}`;
+        container.parentElement.appendChild(field);
+    }
+    field.value = JSON.stringify(docs);
 }

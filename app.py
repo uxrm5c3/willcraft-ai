@@ -1929,7 +1929,7 @@ def api_ocr_property():
     )
     db.session.add(doc)
     db.session.commit()
-    result = {'ok': True, 'document_id': doc.id}
+    result = {'ok': True, 'document_id': doc.id, 'document_url': f'/api/documents/{doc.id}'}
     if extracted:
         result['extracted'] = extracted
     if ocr_warning:
@@ -1971,7 +1971,7 @@ def api_ocr_asset():
     )
     db.session.add(doc)
     db.session.commit()
-    result = {'ok': True, 'document_id': doc.id}
+    result = {'ok': True, 'document_id': doc.id, 'document_url': f'/api/documents/{doc.id}'}
     if extracted:
         result['extracted'] = extracted
     if ocr_warning:
@@ -2606,6 +2606,13 @@ def wizard_step_gifts():
                 'substitutes': subs,
             })
 
+        # Parse uploaded document references
+        gift_docs_json = request.form.get(f'gift_docs_{gi}', '[]')
+        try:
+            gift_docs = json.loads(gift_docs_json) if gift_docs_json else []
+        except (json.JSONDecodeError, TypeError):
+            gift_docs = []
+
         gifts.append({
             'gift_type': gift_type,
             'description': desc,
@@ -2616,6 +2623,7 @@ def wizard_step_gifts():
             'subject_to_guardian_allowance': subject_to_guardian_allowance,
             'sell_property': sell_property,
             'substitute_mode': substitute_mode,
+            'documents': gift_docs,
         })
 
     session['step5_gifts'] = gifts
