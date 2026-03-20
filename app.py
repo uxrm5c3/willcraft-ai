@@ -2732,6 +2732,7 @@ def wizard_step_residuary():
             data=session.get('step6_residuary', {}),
             beneficiaries=session.get('step4_beneficiaries', []),
             persons=session.get('person_registry', []),
+            gifts=session.get('step5_gifts', []),
         )
 
     # POST -- parse main beneficiaries and substitute groups

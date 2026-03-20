@@ -20,7 +20,17 @@
 
     <!-- Main Beneficiaries -->
     <div>
-        <h3 class="text-lg font-semibold text-gray-800 mb-1">Main Beneficiaries</h3>
+        <div class="flex justify-between items-center mb-1">
+            <h3 class="text-lg font-semibold text-gray-800">Main Beneficiaries</h3>
+            {% if gifts %}
+            <div class="relative">
+                <button type="button" onclick="showFollowGiftMenu('main')"
+                        class="text-xs text-primary-600 hover:text-primary-800 font-medium px-2 py-1 bg-primary-50 rounded-md hover:bg-primary-100 transition-colors">
+                    Follow specific gift
+                </button>
+            </div>
+            {% endif %}
+        </div>
         <p class="text-sm text-gray-500 mb-4">Select beneficiaries from your list and allocate shares (percentages). Shares must total 100%.</p>
 
         <div id="main-beneficiaries-container">
@@ -77,7 +87,17 @@
 
     <!-- Substitute Beneficiaries -->
     <div>
-        <h3 class="text-lg font-semibold text-gray-800 mb-1">Substitute Beneficiaries</h3>
+        <div class="flex justify-between items-center mb-1">
+            <h3 class="text-lg font-semibold text-gray-800">Substitute Beneficiaries</h3>
+            {% if gifts %}
+            <div class="relative">
+                <button type="button" onclick="showFollowGiftMenu('sub')"
+                        class="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors">
+                    Follow specific gift
+                </button>
+            </div>
+            {% endif %}
+        </div>
         <p class="text-sm text-gray-500 mb-4">If a main beneficiary predeceases you, their share goes to their substitute(s). You can define up to 3 substitute groups.</p>
 
         <div id="substitute-groups-container">
@@ -163,6 +183,7 @@
 {% block wizard_scripts %}
 <script>
 const _beneficiaryList = {{ beneficiaries | tojson }};
+const _giftsList = {{ gifts | tojson }};
 let mainBenCount = {{ data.get('main_beneficiaries', [{}])|length }};
 let subGroupCount = {{ data.get('substitute_groups', [])|length }};
 let subCountsPerGroup = {};
@@ -336,5 +357,277 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
+
+// --- Follow Specific Gift ---
+
+function _giftLabel(gift, idx) {
+    let label = 'Gift ' + (idx + 1) + ': ';
+    if (gift.gift_type === 'property') {
+        const addr = (gift.property_details || {}).property_address || '';
+        label += 'Property' + (addr ? ' - ' + addr.substring(0, 40) + (addr.length > 40 ? '...' : '') : '');
+    } else if (gift.gift_type === 'financial') {
+        const fd = gift.financial_details || {};
+        label += 'Financial' + (fd.institution ? ' - ' + fd.institution : '');
+    } else {
+        label += 'Other' + (gift.description ? ' - ' + gift.description.substring(0, 40) : '');
+    }
+    const bens = (gift.allocations || []).map(a => a.beneficiary_name).join(', ');
+    if (bens) label += ' → ' + bens.substring(0, 50) + (bens.length > 50 ? '...' : '');
+    return label;
+}
+
+function _fractionToPercent(frac) {
+    if (!frac) return 0;
+    frac = frac.toString().trim();
+    if (frac.includes('/')) {
+        const parts = frac.split('/');
+        const num = parseFloat(parts[0]) || 0;
+        const den = parseFloat(parts[1]) || 1;
+        return den === 0 ? 0 : Math.round((num / den) * 10000) / 100;
+    }
+    return parseFloat(frac) || 0;
+}
+
+function showFollowGiftMenu(mode) {
+    // Remove any existing menu
+    document.querySelectorAll('.follow-gift-menu').forEach(m => m.remove());
+
+    // Filter gifts based on mode
+    const relevantGifts = [];
+    _giftsList.forEach((gift, i) => {
+        if (mode === 'main') {
+            // Show gifts that have allocations
+            if (gift.allocations && gift.allocations.length > 0) {
+                relevantGifts.push({gift, index: i});
+            }
+        } else {
+            // Show gifts that have substitute beneficiaries
+            const hasSubs = (gift.allocations || []).some(a => a.substitutes && a.substitutes.length > 0);
+            if (hasSubs) {
+                relevantGifts.push({gift, index: i});
+            }
+        }
+    });
+
+    if (relevantGifts.length === 0) {
+        alert(mode === 'main' ? 'No gifts with beneficiaries found.' : 'No gifts with substitute beneficiaries found.');
+        return;
+    }
+
+    // Build dropdown menu
+    const menu = document.createElement('div');
+    menu.className = 'follow-gift-menu fixed inset-0 z-50 flex items-start justify-center pt-20';
+    menu.style.backgroundColor = 'rgba(0,0,0,0.3)';
+
+    let itemsHtml = '';
+    if (mode === 'main') {
+        itemsHtml += `<div class="px-4 py-2 hover:bg-primary-50 cursor-pointer text-sm text-primary-700 font-medium border-b border-gray-100"
+                           data-action="all">Follow all gifts (combine all main beneficiaries)</div>`;
+    }
+    relevantGifts.forEach(({gift, index}) => {
+        itemsHtml += `<div class="px-4 py-2 hover:bg-gray-50 cursor-pointer text-sm text-gray-700 border-b border-gray-50"
+                           data-action="gift" data-gift-index="${index}">${_giftLabel(gift, index)}</div>`;
+    });
+
+    menu.innerHTML = `
+        <div class="bg-white rounded-lg shadow-xl border border-gray-200 max-w-lg w-full max-h-80 overflow-y-auto">
+            <div class="px-4 py-3 border-b border-gray-200 flex justify-between items-center">
+                <h4 class="font-semibold text-gray-800">${mode === 'main' ? 'Follow Gift — Main Beneficiaries' : 'Follow Gift — Substitute Beneficiaries'}</h4>
+                <button type="button" class="text-gray-400 hover:text-gray-600 text-lg" onclick="this.closest('.follow-gift-menu').remove()">×</button>
+            </div>
+            ${itemsHtml}
+        </div>
+    `;
+
+    // Handle clicks
+    menu.addEventListener('click', function(e) {
+        const item = e.target.closest('[data-action]');
+        if (!item) {
+            if (e.target === menu) menu.remove();
+            return;
+        }
+        const action = item.dataset.action;
+        if (mode === 'main') {
+            if (action === 'all') {
+                followAllGiftsMain();
+            } else {
+                followGiftMain(parseInt(item.dataset.giftIndex));
+            }
+        } else {
+            followGiftSubstitutes(parseInt(item.dataset.giftIndex));
+        }
+        menu.remove();
+    });
+
+    document.body.appendChild(menu);
+}
+
+function followGiftMain(giftIdx) {
+    const gift = _giftsList[giftIdx];
+    if (!gift || !gift.allocations) return;
+
+    const container = document.getElementById('main-beneficiaries-container');
+    container.innerHTML = '';
+    mainBenCount = 0;
+
+    gift.allocations.forEach((alloc, i) => {
+        const pct = _fractionToPercent(alloc.share);
+        _addMainBenWithData(alloc.beneficiary_name, pct);
+    });
+
+    document.getElementById('main-beneficiary-count').value = mainBenCount;
+    updateShareTotal();
+}
+
+function followAllGiftsMain() {
+    // Collect unique beneficiaries across all gifts with total shares
+    const benMap = {};
+    let totalParts = 0;
+    _giftsList.forEach(gift => {
+        (gift.allocations || []).forEach(alloc => {
+            const name = alloc.beneficiary_name;
+            if (!name) return;
+            if (!benMap[name]) benMap[name] = 0;
+            benMap[name]++;
+            totalParts++;
+        });
+    });
+
+    const container = document.getElementById('main-beneficiaries-container');
+    container.innerHTML = '';
+    mainBenCount = 0;
+
+    const names = Object.keys(benMap);
+    const equalShare = names.length > 0 ? Math.round((100 / names.length) * 100) / 100 : 100;
+    names.forEach(name => {
+        _addMainBenWithData(name, equalShare);
+    });
+
+    document.getElementById('main-beneficiary-count').value = mainBenCount;
+    updateShareTotal();
+}
+
+function _addMainBenWithData(beneficiaryName, sharePct) {
+    const idx = mainBenCount;
+    const options = _buildBeneficiaryOptions();
+    const html = `
+    <div class="main-beneficiary-entry border border-gray-200 rounded-lg p-4 mb-3" data-index="${idx}">
+        <div class="flex justify-between items-center mb-3">
+            <h4 class="font-medium text-gray-700">Main Beneficiary No. ${idx + 1}</h4>
+            <button type="button" onclick="removeMainBeneficiary(this)" class="text-red-500 hover:text-red-700 text-sm">Remove</button>
+        </div>
+        <div class="grid md:grid-cols-3 gap-4">
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Select Beneficiary <span class="text-red-500">*</span></label>
+                <select name="main_ben_person_id_${idx}" required
+                        data-role="residuary_main"
+                        class="person-select w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    ${options}
+                </select>
+                <input type="hidden" name="main_ben_name_${idx}" value="${beneficiaryName}">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Share (%) <span class="text-red-500">*</span></label>
+                <input type="number" name="main_ben_share_${idx}" value="${sharePct}" required min="1" max="100" step="0.01"
+                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                       placeholder="e.g., 50" onchange="updateShareTotal()">
+            </div>
+        </div>
+    </div>`;
+    document.getElementById('main-beneficiaries-container').insertAdjacentHTML('beforeend', html);
+    mainBenCount++;
+
+    // Select the matching option in the dropdown
+    const entry = document.querySelectorAll('.main-beneficiary-entry')[idx];
+    const select = entry.querySelector('select');
+    for (let i = 0; i < select.options.length; i++) {
+        if (select.options[i].dataset.name === beneficiaryName) {
+            select.selectedIndex = i;
+            break;
+        }
+    }
+}
+
+function followGiftSubstitutes(giftIdx) {
+    const gift = _giftsList[giftIdx];
+    if (!gift || !gift.allocations) return;
+
+    // Clear existing substitute groups
+    document.getElementById('substitute-groups-container').innerHTML = '';
+    subGroupCount = 0;
+    subCountsPerGroup = {};
+    document.getElementById('substitute-group-count').value = 0;
+    document.getElementById('add-sub-group-btn').classList.remove('hidden');
+
+    // Each allocation with substitutes becomes a substitute group
+    gift.allocations.forEach(alloc => {
+        if (!alloc.substitutes || alloc.substitutes.length === 0) return;
+        if (subGroupCount >= 3) return;
+
+        const gIdx = subGroupCount;
+        subCountsPerGroup[gIdx] = alloc.substitutes.length;
+        const options = _buildBeneficiaryOptions();
+
+        let subsHtml = '';
+        alloc.substitutes.forEach((sub, sIdx) => {
+            const pct = _fractionToPercent(sub.share);
+            subsHtml += `
+            <div class="substitute-entry grid md:grid-cols-3 gap-4" data-sub-index="${sIdx}">
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Substitute Beneficiary</label>
+                    <select name="sub_group_${gIdx}_person_id_${sIdx}"
+                            data-role="residuary_sub"
+                            class="person-select w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                        ${options}
+                    </select>
+                    <input type="hidden" name="sub_group_${gIdx}_name_${sIdx}" value="${sub.name}">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Share (%)</label>
+                    <input type="number" name="sub_group_${gIdx}_share_${sIdx}" value="${pct}" min="1" max="100" step="0.01"
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                           placeholder="e.g., 50">
+                </div>
+            </div>`;
+        });
+
+        const groupLabel = alloc.beneficiary_name ? `Substitute Group ${gIdx + 1} (for ${alloc.beneficiary_name})` : `Substitute Group ${gIdx + 1}`;
+
+        const groupHtml = `
+        <div class="substitute-group border border-gray-200 rounded-lg p-4 mb-4" data-group-index="${gIdx}">
+            <div class="flex justify-between items-center mb-3">
+                <h4 class="font-medium text-gray-700">${groupLabel}</h4>
+                <button type="button" onclick="removeSubstituteGroup(this)" class="text-red-500 hover:text-red-700 text-sm">Remove Group</button>
+            </div>
+            <div class="substitute-entries space-y-3">${subsHtml}</div>
+            <input type="hidden" name="sub_group_${gIdx}_count" class="sub-group-count" value="${alloc.substitutes.length}">
+            <button type="button" onclick="addSubstituteToGroup(this, ${gIdx})"
+                    class="mt-3 px-3 py-1.5 text-sm border border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
+                + Add Substitute to Group
+            </button>
+        </div>`;
+
+        document.getElementById('substitute-groups-container').insertAdjacentHTML('beforeend', groupHtml);
+        subGroupCount++;
+        document.getElementById('substitute-group-count').value = subGroupCount;
+
+        // Select matching options in dropdowns
+        const groups = document.querySelectorAll('.substitute-group');
+        const currentGroup = groups[gIdx];
+        const selects = currentGroup.querySelectorAll('select');
+        alloc.substitutes.forEach((sub, sIdx) => {
+            if (selects[sIdx]) {
+                for (let i = 0; i < selects[sIdx].options.length; i++) {
+                    if (selects[sIdx].options[i].dataset.name === sub.name) {
+                        selects[sIdx].selectedIndex = i;
+                        break;
+                    }
+                }
+            }
+        });
+    });
+
+    if (subGroupCount >= 3) document.getElementById('add-sub-group-btn').classList.add('hidden');
+}
 </script>
 {% endblock %}
