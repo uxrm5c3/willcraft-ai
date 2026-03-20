@@ -21,6 +21,10 @@
             <div class="flex justify-between items-center p-5 pb-0 cursor-pointer gift-header" onclick="toggleGiftCollapse({{ gift_idx }})">
                 <div class="flex items-center gap-2">
                     <span class="drag-handle cursor-grab text-gray-300 hover:text-gray-500 select-none text-lg leading-none" title="Drag to reorder" onmousedown="event.stopPropagation()">⠿</span>
+                    <div class="reorder-arrows hidden flex-col gap-0.5" onclick="event.stopPropagation()">
+                        <button type="button" onclick="moveGiftUp(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none p-0.5" title="Move up">▲</button>
+                        <button type="button" onclick="moveGiftDown(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none p-0.5" title="Move down">▼</button>
+                    </div>
                     <svg class="w-4 h-4 text-gray-400 transition-transform gift-chevron" id="gift-chevron-{{ gift_idx }}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                     <h3 class="font-semibold text-gray-700">Gift No. {{ loop.index }}</h3>
                 </div>
@@ -551,14 +555,25 @@
     <input type="hidden" name="gift_count" id="gift-count" value="{{ gifts|length }}">
     <input type="hidden" name="gift_order" id="gift-order" value="">
 
-    <div class="flex gap-2 mb-6">
+    <div class="flex gap-2 mb-6" id="gift-action-buttons">
         <button type="button" onclick="addGift()" id="add-gift-btn"
                 class="flex-1 px-4 py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 transition-colors">
             + Add Another Gift
         </button>
+        <button type="button" onclick="toggleReorderMode()"  id="reorder-btn"
+                class="px-4 py-2 border border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 text-sm transition-colors" title="Enter reorder mode to rearrange gifts">
+            ↕ Reorder
+        </button>
         <button type="button" onclick="sortGiftsByType()"
                 class="px-4 py-2 border border-gray-300 rounded-lg text-gray-500 hover:border-primary-400 hover:text-primary-600 text-sm transition-colors" title="Sort gifts by type: Property, Financial, Free Text">
             Sort by Type
+        </button>
+    </div>
+    <!-- Reorder mode banner (hidden by default) -->
+    <div id="reorder-banner" class="hidden mb-6 p-3 bg-primary-50 border border-primary-200 rounded-lg flex items-center justify-between">
+        <span class="text-sm text-primary-700 font-medium">Reorder mode — use ▲ ▼ arrows or drag to rearrange gifts</span>
+        <button type="button" onclick="toggleReorderMode()" class="px-4 py-1.5 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700 transition-colors">
+            Done
         </button>
     </div>
 
@@ -580,6 +595,29 @@
 {% endblock %}
 
 {% block wizard_scripts %}
+<style>
+@keyframes wiggle {
+    0%, 100% { transform: rotate(0deg); }
+    25% { transform: rotate(-0.5deg); }
+    75% { transform: rotate(0.5deg); }
+}
+.reorder-active .gift-entry {
+    animation: wiggle 0.3s ease-in-out infinite;
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 1px rgba(99,102,241,0.3);
+    cursor: grab;
+}
+.reorder-active .gift-entry:nth-child(even) {
+    animation-delay: 0.15s;
+}
+.reorder-active .gift-entry .reorder-arrows {
+    display: flex !important;
+}
+.reorder-active .gift-entry .drag-handle {
+    color: #6366f1 !important;
+    cursor: grab;
+}
+</style>
 <script>
 const _giftBeneficiaries = {{ beneficiaries | tojson }};
 const _personAddresses = {{ (persons | default([])) | tojson }};
@@ -930,6 +968,10 @@ function addGift() {
         <div class="flex justify-between items-center p-5 pb-0 cursor-pointer gift-header" onclick="toggleGiftCollapse(${idx})">
             <div class="flex items-center gap-2">
                 <span class="drag-handle cursor-grab text-gray-300 hover:text-gray-500 select-none text-lg leading-none" title="Drag to reorder" onmousedown="event.stopPropagation()">&#x2807;</span>
+                <div class="reorder-arrows hidden flex-col gap-0.5" onclick="event.stopPropagation()">
+                    <button type="button" onclick="moveGiftUp(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none p-0.5" title="Move up">▲</button>
+                    <button type="button" onclick="moveGiftDown(this)" class="text-primary-600 hover:text-primary-800 text-xs leading-none p-0.5" title="Move down">▼</button>
+                </div>
                 <svg class="w-4 h-4 text-gray-400 transition-transform gift-chevron" id="gift-chevron-${idx}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 <h3 class="font-semibold text-gray-700">Gift No. ${idx + 1}</h3>
             </div>
@@ -1125,6 +1167,61 @@ function sortGiftsByType() {
         document.querySelectorAll('.gift-entry[draggable]').forEach(el => el.draggable = false);
     });
 })();
+
+// Reorder mode (iPhone-style with wiggle + up/down arrows)
+let _reorderMode = false;
+function toggleReorderMode() {
+    _reorderMode = !_reorderMode;
+    const container = document.getElementById('gifts-container');
+    const banner = document.getElementById('reorder-banner');
+    const actionBtns = document.getElementById('gift-action-buttons');
+    const reorderBtn = document.getElementById('reorder-btn');
+
+    if (_reorderMode) {
+        // Collapse all gifts first for easy reordering
+        container.querySelectorAll('.gift-entry').forEach((entry) => {
+            const idx = entry.dataset.giftIndex;
+            const body = entry.querySelector('[id^="gift-body-"]');
+            const summary = entry.querySelector('[id^="gift-summary-"]');
+            const chevron = entry.querySelector('.gift-chevron');
+            if (body) body.classList.add('hidden');
+            if (summary) summary.classList.remove('hidden');
+            if (chevron) chevron.style.transform = 'rotate(-90deg)';
+        });
+        container.classList.add('reorder-active');
+        banner.classList.remove('hidden');
+        actionBtns.classList.add('hidden');
+        reorderBtn.textContent = 'Done';
+        reorderBtn.classList.add('bg-primary-600', 'text-white', 'border-primary-600');
+    } else {
+        container.classList.remove('reorder-active');
+        banner.classList.add('hidden');
+        actionBtns.classList.remove('hidden');
+        reorderBtn.textContent = '↕ Reorder';
+        reorderBtn.classList.remove('bg-primary-600', 'text-white', 'border-primary-600');
+        renumberGifts();
+    }
+}
+
+function moveGiftUp(btn) {
+    const entry = btn.closest('.gift-entry');
+    const prev = entry.previousElementSibling;
+    if (prev && prev.classList.contains('gift-entry')) {
+        entry.parentNode.insertBefore(entry, prev);
+        renumberGifts();
+        entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
+
+function moveGiftDown(btn) {
+    const entry = btn.closest('.gift-entry');
+    const next = entry.nextElementSibling;
+    if (next && next.classList.contains('gift-entry')) {
+        entry.parentNode.insertBefore(next, entry);
+        renumberGifts();
+        entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+}
 
 function addAllocation(giftIdx) {
     const container = document.getElementById('allocations-' + giftIdx);
