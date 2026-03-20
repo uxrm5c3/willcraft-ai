@@ -1673,15 +1673,87 @@ def api_persons_update(person_id):
 @app.route('/api/persons/<person_id>', methods=['DELETE'])
 @login_required
 def api_persons_delete(person_id):
-    """Delete a person identity."""
+    """Delete a person identity after checking for references."""
     person = db.session.get(Person, person_id)
     if not person:
         return jsonify({'ok': False, 'error': 'Person not found'}), 404
+
+    # Check if this person is referenced anywhere in the will
+    refs = _get_person_references(person_id, person.full_name)
+    if refs:
+        msg = f"Cannot delete {person.full_name}. This person is assigned as:\n"
+        msg += "\n".join(f"• {r}" for r in refs)
+        msg += "\n\nPlease remove them from these roles first."
+        return jsonify({'ok': False, 'error': msg}), 400
+
     client_id = person.client_id
     db.session.delete(person)
     db.session.commit()
     _refresh_session_person_registry(client_id)
     return jsonify({'ok': True})
+
+
+def _get_person_references(person_id, full_name):
+    """Find all references to a person across will wizard session data."""
+    refs = []
+
+    # Step 2 - Testator
+    step1 = session.get('step1', {})
+    if step1.get('person_id') == person_id:
+        refs.append('Testator')
+
+    # Step 3 - Executors
+    for ex in session.get('step2_executors', []):
+        if ex.get('person_id') == person_id:
+            role = ex.get('role', 'Primary')
+            refs.append(f'Executor ({role})')
+
+    # Step 3 - Trustees
+    trustee_data = session.get('step3_trustees', {})
+    for tr in trustee_data.get('trustees', []):
+        if tr.get('person_id') == person_id:
+            refs.append('Trustee')
+    for st in trustee_data.get('substitute_trustees', []):
+        if st.get('person_id') == person_id:
+            refs.append('Substitute Trustee')
+
+    # Step 4 - Guardians
+    for gdn in session.get('step3_guardians', []):
+        if gdn.get('person_id') == person_id:
+            role = gdn.get('role', 'Primary')
+            refs.append(f'Guardian ({role})')
+
+    # Step 5 - Beneficiaries
+    for ben in session.get('step4_beneficiaries', []):
+        if ben.get('person_id') == person_id:
+            refs.append('Beneficiary')
+
+    # Step 6 - Gift allocations (matched by name)
+    for gi, gift in enumerate(session.get('step5_gifts', [])):
+        gift_num = gi + 1
+        for alloc in gift.get('allocations', []):
+            if alloc.get('beneficiary_name') == full_name:
+                refs.append(f'Beneficiary of Gift No. {gift_num}')
+            for sub in alloc.get('substitutes', []):
+                if sub.get('beneficiary_name') == full_name:
+                    refs.append(f'Substitute Beneficiary of Gift No. {gift_num}')
+
+    # Step 7 - Residuary Estate
+    res = session.get('step6_residuary', {})
+    for mb in res.get('main_beneficiaries', []):
+        if mb.get('person_id') == person_id:
+            refs.append('Residuary Beneficiary')
+    for sg in res.get('substitute_groups', []):
+        for sb in (sg if isinstance(sg, list) else []):
+            if sb.get('person_id') == person_id:
+                refs.append('Residuary Substitute Beneficiary')
+
+    # Step 8 - Trust
+    trust = session.get('step7_trust', {})
+    if trust.get('trustee_person_id') == person_id:
+        refs.append('Trust Trustee')
+
+    return refs
 
 
 # -- Upload & Document API ----------------------------------------------------
