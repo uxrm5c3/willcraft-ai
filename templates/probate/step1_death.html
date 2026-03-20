@@ -528,28 +528,23 @@ function renderWillConfirmStep() {
         html += `<p class="text-xs text-blue-500 mb-3">${step.info}</p>`;
     }
 
+    html += '<p class="text-xs text-gray-400 mb-3">Edit any field below, then confirm to apply.</p>';
+
     step.fields.forEach((f, fi) => {
-        const existing = f.formName ? (document.querySelector('[name="' + f.formName + '"]')?.value || '') : '';
-        const hasConflict = existing && existing.trim().toUpperCase() !== f.value.trim().toUpperCase();
         const fieldId = `wc_${willConfirmIndex}_${fi}`;
+        // Use previously edited value if user went back, otherwise use scanned value
+        const displayValue = f._editedValue !== undefined ? f._editedValue : f.value;
+        const isLong = displayValue.length > 60;
 
-        html += `<div class="p-3 rounded-lg border mb-2 ${hasConflict ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}">
-            <div class="text-xs font-semibold text-gray-600 mb-1">${f.label}</div>`;
+        html += `<div class="p-3 rounded-lg border mb-2 bg-white border-gray-200">
+            <label class="text-xs font-semibold text-gray-600 mb-1 block">${f.label}</label>`;
 
-        if (hasConflict) {
-            html += `<div class="space-y-1">
-                <label class="flex items-start gap-2 cursor-pointer">
-                    <input type="radio" name="${fieldId}" value="scanned" checked class="mt-0.5 will-confirm-radio" data-idx="${willConfirmIndex}" data-fidx="${fi}">
-                    <div><span class="text-xs text-gray-400">Scanned:</span> <span class="text-sm font-medium">${escHtml(f.value)}</span></div>
-                </label>
-                <label class="flex items-start gap-2 cursor-pointer">
-                    <input type="radio" name="${fieldId}" value="existing" class="mt-0.5 will-confirm-radio" data-idx="${willConfirmIndex}" data-fidx="${fi}">
-                    <div><span class="text-xs text-gray-400">Existing:</span> <span class="text-sm font-medium">${escHtml(existing)}</span></div>
-                </label>
-            </div>`;
+        if (isLong) {
+            html += `<textarea id="${fieldId}" rows="2"
+                class="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">${escHtml(displayValue)}</textarea>`;
         } else {
-            html += `<div class="text-sm font-medium text-gray-800">${escHtml(f.value)}</div>
-                <input type="hidden" class="will-confirm-radio" data-idx="${willConfirmIndex}" data-fidx="${fi}" value="scanned">`;
+            html += `<input type="text" id="${fieldId}" value="${escHtml(displayValue)}"
+                class="w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">`;
         }
         html += '</div>';
     });
@@ -571,19 +566,25 @@ function renderWillConfirmStep() {
     container.innerHTML = html;
 }
 
+function willConfirmSaveEdits() {
+    // Save user edits back into the field data so they persist when navigating back
+    const step = willConfirmFields[willConfirmIndex];
+    step.fields.forEach((f, fi) => {
+        const fieldId = `wc_${willConfirmIndex}_${fi}`;
+        const el = document.getElementById(fieldId);
+        if (el) f._editedValue = el.value.trim();
+    });
+}
+
 function willConfirmApplyCurrentStep() {
+    willConfirmSaveEdits();
     const step = willConfirmFields[willConfirmIndex];
     step.fields.forEach((f, fi) => {
         if (!f.formName) return; // stored fields applied later
-        const radios = document.querySelectorAll(`[name="wc_${willConfirmIndex}_${fi}"]`);
-        let useScanned = true;
-        radios.forEach(r => { if (r.checked && r.value === 'existing') useScanned = false; });
-        if (useScanned) {
-            const el = document.querySelector(`[name="${f.formName}"]`);
-            if (el) el.value = f.value;
-        }
+        const val = f._editedValue !== undefined ? f._editedValue : f.value;
+        const el = document.querySelector(`[name="${f.formName}"]`);
+        if (el) el.value = val;
     });
-    // Mark step as confirmed
     step._confirmed = true;
 }
 
@@ -594,6 +595,7 @@ function willConfirmNext() {
 }
 
 function willConfirmPrev() {
+    willConfirmSaveEdits();
     willConfirmIndex--;
     renderWillConfirmStep();
 }
