@@ -559,8 +559,8 @@ Best regards,
         </div>
     </div>
 
-        <!-- Submit for Approval -->
-        {% if probate.status in ('generated', 'rejected') %}
+        <!-- Submit for Approval (only for non-approvers — approvers don't need to approve their own work) -->
+        {% if probate.status in ('generated', 'rejected') and session.get('user_role') not in ('admin', 'approver') %}
         <div class="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
             <h4 class="text-sm font-semibold text-purple-800 mb-2 flex items-center gap-1">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
