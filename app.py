@@ -3578,13 +3578,17 @@ def _sync_probate_from_will(probate, will_record):
     # Extract executor from will — try step3_data first (executors), then step2_data
     executor = {}
     step3 = json.loads(will_record.step3_data or '[]')
-    if step3:
-        executor = step3[0] if isinstance(step3, list) else step3
-    if not executor:
+    if isinstance(step3, list) and step3:
+        executor = step3[0]
+    elif isinstance(step3, dict) and (step3.get('full_name') or step3.get('person_id')):
+        executor = step3
+    # If step3 didn't yield a valid executor (e.g. it's guardians data), try step2
+    if not executor or not (executor.get('full_name') or executor.get('person_id')):
         step2 = json.loads(will_record.step2_data or '{}')
         executors = step2.get('executors', []) if isinstance(step2, dict) else step2
-        executor = executors[0] if executors else {}
-    if not executor:
+        if isinstance(executors, list) and executors:
+            executor = executors[0]
+    if not executor or not (executor.get('full_name') or executor.get('person_id')):
         errors.append(f'Will ({will_record.id}) has no executor data (step2_data and step3_data are empty)')
 
     # Resolve person details from identity registry
