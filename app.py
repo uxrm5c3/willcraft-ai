@@ -3564,72 +3564,96 @@ def _validate_probate_data(probate, will_record, recommendations):
     warnings = {}  # form_code -> list of missing field descriptions
     rec_codes = {r['form_code'] for r in recommendations if r.get('recommended')}
 
+    # Pre-compute common checks
+    has_deceased_name = bool(probate.deceased_name)
+    has_deceased_nric = bool(probate.deceased_nric)
+    has_deceased_addr = bool(probate.deceased_address)
+    has_applicant_name = bool(probate.applicant_name)
+    has_applicant_nric = bool(probate.applicant_nric)
+    has_applicant_addr = bool(probate.applicant_address)
+    has_applicant_rel = bool(probate.applicant_relationship)
+    has_court = bool(probate.court_location)
+    has_court_state = bool(probate.court_state)
+    has_firm_name = bool(probate.firm_name)
+    has_firm_addr = bool(probate.firm_address)
+    has_firm_ref = bool(probate.firm_reference)
+    has_lawyer = bool(probate.lawyer_name)
+    has_bar = bool(probate.lawyer_bar_number)
+    has_dod = bool(probate.date_of_death)
+    has_pod = bool(probate.place_of_death)
+    has_death_cert = bool(probate.death_cert_number)
+
+    assets = json.loads(probate.assets_data or '[]')
+    props = [a for a in assets if a.get('asset_type') == 'property']
+    bens = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data else []
+
+    # Fields used by all/most forms
+    common_fields = []
+    if not has_deceased_name: common_fields.append('Deceased Name (Step 1)')
+    if not has_deceased_nric: common_fields.append('Deceased NRIC (Step 1)')
+    if not has_applicant_name: common_fields.append('Applicant Name (Step 1)')
+    if not has_applicant_nric: common_fields.append('Applicant NRIC (Step 1)')
+    if not has_court: common_fields.append('Court Location (Step 2)')
+    if not has_court_state: common_fields.append('Court State (Step 2)')
+    if not has_firm_ref: common_fields.append('File Reference (Step 2)')
+
     for code in rec_codes:
-        missing = []
-        # Common: death details
+        missing = list(common_fields)  # start with common missing fields
+
+        # Death details
         if code in ('doc01', 'doc02', 'doc03'):
-            if not probate.date_of_death:
-                missing.append('Date of Death (Step 1)')
-            if not probate.place_of_death:
-                missing.append('Place of Death (Step 1)')
+            if not has_dod: missing.append('Date of Death (Step 1)')
+            if not has_pod: missing.append('Place of Death (Step 1)')
         if code == 'doc02':
-            if not probate.death_cert_number:
-                missing.append('Death Certificate Number (Step 1)')
-        # File reference (used in most forms)
-        if code in ('doc01', 'doc02', 'doc03', 'doc06', 'doc07', 'doc08', 'form14a', 'form346'):
-            if not probate.firm_reference:
-                missing.append('File Reference (Step 2)')
-        # Court/firm
-        if code in ('doc01', 'doc08'):
-            if not probate.court_location:
-                missing.append('Court Location (Step 2)')
-            if not probate.firm_name:
-                missing.append('Firm Name (Step 2)')
+            if not has_death_cert: missing.append('Death Certificate Number (Step 1)')
+
+        # Firm details
+        if code in ('doc01', 'doc08', 'form14a', 'form346'):
+            if not has_firm_name: missing.append('Firm Name (Step 2)')
+            if not has_firm_addr: missing.append('Firm Address (Step 2)')
+
         # Lawyer details
         if code in ('form14a', 'form346'):
-            if not probate.lawyer_name:
-                missing.append('Lawyer Name (Step 2)')
-            if not probate.lawyer_bar_number:
-                missing.append('Bar Council Number (Step 2)')
+            if not has_lawyer: missing.append('Lawyer Name (Step 2)')
+            if not has_bar: missing.append('Bar Council Number (Step 2)')
+
+        # Applicant details
+        if code in ('doc01', 'doc02', 'doc03', 'form346'):
+            if not has_applicant_addr: missing.append('Applicant Address (Step 1)')
+            if not has_applicant_rel: missing.append('Applicant Relationship (Step 1)')
+
+        # Deceased address
+        if code in ('doc01', 'doc02'):
+            if not has_deceased_addr: missing.append('Deceased Address (Step 1)')
+
         # Witnesses
         if code == 'doc04':
-            if not probate.witness1_name:
-                missing.append('Witness 1 Name (Step 3)')
-            if not probate.witness1_nric:
-                missing.append('Witness 1 NRIC (Step 3)')
-            if not probate.witness1_address:
-                missing.append('Witness 1 Address (Step 3)')
+            if not probate.witness1_name: missing.append('Witness 1 Name (Step 3)')
+            if not probate.witness1_nric: missing.append('Witness 1 NRIC (Step 3)')
+            if not probate.witness1_address: missing.append('Witness 1 Address (Step 3)')
         if code == 'doc05':
-            if not probate.witness2_name:
-                missing.append('Witness 2 Name (Step 3)')
-            if not probate.witness2_nric:
-                missing.append('Witness 2 NRIC (Step 3)')
-            if not probate.witness2_address:
-                missing.append('Witness 2 Address (Step 3)')
-        # Property details for form14a / form346
+            if not probate.witness2_name: missing.append('Witness 2 Name (Step 3)')
+            if not probate.witness2_nric: missing.append('Witness 2 NRIC (Step 3)')
+            if not probate.witness2_address: missing.append('Witness 2 Address (Step 3)')
+
+        # Property details
         if code in ('form14a', 'form346'):
-            assets = json.loads(probate.assets_data or '[]')
-            props = [a for a in assets if a.get('asset_type') == 'property']
             if props:
                 p0 = props[0]
-                if not p0.get('title_number'):
-                    missing.append('Property Title Number (Step 5)')
-                if not p0.get('lot_number'):
-                    missing.append('Property Lot Number (Step 5)')
-                if not p0.get('mukim'):
-                    missing.append('Property Mukim (Step 5)')
+                if not p0.get('title_number'): missing.append('Property Title Number (Step 5)')
+                if not p0.get('lot_number'): missing.append('Property Lot Number (Step 5)')
+                if not p0.get('mukim'): missing.append('Property Mukim (Step 5)')
             else:
                 missing.append('No properties entered (Step 5)')
+
         # Beneficiaries
         if code == 'doc07':
-            bens = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data else []
-            if not bens:
-                missing.append('No beneficiaries entered (Step 4)')
-        # Assets
+            if not bens: missing.append('No beneficiaries entered (Step 4)')
+
+        # Assets schedule
         if code == 'doc06':
-            assets = json.loads(probate.assets_data or '[]')
-            if not assets:
-                missing.append('No assets entered (Step 5)')
+            if not assets: missing.append('No assets entered (Step 5)')
+
         if missing:
             warnings[code] = missing
     return warnings

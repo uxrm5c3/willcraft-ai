@@ -365,7 +365,14 @@
                             {{ rec.reason }}
                         </p>
                         {% if rec.form_code in validation_warnings %}
-                        <p class="text-xs text-red-500 mt-1">Missing: {{ validation_warnings[rec.form_code] | join(', ') }}</p>
+                        <div class="text-xs text-red-500 mt-1">
+                            <span class="font-semibold">Missing:</span>
+                            <ul class="list-disc ml-4 mt-0.5">
+                                {% for mf in validation_warnings[rec.form_code] %}
+                                <li>{{ mf }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
                         {% endif %}
                         {% if rec.fields %}
                         <details class="mt-1.5">
