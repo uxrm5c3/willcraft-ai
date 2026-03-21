@@ -102,6 +102,7 @@ class Will(db.Model):
     include_logo = db.Column(db.Boolean, default=True)  # Include firm logo in PDF header
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = db.Column(db.DateTime, nullable=True)  # Soft delete — auto-purged after 30 days
 
     documents = db.relationship('Document', backref='will', lazy=True)
     edit_logs = db.relationship('WillEditLog', backref='will', lazy=True, order_by='WillEditLog.edited_at.desc()')
@@ -252,6 +253,7 @@ class ProbateApplication(db.Model):
     created_by = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    deleted_at = db.Column(db.DateTime, nullable=True)  # Soft delete — auto-purged after 30 days
 
     will = db.relationship('Will', backref='probate_applications')
     client = db.relationship('Client', backref='probate_applications')

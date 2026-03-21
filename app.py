@@ -218,7 +218,7 @@ def inject_global_context():
     # Count pending approvals for approvers
     pending_count = 0
     if g.user and g.perms.get('canApprove'):
-        pending_count = Will.query.filter_by(status='pending_approval').count()
+        pending_count = Will.query.filter_by(status='pending_approval').filter(Will.deleted_at.is_(None)).count()
     # Check if current will has been generated
     has_generated_will = False
     if session.get('will_id'):
@@ -279,6 +279,8 @@ with app.app_context():
         ("probate_applications", "assets_data", "TEXT DEFAULT '[]'"),
         ("probate_applications", "beneficiaries_data", "TEXT DEFAULT '[]'"),
         ("probate_applications", "will_document_id", "VARCHAR(36)"),
+        ("probate_applications", "deleted_at", "DATETIME"),
+        ("wills", "deleted_at", "DATETIME"),
     ]:
         try:
             with db.engine.connect() as conn:
@@ -1115,9 +1117,9 @@ def will_submit_for_approval(will_id):
 @role_required('approver')
 def approval_list():
     """List wills pending approval."""
-    pending = Will.query.filter_by(status='pending_approval').order_by(Will.submitted_at.desc()).all()
-    approved = Will.query.filter_by(status='approved').order_by(Will.approved_at.desc()).limit(20).all()
-    rejected = Will.query.filter_by(status='rejected').order_by(Will.updated_at.desc()).limit(20).all()
+    pending = Will.query.filter_by(status='pending_approval').filter(Will.deleted_at.is_(None)).order_by(Will.submitted_at.desc()).all()
+    approved = Will.query.filter_by(status='approved').filter(Will.deleted_at.is_(None)).order_by(Will.approved_at.desc()).limit(20).all()
+    rejected = Will.query.filter_by(status='rejected').filter(Will.deleted_at.is_(None)).order_by(Will.updated_at.desc()).limit(20).all()
     return render_template('approvals.html', pending=pending, approved=approved, rejected=rejected)
 
 
@@ -1541,7 +1543,7 @@ def api_will_send_email(will_id):
 @login_required
 def index():
     """Landing page."""
-    wills_query = Will.query
+    wills_query = Will.query.filter(Will.deleted_at.is_(None))
     # Approvers see all wills; admin/advisor see only their own
     if session.get('user_role') != 'approver':
         wills_query = wills_query.filter_by(created_by=session.get('user_id'))
@@ -1705,7 +1707,7 @@ def will_list():
     user_id = session.get('user_id', '')
     client_groups = []
     for c in all_clients:
-        wills_query = Will.query.filter_by(client_id=c.id)
+        wills_query = Will.query.filter_by(client_id=c.id).filter(Will.deleted_at.is_(None))
         # Approvers see all wills; admin/advisor see only their own
         if user_role != 'approver':
             wills_query = wills_query.filter_by(created_by=user_id)
@@ -1752,16 +1754,88 @@ def will_load(will_id):
 @app.route('/wills/<will_id>/delete', methods=['POST'])
 @login_required
 def will_delete(will_id):
-    """Delete a saved will."""
+    """Soft-delete a saved will (recoverable for 30 days)."""
     will_record = db.session.get(Will, will_id)
     if will_record:
-        db.session.delete(will_record)
+        will_record.deleted_at = datetime.utcnow()
         db.session.commit()
         # Clear session if we deleted the currently loaded will
         if session.get('will_id') == will_id:
             session.pop('will_id', None)
-        flash('Will deleted.', 'info')
+        flash('Will moved to trash. It can be restored within 30 days.', 'info')
     return redirect(url_for('will_list'))
+
+
+@app.route('/wills/<will_id>/restore', methods=['POST'])
+@login_required
+def will_restore(will_id):
+    """Restore a soft-deleted will."""
+    will_record = db.session.get(Will, will_id)
+    if will_record and will_record.deleted_at:
+        will_record.deleted_at = None
+        db.session.commit()
+        flash('Will restored successfully.', 'success')
+    return redirect(url_for('trash_list'))
+
+
+@app.route('/wills/<will_id>/permanent-delete', methods=['POST'])
+@login_required
+def will_permanent_delete(will_id):
+    """Permanently delete a will (admin only, from trash)."""
+    role = session.get('user_role')
+    if role not in ('admin',):
+        flash('Access denied.', 'error')
+        return redirect(url_for('trash_list'))
+    will_record = db.session.get(Will, will_id)
+    if will_record:
+        db.session.delete(will_record)
+        db.session.commit()
+        flash('Will permanently deleted.', 'success')
+    return redirect(url_for('trash_list'))
+
+
+@app.route('/trash')
+@login_required
+def trash_list():
+    """Show soft-deleted wills and probate applications (recoverable for 30 days)."""
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(days=30)
+
+    # Auto-purge items older than 30 days
+    expired_wills = Will.query.filter(Will.deleted_at.isnot(None), Will.deleted_at < cutoff).all()
+    for w in expired_wills:
+        db.session.delete(w)
+    expired_probates = ProbateApplication.query.filter(
+        ProbateApplication.deleted_at.isnot(None), ProbateApplication.deleted_at < cutoff
+    ).all()
+    for p in expired_probates:
+        # Clean up generated form files
+        gen_forms = ProbateGeneratedForm.query.filter_by(probate_id=p.id).all()
+        for gf in gen_forms:
+            if gf.file_path and os.path.exists(gf.file_path):
+                try:
+                    os.remove(gf.file_path)
+                except OSError:
+                    pass
+        ProbateGeneratedForm.query.filter_by(probate_id=p.id).delete()
+        db.session.delete(p)
+    if expired_wills or expired_probates:
+        db.session.commit()
+
+    # Fetch soft-deleted items with days_left
+    now = datetime.utcnow()
+    deleted_wills = Will.query.filter(Will.deleted_at.isnot(None)).order_by(Will.deleted_at.desc()).all()
+    for w in deleted_wills:
+        w.days_left = max(0, 30 - (now - w.deleted_at).days)
+    deleted_probates = ProbateApplication.query.filter(
+        ProbateApplication.deleted_at.isnot(None)
+    ).order_by(ProbateApplication.deleted_at.desc()).all()
+    for p in deleted_probates:
+        p.days_left = max(0, 30 - (now - p.deleted_at).days)
+
+    return render_template('trash.html',
+                           deleted_wills=deleted_wills,
+                           deleted_probates=deleted_probates)
 
 
 @app.route('/clients/<client_id>/delete', methods=['POST'])
@@ -2376,7 +2450,7 @@ def client_files(client_id):
                 })
 
     # Wills in DB for this client
-    wills = Will.query.filter_by(client_id=client_id).order_by(Will.updated_at.desc()).all()
+    wills = Will.query.filter_by(client_id=client_id).filter(Will.deleted_at.is_(None)).order_by(Will.updated_at.desc()).all()
 
     total_docs = sum(len(docs) for docs in doc_groups.values())
     return render_template('client_files.html',
@@ -3884,8 +3958,9 @@ def probate_list():
         flash('Access denied.', 'error')
         return redirect(url_for('index'))
     q = request.args.get('q', '').strip()
+    base_q = ProbateApplication.query.filter(ProbateApplication.deleted_at.is_(None))
     if q:
-        applications = ProbateApplication.query.filter(
+        applications = base_q.filter(
             db.or_(
                 ProbateApplication.deceased_name.ilike(f'%{q}%'),
                 ProbateApplication.deceased_nric.ilike(f'%{q}%'),
@@ -3894,15 +3969,15 @@ def probate_list():
             )
         ).order_by(ProbateApplication.created_at.desc()).all()
     else:
-        applications = ProbateApplication.query.order_by(ProbateApplication.created_at.desc()).all()
-    approved_wills = Will.query.filter_by(status='approved').order_by(Will.approved_at.desc()).all()
+        applications = base_q.order_by(ProbateApplication.created_at.desc()).all()
+    approved_wills = Will.query.filter_by(status='approved').filter(Will.deleted_at.is_(None)).order_by(Will.approved_at.desc()).all()
     return render_template('probate/list.html', applications=applications, approved_wills=approved_wills, search_query=q)
 
 
 @app.route('/probate/<probate_id>/delete', methods=['POST'])
 @login_required
 def probate_delete(probate_id):
-    """Delete a probate application and its generated forms."""
+    """Soft-delete a probate application (recoverable for 30 days)."""
     role = session.get('user_role')
     if role not in ('admin', 'approver'):
         flash('Access denied.', 'error')
@@ -3911,6 +3986,41 @@ def probate_delete(probate_id):
     if not probate:
         flash('Application not found.', 'error')
         return redirect(url_for('probate_list'))
+    deceased = probate.deceased_name or 'Unknown'
+    probate.deleted_at = datetime.utcnow()
+    db.session.commit()
+    flash(f'Probate application for "{deceased}" moved to trash. It can be restored within 30 days.', 'success')
+    return redirect(url_for('probate_list'))
+
+
+@app.route('/probate/<probate_id>/restore', methods=['POST'])
+@login_required
+def probate_restore(probate_id):
+    """Restore a soft-deleted probate application."""
+    role = session.get('user_role')
+    if role not in ('admin', 'approver'):
+        flash('Access denied.', 'error')
+        return redirect(url_for('trash_list'))
+    probate = db.session.get(ProbateApplication, probate_id)
+    if probate and probate.deleted_at:
+        probate.deleted_at = None
+        db.session.commit()
+        flash(f'Probate application restored successfully.', 'success')
+    return redirect(url_for('trash_list'))
+
+
+@app.route('/probate/<probate_id>/permanent-delete', methods=['POST'])
+@login_required
+def probate_permanent_delete(probate_id):
+    """Permanently delete a probate application (admin only, from trash)."""
+    role = session.get('user_role')
+    if role not in ('admin',):
+        flash('Access denied.', 'error')
+        return redirect(url_for('trash_list'))
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        flash('Application not found.', 'error')
+        return redirect(url_for('trash_list'))
     # Delete generated form files from disk
     gen_forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
     for gf in gen_forms:
@@ -3923,8 +4033,8 @@ def probate_delete(probate_id):
     deceased = probate.deceased_name or 'Unknown'
     db.session.delete(probate)
     db.session.commit()
-    flash(f'Probate application for "{deceased}" has been deleted.', 'success')
-    return redirect(url_for('probate_list'))
+    flash(f'Probate application for "{deceased}" permanently deleted.', 'success')
+    return redirect(url_for('trash_list'))
 
 
 @app.route('/probate/new-la')
@@ -3966,7 +4076,7 @@ def probate_new(will_id):
         flash('Will not found.', 'error')
         return redirect(url_for('wills_list'))
     # Check if probate already exists for this will
-    existing = ProbateApplication.query.filter_by(will_id=will_id).first()
+    existing = ProbateApplication.query.filter_by(will_id=will_id).filter(ProbateApplication.deleted_at.is_(None)).first()
     if existing:
         return redirect(f'/probate/{existing.id}/step/1')
     # Create new probate application
@@ -3989,6 +4099,36 @@ def probate_new(will_id):
     return redirect(f'/probate/{probate.id}/step/1')
 
 
+def _classify_asset(description):
+    """Classify an asset description into: property, bank, vehicle, investment, other."""
+    if not description:
+        return 'other'
+    desc = description.lower()
+    # Property keywords
+    if any(kw in desc for kw in ['land', 'house', 'apartment', 'flat', 'condo', 'bungalow',
+            'terrace', 'semi-d', 'lot', 'title', 'geran', 'hakmilik', 'strata',
+            'property', 'rumah', 'tanah', 'building', 'premises', 'unit',
+            'jalan', 'lorong', 'taman', 'kampung', 'no.', 'no ', 'address']):
+        return 'property'
+    # Bank / financial account keywords
+    if any(kw in desc for kw in ['bank', 'account', 'savings', 'current account', 'fixed deposit',
+            'akaun', 'maybank', 'cimb', 'rhb', 'hong leong', 'public bank',
+            'ambank', 'bsn', 'affin', 'hsbc', 'ocbc', 'uob', 'standard chartered',
+            'alliance', 'kwsp', 'epf', 'tabung', 'amanah', 'asb', 'asp']):
+        return 'bank'
+    # Vehicle keywords
+    if any(kw in desc for kw in ['car', 'vehicle', 'motor', 'kereta', 'toyota', 'honda',
+            'proton', 'perodua', 'mercedes', 'bmw', 'nissan', 'mazda',
+            'registration', 'plate number', 'nombor pendaftaran']):
+        return 'vehicle'
+    # Investment keywords
+    if any(kw in desc for kw in ['share', 'stock', 'unit trust', 'bond', 'investment',
+            'dividend', 'securities', 'saham', 'bursa', 'insurance', 'policy',
+            'insurans', 'takaful', 'mutual fund']):
+        return 'investment'
+    return 'other'
+
+
 @app.route('/probate/<probate_id>/save-ocr-data', methods=['POST'])
 @login_required
 def probate_save_ocr_data(probate_id):
@@ -4002,73 +4142,72 @@ def probate_save_ocr_data(probate_id):
     existing['ocr_extracted'] = data
     probate.form_data_json = json.dumps(existing)
 
-    # Auto-fill deceased fields if empty
-    if not probate.deceased_name and data.get('deceased_name'):
+    # Auto-fill deceased fields (overwrite from scan — user explicitly confirmed)
+    if data.get('deceased_name'):
         probate.deceased_name = data['deceased_name']
-    if not probate.deceased_nric and data.get('deceased_nric'):
+    if data.get('deceased_nric'):
         probate.deceased_nric = data['deceased_nric']
-    if not probate.deceased_address and data.get('deceased_address'):
+    if data.get('deceased_address'):
         probate.deceased_address = data['deceased_address']
 
-    # Auto-fill executor/applicant fields if empty
-    if not probate.applicant_name and data.get('applicant_name'):
+    # Auto-fill executor/applicant fields
+    if data.get('applicant_name'):
         probate.applicant_name = data['applicant_name']
-    if not probate.applicant_nric and data.get('applicant_nric'):
+    if data.get('applicant_nric'):
         probate.applicant_nric = data['applicant_nric']
-    if not probate.applicant_address and data.get('applicant_address'):
+    if data.get('applicant_address'):
         probate.applicant_address = data['applicant_address']
-    if not probate.applicant_relationship and data.get('applicant_relationship'):
+    if data.get('applicant_relationship'):
         probate.applicant_relationship = data['applicant_relationship']
 
-    # Auto-fill witness fields if empty
-    if not probate.witness1_name and data.get('witness1_name'):
+    # Auto-fill witness fields
+    if data.get('witness1_name'):
         probate.witness1_name = data['witness1_name']
-    if not probate.witness1_nric and data.get('witness1_nric'):
+    if data.get('witness1_nric'):
         probate.witness1_nric = data['witness1_nric']
-    if not probate.witness1_address and data.get('witness1_address'):
+    if data.get('witness1_address'):
         probate.witness1_address = data['witness1_address']
-    if not probate.witness2_name and data.get('witness2_name'):
+    if data.get('witness2_name'):
         probate.witness2_name = data['witness2_name']
-    if not probate.witness2_nric and data.get('witness2_nric'):
+    if data.get('witness2_nric'):
         probate.witness2_nric = data['witness2_nric']
-    if not probate.witness2_address and data.get('witness2_address'):
+    if data.get('witness2_address'):
         probate.witness2_address = data['witness2_address']
 
-    # Auto-fill beneficiaries if empty
-    existing_bens = json.loads(probate.beneficiaries_data or '[]')
-    if not existing_bens:
-        bens = []
-        i = 0
-        while data.get(f'beneficiary_{i}_name'):
-            bens.append({
-                'full_name': data.get(f'beneficiary_{i}_name', ''),
-                'nric_passport': data.get(f'beneficiary_{i}_nric', ''),
-                'relationship': data.get(f'beneficiary_{i}_relationship', ''),
-                'address': data.get(f'beneficiary_{i}_address', ''),
-            })
-            i += 1
-        if bens:
-            probate.beneficiaries_data = json.dumps(bens)
+    # Auto-fill beneficiaries
+    bens = []
+    i = 0
+    while data.get(f'beneficiary_{i}_name'):
+        bens.append({
+            'full_name': data.get(f'beneficiary_{i}_name', ''),
+            'nric_passport': data.get(f'beneficiary_{i}_nric', ''),
+            'relationship': data.get(f'beneficiary_{i}_relationship', ''),
+            'address': data.get(f'beneficiary_{i}_address', ''),
+        })
+        i += 1
+    if bens:
+        probate.beneficiaries_data = json.dumps(bens)
 
-    # Auto-fill assets if empty
-    existing_assets = json.loads(probate.assets_data or '[]')
-    if not existing_assets:
-        assets = []
-        i = 0
-        while data.get(f'asset_{i}'):
-            desc = data[f'asset_{i}']
-            # Try to parse JSON if the asset was stored as JSON string
-            try:
-                asset_obj = json.loads(desc) if desc.startswith('{') else None
-            except (json.JSONDecodeError, AttributeError):
-                asset_obj = None
-            if asset_obj and isinstance(asset_obj, dict):
-                assets.append(asset_obj)
-            else:
-                assets.append({'asset_type': 'other', 'description': desc, 'estimated_value': ''})
-            i += 1
-        if assets:
-            probate.assets_data = json.dumps(assets)
+    # Auto-fill assets
+    assets = []
+    i = 0
+    while data.get(f'asset_{i}'):
+        desc = data[f'asset_{i}']
+        # Try to parse JSON if the asset was stored as JSON string
+        try:
+            asset_obj = json.loads(desc) if desc.startswith('{') else None
+        except (json.JSONDecodeError, AttributeError):
+            asset_obj = None
+        if asset_obj and isinstance(asset_obj, dict):
+            # Ensure asset_type is set
+            if not asset_obj.get('asset_type'):
+                asset_obj['asset_type'] = _classify_asset(asset_obj.get('description', ''))
+            assets.append(asset_obj)
+        else:
+            assets.append({'asset_type': _classify_asset(desc), 'description': desc, 'estimated_value': ''})
+        i += 1
+    if assets:
+        probate.assets_data = json.dumps(assets)
 
     probate.updated_at = datetime.utcnow()
     db.session.commit()

@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-6 sm:py-8">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-xl font-bold text-gray-800">Trash</h1>
+            <p class="text-sm text-gray-500 mt-1">Deleted items are kept for 30 days before permanent removal.</p>
+        </div>
+        <a href="{{ url_for('will_list') }}" class="px-4 py-2 bg-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-300 no-underline">Back to Wills</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    {% for category, message in messages %}
+    <div class="mb-4 p-3 rounded-lg text-sm {% if category == 'error' %}bg-red-50 text-red-700{% elif category == 'success' %}bg-green-50 text-green-700{% else %}bg-blue-50 text-blue-700{% endif %}">
+        {{ message }}
+    </div>
+    {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    <!-- Deleted Wills -->
+    {% if deleted_wills %}
+    <div class="mb-8">
+        <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Deleted Wills ({{ deleted_wills|length }})</h2>
+        <div class="space-y-2">
+            {% for w in deleted_wills %}
+                        <div class="flex items-center justify-between p-4 bg-white rounded-lg border border-gray-200 hover:shadow-sm">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm font-semibold text-gray-800">{{ w.title or 'Untitled Will' }}</span>
+                        <span class="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded">DELETED</span>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5">
+                        Client: {{ w.client.full_name if w.client else 'Unknown' }}
+                        &middot; Deleted {{ w.deleted_at.strftime('%d %b %Y, %I:%M %p') if w.deleted_at else '' }}
+                        &middot; <span class="text-amber-600 font-medium">{{ w.days_left }} days left</span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 ml-4">
+                    <form method="POST" action="{{ url_for('will_restore', will_id=w.id) }}">
+                        <button type="submit" class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700">Restore</button>
+                    </form>
+                    {% if session.get('user_role') == 'admin' %}
+                    <form method="POST" action="{{ url_for('will_permanent_delete', will_id=w.id) }}" onsubmit="return confirm('Permanently delete this will? This cannot be undone.')">
+                        <button type="submit" class="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700">Delete Forever</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Deleted Probate Applications -->
+    {% if deleted_probates %}
+    <div class="mb-8">
+        <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Deleted Probate Applications ({{ deleted_probates|length }})</h2>
+        <div class="space-y-2">
+            {% for p in deleted_probates %}
+                        <div class="flex items-center justify-between p-4 bg-white rounded-lg border border-gray-200 hover:shadow-sm">
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm font-semibold text-gray-800">{{ p.deceased_name or 'Unknown Deceased' }}</span>
+                        <span class="px-2 py-0.5 bg-{{ 'purple' if p.application_type == 'probate' else 'blue' }}-100 text-{{ 'purple' if p.application_type == 'probate' else 'blue' }}-600 text-[10px] font-bold rounded uppercase">{{ p.application_type }}</span>
+                        <span class="px-2 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded">DELETED</span>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5">
+                        Applicant: {{ p.applicant_name or 'Not set' }}
+                        &middot; Deleted {{ p.deleted_at.strftime('%d %b %Y, %I:%M %p') if p.deleted_at else '' }}
+                        &middot; <span class="text-amber-600 font-medium">{{ p.days_left }} days left</span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 ml-4">
+                    <form method="POST" action="{{ url_for('probate_restore', probate_id=p.id) }}">
+                        <button type="submit" class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700">Restore</button>
+                    </form>
+                    {% if session.get('user_role') == 'admin' %}
+                    <form method="POST" action="{{ url_for('probate_permanent_delete', probate_id=p.id) }}" onsubmit="return confirm('Permanently delete this probate application? This cannot be undone.')">
+                        <button type="submit" class="px-3 py-1.5 bg-red-600 text-white text-xs font-medium rounded-lg hover:bg-red-700">Delete Forever</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not deleted_wills and not deleted_probates %}
+    <div class="text-center py-16">
+        <svg class="w-16 h-16 mx-auto text-gray-300 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+        </svg>
+        <p class="text-gray-500 text-sm">Trash is empty.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
