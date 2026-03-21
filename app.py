@@ -3695,7 +3695,6 @@ def _validate_probate_data(probate, will_record, recommendations):
     if not has_applicant_nric: common_fields.append('Applicant NRIC (Step 2)')
     if not has_court: common_fields.append('Court Location (Step 3)')
     if not has_court_state: common_fields.append('Court State (Step 3)')
-    if not has_firm_ref: common_fields.append('File Reference (Step 3)')
 
     for code in rec_codes:
         missing = list(common_fields)  # start with common missing fields
