@@ -36,11 +36,11 @@
                     </select>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Case Number <span class="text-red-500">*</span> <span class="text-xs text-gray-400 font-normal">(leave blank if not yet filed)</span></label>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Case Number <span class="text-xs text-gray-400 font-normal">(assigned by court after filing)</span></label>
                     <input type="text" name="case_number" value="{{ probate.case_number or '' }}"
                            placeholder="Assigned by court after filing"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.case_number %}field-missing{% endif %}">
-                    <p class="text-xs text-gray-400 mt-1">Required for all forms. Assigned by court registry when you file — fill in later.</p>
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <p class="text-xs text-gray-400 mt-1">Fill in after court assigns a case number. Forms can be generated without it.</p>
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">Filing Year</label>

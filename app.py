@@ -3575,10 +3575,10 @@ def _validate_probate_data(probate, will_record, recommendations):
         if code == 'doc02':
             if not probate.death_cert_number:
                 missing.append('Death Certificate Number (Step 1)')
-        # Case number (all forms use it)
-        if code in ('doc01', 'doc02', 'doc03', 'doc06', 'doc07', 'doc08'):
-            if not probate.case_number:
-                missing.append('Case Number (Step 2) — assigned after filing')
+        # File reference (used in most forms)
+        if code in ('doc01', 'doc02', 'doc03', 'doc06', 'doc07', 'doc08', 'form14a', 'form346'):
+            if not probate.firm_reference:
+                missing.append('File Reference (Step 2)')
         # Court/firm
         if code in ('doc01', 'doc08'):
             if not probate.court_location:

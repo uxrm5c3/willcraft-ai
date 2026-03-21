@@ -325,7 +325,7 @@
         <h3 class="text-sm font-bold text-gray-800 mb-3">Select Forms to Generate</h3>
         <p class="text-xs text-gray-500 mb-4">The system has pre-selected forms based on the will data. You can uncheck forms you don't need.</p>
 
-        <form method="POST" action="/probate/{{ probate_id }}/generate" id="generate-form">
+        <form method="POST" action="/probate/{{ probate_id }}/generate" id="generate-form" onsubmit="return handleGenerate(event)">
             <div class="space-y-2">
                 {% for rec in recommendations %}
                 <label class="flex items-start gap-3 p-3 rounded-lg border transition-colors cursor-pointer
@@ -624,6 +624,65 @@ Best regards,
 </div>
 
 <script>
+/* ── Generate forms with loading + completion prompt ── */
+function handleGenerate(e) {
+    e.preventDefault();
+    const form = document.getElementById('generate-form');
+    const btn = document.getElementById('generate-btn');
+    const checked = form.querySelectorAll('input[name="forms"]:checked');
+    if (checked.length === 0) { alert('Please select at least one form.'); return false; }
+
+    btn.disabled = true;
+    btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Generating ' + checked.length + ' form(s)...';
+
+    // Start timer
+    let elapsed = 0;
+    const est = checked.length * 5;
+    const timer = setInterval(() => {
+        elapsed++;
+        const rem = Math.max(0, est - elapsed);
+        btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Generating... ~' + (rem > 0 ? rem + 's' : 'almost done');
+    }, 1000);
+
+    // Submit via AJAX
+    const formData = new FormData(form);
+    fetch(form.action, { method: 'POST', body: formData, redirect: 'follow' })
+    .then(resp => {
+        clearInterval(timer);
+        if (resp.redirected || resp.ok) {
+            // Show completion modal
+            const overlay = document.createElement('div');
+            overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/50';
+            overlay.innerHTML = `
+                <div class="bg-white rounded-xl shadow-2xl p-6 max-w-sm mx-4 text-center">
+                    <div class="w-16 h-16 mx-auto mb-4 bg-green-100 rounded-full flex items-center justify-center">
+                        <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-bold text-gray-800 mb-2">Forms Generated!</h3>
+                    <p class="text-sm text-gray-600 mb-4">${checked.length} form(s) have been generated successfully in ${elapsed}s.</p>
+                    <p class="text-xs text-gray-400 mb-4">You can preview, edit, download, or submit for approval below.</p>
+                    <button onclick="this.closest('.fixed').remove(); location.reload();"
+                            class="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg hover:bg-green-700">
+                        OK
+                    </button>
+                </div>`;
+            document.body.appendChild(overlay);
+        } else {
+            alert('Generation may have failed. Please check and try again.');
+            location.reload();
+        }
+    })
+    .catch(err => {
+        clearInterval(timer);
+        alert('Error: ' + err.message);
+        btn.disabled = false;
+        btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg> Generate Selected Forms';
+    });
+    return false;
+}
+
 async function emailProbateForms() {
     const toEmail = document.getElementById('email-to').value.trim();
     const ccEmail = document.getElementById('email-cc').value.trim();
