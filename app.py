@@ -4199,12 +4199,12 @@ def probate_step6(probate_id):
     _others = [a for a in _assets if a.get('asset_type') == 'other']
     _investments = [a for a in _assets if a.get('asset_type') == 'investment']
     _liabs = [a for a in _assets if a.get('asset_type') == 'liability']
-    field_values['Properties (title, lot, mukim, address)'] = f'{len(_props)} properties' if _props else ''
-    field_values['Bank accounts (bank, account no., value)'] = f'{len(_banks)} accounts' if _banks else ''
-    field_values['Vehicles (desc, reg no., engine, chassis)'] = f'{len(_vehicles)} vehicles' if _vehicles else ''
-    field_values['Investment accounts (CDS, unit trust, etc.)'] = f'{len(_investments)} accounts' if _investments else ''
-    field_values['Other assets (description, value)'] = f'{len(_others)} items' if _others else ''
-    field_values['Liabilities (description, value)'] = f'{len(_liabs)} items' if _liabs else ''
+    field_values['Properties (title, lot, mukim, address)'] = f'{len(_props)} properties' if _props else 'N/A'
+    field_values['Bank accounts (bank, account no., value)'] = f'{len(_banks)} accounts' if _banks else 'N/A'
+    field_values['Vehicles (desc, reg no., engine, chassis)'] = f'{len(_vehicles)} vehicles' if _vehicles else 'N/A'
+    field_values['Investment accounts (CDS, unit trust, etc.)'] = f'{len(_investments)} accounts' if _investments else 'N/A'
+    field_values['Other assets (description, value)'] = f'{len(_others)} items' if _others else 'N/A'
+    field_values['Liabilities (description, value)'] = f'{len(_liabs)} items' if _liabs else 'N/A'
     # Prefer probate.beneficiaries_data (populated in step 4), fall back to will data
     _bens = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data and probate.beneficiaries_data != '[]' else (json.loads(will_record.step4_data or '[]') if will_record else [])
     field_values['Beneficiary names & NRIC'] = ', '.join(b.get('full_name', b.get('beneficiary_name', '')) for b in _bens[:5]) if _bens else ''
