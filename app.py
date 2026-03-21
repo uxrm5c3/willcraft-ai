@@ -4627,6 +4627,12 @@ def probate_form_html(probate_id, form_code):
   #toolbar .save-btn {{ background: #16a34a; color: white; }}
   #toolbar .save-btn:hover {{ background: #15803d; }}
   #toolbar .save-btn:disabled {{ background: #6b7280; cursor: not-allowed; }}
+  #toolbar .translate-btn {{ background: #2563eb; color: white; }}
+  #toolbar .translate-btn:hover {{ background: #1d4ed8; }}
+  #toolbar .translate-btn:disabled {{ background: #6b7280; cursor: not-allowed; }}
+  #toolbar .edit-toggle {{ background: #7c3aed; color: white; }}
+  #toolbar .edit-toggle:hover {{ background: #6d28d9; }}
+  #toolbar .edit-toggle.active {{ background: #f59e0b; }}
   #toolbar .status {{ font-size: 11px; color: #9ca3af; margin-left: 8px; }}
   #toolbar .title {{ font-size: 13px; font-weight: 600; }}
   /* Make content editable look nice */
@@ -4641,6 +4647,8 @@ def probate_form_html(probate_id, form_code):
   <span class="title">{gf.form_name or form_code}</span>
   <div style="display:flex;align-items:center;gap:8px;">
     <span id="status" class="status"></span>
+    <button class="translate-btn" id="translate-btn" onclick="translateToEnglish()" title="Translate Bahasa Melayu to English">Translate to English</button>
+    <button class="edit-toggle" id="edit-toggle" onclick="toggleEdit()" title="Toggle editing mode">Edit: ON</button>
     <button class="save-btn" id="save-btn" onclick="saveChanges()">Save</button>
   </div>
 </div>
@@ -4707,6 +4715,49 @@ async function saveChanges() {
   btn.textContent = 'Save';
 }
 
+// Toggle edit mode
+let _editMode = true;
+function toggleEdit() {
+  _editMode = !_editMode;
+  docEl.contentEditable = _editMode ? 'true' : 'false';
+  const btn = document.getElementById('edit-toggle');
+  btn.textContent = 'Edit: ' + (_editMode ? 'ON' : 'OFF');
+  btn.classList.toggle('active', _editMode);
+}
+
+// Translate to English using Claude API
+async function translateToEnglish() {
+  const btn = document.getElementById('translate-btn');
+  const status = document.getElementById('status');
+  btn.disabled = true;
+  btn.textContent = 'Translating...';
+  status.textContent = 'AI is translating...';
+  status.style.color = '#60a5fa';
+
+  try {
+    const res = await fetch('/probate/''' + probate_id + '''/translate-form/''' + form_code + '''', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ html: docEl.innerHTML })
+    });
+    const data = await res.json();
+    if (data.ok && data.translated_html) {
+      docEl.innerHTML = data.translated_html;
+      _dirty = true;
+      status.textContent = 'Translated! Review and Save.';
+      status.style.color = '#4ade80';
+    } else {
+      status.textContent = 'Translation failed: ' + (data.error || 'Unknown');
+      status.style.color = '#f87171';
+    }
+  } catch(e) {
+    status.textContent = 'Translation failed: ' + e.message;
+    status.style.color = '#f87171';
+  }
+  btn.disabled = false;
+  btn.textContent = 'Translate to English';
+}
+
 window.addEventListener('beforeunload', (e) => {
   if (_dirty) { e.preventDefault(); e.returnValue = ''; }
 });
@@ -4747,6 +4798,59 @@ def probate_form_html_save(probate_id, form_code):
     gf.generated_at = datetime.utcnow()
     db.session.commit()
     return jsonify(ok=True)
+
+
+@app.route('/probate/<probate_id>/translate-form/<form_code>', methods=['POST'])
+@login_required
+def probate_translate_form(probate_id, form_code):
+    """Translate form HTML from Bahasa Melayu to English using Claude API."""
+    data = request.get_json()
+    if not data or 'html' not in data:
+        return jsonify(ok=False, error='No HTML content'), 400
+
+    html_content = data['html']
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+        response = client.messages.create(
+            model=CLAUDE_MODEL_FAST,
+            max_tokens=8000,
+            messages=[{
+                "role": "user",
+                "content": f"""Translate this Malaysian legal court document from Bahasa Melayu to English.
+
+IMPORTANT RULES:
+1. Keep ALL HTML tags, attributes, and structure EXACTLY as-is — only translate the text content
+2. Keep ALL names, NRIC numbers, addresses, dates, case numbers, and form numbers unchanged
+3. Keep legal citations and section references unchanged (e.g., "Seksyen 12" → "Section 12")
+4. Use proper English legal terminology (e.g., "Pemohon" → "Applicant", "Si Mati" → "the Deceased")
+5. Keep "PEMOHON" as "APPLICANT", "Probet" as "Probate"
+6. Return ONLY the translated HTML, no explanations
+
+Common translations:
+- Dalam Mahkamah Tinggi Malaya → In the High Court of Malaya
+- Dalam Perkara Mengenai Harta Pusaka → In the Matter of the Estate of
+- Saman Pemula → Originating Summons
+- Afidavit → Affidavit
+- Senarai Benefisiari → List of Beneficiaries
+- Perintah → Order
+- Sumpah → Oath/Affirmation
+
+HTML to translate:
+{html_content}"""
+            }]
+        )
+        translated = response.content[0].text.strip()
+        # Remove markdown code fences if present
+        if translated.startswith('```'):
+            translated = translated.split('\n', 1)[1] if '\n' in translated else translated[3:]
+        if translated.endswith('```'):
+            translated = translated[:-3].rstrip()
+        return jsonify(ok=True, translated_html=translated)
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 500
 
 
 @app.route('/probate/<probate_id>/download/<form_code>')
