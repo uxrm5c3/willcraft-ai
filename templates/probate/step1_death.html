@@ -88,69 +88,7 @@
             </div>
         </div>
 
-        {% if is_la or no_will %}
-        <!-- LA / Manual Entry: Deceased details -->
-        <div class="mt-6 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-            <h3 class="text-sm font-semibold text-purple-800 mb-3">Deceased Person Details</h3>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
-                    <input type="text" name="deceased_name" value="{{ probate.deceased_name or '' }}" required
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC <span class="text-red-500">*</span></label>
-                    <input type="text" name="deceased_nric" value="{{ probate.deceased_nric or '' }}" required
-                           placeholder="YYMMDD-SS-NNNN"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                </div>
-                <div class="md:col-span-2">
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Last Known Address <span class="text-red-500">*</span></label>
-                    <textarea name="deceased_address" rows="2" required
-                              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">{{ probate.deceased_address or '' }}</textarea>
-                </div>
-            </div>
-        </div>
-
-        <!-- LA / Manual Entry: Applicant (Executor / Next-of-Kin) -->
-        <div class="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
-            <h3 class="text-sm font-semibold text-purple-800 mb-3">Applicant ({{ 'Next-of-Kin' if is_la else 'Executor' }})</h3>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
-                    <input type="text" name="applicant_name" value="{{ probate.applicant_name or '' }}" required
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC <span class="text-red-500">*</span></label>
-                    <input type="text" name="applicant_nric" value="{{ probate.applicant_nric or '' }}" required
-                           placeholder="YYMMDD-SS-NNNN"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Deceased <span class="text-red-500">*</span></label>
-                    <input type="text" name="applicant_relationship" value="{{ probate.applicant_relationship or '' }}" required
-                           placeholder="e.g., spouse, child, sibling"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
-                    <input type="text" name="applicant_address" value="{{ probate.applicant_address or '' }}"
-                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
-                </div>
-            </div>
-        </div>
-        {% else %}
-        <!-- Probate: Deceased info (from will, read-only) -->
-        <div class="mt-6 p-4 bg-gray-50 rounded-lg">
-            <h3 class="text-sm font-semibold text-gray-700 mb-2">Deceased Person (from Will)</h3>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                <div><span class="text-gray-500">Name:</span> <span class="font-medium">{{ testator.full_name }}</span></div>
-                <div><span class="text-gray-500">NRIC:</span> <span class="font-medium">{{ testator.nric_passport }}</span></div>
-                <div><span class="text-gray-500">Address:</span> <span class="font-medium">{{ testator.residential_address }}</span></div>
-            </div>
-        </div>
-        {% endif %}
+        <!-- Deceased/Executor details moved to Step 2 -->
 
         <div class="flex justify-end mt-6">
             <button type="submit" class="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
@@ -498,7 +436,7 @@ function buildWillConfirmFields(ext, docId) {
         });
     }
 
-    // Step 3: Witnesses (stored for later steps)
+    // Step 4: Witnesses (stored for later steps)
     if (ext.witnesses && ext.witnesses.length) {
         const wFields = [];
         ext.witnesses.forEach((w, i) => {
@@ -506,10 +444,10 @@ function buildWillConfirmFields(ext, docId) {
             if (w.nric_number) wFields.push({ label: `Witness ${i+1} NRIC`, value: w.nric_number, storeKey: `witness${i+1}_nric` });
             if (w.address) wFields.push({ label: `Witness ${i+1} Address`, value: w.address, storeKey: `witness${i+1}_address` });
         });
-        if (wFields.length) willConfirmFields.push({ category: 'Witnesses', icon: '3', fields: wFields, info: 'Will be saved for Step 3 (Witnesses)' });
+        if (wFields.length) willConfirmFields.push({ category: 'Witnesses', icon: '4', fields: wFields, info: 'Will be saved for Step 4 (Witnesses)' });
     }
 
-    // Step 4: Beneficiaries (stored for later steps)
+    // Step 5: Beneficiaries (stored for later steps)
     if (ext.beneficiaries && ext.beneficiaries.length) {
         const bFields = [];
         ext.beneficiaries.forEach((b, i) => {
@@ -519,15 +457,15 @@ function buildWillConfirmFields(ext, docId) {
             if (b.relationship) bFields.push({ label: `Beneficiary ${n} Relationship`, value: b.relationship, storeKey: `beneficiary_${i}_relationship` });
             if (b.address) bFields.push({ label: `Beneficiary ${n} Address`, value: b.address, storeKey: `beneficiary_${i}_address` });
         });
-        if (bFields.length) willConfirmFields.push({ category: 'Beneficiaries', icon: '4', fields: bFields, info: 'Will be saved for Step 4 (Beneficiaries)' });
+        if (bFields.length) willConfirmFields.push({ category: 'Beneficiaries', icon: '5', fields: bFields, info: 'Will be saved for Step 5 (Beneficiaries)' });
     }
 
-    // Step 5: Assets
+    // Step 6: Assets
     if (ext.assets && ext.assets.length) {
         const aFields = ext.assets.map((a, i) => ({
             label: `Asset ${i+1}`, value: a.description || a.type || JSON.stringify(a), storeKey: `asset_${i}`
         }));
-        willConfirmFields.push({ category: 'Assets', icon: '5', fields: aFields, info: 'Will be saved for Step 5 (Assets)' });
+        willConfirmFields.push({ category: 'Assets', icon: '6', fields: aFields, info: 'Will be saved for Step 6 (Assets)' });
     }
 
     if (ext.will_date) {

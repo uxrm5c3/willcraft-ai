@@ -89,12 +89,12 @@
                 <a href="/probate/{{ app.id }}/download-all" class="px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 no-underline" title="Download all generated forms as ZIP">
                     Download All
                 </a>
-                <a href="/probate/{{ app.id }}/step/6" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 no-underline" title="View and download individual forms">
+                <a href="/probate/{{ app.id }}/step/7" class="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 no-underline" title="View and download individual forms">
                     View Forms
                 </a>
                 {% endif %}
                 {% if app.status == 'pending_approval' and perms.get('canApprove') %}
-                <a href="/probate/{{ app.id }}/step/6" class="px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 no-underline" title="Review and approve/reject">
+                <a href="/probate/{{ app.id }}/step/7" class="px-3 py-1.5 bg-purple-600 text-white text-xs font-medium rounded-lg hover:bg-purple-700 no-underline" title="Review and approve/reject">
                     Review
                 </a>
                 {% endif %}

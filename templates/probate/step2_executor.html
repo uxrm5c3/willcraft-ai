@@ -1,0 +1,89 @@
+{% extends "probate/layout.html" %}
+
+{% block step_content %}
+<div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+    <h2 class="text-lg font-bold text-gray-800 mb-1">Step 2: Deceased & Executor Details</h2>
+    <p class="text-sm text-gray-500 mb-6">Enter the deceased person and executor/applicant information.</p>
+
+    {% if probate.will_id and not no_will %}
+    <div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+        <p class="text-xs text-blue-700"><strong>Linked to Will:</strong> {{ will_title }}. Fields have been auto-populated from the will. You can edit any field below.</p>
+    </div>
+    {% endif %}
+
+    <form method="POST" action="/probate/{{ probate_id }}/step/2">
+        <!-- Deceased Person -->
+        <div class="mb-6">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                Deceased Person (Si Mati)
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
+                    <input type="text" name="deceased_name" value="{{ probate.deceased_name or '' }}" required
+                           placeholder="As per NRIC"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.deceased_name %}field-missing{% endif %}">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport <span class="text-red-500">*</span></label>
+                    <input type="text" name="deceased_nric" value="{{ probate.deceased_nric or '' }}" required
+                           placeholder="YYMMDD-SS-NNNN"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.deceased_nric %}field-missing{% endif %}">
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Last Known Address <span class="text-red-500">*</span></label>
+                    <textarea name="deceased_address" rows="2" required
+                              placeholder="Full last known residential address"
+                              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.deceased_address %}field-missing{% endif %}">{{ probate.deceased_address or '' }}</textarea>
+                </div>
+            </div>
+        </div>
+
+        <!-- Executor / Applicant -->
+        <div class="mb-6">
+            <h3 class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                {{ 'Applicant (Next-of-Kin)' if is_la else 'Executor / Applicant' }}
+            </h3>
+            <p class="text-xs text-gray-500 mb-3">The person applying to administer the estate.</p>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Full Name <span class="text-red-500">*</span></label>
+                    <input type="text" name="applicant_name" value="{{ probate.applicant_name or '' }}" required
+                           placeholder="As per NRIC"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.applicant_name %}field-missing{% endif %}">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport <span class="text-red-500">*</span></label>
+                    <input type="text" name="applicant_nric" value="{{ probate.applicant_nric or '' }}" required
+                           placeholder="YYMMDD-SS-NNNN"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.applicant_nric %}field-missing{% endif %}">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Relationship to Deceased <span class="text-red-500">*</span></label>
+                    <input type="text" name="applicant_relationship" value="{{ probate.applicant_relationship or '' }}" required
+                           placeholder="e.g., spouse, child, sibling"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.applicant_relationship %}field-missing{% endif %}">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Address <span class="text-red-500">*</span></label>
+                    <input type="text" name="applicant_address" value="{{ probate.applicant_address or '' }}" required
+                           placeholder="Current residential address"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 {% if not probate.applicant_address %}field-missing{% endif %}">
+                </div>
+            </div>
+        </div>
+
+        <div class="flex justify-between mt-6">
+            <a href="/probate/{{ probate_id }}/step/1" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
+            <button type="submit" class="px-6 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">
+                Save & Next
+            </button>
+        </div>
+    </form>
+</div>
+<style>
+    .field-missing { border-color: #ef4444 !important; background-color: #fef2f2 !important; }
+</style>
+{% endblock %}

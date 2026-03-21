@@ -7,11 +7,11 @@
     <div class="lg:hidden mb-4">
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-3">
             <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-gray-500 uppercase">Step {{ probate_step }} of 6</span>
+                <span class="text-xs font-semibold text-gray-500 uppercase">Step {{ probate_step }} of 7</span>
                 <a href="/probate" class="text-xs text-gray-500 hover:text-primary-600">Back to List</a>
             </div>
             <div class="w-full bg-gray-200 rounded-full h-2">
-                <div class="bg-primary-600 h-2 rounded-full transition-all" style="width: {{ (probate_step / 6 * 100) | int }}%"></div>
+                <div class="bg-primary-600 h-2 rounded-full transition-all" style="width: {{ (probate_step / 7 * 100) | int }}%"></div>
             </div>
         </div>
     </div>
@@ -28,11 +28,12 @@
                 <nav class="space-y-1">
                     {% set steps = [
                         (1, "Death Certificate", "Upload & verify death details"),
-                        (2, "Court & Law Firm", "Court location, lawyer info"),
-                        (3, "Witnesses", "Will signing witnesses"),
-                        (4, "Beneficiaries", "List all beneficiaries"),
-                        (5, "Assets & Liabilities", "Schedule of estate assets"),
-                        (6, "Review & Generate", "Select forms and download")
+                        (2, "Deceased & Executor", "Deceased person & executor info"),
+                        (3, "Court & Law Firm", "Court location, lawyer info"),
+                        (4, "Witnesses", "Will signing witnesses"),
+                        (5, "Beneficiaries", "List all beneficiaries"),
+                        (6, "Assets & Liabilities", "Schedule of estate assets"),
+                        (7, "Review & Generate", "Select forms and download")
                     ] %}
                     {% set done = completed_steps if completed_steps is defined else [] %}
                     {% for num, name, desc in steps %}

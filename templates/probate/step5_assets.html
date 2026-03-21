@@ -2,10 +2,10 @@
 
 {% block step_content %}
 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-    <h2 class="text-lg font-bold text-gray-800 mb-1">Step 5: Schedule of Assets & Liabilities</h2>
+    <h2 class="text-lg font-bold text-gray-800 mb-1">Step 6: Schedule of Assets & Liabilities</h2>
     <p class="text-sm text-gray-500 mb-6">List all assets and liabilities of the deceased. Scan documents to auto-fill details. This will auto-fill the Assets & Liabilities Schedule (Exhibit {{ exhibit_prefix }}-2).</p>
 
-    <form method="POST" action="/probate/{{ probate_id }}/step/5" id="assets-form">
+    <form method="POST" action="/probate/{{ probate_id }}/step/6" id="assets-form">
         <input type="hidden" name="assets_json" id="assets-json-input">
 
         <!-- Properties -->
@@ -81,7 +81,7 @@
 
 <!-- Sticky Save & Next bar -->
 <div class="sticky bottom-0 bg-white border-t border-gray-200 shadow-[0_-2px_8px_rgba(0,0,0,0.06)] px-6 py-3 -mx-4 sm:-mx-6 mt-4 flex justify-between items-center z-10">
-    <a href="/probate/{{ probate_id }}/step/4" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
+    <a href="/probate/{{ probate_id }}/step/5" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
     <div class="flex items-center gap-2">
         <span id="save-status" class="text-xs text-gray-400"></span>
         <button type="button" onclick="saveAssets()" class="px-5 py-2 bg-gray-600 text-white text-sm font-semibold rounded-lg hover:bg-gray-700">
@@ -642,7 +642,7 @@ async function saveAssets() {
     try {
         const formData = new FormData();
         formData.append('assets_json', JSON.stringify(assets));
-        const resp = await fetch('/probate/{{ probate_id }}/step/5', { method: 'POST', body: formData, headers: { 'X-Save-Only': '1' } });
+        const resp = await fetch('/probate/{{ probate_id }}/step/6', { method: 'POST', body: formData, headers: { 'X-Save-Only': '1' } });
         if (resp.redirected || resp.ok) {
             statusEl.textContent = '✓ Saved';
             statusEl.className = 'text-xs text-green-600 font-medium';

@@ -3685,13 +3685,13 @@ def _validate_probate_data(probate, will_record, recommendations):
 
     # Fields used by all/most forms
     common_fields = []
-    if not has_deceased_name: common_fields.append('Deceased Name (Step 1)')
-    if not has_deceased_nric: common_fields.append('Deceased NRIC (Step 1)')
-    if not has_applicant_name: common_fields.append('Applicant Name (Step 1)')
-    if not has_applicant_nric: common_fields.append('Applicant NRIC (Step 1)')
-    if not has_court: common_fields.append('Court Location (Step 2)')
-    if not has_court_state: common_fields.append('Court State (Step 2)')
-    if not has_firm_ref: common_fields.append('File Reference (Step 2)')
+    if not has_deceased_name: common_fields.append('Deceased Name (Step 2)')
+    if not has_deceased_nric: common_fields.append('Deceased NRIC (Step 2)')
+    if not has_applicant_name: common_fields.append('Applicant Name (Step 2)')
+    if not has_applicant_nric: common_fields.append('Applicant NRIC (Step 2)')
+    if not has_court: common_fields.append('Court Location (Step 3)')
+    if not has_court_state: common_fields.append('Court State (Step 3)')
+    if not has_firm_ref: common_fields.append('File Reference (Step 3)')
 
     for code in rec_codes:
         missing = list(common_fields)  # start with common missing fields
@@ -3705,50 +3705,50 @@ def _validate_probate_data(probate, will_record, recommendations):
 
         # Firm details
         if code in ('doc01', 'doc08', 'form14a', 'form346'):
-            if not has_firm_name: missing.append('Firm Name (Step 2)')
-            if not has_firm_addr: missing.append('Firm Address (Step 2)')
+            if not has_firm_name: missing.append('Firm Name (Step 3)')
+            if not has_firm_addr: missing.append('Firm Address (Step 3)')
 
         # Lawyer details
         if code in ('form14a', 'form346'):
-            if not has_lawyer: missing.append('Lawyer Name (Step 2)')
-            if not has_bar: missing.append('Bar Council Number (Step 2)')
+            if not has_lawyer: missing.append('Lawyer Name (Step 3)')
+            if not has_bar: missing.append('Bar Council Number (Step 3)')
 
         # Applicant details
         if code in ('doc01', 'doc02', 'doc03', 'form346'):
-            if not has_applicant_addr: missing.append('Applicant Address (Step 1)')
-            if not has_applicant_rel: missing.append('Applicant Relationship (Step 1)')
+            if not has_applicant_addr: missing.append('Applicant Address (Step 2)')
+            if not has_applicant_rel: missing.append('Applicant Relationship (Step 2)')
 
         # Deceased address
         if code in ('doc01', 'doc02'):
-            if not has_deceased_addr: missing.append('Deceased Address (Step 1)')
+            if not has_deceased_addr: missing.append('Deceased Address (Step 2)')
 
         # Witnesses
         if code == 'doc04':
-            if not probate.witness1_name: missing.append('Witness 1 Name (Step 3)')
-            if not probate.witness1_nric: missing.append('Witness 1 NRIC (Step 3)')
-            if not probate.witness1_address: missing.append('Witness 1 Address (Step 3)')
+            if not probate.witness1_name: missing.append('Witness 1 Name (Step 4)')
+            if not probate.witness1_nric: missing.append('Witness 1 NRIC (Step 4)')
+            if not probate.witness1_address: missing.append('Witness 1 Address (Step 4)')
         if code == 'doc05':
-            if not probate.witness2_name: missing.append('Witness 2 Name (Step 3)')
-            if not probate.witness2_nric: missing.append('Witness 2 NRIC (Step 3)')
-            if not probate.witness2_address: missing.append('Witness 2 Address (Step 3)')
+            if not probate.witness2_name: missing.append('Witness 2 Name (Step 4)')
+            if not probate.witness2_nric: missing.append('Witness 2 NRIC (Step 4)')
+            if not probate.witness2_address: missing.append('Witness 2 Address (Step 4)')
 
         # Property details
         if code in ('form14a', 'form346'):
             if props:
                 p0 = props[0]
-                if not p0.get('title_number'): missing.append('Property Title Number (Step 5)')
-                if not p0.get('lot_number'): missing.append('Property Lot Number (Step 5)')
-                if not p0.get('mukim'): missing.append('Property Mukim (Step 5)')
+                if not p0.get('title_number'): missing.append('Property Title Number (Step 6)')
+                if not p0.get('lot_number'): missing.append('Property Lot Number (Step 6)')
+                if not p0.get('mukim'): missing.append('Property Mukim (Step 6)')
             else:
-                missing.append('No properties entered (Step 5)')
+                missing.append('No properties entered (Step 6)')
 
         # Beneficiaries
         if code == 'doc07':
-            if not bens: missing.append('No beneficiaries entered (Step 4)')
+            if not bens: missing.append('No beneficiaries entered (Step 5)')
 
         # Assets schedule
         if code == 'doc06':
-            if not assets: missing.append('No assets entered (Step 5)')
+            if not assets: missing.append('No assets entered (Step 6)')
 
         if missing:
             warnings[code] = missing
@@ -3805,17 +3805,20 @@ def _get_probate_context(probate_id):
             client_name = probate.applicant_name or ''
 
     # Determine which steps are complete (green tick) — require ALL essential fields
-    # Step 1: Death details + deceased/applicant info
+    # Step 1: Death details only
     step1_ok = all([
+        probate.date_of_death,
+        probate.place_of_death,
+    ])
+    # Step 2: Deceased & Executor details
+    step2_ok = all([
         probate.deceased_name,
         probate.deceased_nric,
         probate.applicant_name,
         probate.applicant_nric,
-        probate.date_of_death,
-        probate.place_of_death,
     ])
-    # Step 2: Court & Firm — case_number and firm_reference are OPTIONAL (assigned later)
-    step2_ok = all([
+    # Step 3: Court & Firm — case_number and firm_reference are OPTIONAL (assigned later)
+    step3_ok = all([
         probate.court_location,
         probate.court_state,
         probate.firm_name,
@@ -3823,20 +3826,20 @@ def _get_probate_context(probate_id):
         probate.lawyer_name,
         probate.lawyer_bar_number,
     ])
-    # Step 3: At least one witness with name, NRIC, address
-    step3_ok = all([
+    # Step 4: At least one witness with name, NRIC, address
+    step4_ok = all([
         probate.witness1_name,
         probate.witness1_nric,
         probate.witness1_address,
     ])
-    # Step 4: At least one beneficiary
+    # Step 5: At least one beneficiary
     _bens_data = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data else []
-    step4_ok = len(_bens_data) > 0 and all(
+    step5_ok = len(_bens_data) > 0 and all(
         b.get('full_name') or b.get('beneficiary_name') for b in _bens_data
     )
-    # Step 5: At least one asset entered
+    # Step 6: At least one asset entered
     _assets_data = json.loads(probate.assets_data or '[]') if probate.assets_data else []
-    step5_ok = len(_assets_data) > 0
+    step6_ok = len(_assets_data) > 0
 
     # Build completed steps set (non-sequential — each step independent)
     completed_steps = set()
@@ -3845,10 +3848,11 @@ def _get_probate_context(probate_id):
     if step3_ok: completed_steps.add(3)
     if step4_ok: completed_steps.add(4)
     if step5_ok: completed_steps.add(5)
+    if step6_ok: completed_steps.add(6)
     if probate.status in ('generated', 'pending_approval', 'approved', 'rejected'):
-        completed_steps.add(6)
+        completed_steps.add(7)
 
-    all_steps_complete = all(s in completed_steps for s in range(1, 6))  # Steps 1-5 all done
+    all_steps_complete = all(s in completed_steps for s in range(1, 7))  # Steps 1-6 all done
 
     no_will = not is_la and not will_record  # Manual will upload (probate without linked will)
 
@@ -4048,15 +4052,7 @@ def probate_step1(probate_id):
         doc_id = request.form.get('death_cert_document_id', '').strip()
         if doc_id:
             probate.death_cert_document_id = doc_id
-        # LA or no-will probate: save deceased/applicant fields
-        if probate.application_type == 'la' or not probate.will_id:
-            probate.deceased_name = request.form.get('deceased_name', '').strip()
-            probate.deceased_nric = request.form.get('deceased_nric', '').strip()
-            probate.deceased_address = request.form.get('deceased_address', '').strip()
-            probate.applicant_name = request.form.get('applicant_name', '').strip()
-            probate.applicant_nric = request.form.get('applicant_nric', '').strip()
-            probate.applicant_address = request.form.get('applicant_address', '').strip()
-            probate.applicant_relationship = request.form.get('applicant_relationship', '').strip()
+        # Deceased/applicant fields moved to step 2
         # Will document upload (for LA with external will)
         will_doc_id = request.form.get('will_document_id', '').strip()
         if will_doc_id:
@@ -4122,6 +4118,32 @@ def probate_step1(probate_id):
 @app.route('/probate/<probate_id>/step/2', methods=['GET', 'POST'])
 @login_required
 def probate_step2(probate_id):
+    """Step 2: Deceased & Executor details."""
+    probate, will_record, ctx = _get_probate_context(probate_id)
+    if not probate:
+        flash('Probate application not found.', 'error')
+        return redirect(url_for('probate_list'))
+
+    if request.method == 'POST':
+        probate.deceased_name = request.form.get('deceased_name', '').strip()
+        probate.deceased_nric = request.form.get('deceased_nric', '').strip()
+        probate.deceased_address = request.form.get('deceased_address', '').strip()
+        probate.applicant_name = request.form.get('applicant_name', '').strip()
+        probate.applicant_nric = request.form.get('applicant_nric', '').strip()
+        probate.applicant_address = request.form.get('applicant_address', '').strip()
+        probate.applicant_relationship = request.form.get('applicant_relationship', '').strip()
+        probate.updated_at = datetime.utcnow()
+        db.session.commit()
+        return redirect(f'/probate/{probate_id}/step/3')
+
+    ctx['probate_step'] = 2
+    return render_template('probate/step2_executor.html', **ctx)
+
+
+@app.route('/probate/<probate_id>/step/3', methods=['GET', 'POST'])
+@login_required
+def probate_step3(probate_id):
+    """Step 3: Court & Law Firm details."""
     probate, will_record, ctx = _get_probate_context(probate_id)
     if not probate:
         flash('Probate application not found.', 'error')
@@ -4142,18 +4164,19 @@ def probate_step2(probate_id):
         probate.lawyer_bar_number = request.form.get('lawyer_bar_number', '').strip()
         probate.updated_at = datetime.utcnow()
         db.session.commit()
-        return redirect(f'/probate/{probate_id}/step/3')
+        return redirect(f'/probate/{probate_id}/step/4')
 
-    ctx['probate_step'] = 2
+    ctx['probate_step'] = 3
     ctx['courts'] = MALAYSIAN_COURTS
     ctx['states'] = MALAYSIAN_STATES
     ctx['current_year'] = str(datetime.now().year)
     return render_template('probate/step2_court.html', **ctx)
 
 
-@app.route('/probate/<probate_id>/step/3', methods=['GET', 'POST'])
+@app.route('/probate/<probate_id>/step/4', methods=['GET', 'POST'])
 @login_required
-def probate_step3(probate_id):
+def probate_step4(probate_id):
+    """Step 4: Witnesses."""
     probate, will_record, ctx = _get_probate_context(probate_id)
     if not probate:
         flash('Probate application not found.', 'error')
@@ -4168,16 +4191,16 @@ def probate_step3(probate_id):
         probate.witness2_address = request.form.get('witness2_address', '').strip()
         probate.updated_at = datetime.utcnow()
         db.session.commit()
-        return redirect(f'/probate/{probate_id}/step/4')
+        return redirect(f'/probate/{probate_id}/step/5')
 
-    ctx['probate_step'] = 3
+    ctx['probate_step'] = 4
     return render_template('probate/step3_witnesses.html', **ctx)
 
 
-@app.route('/probate/<probate_id>/step/4', methods=['GET', 'POST'])
+@app.route('/probate/<probate_id>/step/5', methods=['GET', 'POST'])
 @login_required
-def probate_step4(probate_id):
-    """Step 4: Beneficiaries list."""
+def probate_step5(probate_id):
+    """Step 5: Beneficiaries list."""
     probate, will_record, ctx = _get_probate_context(probate_id)
     if not probate:
         flash('Probate application not found.', 'error')
@@ -4194,7 +4217,7 @@ def probate_step4(probate_id):
         db.session.commit()
         if request.headers.get('X-Save-Only'):
             return jsonify(ok=True)
-        return redirect(f'/probate/{probate_id}/step/5')
+        return redirect(f'/probate/{probate_id}/step/6')
 
     # Pre-populate from will data if beneficiaries_data is empty
     existing_bens = json.loads(probate.beneficiaries_data or '[]')
@@ -4218,15 +4241,15 @@ def probate_step4(probate_id):
                 'address': addr,
             })
 
-    ctx['probate_step'] = 4
+    ctx['probate_step'] = 5
     ctx['beneficiaries_json'] = json.dumps(existing_bens)
     return render_template('probate/step4_beneficiaries.html', **ctx)
 
 
-@app.route('/probate/<probate_id>/step/5', methods=['GET', 'POST'])
+@app.route('/probate/<probate_id>/step/6', methods=['GET', 'POST'])
 @login_required
-def probate_step5(probate_id):
-    """Step 5: Assets & Liabilities schedule."""
+def probate_step6(probate_id):
+    """Step 6: Assets & Liabilities schedule."""
     probate, will_record, ctx = _get_probate_context(probate_id)
     if not probate:
         flash('Probate application not found.', 'error')
@@ -4243,7 +4266,7 @@ def probate_step5(probate_id):
         db.session.commit()
         if request.headers.get('X-Save-Only'):
             return jsonify(ok=True)
-        return redirect(f'/probate/{probate_id}/step/6')
+        return redirect(f'/probate/{probate_id}/step/7')
 
     # Pre-populate from will gifts if assets_data is empty and will exists
     existing_assets = json.loads(probate.assets_data or '[]')
@@ -4274,15 +4297,15 @@ def probate_step5(probate_id):
     exec_name = exec_data.full_name if exec_data and hasattr(exec_data, 'full_name') else ''
     exhibit_prefix = ''.join(w[0] for w in exec_name.split() if w) if exec_name else 'APP'
 
-    ctx['probate_step'] = 5
+    ctx['probate_step'] = 6
     ctx['assets_json'] = json.dumps(existing_assets)
     ctx['exhibit_prefix'] = exhibit_prefix
     return render_template('probate/step5_assets.html', **ctx)
 
 
-@app.route('/probate/<probate_id>/step/6', methods=['GET'])
+@app.route('/probate/<probate_id>/step/7', methods=['GET'])
 @login_required
-def probate_step6(probate_id):
+def probate_step7(probate_id):
     probate, will_record, ctx = _get_probate_context(probate_id)
     if not probate:
         flash('Probate application not found.', 'error')
@@ -4570,7 +4593,7 @@ def probate_step6(probate_id):
          'checked': manual_checks.get('property_titles', prop_ok)},
     ]
 
-    ctx['probate_step'] = 6
+    ctx['probate_step'] = 7
     ctx['recommendations'] = recommendations
     ctx['generated_forms'] = gen_list
     ctx['exhibit_prefix'] = exhibit_prefix
@@ -4593,13 +4616,13 @@ def probate_generate(probate_id):
     # Block generation if steps are incomplete (approver/admin can override)
     role = session.get('user_role')
     if not ctx.get('all_steps_complete') and role not in ('admin', 'approver'):
-        flash('Please complete all steps (1-5) before generating forms.', 'error')
-        return redirect(f'/probate/{probate_id}/step/6')
+        flash('Please complete all steps (1-6) before generating forms.', 'error')
+        return redirect(f'/probate/{probate_id}/step/7')
 
     selected_codes = request.form.getlist('forms')
     if not selected_codes:
         flash('Please select at least one form to generate.', 'error')
-        return redirect(f'/probate/{probate_id}/step/6')
+        return redirect(f'/probate/{probate_id}/step/7')
 
     # Build template paths map
     templates = ProbateFormTemplate.query.all()
@@ -4638,7 +4661,7 @@ def probate_generate(probate_id):
     db.session.commit()
 
     flash(f'Successfully generated {len(results)} probate form(s).', 'success')
-    return redirect(f'/probate/{probate_id}/step/6')
+    return redirect(f'/probate/{probate_id}/step/7')
 
 
 @app.route('/probate/<probate_id>/submit-approval', methods=['POST'])
@@ -4651,14 +4674,14 @@ def probate_submit_approval(probate_id):
         return redirect(url_for('probate_list'))
     if probate.status not in ('generated', 'rejected'):
         flash('Forms must be generated before submitting for approval.', 'error')
-        return redirect(f'/probate/{probate_id}/step/6')
+        return redirect(f'/probate/{probate_id}/step/7')
     probate.status = 'pending_approval'
     probate.submitted_by = session.get('user_id')
     probate.submitted_at = datetime.utcnow()
     probate.approval_notes = None  # Clear previous rejection notes
     db.session.commit()
     flash('Forms submitted for approval.', 'success')
-    return redirect(f'/probate/{probate_id}/step/6')
+    return redirect(f'/probate/{probate_id}/step/7')
 
 
 @app.route('/probate/<probate_id>/approve', methods=['POST'])
@@ -4680,7 +4703,7 @@ def probate_approve(probate_id):
     probate.approval_notes = notes or None
     db.session.commit()
     flash(f'Probate forms for {probate.deceased_name or "estate"} approved.', 'success')
-    return redirect(f'/probate/{probate_id}/step/6')
+    return redirect(f'/probate/{probate_id}/step/7')
 
 
 @app.route('/probate/<probate_id>/reject', methods=['POST'])
@@ -4702,7 +4725,7 @@ def probate_reject(probate_id):
     probate.approval_notes = notes or 'Changes requested'
     db.session.commit()
     flash(f'Changes requested for {probate.deceased_name or "estate"}.', 'info')
-    return redirect(f'/probate/{probate_id}/step/6')
+    return redirect(f'/probate/{probate_id}/step/7')
 
 
 @app.route('/probate/<probate_id>/preview/<form_code>')
@@ -4712,7 +4735,7 @@ def probate_preview(probate_id, form_code):
     gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
     if not gf or not os.path.exists(gf.file_path):
         flash('Form not found.', 'error')
-        return redirect(f'/probate/{probate_id}/step/6')
+        return redirect(f'/probate/{probate_id}/step/7')
     from documents.probate_generator import convert_to_pdf
     import shutil
     tmp_dir = tempfile.mkdtemp()
@@ -4727,7 +4750,7 @@ def probate_preview(probate_id, form_code):
         resp.headers['Expires'] = '0'
         return resp
     flash('PDF conversion failed.', 'error')
-    return redirect(f'/probate/{probate_id}/step/6')
+    return redirect(f'/probate/{probate_id}/step/7')
 
 
 @app.route('/probate/<probate_id>/form-html/<form_code>')
@@ -5047,7 +5070,7 @@ def probate_download(probate_id, form_code):
     gf = ProbateGeneratedForm.query.filter_by(probate_id=probate_id, form_code=form_code).first()
     if not gf or not os.path.exists(gf.file_path):
         flash('Form not found.', 'error')
-        return redirect(f'/probate/{probate_id}/step/6')
+        return redirect(f'/probate/{probate_id}/step/7')
 
     # Use proper form name for download filename
     safe_name = (gf.form_name or form_code).replace(' ', '_').replace('/', '_')
@@ -5088,7 +5111,7 @@ def probate_download_all(probate_id):
     forms = ProbateGeneratedForm.query.filter_by(probate_id=probate_id).all()
     if not forms:
         flash('No generated forms found.', 'error')
-        return redirect(f'/probate/{probate_id}/step/6')
+        return redirect(f'/probate/{probate_id}/step/7')
 
     from documents.probate_generator import create_zip
     zip_path = os.path.join(tempfile.gettempdir(), f'probate_{probate_id[:8]}.zip')
