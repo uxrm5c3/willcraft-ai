@@ -90,7 +90,8 @@ FORM_FIELDS = {
             ('Deceased name & NRIC', 'Will — Testator'),
             ('Beneficiary names & NRIC', 'Step 4 — Beneficiaries'),
             ('Beneficiary relationships', 'Step 4 — Beneficiaries'),
-            ('Court location & case number', 'Step 2 — Court Info'),
+            ('Court location', 'Step 2 — Court Info'),
+            ('Case number', 'Step 2 — Court Info'),
         ],
     },
     'doc08': {
@@ -98,7 +99,8 @@ FORM_FIELDS = {
         'fields': [
             ('Deceased name', 'Will — Testator'),
             ('Applicant (Executor) name & NRIC', 'Will — Executor'),
-            ('Court location & case number', 'Step 2 — Court Info'),
+            ('Court location', 'Step 2 — Court Info'),
+            ('Case number', 'Step 2 — Court Info'),
             ('Firm name & address', 'Step 2 — Law Firm'),
             ('Firm phone & fax', 'Step 2 — Law Firm'),
             ('Firm reference', 'Step 2 — Law Firm'),
@@ -112,7 +114,8 @@ FORM_FIELDS = {
             ('Property mukim', 'Step 5 — Assets (Property)'),
             ('Deceased name & NRIC', 'Will — Testator'),
             ('Applicant name & NRIC', 'Will — Executor'),
-            ('Court location & case number', 'Step 2 — Court Info'),
+            ('Court location', 'Step 2 — Court Info'),
+            ('Case number', 'Step 2 — Court Info'),
         ],
     },
     'form346': {
@@ -122,7 +125,8 @@ FORM_FIELDS = {
             ('Property lot number', 'Step 5 — Assets (Property)'),
             ('Deceased name & NRIC', 'Will — Testator'),
             ('Applicant name & NRIC', 'Will — Executor'),
-            ('Court case number', 'Step 2 — Court Info'),
+            ('Court location', 'Step 2 — Court Info'),
+            ('Case number', 'Step 2 — Court Info'),
         ],
     },
 }

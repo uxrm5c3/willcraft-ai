@@ -415,7 +415,9 @@
     <div class="mt-6 p-4 bg-green-50 border border-green-200 rounded-lg">
         <div class="flex items-center justify-between mb-3">
             <h3 class="text-sm font-semibold text-green-800">Generated Forms ({{ generated_forms|length }})</h3>
-            <span class="text-xs text-green-600">Click Preview to view, or download as DOCX/PDF</span>
+            <span class="text-xs text-green-600">
+                Generated on {{ generated_forms[0].generated_at.strftime('%d %b %Y, %I:%M %p') if generated_forms[0].generated_at else '' }}
+            </span>
         </div>
         <div class="space-y-2">
             {% for gf in generated_forms %}
