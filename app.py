@@ -3559,35 +3559,115 @@ MALAYSIAN_STATES = [
 ]
 
 
+def _sync_probate_from_will(probate, will_record):
+    """Copy testator/executor data from linked will into probate fields if empty.
+    Makes probate the single source of truth for all downstream validation/generation.
+    Returns (changed: bool, errors: list[str]) — errors explain why fields couldn't be synced."""
+    errors = []
+    if not will_record:
+        errors.append('No linked will record found')
+        return False, errors
+    changed = False
+
+    # Extract testator from will step1_data
+    step1 = json.loads(will_record.step1_data or '{}')
+    testator = step1 if step1 else {}
+    if not testator:
+        errors.append(f'Will ({will_record.id}) has no testator data (step1_data is empty)')
+
+    # Extract executor from will — try step3_data first (executors), then step2_data
+    executor = {}
+    step3 = json.loads(will_record.step3_data or '[]')
+    if step3:
+        executor = step3[0] if isinstance(step3, list) else step3
+    if not executor:
+        step2 = json.loads(will_record.step2_data or '{}')
+        executors = step2.get('executors', []) if isinstance(step2, dict) else step2
+        executor = executors[0] if executors else {}
+    if not executor:
+        errors.append(f'Will ({will_record.id}) has no executor data (step2_data and step3_data are empty)')
+
+    # Resolve person details from identity registry
+    identities = json.loads(will_record.identities_data or '[]')
+    id_lookup = {p.get('id', ''): p for p in identities} if identities else {}
+
+    if executor.get('person_id'):
+        if executor['person_id'] in id_lookup:
+            person = id_lookup[executor['person_id']]
+            executor = {**executor, **person}
+        else:
+            errors.append(f'Executor person_id "{executor["person_id"]}" not found in will identities ({len(identities)} identities)')
+
+    if testator.get('person_id'):
+        if testator['person_id'] in id_lookup:
+            person = id_lookup[testator['person_id']]
+            testator = {**testator, **person}
+        else:
+            errors.append(f'Testator person_id "{testator["person_id"]}" not found in will identities ({len(identities)} identities)')
+
+    # Sync deceased fields from testator
+    if not probate.deceased_name and testator.get('full_name'):
+        probate.deceased_name = testator['full_name']
+        changed = True
+    elif not probate.deceased_name and not testator.get('full_name'):
+        errors.append('Cannot sync deceased name: will testator has no full_name')
+
+    if not probate.deceased_nric and testator.get('nric_passport'):
+        probate.deceased_nric = testator['nric_passport']
+        changed = True
+    elif not probate.deceased_nric and not testator.get('nric_passport'):
+        errors.append('Cannot sync deceased NRIC: will testator has no nric_passport')
+
+    if not probate.deceased_address and (testator.get('residential_address') or testator.get('address')):
+        probate.deceased_address = testator.get('residential_address') or testator.get('address')
+        changed = True
+
+    # Sync applicant fields from executor
+    if not probate.applicant_name and executor.get('full_name'):
+        probate.applicant_name = executor['full_name']
+        changed = True
+    elif not probate.applicant_name and not executor.get('full_name'):
+        errors.append('Cannot sync applicant name: will executor has no full_name')
+
+    if not probate.applicant_nric and executor.get('nric_passport'):
+        probate.applicant_nric = executor['nric_passport']
+        changed = True
+    elif not probate.applicant_nric and not executor.get('nric_passport'):
+        errors.append('Cannot sync applicant NRIC: will executor has no nric_passport')
+
+    if not probate.applicant_address and executor.get('address'):
+        probate.applicant_address = executor['address']
+        changed = True
+    if not probate.applicant_relationship and executor.get('relationship'):
+        probate.applicant_relationship = executor['relationship']
+        changed = True
+
+    if changed:
+        db.session.commit()
+
+    # Log errors for debugging
+    if errors:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f'Probate {probate.id} sync from will {will_record.id}: {"; ".join(errors)}')
+
+    return changed, errors
+
+
 def _validate_probate_data(probate, will_record, recommendations):
-    """Check for missing required data per form and return warnings."""
+    """Check for missing required data per form and return warnings.
+    Always checks probate fields only — will data should already be synced."""
     warnings = {}  # form_code -> list of missing field descriptions
     rec_codes = {r['form_code'] for r in recommendations if r.get('recommended')}
 
-    # Pre-compute common checks — check both probate fields AND will data
-    # For will-linked probate, deceased/applicant data comes from the will record
-    testator = {}
-    executor = {}
-    if will_record:
-        step1 = json.loads(will_record.step1_data or '{}')
-        testator = step1 if step1 else {}
-        executors = json.loads(will_record.step3_data or '[]')
-        if executors:
-            executor = executors[0] if isinstance(executors, list) else executors
-            # Resolve person details from identity registry
-            identities = json.loads(will_record.identities_data or '[]')
-            id_lookup = {p.get('id', ''): p for p in identities}
-            if executor.get('person_id') and executor['person_id'] in id_lookup:
-                person = id_lookup[executor['person_id']]
-                executor = {**executor, **person}
-
-    has_deceased_name = bool(probate.deceased_name or testator.get('full_name'))
-    has_deceased_nric = bool(probate.deceased_nric or testator.get('nric_passport'))
-    has_deceased_addr = bool(probate.deceased_address or testator.get('residential_address') or testator.get('address'))
-    has_applicant_name = bool(probate.applicant_name or executor.get('full_name'))
-    has_applicant_nric = bool(probate.applicant_nric or executor.get('nric_passport'))
-    has_applicant_addr = bool(probate.applicant_address or executor.get('address'))
-    has_applicant_rel = bool(probate.applicant_relationship or executor.get('relationship'))
+    # Pre-compute common checks — probate fields are the single source of truth
+    has_deceased_name = bool(probate.deceased_name)
+    has_deceased_nric = bool(probate.deceased_nric)
+    has_deceased_addr = bool(probate.deceased_address)
+    has_applicant_name = bool(probate.applicant_name)
+    has_applicant_nric = bool(probate.applicant_nric)
+    has_applicant_addr = bool(probate.applicant_address)
+    has_applicant_rel = bool(probate.applicant_relationship)
     has_court = bool(probate.court_location)
     has_court_state = bool(probate.court_state)
     has_firm_name = bool(probate.firm_name)
@@ -3684,6 +3764,11 @@ def _get_probate_context(probate_id):
     is_la = probate.application_type == 'la'
     will_record = db.session.get(Will, probate.will_id) if probate.will_id else None
 
+    # Auto-sync will data into probate fields (single source of truth)
+    sync_errors = []
+    if will_record and not is_la:
+        _changed, sync_errors = _sync_probate_from_will(probate, will_record)
+
     if is_la:
         # LA: deceased/applicant from probate fields
         testator = {
@@ -3700,45 +3785,70 @@ def _get_probate_context(probate_id):
         will_title = f'LA — {probate.deceased_name or "Unnamed"}'
         client_name = probate.applicant_name or ''
     else:
-        # Probate: from will data
-        if not will_record:
-            # Manual will upload / no linked will — treat like LA for field entry
-            testator = {
-                'full_name': probate.deceased_name or '',
-                'nric_passport': probate.deceased_nric or '',
-                'residential_address': probate.deceased_address or '',
-            }
-            executor = {
-                'full_name': probate.applicant_name or '',
-                'nric_passport': probate.applicant_nric or '',
-                'address': probate.applicant_address or '',
-                'relationship': probate.applicant_relationship or '',
-            }
-            will_title = f'Probate — {probate.deceased_name or "Manual Entry"}'
-            client_name = probate.applicant_name or ''
-        else:
-            testator = json.loads(will_record.step1_data or '{}')
-            step2 = json.loads(will_record.step2_data or '{}')
-            executors = step2.get('executors', []) if isinstance(step2, dict) else step2
-            executor = executors[0] if executors else {}
+        # Probate: always read from probate fields (already synced from will above)
+        testator = {
+            'full_name': probate.deceased_name or '',
+            'nric_passport': probate.deceased_nric or '',
+            'residential_address': probate.deceased_address or '',
+        }
+        executor = {
+            'full_name': probate.applicant_name or '',
+            'nric_passport': probate.applicant_nric or '',
+            'address': probate.applicant_address or '',
+            'relationship': probate.applicant_relationship or '',
+        }
+        if will_record:
             will_title = will_record.title
             client_name = will_record.client.full_name if will_record.client else ''
+        else:
+            will_title = f'Probate — {probate.deceased_name or "Manual Entry"}'
+            client_name = probate.applicant_name or ''
 
-    # Determine max completed step based on data presence
-    max_step = 0
-    no_will = not is_la and not will_record
-    if probate.date_of_death or probate.place_of_death or ((is_la or no_will) and probate.deceased_name):
-        max_step = 1
-    if probate.court_location or probate.firm_name:
-        max_step = max(max_step, 2)
-    if probate.witness1_name or probate.witness2_name:
-        max_step = max(max_step, 3)
-    if probate.beneficiaries_data and probate.beneficiaries_data != '[]':
-        max_step = max(max_step, 4)
-    if probate.assets_data and probate.assets_data != '[]':
-        max_step = max(max_step, 5)
-    if probate.status == 'generated':
-        max_step = 6
+    # Determine which steps are complete (green tick) — require ALL essential fields
+    # Step 1: Death details + deceased/applicant info
+    step1_ok = all([
+        probate.deceased_name,
+        probate.deceased_nric,
+        probate.applicant_name,
+        probate.applicant_nric,
+        probate.date_of_death,
+        probate.place_of_death,
+    ])
+    # Step 2: Court & Firm — case_number and firm_reference are OPTIONAL (assigned later)
+    step2_ok = all([
+        probate.court_location,
+        probate.court_state,
+        probate.firm_name,
+        probate.firm_address,
+        probate.lawyer_name,
+        probate.lawyer_bar_number,
+    ])
+    # Step 3: At least one witness with name, NRIC, address
+    step3_ok = all([
+        probate.witness1_name,
+        probate.witness1_nric,
+        probate.witness1_address,
+    ])
+    # Step 4: At least one beneficiary
+    _bens_data = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data else []
+    step4_ok = len(_bens_data) > 0 and all(
+        b.get('full_name') or b.get('beneficiary_name') for b in _bens_data
+    )
+    # Step 5: At least one asset entered
+    _assets_data = json.loads(probate.assets_data or '[]') if probate.assets_data else []
+    step5_ok = len(_assets_data) > 0
+
+    # Build completed steps set (non-sequential — each step independent)
+    completed_steps = set()
+    if step1_ok: completed_steps.add(1)
+    if step2_ok: completed_steps.add(2)
+    if step3_ok: completed_steps.add(3)
+    if step4_ok: completed_steps.add(4)
+    if step5_ok: completed_steps.add(5)
+    if probate.status in ('generated', 'pending_approval', 'approved', 'rejected'):
+        completed_steps.add(6)
+
+    all_steps_complete = all(s in completed_steps for s in range(1, 6))  # Steps 1-5 all done
 
     no_will = not is_la and not will_record  # Manual will upload (probate without linked will)
 
@@ -3751,7 +3861,11 @@ def _get_probate_context(probate_id):
         'client_name': client_name,
         'testator': testator,
         'executor': type('Obj', (), executor) if executor else None,
-        'max_completed_step': max_step,
+        'completed_steps': completed_steps,
+        'all_steps_complete': all_steps_complete,
+        'sync_errors': sync_errors,
+        # Keep max_completed_step for backward compatibility
+        'max_completed_step': max(completed_steps) if completed_steps else 0,
     }
 
 
@@ -3863,6 +3977,8 @@ def probate_new(will_id):
     )
     db.session.add(probate)
     db.session.commit()
+    # Auto-populate deceased/applicant from linked will
+    _changed, _errors = _sync_probate_from_will(probate, will_record)
     return redirect(f'/probate/{probate.id}/step/1')
 
 
@@ -4219,8 +4335,8 @@ def probate_step6(probate_id):
     field_values['Investment accounts (CDS, unit trust, etc.)'] = f'{len(_investments)} accounts' if _investments else 'N/A'
     field_values['Other assets (description, value)'] = f'{len(_others)} items' if _others else 'N/A'
     field_values['Liabilities (description, value)'] = f'{len(_liabs)} items' if _liabs else 'N/A'
-    # Prefer probate.beneficiaries_data (populated in step 4), fall back to will data
-    _bens = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data and probate.beneficiaries_data != '[]' else (json.loads(will_record.step4_data or '[]') if will_record else [])
+    # Beneficiaries from probate (single source of truth)
+    _bens = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data and probate.beneficiaries_data != '[]' else []
     field_values['Beneficiary names & NRIC'] = ', '.join(b.get('full_name', b.get('beneficiary_name', '')) for b in _bens[:5]) if _bens else ''
     field_values['Beneficiary relationships'] = ', '.join(b.get('relationship', '') for b in _bens[:5]) if _bens else ''
     if _props:
@@ -4329,8 +4445,8 @@ def probate_step6(probate_id):
     will_ok = bool(will_record)
     will_missing = [] if will_ok else ['No approved will linked']
 
-    # Beneficiary info? (prefer probate.beneficiaries_data from step 4)
-    beneficiaries = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data and probate.beneficiaries_data != '[]' else (json.loads(will_record.step4_data or '[]') if will_record else [])
+    # Beneficiary info from probate (single source of truth)
+    beneficiaries = json.loads(probate.beneficiaries_data or '[]') if probate.beneficiaries_data and probate.beneficiaries_data != '[]' else []
     ben_ok = len(beneficiaries) > 0
     ben_missing = [] if ben_ok else ['No beneficiaries entered']
 
@@ -4473,6 +4589,11 @@ def probate_generate(probate_id):
     if not probate:
         flash('Probate application not found.', 'error')
         return redirect(url_for('probate_list'))
+
+    # Block generation if steps are incomplete
+    if not ctx.get('all_steps_complete'):
+        flash('Please complete all steps (1-5) before generating forms.', 'error')
+        return redirect(f'/probate/{probate_id}/step/6')
 
     selected_codes = request.form.getlist('forms')
     if not selected_codes:

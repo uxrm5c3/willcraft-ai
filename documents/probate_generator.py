@@ -301,31 +301,25 @@ def build_replacements(probate_app, will_record):
     """
     is_la = probate_app.application_type == 'la'
 
-    if is_la or not will_record:
-        # LA: deceased/applicant from probate fields
-        testator = {
-            'full_name': probate_app.deceased_name or '',
-            'nric_passport': probate_app.deceased_nric or '',
-            'residential_address': probate_app.deceased_address or '',
-        }
-        primary_exec = {
-            'full_name': probate_app.applicant_name or '',
-            'nric_passport': probate_app.applicant_nric or '',
-            'address': probate_app.applicant_address or '',
-            'relationship': probate_app.applicant_relationship or '',
-        }
-        beneficiaries = json.loads(probate_app.beneficiaries_data or '[]')
-        gifts = json.loads(probate_app.assets_data or '[]')
-    else:
-        # Probate: from will data
-        testator = json.loads(will_record.step1_data or '{}')
-        step2 = json.loads(will_record.step2_data or '{}')
-        executors = step2.get('executors', []) if isinstance(step2, dict) else step2
-        primary_exec = executors[0] if executors else {}
-        # Prefer probate.beneficiaries_data (populated in step 4), fall back to will data
-        _probate_bens = json.loads(probate_app.beneficiaries_data or '[]') if probate_app.beneficiaries_data and probate_app.beneficiaries_data != '[]' else []
-        beneficiaries = _probate_bens if _probate_bens else json.loads(will_record.step4_data or '[]')
-        gifts = json.loads(will_record.step5_data or '[]')
+    # Always use probate fields as the single source of truth
+    # (will data is synced into probate fields on creation/load)
+    testator = {
+        'full_name': probate_app.deceased_name or '',
+        'nric_passport': probate_app.deceased_nric or '',
+        'residential_address': probate_app.deceased_address or '',
+    }
+    primary_exec = {
+        'full_name': probate_app.applicant_name or '',
+        'nric_passport': probate_app.applicant_nric or '',
+        'address': probate_app.applicant_address or '',
+        'relationship': probate_app.applicant_relationship or '',
+    }
+    # Beneficiaries: prefer probate data, fall back to will data
+    _probate_bens = json.loads(probate_app.beneficiaries_data or '[]') if probate_app.beneficiaries_data and probate_app.beneficiaries_data != '[]' else []
+    beneficiaries = _probate_bens if _probate_bens else (json.loads(will_record.step4_data or '[]') if will_record else [])
+    # Assets: prefer probate data, fall back to will data
+    _probate_assets = json.loads(probate_app.assets_data or '[]') if probate_app.assets_data and probate_app.assets_data != '[]' else []
+    gifts = _probate_assets if _probate_assets else (json.loads(will_record.step5_data or '[]') if will_record else [])
 
     # Build applicant initials for exhibit references (e.g., TLL from TAN LI LI)
     applicant_name = primary_exec.get('full_name', probate_app.witness1_name or '')
