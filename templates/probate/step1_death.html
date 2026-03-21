@@ -465,7 +465,8 @@ function buildWillConfirmFields(ext, docId) {
     // Step 6: Assets
     if (ext.assets && ext.assets.length) {
         const aFields = ext.assets.map((a, i) => ({
-            label: `Asset ${i+1}`, value: a.description || a.type || JSON.stringify(a), storeKey: `asset_${i}`
+            label: `Asset ${i+1} (${a.type || 'other'})`, value: a.description || '', storeKey: `asset_${i}`,
+            _assetJson: JSON.stringify({type: a.type || 'other', description: a.description || ''})
         }));
         willConfirmFields.push({ category: 'Assets', icon: '6', fields: aFields, info: 'Will be saved for Step 6 (Assets)' });
     }
@@ -609,7 +610,15 @@ function willConfirmFinish() {
     willConfirmFields.forEach(step => {
         step.fields.forEach(f => {
             if (f.storeKey) {
-                storedData[f.storeKey] = f._editedValue !== undefined ? f._editedValue : f.value;
+                if (f._assetJson) {
+                    // Send asset as JSON with type info so backend doesn't need to re-classify
+                    const editedDesc = f._editedValue !== undefined ? f._editedValue : f.value;
+                    const assetObj = JSON.parse(f._assetJson);
+                    assetObj.description = editedDesc;
+                    storedData[f.storeKey] = JSON.stringify(assetObj);
+                } else {
+                    storedData[f.storeKey] = f._editedValue !== undefined ? f._editedValue : f.value;
+                }
             }
         });
     });

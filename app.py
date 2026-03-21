@@ -4277,9 +4277,13 @@ def probate_save_ocr_data(probate_id):
         except (json.JSONDecodeError, AttributeError):
             asset_obj = None
         if asset_obj and isinstance(asset_obj, dict):
-            # Ensure asset_type is set
+            # Normalize: OCR uses 'type', DB uses 'asset_type'
+            if asset_obj.get('type') and not asset_obj.get('asset_type'):
+                asset_obj['asset_type'] = asset_obj.pop('type')
             if not asset_obj.get('asset_type'):
                 asset_obj['asset_type'] = _classify_asset(asset_obj.get('description', ''))
+            if 'estimated_value' not in asset_obj:
+                asset_obj['estimated_value'] = ''
             assets.append(asset_obj)
         else:
             assets.append({'asset_type': _classify_asset(desc), 'description': desc, 'estimated_value': ''})
