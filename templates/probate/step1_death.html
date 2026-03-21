@@ -409,30 +409,32 @@ function buildWillConfirmFields(ext, docId) {
     const t = ext.testator || {};
     const exec = (ext.executors || [])[0] || {};
 
-    // Step 1: Testator (Deceased)
+    // Step 2: Testator (Deceased) — saved via storeKey to auto-populate Step 2
     if (t.full_name || t.nric_number || t.address) {
         willConfirmFields.push({
             category: 'Testator (Deceased)',
-            icon: '1',
+            icon: '2',
             fields: [
-                { label: 'Full Name', value: t.full_name || '', formName: 'deceased_name' },
-                { label: 'NRIC', value: t.nric_number || '', formName: 'deceased_nric' },
-                { label: 'Address', value: t.address || '', formName: 'deceased_address' },
-            ].filter(f => f.value)
+                { label: 'Full Name', value: t.full_name || '', storeKey: 'deceased_name' },
+                { label: 'NRIC', value: t.nric_number || '', storeKey: 'deceased_nric' },
+                { label: 'Address', value: t.address || '', storeKey: 'deceased_address' },
+            ].filter(f => f.value),
+            info: 'Will be saved for Step 2 (Deceased & Executor)'
         });
     }
 
-    // Step 2: Executor (Applicant)
+    // Step 2: Executor (Applicant) — saved via storeKey to auto-populate Step 2
     if (exec.full_name || exec.nric_number) {
         willConfirmFields.push({
             category: 'Executor (Applicant)',
             icon: '2',
             fields: [
-                { label: 'Full Name', value: exec.full_name || '', formName: 'applicant_name' },
-                { label: 'NRIC', value: exec.nric_number || '', formName: 'applicant_nric' },
-                { label: 'Relationship', value: exec.relationship || '', formName: 'applicant_relationship' },
-                { label: 'Address', value: exec.address || '', formName: 'applicant_address' },
-            ].filter(f => f.value)
+                { label: 'Full Name', value: exec.full_name || '', storeKey: 'applicant_name' },
+                { label: 'NRIC', value: exec.nric_number || '', storeKey: 'applicant_nric' },
+                { label: 'Relationship', value: exec.relationship || '', storeKey: 'applicant_relationship' },
+                { label: 'Address', value: exec.address || '', storeKey: 'applicant_address' },
+            ].filter(f => f.value),
+            info: 'Will be saved for Step 2 (Deceased & Executor)'
         });
     }
 

@@ -4002,6 +4002,24 @@ def probate_save_ocr_data(probate_id):
     existing['ocr_extracted'] = data
     probate.form_data_json = json.dumps(existing)
 
+    # Auto-fill deceased fields if empty
+    if not probate.deceased_name and data.get('deceased_name'):
+        probate.deceased_name = data['deceased_name']
+    if not probate.deceased_nric and data.get('deceased_nric'):
+        probate.deceased_nric = data['deceased_nric']
+    if not probate.deceased_address and data.get('deceased_address'):
+        probate.deceased_address = data['deceased_address']
+
+    # Auto-fill executor/applicant fields if empty
+    if not probate.applicant_name and data.get('applicant_name'):
+        probate.applicant_name = data['applicant_name']
+    if not probate.applicant_nric and data.get('applicant_nric'):
+        probate.applicant_nric = data['applicant_nric']
+    if not probate.applicant_address and data.get('applicant_address'):
+        probate.applicant_address = data['applicant_address']
+    if not probate.applicant_relationship and data.get('applicant_relationship'):
+        probate.applicant_relationship = data['applicant_relationship']
+
     # Auto-fill witness fields if empty
     if not probate.witness1_name and data.get('witness1_name'):
         probate.witness1_name = data['witness1_name']
@@ -4022,16 +4040,35 @@ def probate_save_ocr_data(probate_id):
         bens = []
         i = 0
         while data.get(f'beneficiary_{i}_name'):
-            ben = {
+            bens.append({
                 'full_name': data.get(f'beneficiary_{i}_name', ''),
                 'nric_passport': data.get(f'beneficiary_{i}_nric', ''),
                 'relationship': data.get(f'beneficiary_{i}_relationship', ''),
                 'address': data.get(f'beneficiary_{i}_address', ''),
-            }
-            bens.append(ben)
+            })
             i += 1
         if bens:
             probate.beneficiaries_data = json.dumps(bens)
+
+    # Auto-fill assets if empty
+    existing_assets = json.loads(probate.assets_data or '[]')
+    if not existing_assets:
+        assets = []
+        i = 0
+        while data.get(f'asset_{i}'):
+            desc = data[f'asset_{i}']
+            # Try to parse JSON if the asset was stored as JSON string
+            try:
+                asset_obj = json.loads(desc) if desc.startswith('{') else None
+            except (json.JSONDecodeError, AttributeError):
+                asset_obj = None
+            if asset_obj and isinstance(asset_obj, dict):
+                assets.append(asset_obj)
+            else:
+                assets.append({'asset_type': 'other', 'description': desc, 'estimated_value': ''})
+            i += 1
+        if assets:
+            probate.assets_data = json.dumps(assets)
 
     probate.updated_at = datetime.utcnow()
     db.session.commit()
