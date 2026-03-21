@@ -3821,6 +3821,55 @@ def probate_new(will_id):
     return redirect(f'/probate/{probate.id}/step/1')
 
 
+@app.route('/probate/<probate_id>/save-ocr-data', methods=['POST'])
+@login_required
+def probate_save_ocr_data(probate_id):
+    """Save OCR-extracted data (witnesses, beneficiaries, assets) for later steps."""
+    probate = db.session.get(ProbateApplication, probate_id)
+    if not probate:
+        return jsonify(ok=False, error='Not found'), 404
+    data = request.get_json(force=True)
+    # Merge into form_data_json
+    existing = json.loads(probate.form_data_json or '{}')
+    existing['ocr_extracted'] = data
+    probate.form_data_json = json.dumps(existing)
+
+    # Auto-fill witness fields if empty
+    if not probate.witness1_name and data.get('witness1_name'):
+        probate.witness1_name = data['witness1_name']
+    if not probate.witness1_nric and data.get('witness1_nric'):
+        probate.witness1_nric = data['witness1_nric']
+    if not probate.witness1_address and data.get('witness1_address'):
+        probate.witness1_address = data['witness1_address']
+    if not probate.witness2_name and data.get('witness2_name'):
+        probate.witness2_name = data['witness2_name']
+    if not probate.witness2_nric and data.get('witness2_nric'):
+        probate.witness2_nric = data['witness2_nric']
+    if not probate.witness2_address and data.get('witness2_address'):
+        probate.witness2_address = data['witness2_address']
+
+    # Auto-fill beneficiaries if empty
+    existing_bens = json.loads(probate.beneficiaries_data or '[]')
+    if not existing_bens:
+        bens = []
+        i = 0
+        while data.get(f'beneficiary_{i}_name'):
+            ben = {
+                'full_name': data.get(f'beneficiary_{i}_name', ''),
+                'nric_passport': data.get(f'beneficiary_{i}_nric', ''),
+                'relationship': data.get(f'beneficiary_{i}_relationship', ''),
+                'address': data.get(f'beneficiary_{i}_address', ''),
+            }
+            bens.append(ben)
+            i += 1
+        if bens:
+            probate.beneficiaries_data = json.dumps(bens)
+
+    probate.updated_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify(ok=True)
+
+
 @app.route('/probate/<probate_id>/step/1', methods=['GET', 'POST'])
 @login_required
 def probate_step1(probate_id):

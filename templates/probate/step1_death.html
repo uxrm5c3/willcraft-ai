@@ -623,6 +623,28 @@ function willConfirmPrev() {
 
 function willConfirmFinish() {
     willConfirmApplyCurrentStep();
+
+    // Collect all storeKey fields and POST to server for later steps
+    const storedData = {};
+    willConfirmFields.forEach(step => {
+        step.fields.forEach(f => {
+            if (f.storeKey) {
+                storedData[f.storeKey] = f._editedValue !== undefined ? f._editedValue : f.value;
+            }
+        });
+    });
+
+    // Save to server via AJAX
+    if (Object.keys(storedData).length) {
+        fetch('/probate/{{ probate_id }}/save-ocr-data', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(storedData)
+        }).then(r => r.json()).then(d => {
+            if (d.ok) console.log('OCR data saved for later steps');
+        }).catch(e => console.error('Failed to save OCR data:', e));
+    }
+
     // Close modal
     document.getElementById('will-confirm-modal').classList.add('hidden');
     document.body.style.overflow = '';
