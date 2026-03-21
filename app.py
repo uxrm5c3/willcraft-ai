@@ -1384,6 +1384,84 @@ def send_will_email(to_email, subject, body_html, attachments=None, tenant=None)
     return True
 
 
+@app.route('/api/support/report', methods=['POST'])
+@login_required
+def api_support_report():
+    """Send a bug/issue report with optional screenshot to support@lifa.com.my."""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.base import MIMEBase
+    from email import encoders
+
+    description = request.form.get('description', '').strip()
+    if not description:
+        return jsonify(ok=False, error='Description is required'), 400
+
+    page = request.form.get('page', 'Unknown')
+    browser = request.form.get('browser', 'Unknown')
+    user_name = session.get('user_name', 'Unknown')
+    user_email = session.get('user_email', 'Unknown')
+    user_role = session.get('user_role', 'Unknown')
+    tenant = get_tenant()
+    domain = os.environ.get('WILLCRAFT_DOMAIN', 'Unknown')
+
+    subject = f"[WillCraft Issue] {description[:80]}"
+
+    body_html = f"""
+    <h2 style="color: #dc2626;">Issue Report from WillCraft</h2>
+    <table style="border-collapse: collapse; width: 100%; max-width: 600px;">
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold; background: #f9fafb; width: 140px;">Reported By</td>
+            <td style="padding: 8px; border: 1px solid #e5e7eb;">{user_name} ({user_email})</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold; background: #f9fafb;">Role</td>
+            <td style="padding: 8px; border: 1px solid #e5e7eb;">{user_role}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold; background: #f9fafb;">Site</td>
+            <td style="padding: 8px; border: 1px solid #e5e7eb;">{domain}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold; background: #f9fafb;">Page</td>
+            <td style="padding: 8px; border: 1px solid #e5e7eb;">{page}</td></tr>
+        <tr><td style="padding: 8px; border: 1px solid #e5e7eb; font-weight: bold; background: #f9fafb;">Browser</td>
+            <td style="padding: 8px; border: 1px solid #e5e7eb; font-size: 11px;">{browser}</td></tr>
+    </table>
+    <h3 style="margin-top: 16px;">Description</h3>
+    <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 12px; white-space: pre-wrap;">{description}</div>
+    <p style="color: #9ca3af; font-size: 11px; margin-top: 16px;">Sent automatically from WillCraft AI</p>
+    """
+
+    try:
+        sender_addr = SMTP_USER or tenant.get('email_from', '')
+        msg = MIMEMultipart()
+        msg['From'] = sender_addr
+        msg['To'] = 'support@lifa.com.my'
+        msg['Subject'] = subject
+        if tenant.get('email_from') and tenant['email_from'] != sender_addr:
+            msg['Reply-To'] = tenant['email_from']
+
+        msg.attach(MIMEText(body_html, 'html'))
+
+        # Attach screenshot if provided
+        screenshot = request.files.get('screenshot')
+        if screenshot and screenshot.filename:
+            part = MIMEBase('image', 'png')
+            part.set_payload(screenshot.read())
+            encoders.encode_base64(part)
+            safe_name = screenshot.filename.replace('"', '')
+            part.add_header('Content-Disposition', f'attachment; filename="{safe_name}"')
+            msg.attach(part)
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            if SMTP_USER and SMTP_PASSWORD:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(sender_addr, ['support@lifa.com.my'], msg.as_string())
+
+        return jsonify(ok=True)
+    except Exception as e:
+        print(f"[Support] Email failed: {e}")
+        return jsonify(ok=False, error=f'Failed to send: {str(e)}'), 500
+
+
 @app.route('/api/will/<will_id>/send-email', methods=['POST'])
 @login_required
 def api_will_send_email(will_id):

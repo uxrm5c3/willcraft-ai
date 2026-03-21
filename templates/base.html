@@ -310,6 +310,143 @@
     });
     </script>
 
+    <!-- Floating Support Button -->
+    {% if g.user %}
+    <button onclick="document.getElementById('support-modal').classList.remove('hidden')"
+            class="fixed bottom-6 right-6 w-12 h-12 bg-red-500 text-white rounded-full shadow-lg hover:bg-red-600 hover:shadow-xl transition-all z-40 flex items-center justify-center group"
+            title="Report an Issue">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M12 2a10 10 0 100 20 10 10 0 000-20z"/></svg>
+    </button>
+
+    <!-- Support Modal -->
+    <div id="support-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center">
+        <div class="bg-white rounded-xl shadow-2xl max-w-lg w-full mx-4 max-h-[90vh] overflow-hidden flex flex-col">
+            <div class="flex items-center justify-between px-6 py-4 border-b">
+                <div>
+                    <h3 class="text-lg font-bold text-gray-800">Report an Issue</h3>
+                    <p class="text-xs text-gray-500">Describe the problem and optionally attach a screenshot</p>
+                </div>
+                <button onclick="closeSupportModal()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+            </div>
+            <form id="support-form" class="flex-1 overflow-auto p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">What happened? <span class="text-red-500">*</span></label>
+                    <textarea id="support-desc" rows="4" required
+                              placeholder="Describe the issue you encountered..."
+                              class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-red-500 focus:border-red-500 resize-none"></textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Page / Step</label>
+                    <input type="text" id="support-page" readonly
+                           class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-600">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Screenshot (optional)</label>
+                    <div id="support-drop-zone" class="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center cursor-pointer hover:border-red-400 hover:bg-red-50 transition-colors">
+                        <input type="file" id="support-file" accept=".jpg,.jpeg,.png,.gif" class="hidden" onchange="handleSupportFile(this)">
+                        <div id="support-file-label">
+                            <svg class="w-8 h-8 mx-auto text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                            <p class="text-xs text-gray-500">Click to upload or drag & drop</p>
+                            <p class="text-[10px] text-gray-400 mt-1">JPG, PNG, GIF up to 5MB</p>
+                        </div>
+                        <div id="support-preview" class="hidden">
+                            <img id="support-preview-img" class="max-h-32 mx-auto rounded">
+                            <button type="button" onclick="clearSupportFile(event)" class="mt-2 text-xs text-red-500 hover:text-red-700">Remove</button>
+                        </div>
+                    </div>
+                </div>
+            </form>
+            <div class="px-6 py-4 border-t flex justify-end gap-3">
+                <button onclick="closeSupportModal()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">Cancel</button>
+                <button onclick="submitSupportIssue()" id="support-submit-btn"
+                        class="px-5 py-2 bg-red-500 text-white text-sm font-semibold rounded-lg hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    Send Report
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // Support modal
+    document.getElementById('support-page').value = window.location.pathname;
+
+    document.getElementById('support-drop-zone').addEventListener('click', function(e) {
+        if (e.target.closest('button')) return;
+        document.getElementById('support-file').click();
+    });
+    document.getElementById('support-drop-zone').addEventListener('dragover', function(e) {
+        e.preventDefault(); this.classList.add('border-red-400', 'bg-red-50');
+    });
+    document.getElementById('support-drop-zone').addEventListener('dragleave', function() {
+        this.classList.remove('border-red-400', 'bg-red-50');
+    });
+    document.getElementById('support-drop-zone').addEventListener('drop', function(e) {
+        e.preventDefault(); this.classList.remove('border-red-400', 'bg-red-50');
+        if (e.dataTransfer.files.length) {
+            document.getElementById('support-file').files = e.dataTransfer.files;
+            handleSupportFile(document.getElementById('support-file'));
+        }
+    });
+
+    function handleSupportFile(input) {
+        const file = input.files[0];
+        if (!file) return;
+        if (file.size > 5 * 1024 * 1024) { alert('File too large (max 5MB)'); input.value = ''; return; }
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            document.getElementById('support-preview-img').src = e.target.result;
+            document.getElementById('support-file-label').classList.add('hidden');
+            document.getElementById('support-preview').classList.remove('hidden');
+        };
+        reader.readAsDataURL(file);
+    }
+
+    function clearSupportFile(e) {
+        e.stopPropagation();
+        document.getElementById('support-file').value = '';
+        document.getElementById('support-preview').classList.add('hidden');
+        document.getElementById('support-file-label').classList.remove('hidden');
+    }
+
+    function closeSupportModal() {
+        document.getElementById('support-modal').classList.add('hidden');
+    }
+
+    async function submitSupportIssue() {
+        const desc = document.getElementById('support-desc').value.trim();
+        if (!desc) { alert('Please describe the issue.'); return; }
+        const btn = document.getElementById('support-submit-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg> Sending...';
+
+        const formData = new FormData();
+        formData.append('description', desc);
+        formData.append('page', document.getElementById('support-page').value);
+        formData.append('browser', navigator.userAgent);
+        const fileInput = document.getElementById('support-file');
+        if (fileInput.files[0]) formData.append('screenshot', fileInput.files[0]);
+
+        try {
+            const resp = await fetch('/api/support/report', { method: 'POST', body: formData });
+            const data = await resp.json();
+            if (data.ok) {
+                closeSupportModal();
+                document.getElementById('support-desc').value = '';
+                clearSupportFile(new Event('click'));
+                alert('Issue reported successfully! Our team will look into it.');
+            } else {
+                alert(data.error || 'Failed to send report. Please try again.');
+            }
+        } catch (e) {
+            alert('Failed to send report. Please try again.');
+        }
+        btn.disabled = false;
+        btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> Send Report';
+    }
+    </script>
+    {% endif %}
+
     {% block scripts %}{% endblock %}
 </body>
 </html>
