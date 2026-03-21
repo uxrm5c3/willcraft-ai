@@ -162,6 +162,65 @@ const FIELD_DEFS = {
     ],
 };
 
+/* ── Parse property fields from description string ── */
+function parsePropertyFields(desc) {
+    const result = { title_number: '', lot_number: '', mukim: '' };
+    if (!desc) return result;
+    const upper = desc.toUpperCase();
+
+    // Title: H.S.(D), HAKMILIK No., GRN No., GRN, PM, PN, EMR followed by number
+    const titleMatch = upper.match(/(?:H\.S\.\(D\)|HAKMILIK\s*(?:NO\.?)?|GRN\s*(?:NO\.?)?|PM|PN|EMR)\s*(\d+)/);
+    if (titleMatch) {
+        // Determine the prefix used
+        const prefixMatch = upper.match(/(H\.S\.\(D\)|HAKMILIK\s*(?:NO\.?)?|GRN\s*(?:NO\.?)?|PM|PN|EMR)\s*\d+/);
+        if (prefixMatch) {
+            let prefix = prefixMatch[1].trim().replace(/\s+/g, ' ');
+            // Normalize: HAKMILIK No. -> just the number, GRN No. -> "GRN", H.S.(D) -> "H.S.(D)"
+            if (/^HAKMILIK/.test(prefix)) {
+                result.title_number = titleMatch[1];
+            } else if (/^GRN/.test(prefix)) {
+                result.title_number = 'GRN ' + titleMatch[1];
+            } else {
+                result.title_number = prefix.replace(/\s*NO\.?\s*$/, '') + ' ' + titleMatch[1];
+            }
+        }
+    }
+
+    // Lot: LOT No./LOT/PT followed by number
+    const lotMatch = upper.match(/(?:LOT\s*(?:NO\.?)?|PT)\s*(\d+)/);
+    if (lotMatch) {
+        result.lot_number = lotMatch[1];
+    }
+
+    // Mukim/Bandar/Pekan and Daerah
+    // First find MUKIM/BANDAR/PEKAN segment after LOT pattern (to avoid duplicates like "BANDAR BANDAR")
+    let mukimParts = [];
+    const mukimMatch = upper.match(/(?:MUKIM|BANDAR|PEKAN)\s+([\w\s]+?)(?:,\s*DAERAH|$)/);
+    if (mukimMatch) {
+        let area = mukimMatch[0].trim();
+        // Check if it starts with "BANDAR BANDAR" or "BANDAR MUKIM" etc - take the locality type + name
+        const areaClean = area.replace(/,\s*DAERAH.*$/, '').trim();
+        // Remove leading duplicate: "BANDAR MUKIM X" -> "MUKIM X", "BANDAR BANDAR X" -> "BANDAR X"
+        const dedupMatch = areaClean.match(/^(?:BANDAR|MUKIM|PEKAN)\s+((?:MUKIM|BANDAR|PEKAN)\s+.*)$/);
+        if (dedupMatch) {
+            mukimParts.push(dedupMatch[1].trim());
+        } else {
+            mukimParts.push(areaClean.trim());
+        }
+    }
+
+    const daerahMatch = upper.match(/DAERAH\s+([\w\s]+?)(?:,|$)/);
+    if (daerahMatch) {
+        mukimParts.push('DAERAH ' + daerahMatch[1].trim());
+    }
+
+    if (mukimParts.length > 0) {
+        result.mukim = mukimParts.join(', ');
+    }
+
+    return result;
+}
+
 /* ── Helpers ── */
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
@@ -602,6 +661,16 @@ async function saveAssets() {
 document.getElementById('assets-form').addEventListener('submit', function() {
     assets = collectAssetData();
     document.getElementById('assets-json-input').value = JSON.stringify(assets);
+});
+
+/* ── Auto-fill property fields from description on page load ── */
+assets.forEach(function(a) {
+    if (a.type === 'property' && a.description) {
+        const parsed = parsePropertyFields(a.description);
+        if (!a.title_number && parsed.title_number) a.title_number = parsed.title_number;
+        if (!a.lot_number && parsed.lot_number) a.lot_number = parsed.lot_number;
+        if (!a.mukim && parsed.mukim) a.mukim = parsed.mukim;
+    }
 });
 
 /* ── Initial render ── */

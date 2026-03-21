@@ -2075,6 +2075,11 @@ def api_document_delete(doc_id):
     linked_persons = Person.query.filter_by(document_id=doc_id).all()
     for p in linked_persons:
         p.document_id = None
+    # Clear references from probate applications
+    for pa in ProbateApplication.query.filter_by(death_cert_document_id=doc_id).all():
+        pa.death_cert_document_id = None
+    for pa in ProbateApplication.query.filter_by(will_document_id=doc_id).all():
+        pa.will_document_id = None
     db.session.delete(doc)
     db.session.commit()
     if linked_persons:
@@ -3950,6 +3955,11 @@ def probate_step1(probate_id):
         return redirect(f'/probate/{probate_id}/step/2')
 
     ctx['probate_step'] = 1
+    # Look up uploaded document objects for display
+    if probate.death_cert_document_id:
+        ctx['death_cert_doc'] = db.session.get(Document, probate.death_cert_document_id)
+    if probate.will_document_id:
+        ctx['will_doc'] = db.session.get(Document, probate.will_document_id)
     return render_template('probate/step1_death.html', **ctx)
 
 

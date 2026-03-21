@@ -17,6 +17,14 @@
             </button>
             <span id="ocr-status" class="text-xs text-gray-500"></span>
         </div>
+        {% if probate.death_cert_document_id %}
+        <div class="mt-2 flex items-center gap-2 p-2 bg-white rounded border border-blue-100" id="death-cert-doc-row">
+            <svg class="w-4 h-4 text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <span class="text-xs text-gray-700 font-medium flex-1">{{ death_cert_doc.original_filename if death_cert_doc else 'Death Certificate' }}</span>
+            <a href="/api/documents/{{ probate.death_cert_document_id }}" target="_blank" class="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-medium rounded hover:bg-blue-200 no-underline">View</a>
+            <button type="button" onclick="deleteDocument('{{ probate.death_cert_document_id }}', 'death_cert', this)" class="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-medium rounded hover:bg-red-200">Delete</button>
+        </div>
+        {% endif %}
     </div>
 
     {% if is_la or no_will %}
@@ -32,6 +40,14 @@
             </button>
             <span id="will-ocr-status" class="text-xs text-gray-500"></span>
         </div>
+        {% if probate.will_document_id %}
+        <div class="mt-2 flex items-center gap-2 p-2 bg-white rounded border border-green-100" id="will-doc-row">
+            <svg class="w-4 h-4 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <span class="text-xs text-gray-700 font-medium flex-1">{{ will_doc.original_filename if will_doc else 'Will Document' }}</span>
+            <a href="/api/documents/{{ probate.will_document_id }}" target="_blank" class="px-2 py-0.5 bg-green-100 text-green-700 text-[10px] font-medium rounded hover:bg-green-200 no-underline">View</a>
+            <button type="button" onclick="deleteDocument('{{ probate.will_document_id }}', 'will_doc', this)" class="px-2 py-0.5 bg-red-100 text-red-700 text-[10px] font-medium rounded hover:bg-red-200">Delete</button>
+        </div>
+        {% endif %}
     </div>
     {% endif %}
 
@@ -306,6 +322,30 @@ function buildCompareFields(extracted) {
 
     if (!hasAnyData) {
         container.innerHTML = '<p class="text-sm text-gray-500">OCR could not extract any data. Please fill in the fields manually.</p>';
+    }
+}
+
+/* ── Delete uploaded document ── */
+async function deleteDocument(docId, docType, btnEl) {
+    if (!confirm('Delete this uploaded document?')) return;
+    try {
+        const resp = await fetch('/api/documents/' + docId, { method: 'DELETE' });
+        const data = await resp.json();
+        if (data.ok) {
+            // Remove the row from UI
+            const row = btnEl.closest('[id$="-doc-row"]');
+            if (row) row.remove();
+            // Clear the hidden input
+            if (docType === 'death_cert') {
+                document.getElementById('death-cert-doc-id').value = '';
+            } else if (docType === 'will_doc') {
+                document.getElementById('will-doc-id').value = '';
+            }
+        } else {
+            alert('Failed to delete: ' + (data.error || 'Unknown error'));
+        }
+    } catch(e) {
+        alert('Error deleting document');
     }
 }
 
