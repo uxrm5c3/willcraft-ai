@@ -621,7 +621,11 @@ function willConfirmFinish() {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(storedData)
         }).then(r => r.json()).then(d => {
-            if (d.ok) console.log('OCR data saved for later steps');
+            if (d.ok) {
+                console.log('OCR data saved for later steps');
+                // Reload page to refresh sidebar ticks
+                window.location.reload();
+            }
         }).catch(e => console.error('Failed to save OCR data:', e));
     }
 
