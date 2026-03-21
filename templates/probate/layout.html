@@ -34,7 +34,7 @@
                         (5, "Assets & Liabilities", "Schedule of estate assets"),
                         (6, "Review & Generate", "Select forms and download")
                     ] %}
-                    {% set done = completed_steps | default(set()) %}
+                    {% set done = completed_steps if completed_steps is defined else [] %}
                     {% for num, name, desc in steps %}
                     <a href="/probate/{{ probate_id }}/step/{{ num }}"
                        class="flex items-start gap-2 px-3 py-2 rounded-lg text-sm transition-colors

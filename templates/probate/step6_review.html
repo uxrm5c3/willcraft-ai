@@ -429,7 +429,11 @@
                 <a href="/probate/{{ probate_id }}/step/5" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800 font-medium">Back</a>
                 <div class="flex items-center gap-3">
                     <span id="generate-warning" class="text-xs text-red-500 hidden">Complete all checklist items first</span>
-                    <button type="submit" id="generate-btn" {% if not all_steps_complete %}disabled title="Complete all steps (1-5) before generating"{% endif %}
+                    {% set user_role = session.get('user_role', '') %}
+                    {% set is_approver = user_role in ['admin', 'approver'] %}
+                    <button type="submit" id="generate-btn"
+                            {% if not all_steps_complete and not is_approver %}disabled title="Complete all steps (1-5) before generating"{% endif %}
+                            {% if not all_steps_complete and is_approver %}data-incomplete="true"{% endif %}
                             class="px-6 py-2 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                         Generate Selected Forms
@@ -670,6 +674,15 @@ function handleGenerate(e) {
     const checked = form.querySelectorAll('input[name="forms"]:checked');
     if (checked.length === 0) { alert('Please select at least one form.'); return false; }
 
+    // Approver override: confirm if steps are incomplete
+    if (btn.dataset.incomplete === 'true') {
+        const ok = confirm(
+            'Warning: Not all steps are complete. Some fields may be missing in the generated forms.\n\n' +
+            'Are you sure you want to proceed with generation?'
+        );
+        if (!ok) return false;
+    }
+
     btn.disabled = true;
     btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Generating ' + checked.length + ' form(s)...';
 
@@ -882,11 +895,17 @@ function updateChecklist() {
         container.classList.add('bg-amber-50', 'border-amber-200');
     }
 
-    // Enable/disable generate button
+    // Enable/disable generate button (approver can always generate with confirmation)
     const genBtn = document.getElementById('generate-btn');
     const genWarn = document.getElementById('generate-warning');
+    const isApprover = {{ 'true' if session.get('user_role') in ['admin', 'approver'] else 'false' }};
     if (genBtn) {
-        genBtn.disabled = checked < total;
+        if (isApprover) {
+            genBtn.disabled = false;
+            genBtn.dataset.incomplete = (checked < total) ? 'true' : '';
+        } else {
+            genBtn.disabled = checked < total;
+        }
         genWarn.classList.toggle('hidden', checked >= total);
     }
 

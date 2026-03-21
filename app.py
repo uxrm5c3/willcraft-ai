@@ -4590,8 +4590,9 @@ def probate_generate(probate_id):
         flash('Probate application not found.', 'error')
         return redirect(url_for('probate_list'))
 
-    # Block generation if steps are incomplete
-    if not ctx.get('all_steps_complete'):
+    # Block generation if steps are incomplete (approver/admin can override)
+    role = session.get('user_role')
+    if not ctx.get('all_steps_complete') and role not in ('admin', 'approver'):
         flash('Please complete all steps (1-5) before generating forms.', 'error')
         return redirect(f'/probate/{probate_id}/step/6')
 
