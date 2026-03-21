@@ -182,7 +182,7 @@ def format_will_data(will_data) -> str:
             if g.subject_to_guardian_allowance:
                 gift_lines.append(f"    (Subject to Guardian Allowance)")
             if getattr(g, 'sell_property', False) and g.gift_type == 'property':
-                gift_lines.append(f"    SELL DIRECTIVE: Direct executor to sell property and distribute nett proceeds of sale to beneficiaries")
+                gift_lines.append(f"    SELL DIRECTIVE: Direct executor to sell property and distribute net proceeds of sale to beneficiaries")
             for a in g.allocations:
                 gift_lines.append(f"    - {a.beneficiary_name}: {_to_fraction(a.share)} (Main Beneficiary)")
             # Substitute beneficiary instructions

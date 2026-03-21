@@ -24,14 +24,13 @@ class PropertyDetails(BaseModel):
         if self.lot_number:
             title_parts.append(f"LOT No. {self.lot_number}")
         if self.bandar_pekan:
-            title_parts.append(f"BANDAR {self.bandar_pekan.upper()}")
+            title_parts.append(f"Mukim of {self.bandar_pekan.upper()}")
         if self.daerah:
-            title_parts.append(f"DAERAH {self.daerah.upper()}")
+            title_parts.append(f"District of {self.daerah.upper()}")
         if self.negeri:
-            title_parts.append(f"NEGERI {self.negeri.upper()}")
+            title_parts.append(f"State of {self.negeri.upper()}")
         if title_parts:
             parts.extend(title_parts)
-        parts.append("MALAYSIA")
         return ", ".join(parts) + ";"
 
 

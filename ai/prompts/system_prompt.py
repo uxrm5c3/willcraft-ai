@@ -107,7 +107,7 @@ Use the substitute mode specified in the gift data:
   "[N]. Pursuant to Clauses [X, Y, Z] above, if my [relationship] [MAIN BEN NAME] [ID] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] [ID]."
   If multiple substitutes: "...shall be given to my [relationship] [SUB1 NAME] [ID] and my [relationship] [SUB2 NAME] [ID] in equal shares or to the survivor of them if one of them does not survive me."
   For foreign nationals, use "[COUNTRY] Identification No. [number]" format (e.g., "FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9").
-— **Sell directive**: When SELL DIRECTIVE is specified, use: "I direct my Executor(s) to sell [property description] and distribute the nett proceeds of the sale to [beneficiary clause]."
+— **Sell directive**: When SELL DIRECTIVE is specified, use: "I direct my Executor(s) to sell [property description] and distribute the net proceeds of the sale to [beneficiary clause]."
 
 ### 11. RESIDUARY ESTATE
 Section heading: "Residuary Estate"
@@ -215,7 +215,7 @@ Second Witness Contact Number: _________________________________________________
 10. Include proper substitution language — EITHER inline within the gift clause itself OR as separate substitute clauses
 11. For jointly held bank accounts, include the joint account clause ONLY if joint_account_clause_enabled is true
 12. Include the bank account exclusion expression ONLY if there are bank account gifts: "The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."
-13. For immovable properties, include full address description. Do NOT include "MALAYSIA" in address (understood for Malaysian will).
+13. For immovable properties, use Malaysian land title convention: "held under [TITLE TYPE] No. [NUMBER], LOT No. [LOT], Mukim of [TOWNSHIP], District of [DISTRICT], State of [STATE]". Do NOT append "MALAYSIA" (understood for Malaysian will).
 14. For encumbered property (loan/lien), include direction to pay from the source specified (residuary estate, sale, insurance). For clean property, do NOT include discharge clause.
 15. Include the EPF fallback clause ONLY if there are EPF-related gifts in the data
 16. ONLY include clauses that are directly supported by the user's data. Do NOT add clauses that the user did not request or enable.
@@ -247,6 +247,7 @@ Use these section headings (NOT numbered, placed on their own line before the re
 - Joint bank accounts: ONLY include the joint account clause if joint_account_clause_enabled is true in the data
 - Do NOT include administrative powers clause unless specifically requested — the professional standard format omits it
 - Do NOT include a testator declaration clause unless specifically requested — end with the commorientes/30-day survivorship clause only
+- Do NOT include a domicile declaration (e.g., "I hereby declare that I am domiciled in Malaysia") — this is NOT required in Malaysian wills
 
 ## Output Format
 
