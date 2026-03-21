@@ -473,10 +473,11 @@ function buildWillConfirmFields(ext, docId) {
     if (ext.beneficiaries && ext.beneficiaries.length) {
         const bFields = [];
         ext.beneficiaries.forEach((b, i) => {
-            const parts = [b.full_name];
-            if (b.nric_number) parts.push(`NRIC: ${b.nric_number}`);
-            if (b.relationship) parts.push(`(${b.relationship})`);
-            bFields.push({ label: `Beneficiary ${i+1}`, value: parts.join(' — '), storeKey: `beneficiary_${i}` });
+            const n = i + 1;
+            if (b.full_name) bFields.push({ label: `Beneficiary ${n} Name`, value: b.full_name, storeKey: `beneficiary_${i}_name` });
+            if (b.nric_number) bFields.push({ label: `Beneficiary ${n} NRIC`, value: b.nric_number, storeKey: `beneficiary_${i}_nric` });
+            if (b.relationship) bFields.push({ label: `Beneficiary ${n} Relationship`, value: b.relationship, storeKey: `beneficiary_${i}_relationship` });
+            if (b.address) bFields.push({ label: `Beneficiary ${n} Address`, value: b.address, storeKey: `beneficiary_${i}_address` });
         });
         if (bFields.length) willConfirmFields.push({ category: 'Beneficiaries', icon: '4', fields: bFields, info: 'Will be saved for Step 4 (Beneficiaries)' });
     }
@@ -530,14 +531,33 @@ function renderWillConfirmStep() {
 
     html += '<p class="text-xs text-gray-400 mb-3">Edit any field below, then confirm to apply.</p>';
 
+    let lastGroup = '';
     step.fields.forEach((f, fi) => {
         const fieldId = `wc_${willConfirmIndex}_${fi}`;
         // Use previously edited value if user went back, otherwise use scanned value
         const displayValue = f._editedValue !== undefined ? f._editedValue : f.value;
         const isLong = displayValue.length > 60;
 
-        html += `<div class="p-3 rounded-lg border mb-2 bg-white border-gray-200">
-            <label class="text-xs font-semibold text-gray-600 mb-1 block">${f.label}</label>`;
+        // Group header for beneficiaries/witnesses (e.g. "Beneficiary 1 Name" → group "Beneficiary 1")
+        const groupMatch = f.label.match(/^((?:Beneficiary|Witness|Asset)\s+\d+)/);
+        const group = groupMatch ? groupMatch[1] : '';
+        if (group && group !== lastGroup) {
+            if (lastGroup) html += '</div>'; // close previous group
+            html += `<div class="p-3 rounded-lg border mb-2 bg-gray-50 border-gray-200 space-y-2">
+                <div class="text-xs font-bold text-gray-700">${group}</div>`;
+            lastGroup = group;
+        }
+
+        const fieldLabel = group ? f.label.replace(group + ' ', '') : f.label;
+
+        if (group) {
+            // Inside a group — compact layout
+            html += `<div>
+                <label class="text-[10px] font-semibold text-gray-500 mb-0.5 block">${fieldLabel}</label>`;
+        } else {
+            html += `<div class="p-3 rounded-lg border mb-2 bg-white border-gray-200">
+                <label class="text-xs font-semibold text-gray-600 mb-1 block">${f.label}</label>`;
+        }
 
         if (isLong) {
             html += `<textarea id="${fieldId}" rows="2"
@@ -548,6 +568,7 @@ function renderWillConfirmStep() {
         }
         html += '</div>';
     });
+    if (lastGroup) html += '</div>'; // close last group
 
     // Navigation buttons
     html += '<div class="flex justify-between mt-4 pt-3 border-t">';
