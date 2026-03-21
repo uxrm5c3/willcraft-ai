@@ -3564,14 +3564,30 @@ def _validate_probate_data(probate, will_record, recommendations):
     warnings = {}  # form_code -> list of missing field descriptions
     rec_codes = {r['form_code'] for r in recommendations if r.get('recommended')}
 
-    # Pre-compute common checks
-    has_deceased_name = bool(probate.deceased_name)
-    has_deceased_nric = bool(probate.deceased_nric)
-    has_deceased_addr = bool(probate.deceased_address)
-    has_applicant_name = bool(probate.applicant_name)
-    has_applicant_nric = bool(probate.applicant_nric)
-    has_applicant_addr = bool(probate.applicant_address)
-    has_applicant_rel = bool(probate.applicant_relationship)
+    # Pre-compute common checks — check both probate fields AND will data
+    # For will-linked probate, deceased/applicant data comes from the will record
+    testator = {}
+    executor = {}
+    if will_record:
+        step1 = json.loads(will_record.step1_data or '{}')
+        testator = step1 if step1 else {}
+        executors = json.loads(will_record.step3_data or '[]')
+        if executors:
+            executor = executors[0] if isinstance(executors, list) else executors
+            # Resolve person details from identity registry
+            identities = json.loads(will_record.identities_data or '[]')
+            id_lookup = {p.get('id', ''): p for p in identities}
+            if executor.get('person_id') and executor['person_id'] in id_lookup:
+                person = id_lookup[executor['person_id']]
+                executor = {**executor, **person}
+
+    has_deceased_name = bool(probate.deceased_name or testator.get('full_name'))
+    has_deceased_nric = bool(probate.deceased_nric or testator.get('nric_passport'))
+    has_deceased_addr = bool(probate.deceased_address or testator.get('residential_address') or testator.get('address'))
+    has_applicant_name = bool(probate.applicant_name or executor.get('full_name'))
+    has_applicant_nric = bool(probate.applicant_nric or executor.get('nric_passport'))
+    has_applicant_addr = bool(probate.applicant_address or executor.get('address'))
+    has_applicant_rel = bool(probate.applicant_relationship or executor.get('relationship'))
     has_court = bool(probate.court_location)
     has_court_state = bool(probate.court_state)
     has_firm_name = bool(probate.firm_name)
