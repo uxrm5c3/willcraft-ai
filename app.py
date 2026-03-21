@@ -4727,12 +4727,37 @@ function toggleEdit() {
 
 // Translate to English using Claude API
 async function translateToEnglish() {
+  if (!confirm('Translate this document from Bahasa Melayu to English?')) return;
   const btn = document.getElementById('translate-btn');
   const status = document.getElementById('status');
   btn.disabled = true;
-  btn.textContent = 'Translating...';
-  status.textContent = 'AI is translating...';
+
+  // Spinner + countdown timer
+  let elapsed = 0;
+  const est = 20; // estimated seconds
+  btn.innerHTML = '&#9889; Translating...';
+  status.innerHTML = '<span style="display:inline-flex;align-items:center;gap:4px;">' +
+    '<svg style="width:14px;height:14px;animation:spin 1s linear infinite;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4m-7.07-3.93l2.83-2.83m8.49-8.49l2.83-2.83M2 12h4m12 0h4m-3.93 7.07l-2.83-2.83M6.34 6.34L3.51 3.51"/></svg>' +
+    '<span id="translate-timer">~' + est + 's remaining</span></span>';
   status.style.color = '#60a5fa';
+
+  // Add spinner keyframes if not present
+  if (!document.getElementById('spin-style')) {
+    const s = document.createElement('style');
+    s.id = 'spin-style';
+    s.textContent = '@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}';
+    document.head.appendChild(s);
+  }
+
+  const timer = setInterval(() => {
+    elapsed++;
+    const rem = Math.max(0, est - elapsed);
+    const el = document.getElementById('translate-timer');
+    if (el) {
+      if (rem > 0) el.textContent = '~' + rem + 's remaining';
+      else el.textContent = 'Almost done...';
+    }
+  }, 1000);
 
   try {
     const res = await fetch('/probate/''' + probate_id + '''/translate-form/''' + form_code + '''', {
@@ -4740,17 +4765,19 @@ async function translateToEnglish() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ html: docEl.innerHTML })
     });
+    clearInterval(timer);
     const data = await res.json();
     if (data.ok && data.translated_html) {
       docEl.innerHTML = data.translated_html;
       _dirty = true;
-      status.textContent = 'Translated! Review and Save.';
+      status.innerHTML = '&#10003; Translated in ' + elapsed + 's — Review and Save';
       status.style.color = '#4ade80';
     } else {
       status.textContent = 'Translation failed: ' + (data.error || 'Unknown');
       status.style.color = '#f87171';
     }
   } catch(e) {
+    clearInterval(timer);
     status.textContent = 'Translation failed: ' + e.message;
     status.style.color = '#f87171';
   }
