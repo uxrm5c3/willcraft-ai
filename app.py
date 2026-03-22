@@ -3583,6 +3583,25 @@ def preview():
             if editor:
                 editor_name = editor.name
         edit_logs = WillEditLog.query.filter_by(will_id=will_record.id).order_by(WillEditLog.edited_at.desc()).all()
+
+        # Attach edit logs to versions: for each version, find edits made between
+        # this version's creation and the next version's creation
+        if versions and edit_logs:
+            for vi, v in enumerate(versions):  # versions are desc by version_number
+                v_start = v.created_at
+                v_end = versions[vi - 1].created_at if vi > 0 else None  # next newer version
+                v.edit_logs = [
+                    el for el in edit_logs
+                    if el.edited_at >= v_start and (v_end is None or el.edited_at < v_end)
+                ]
+                # Update display time to last edit time if edits exist
+                if v.edit_logs:
+                    v.last_edited_at = v.edit_logs[0].edited_at  # most recent edit (already desc)
+                    v.last_edited_by = v.edit_logs[0].edited_by_name
+                else:
+                    v.last_edited_at = None
+                    v.last_edited_by = None
+
         # Get client email for the send-email button
         if will_record.client_id:
             client = db.session.get(Client, will_record.client_id)
