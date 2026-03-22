@@ -104,7 +104,7 @@ Use the substitute mode specified in the gift data:
   "[N]. Pursuant to Clauses [X, Y, Z] above, if my [relationship] [MAIN BEN NAME] [ID] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] [ID]."
   If multiple substitutes: "...shall be given to my [relationship] [SUB1 NAME] [ID] and my [relationship] [SUB2 NAME] [ID] in equal shares or to the survivor of them if one of them does not survive me."
   For foreign nationals, use "[COUNTRY] Identification No. [number]" format (e.g., "FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9").
-— **Sell directive**: When SELL DIRECTIVE is specified, use: "I direct my Executor to sell my undivided share in the property known as [ADDRESS], held under [TITLE] No. [NUMBER], LOT No. [LOT], Mukim of [TOWNSHIP], District of [DISTRICT], State of [STATE] and distribute the net proceeds of the sale to the following beneficiaries named below in the shares indicated.
+— **Sell directive**: When SELL DIRECTIVE is specified, use: "I direct my Executor to sell my undivided share in the property known as [ADDRESS], held under [TITLE] No. [NUMBER], Lot No. [LOT], Mukim [TOWNSHIP], Daerah [DISTRICT], Negeri [STATE] and distribute the net proceeds of the sale to the following beneficiaries named below in the shares indicated.
     (i) my [relationship] [NAME] [ID] ([share])
     (ii) ..."
   For a single beneficiary, use inline: "...and distribute the net proceeds of the sale to my [relationship] [NAME] [ID]."
@@ -219,10 +219,21 @@ Second Witness Contact Number: _________________________________________________
 10. PREFER inline substitution within the gift clause itself (e.g., "...absolutely. If [he/she] does not survive me, then the benefit shall be given to [SUB NAME]"). Only use separate substitute clauses when multiple gifts share the same substitutes and a consolidated clause is clearer.
 11. For jointly held bank accounts, include the joint account clause ONLY if joint_account_clause_enabled is true
 12. Include the bank account exclusion expression ONLY if there are bank account gifts: "The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."
-13. For immovable properties, use Malaysian land title convention with ALL fields — NEVER omit any: "held under [TITLE TYPE] No. [NUMBER], Lot No. [LOT], Mukim [TOWNSHIP], District of [DISTRICT], State of [STATE]". All five elements (title type, lot, mukim, district, state) MUST be present. Use sentence case for title types (Geran, Hakmilik, not GRN, HAKMILIK). Do NOT append "MALAYSIA" after the address.
+13. For immovable properties, use Malaysian land title convention with ALL fields — NEVER omit any: "held under [TITLE TYPE] No. [NUMBER], Lot No. [LOT], Mukim [TOWNSHIP], Daerah [DISTRICT], Negeri [STATE]". All five elements (title type, lot, mukim, district, state) MUST be present. Use Malay legal terms: Mukim (not "Mukim of"), Daerah (not "District of"), Negeri (not "State of"). Use sentence case for title types (Geran, Hakmilik, not GRN, HAKMILIK). Do NOT append "MALAYSIA" after the address.
+    When listing multiple beneficiaries for a property gift, use sub-items:
+    "(i) my [relationship] [NAME] [ID] ([share])"
+    "(ii) my [relationship] [NAME] [ID] ([share])"
+    Include discharge/lien clause for ALL property gifts: "Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate."
 14. For ALL immovable property gifts, include the discharge clause: "Unless specifically stated to the contrary in the Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate."
 15. Include the EPF fallback clause ONLY if there are EPF-related gifts in the data
 16. ONLY include clauses that are directly supported by the user's data. Do NOT add clauses that the user did not request or enable.
+17. Property Clause Examples by Title Type (use the appropriate format based on title type):
+    - Geran (freehold): "held under Geran No. 12345, Lot No. 678, Mukim Damansara, Daerah Petaling, Negeri Selangor"
+    - Hakmilik: "held under Hakmilik No. 27395, Lot No. 456, Mukim Plentong, Daerah Johor Bahru, Negeri Johor"
+    - HSD (interim): "held under HSD No. 53048, PT No. 11820, Mukim Damansara, Daerah Petaling, Negeri Selangor" (HSD uses PT No. instead of Lot No.)
+    - HSM (strata): "held under HSM No. 98765, Petak No. 123, Mukim Batu, Daerah Kuala Lumpur, Negeri Wilayah Persekutuan"
+    - Pajakan Negeri (leasehold): "held under Pajakan Negeri No. 54321, Lot No. 789, Mukim Setapak, Daerah Kuala Lumpur, Negeri Wilayah Persekutuan"
+18. For property clauses, use "I hereby devise and bequeath" (not "I give"). This is the standard legal phrasing used by top-tier Malaysian law firms for immovable property gifts.
 
 ## Section Headings
 

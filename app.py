@@ -3040,18 +3040,29 @@ def wizard_step_gifts():
             state = request.form.get(f'gift_prop_state_{gi}', '').strip()
             country = request.form.get(f'gift_prop_country_{gi}', 'Malaysia').strip()
 
-            # Combine address for backward compat
-            full_addr_parts = [prop_addr]
-            if postcode or city:
-                full_addr_parts.append(f"{postcode} {city}".strip())
-            if state:
-                full_addr_parts.append(state)
-            if country and country != 'Malaysia':
-                full_addr_parts.append(country)
-            full_address = ', '.join(p for p in full_addr_parts if p)
+            # Strip postcode/city/state from address if already in separate fields
+            # This prevents duplication when user selects from existing addresses
+            clean_addr = prop_addr
+            if postcode and city:
+                # Remove trailing duplicates like ", 81100 JOHOR BAHRU, JOHOR, 81100 JOHOR BAHRU, JOHOR..."
+                import re
+                # Remove any repeated postcode+city+state patterns from address
+                dup_pattern = re.compile(
+                    r',\s*' + re.escape(postcode) + r'\s+' + re.escape(city) + r'(?:\s*,\s*' + re.escape(state) + r')?',
+                    re.IGNORECASE
+                )
+                # Keep only the first occurrence (part of the original address), remove the rest
+                matches = list(dup_pattern.finditer(clean_addr))
+                if len(matches) > 1:
+                    # Remove all but first match
+                    for m in reversed(matches[1:]):
+                        clean_addr = clean_addr[:m.start()] + clean_addr[m.end():]
+                elif len(matches) == 1:
+                    # If postcode/city/state are in separate fields, strip them from address
+                    clean_addr = clean_addr[:matches[0].start()].rstrip(', ')
 
             property_details = {
-                'property_address': full_address or prop_addr,
+                'property_address': clean_addr or prop_addr,
                 'title_type': request.form.get(f'gift_prop_title_type_{gi}', '').strip(),
                 'title_number': request.form.get(f'gift_prop_title_number_{gi}', '').strip(),
                 'lot_number': request.form.get(f'gift_prop_lot_number_{gi}', '').strip(),

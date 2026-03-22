@@ -866,10 +866,20 @@ function updatePropertyPreview(giftIndex) {
         document.getElementById('property-preview-' + giftIndex).textContent = '(Fill in property address to see preview)';
         return;
     }
-    // Build address with split fields
+    // Build address — avoid duplicating postcode/city/state if already in address
     let fullAddr = addr;
-    if (postcode || city) fullAddr += ', ' + [postcode, city].filter(Boolean).join(' ');
-    if (state) fullAddr += ', ' + state.toUpperCase();
+    // Strip trailing postcode/city/state from address if they're in separate fields
+    if (postcode && city) {
+        const dupRegex = new RegExp(',\\s*' + postcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+' + city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\s*,\\s*' + (state || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')?', 'gi');
+        fullAddr = fullAddr.replace(dupRegex, '').replace(/,\s*$/, '');
+    }
+    // Only append postcode/city if not already in address
+    if ((postcode || city) && !fullAddr.includes(postcode)) {
+        fullAddr += ', ' + [postcode, city].filter(Boolean).join(' ');
+    }
+    if (state && !fullAddr.toUpperCase().includes(state.toUpperCase())) {
+        fullAddr += ', ' + state.toUpperCase();
+    }
 
     // Check gift handling mode
     const handling = document.querySelector(`input[name="gift_handling_${giftIndex}"]:checked`)?.value || 'direct';
@@ -889,8 +899,18 @@ function updatePropertyPreview(giftIndex) {
     let parts = [prefix + fullAddr];
     if (titleType && titleNum) parts.push('held under ' + titleType + ' No. ' + titleNum);
     if (lotNum) parts.push('LOT No. ' + lotNum);
-    if (bandar) parts.push('BANDAR ' + bandar.toUpperCase());
-    if (daerah) parts.push('DAERAH ' + daerah.toUpperCase());
+    if (bandar) {
+        let mukimVal = bandar.toUpperCase().replace(/^MUKIM\s+/i, '').replace(/^BANDAR\s+/i, '');
+        parts.push('Mukim ' + mukimVal);
+    }
+    if (daerah) {
+        let daerahVal = daerah.toUpperCase().replace(/^DAERAH\s+/i, '').replace(/^DISTRICT\s+OF\s+/i, '');
+        parts.push('Daerah ' + daerahVal);
+    }
+    if (negeri) {
+        let negeriVal = negeri.toUpperCase().replace(/^NEGERI\s+/i, '').replace(/^STATE\s+OF\s+/i, '');
+        parts.push('Negeri ' + negeriVal);
+    }
     if (country && country !== 'Malaysia') parts.push(country.toUpperCase());
 
     let suffix = ';';
@@ -1999,6 +2019,19 @@ document.addEventListener('input', function(e) {
     if (e.target.name && e.target.name.includes('_sub_share_')) {
         const giftEntry = e.target.closest('.gift-entry');
         if (giftEntry) validateSubShareTotals(giftEntry.dataset.giftIndex);
+    }
+});
+
+// Prevent Enter key from submitting form (should only save, not navigate)
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type !== 'submit') {
+        e.preventDefault();
+        // Move focus to next input instead
+        const inputs = Array.from(document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=radio]):not([type=checkbox]), select, textarea'));
+        const idx = inputs.indexOf(e.target);
+        if (idx >= 0 && idx < inputs.length - 1) {
+            inputs[idx + 1].focus();
+        }
     }
 });
 

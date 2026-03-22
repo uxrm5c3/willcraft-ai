@@ -13,37 +13,44 @@ class PropertyDetails(BaseModel):
     negeri: str = ""            # State
 
     def to_formatted_description(self, ownership_prefix: str = "") -> str:
-        """Generate Malaysian standard property description."""
+        """Generate Malaysian standard property description (top-tier law firm format)."""
         if not self.property_address:
             return ""
         prefix = ownership_prefix or "my property"
         parts = [f"{prefix} known as {self.property_address}"]
         title_parts = []
         if self.title_type and self.title_number:
-            # Normalize title type to sentence case (Geran, Hakmilik, etc.)
+            # Normalize title type to proper case
             tt = self.title_type
-            tt_map = {'GRN': 'Geran', 'GERAN': 'Geran', 'HAKMILIK': 'Hakmilik',
-                       'PAJAKAN': 'Pajakan Negeri'}
+            tt_map = {'GRN': 'Geran', 'GERAN': 'Geran', 'GM': 'Geran',
+                       'HAKMILIK': 'Hakmilik', 'PAJAKAN': 'Pajakan Negeri',
+                       'PAJAKAN NEGERI': 'Pajakan Negeri'}
             tt = tt_map.get(tt.upper(), tt) if tt else tt
             title_parts.append(f"held under {tt} No. {self.title_number}")
         if self.lot_number:
             title_parts.append(f"Lot No. {self.lot_number}")
         if self.bandar_pekan:
-            # Strip leading "Mukim"/"MUKIM" to avoid "Mukim of MUKIM X"
-            mukim_val = self.bandar_pekan.upper()
-            if mukim_val.startswith('MUKIM '):
-                mukim_val = mukim_val[6:]
+            # Strip leading "Mukim"/"MUKIM"/"Bandar" to avoid duplication
+            mukim_val = self.bandar_pekan.strip()
+            for pfx in ['MUKIM ', 'Mukim ', 'BANDAR ', 'Bandar ']:
+                if mukim_val.upper().startswith(pfx.upper()):
+                    mukim_val = mukim_val[len(pfx):]
+                    break
             title_parts.append(f"Mukim {mukim_val}")
         if self.daerah:
-            daerah_val = self.daerah.upper()
-            if daerah_val.startswith('DAERAH '):
-                daerah_val = daerah_val[7:]
-            title_parts.append(f"District of {daerah_val}")
+            daerah_val = self.daerah.strip()
+            for pfx in ['DAERAH ', 'Daerah ', 'DISTRICT OF ', 'District of ']:
+                if daerah_val.upper().startswith(pfx.upper()):
+                    daerah_val = daerah_val[len(pfx):]
+                    break
+            title_parts.append(f"Daerah {daerah_val}")
         if self.negeri:
-            negeri_val = self.negeri.upper()
-            if negeri_val.startswith('NEGERI '):
-                negeri_val = negeri_val[7:]
-            title_parts.append(f"State of {negeri_val}")
+            negeri_val = self.negeri.strip()
+            for pfx in ['NEGERI ', 'Negeri ', 'STATE OF ', 'State of ']:
+                if negeri_val.upper().startswith(pfx.upper()):
+                    negeri_val = negeri_val[len(pfx):]
+                    break
+            title_parts.append(f"Negeri {negeri_val}")
         if title_parts:
             parts.extend(title_parts)
         return ", ".join(parts) + ";"

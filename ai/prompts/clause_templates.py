@@ -200,6 +200,58 @@ ADMIN_POWERS_TEMPLATE = """I GIVE AND GRANT unto my Executor the following power
 (g) To apply the whole or any part of the capital or income of any minor beneficiary's share for or towards the maintenance, education and benefit of that minor beneficiary as my Executor shall in his/her absolute discretion think fit."""
 
 # ============================================================
+# MALAYSIA PROPERTY CLAUSE LIBRARY (by title type)
+# Top-tier law firm format using Malay legal terms
+# ============================================================
+
+PROPERTY_CLAUSE_LIBRARY = {
+    'Geran': {
+        'description': 'Final freehold title (Geran Mukim / Grant)',
+        'direct': """{clause_num}.  I hereby devise and bequeath to my {relationship} {beneficiary_name} {id_str} {ownership_prefix} known as {address}, held under Geran No. {title_number}, Lot No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}.{substitute_clause}
+
+Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.""",
+        'sell': """{clause_num}.  I direct my Executor to sell {ownership_prefix} known as {address}, held under Geran No. {title_number}, Lot No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri} and distribute the net proceeds of the sale to the following beneficiaries named below in the shares indicated.
+
+{beneficiary_list}
+
+Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.""",
+    },
+    'Hakmilik': {
+        'description': 'Ownership title (older format)',
+        'direct': """{clause_num}.  I hereby devise and bequeath to my {relationship} {beneficiary_name} {id_str} {ownership_prefix} known as {address}, held under Hakmilik No. {title_number}, Lot No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}.{substitute_clause}
+
+Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.""",
+    },
+    'HSD': {
+        'description': 'Interim title (Hakmilik Sementara)',
+        'direct': """{clause_num}.  I hereby devise and bequeath to my {relationship} {beneficiary_name} {id_str} {ownership_prefix} known as {address}, held under HSD No. {title_number}, PT No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}.{substitute_clause}
+
+Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.""",
+    },
+    'HSM': {
+        'description': 'Strata master title',
+        'direct': """{clause_num}.  I hereby devise and bequeath to my {relationship} {beneficiary_name} {id_str} {ownership_prefix} known as {address}, held under HSM No. {title_number}, Petak No. {lot_number}, Tingkat {floor}, Bangunan {building}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}.{substitute_clause}
+
+Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.""",
+    },
+    'Pajakan Negeri': {
+        'description': 'State leasehold title',
+        'direct': """{clause_num}.  I hereby devise and bequeath to my {relationship} {beneficiary_name} {id_str} {ownership_prefix} known as {address}, held under Pajakan Negeri No. {title_number}, Lot No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}.{substitute_clause}
+
+Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.""",
+    },
+}
+
+# Property description format for each title type (used in format_will_data)
+PROPERTY_FORMAT_BY_TITLE = {
+    'Geran': 'held under Geran No. {title_number}, Lot No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}',
+    'Hakmilik': 'held under Hakmilik No. {title_number}, Lot No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}',
+    'HSD': 'held under HSD No. {title_number}, PT No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}',
+    'HSM': 'held under HSM No. {title_number}, Petak No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}',
+    'Pajakan Negeri': 'held under Pajakan Negeri No. {title_number}, Lot No. {lot_number}, Mukim {mukim}, Daerah {daerah}, Negeri {negeri}',
+}
+
+# ============================================================
 # TESTIMONIUM AND ATTESTATION
 # ============================================================
 
