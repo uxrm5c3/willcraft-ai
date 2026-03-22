@@ -77,18 +77,17 @@ def _build_content_html(text: str) -> str:
     escaped = html.escape(text)
     lines = escaped.split('\n')
 
-    # First pass: classify each line (collapse consecutive blank lines)
+    # First pass: classify each line (max 1 consecutive blank line — minimal spacing)
     classified = []  # list of (type, html_str) tuples
-    prev_blank = False
+    blank_count = 0
     for line in lines:
         stripped = line.strip()
         if not stripped:
-            if prev_blank:
-                continue  # Skip consecutive blank lines
-            prev_blank = True
-            classified.append(('spacer', '<div class="spacer"></div>'))
+            blank_count += 1
+            if blank_count <= 1:  # Max 1 spacer between content
+                classified.append(('spacer', '<div class="spacer"></div>'))
             continue
-        prev_blank = False
+        blank_count = 0
 
         # Skip header/footer content
         if 'LAST WILL AND TESTAMENT' in stripped.upper():
@@ -151,26 +150,27 @@ def _build_content_html(text: str) -> str:
                 while i < len(classified) and classified[i][0] in ('text', 'indented'):
                     group.append(classified[i][1])
                     i += 1
-            html_lines.append(f'<div class="section-group">\n' + '\n'.join(group) + '\n</div>')
+            # Section groups flow naturally — no break-inside:avoid to prevent big gaps
+            html_lines.append('\n'.join(group))
 
         elif typ == 'clause-start':
             # Numbered clause: group with continuation paragraphs
+            # But limit group size to prevent large empty spaces
             group = [htm]
             i += 1
-            # Collect continuation: text/indented lines and spacers followed by
-            # more text/indented (but not by a new clause or section)
-            while i < len(classified):
+            line_count = 1
+            MAX_GROUP_LINES = 8  # Max lines to keep together — prevents big gaps
+            while i < len(classified) and line_count < MAX_GROUP_LINES:
                 next_typ = classified[i][0]
                 if next_typ in ('text', 'indented'):
                     group.append(classified[i][1])
                     i += 1
+                    line_count += 1
                 elif next_typ == 'spacer':
-                    # Peek ahead: if next non-spacer is text/indented, include
                     j = i + 1
                     while j < len(classified) and classified[j][0] == 'spacer':
                         j += 1
                     if j < len(classified) and classified[j][0] in ('text', 'indented'):
-                        # Include spacers and continuation
                         while i < j:
                             group.append(classified[i][1])
                             i += 1
@@ -310,6 +310,7 @@ def _build_cover_page_html(testator_name: str, will_text: str, logo_html: str, f
 
     return f"""
     <div class="cover-page">
+        <div class="cover-spacer-top"></div>
         {cover_logo}
         <div class="cover-firm-address">{firm_address}</div>
         <hr class="cover-line">
@@ -317,7 +318,6 @@ def _build_cover_page_html(testator_name: str, will_text: str, logo_html: str, f
         <div class="cover-title">of</div>
         <div class="cover-testator">{testator_name}</div>
         {'<div class="cover-nric">(NRIC No. ' + nric + ')</div>' if nric else ''}
-        <hr class="cover-line">
     </div>"""
 
 
@@ -550,13 +550,12 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         page-break-after: avoid;
     }}
 
-    /* Section group: heading + first clause kept together */
+    /* Section group: heading + first clause kept together, but CAN span pages */
     .section-group {{
-        break-inside: avoid;
-        page-break-inside: avoid;
+        /* Sections CAN span 2 pages — don't force avoid */
     }}
 
-    /* Clause group: numbered clause + continuation paragraphs kept together */
+    /* Clause group: keep paragraphs together to avoid mid-paragraph breaks */
     .clause-group {{
         break-inside: avoid;
         page-break-inside: avoid;
@@ -589,7 +588,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
 
     /* Spacer between paragraphs — minimal to prevent content alteration */
     div.spacer {{
-        height: 4pt;
+        height: 3pt;
     }}
 
     /* "THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK" */
@@ -650,46 +649,43 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     /* === Cover Page === */
     .cover-page {{
         page: cover;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
         text-align: center;
-        min-height: 85vh;
         page-break-after: always;
     }}
+    .cover-spacer-top {{
+        height: 120pt;
+    }}
     .cover-logo {{
-        max-height: 180pt;
-        max-width: 280pt;
-        margin-bottom: 30pt;
+        max-height: 160pt;
+        max-width: 260pt;
+        margin: 0 auto 16pt auto;
+        display: block;
     }}
     .cover-firm-address {{
-        font-size: 11pt;
+        font-size: 10pt;
         color: #333;
-        margin-bottom: 60pt;
-        line-height: 1.6;
+        margin-bottom: 20pt;
+        line-height: 1.5;
+    }}
+    .cover-line {{
+        width: 100%;
+        border: none;
+        border-top: 0.5pt solid #000;
+        margin: 16pt auto;
     }}
     .cover-title {{
-        font-size: 20pt;
+        font-size: 16pt;
         font-weight: bold;
-        line-height: 1.6;
-        margin-bottom: 10pt;
+        line-height: 2.0;
     }}
     .cover-testator {{
-        font-size: 20pt;
-        font-weight: bold;
-        margin-bottom: 10pt;
-        text-decoration: underline;
-    }}
-    .cover-nric {{
         font-size: 16pt;
         font-weight: bold;
     }}
-    .cover-line {{
-        width: 60%;
-        border: none;
-        border-top: 2pt solid #000;
-        margin: 10pt auto;
+    .cover-nric {{
+        font-size: 14pt;
+        font-weight: bold;
+        margin-top: 4pt;
     }}
 
     /* === Prepared By Page === */

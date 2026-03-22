@@ -323,42 +323,41 @@ def _add_cover_page(doc, testator_name: str, will_text: str, firm_info: dict = N
         run.font.name = 'Times New Roman'
         run.font.size = Pt(11)
 
-    # Decorative line
+    # Thin line separator
     line_para = doc.add_paragraph()
     line_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = line_para.add_run('_' * 40)
-    run.font.size = Pt(10)
-
-    # Spacer
-    doc.add_paragraph().paragraph_format.space_after = Pt(20)
+    pBdr = parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="4" w:space="1" w:color="000000"/></w:pBdr>')
+    line_para._element.get_or_add_pPr().append(pBdr)
 
     # Title: "The Last Will & Testament"
     title_para = doc.add_paragraph()
     title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title_para.paragraph_format.space_after = Pt(4)
+    title_para.paragraph_format.space_before = Pt(16)
+    title_para.paragraph_format.space_after = Pt(0)
+    title_para.paragraph_format.line_spacing = 2.0
     run = title_para.add_run('The Last Will & Testament')
     run.bold = True
     run.font.name = 'Times New Roman'
-    run.font.size = Pt(20)
+    run.font.size = Pt(16)
 
     # "of"
     of_para = doc.add_paragraph()
     of_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    of_para.paragraph_format.space_after = Pt(4)
+    of_para.paragraph_format.space_after = Pt(0)
+    of_para.paragraph_format.line_spacing = 2.0
     run = of_para.add_run('of')
     run.bold = True
     run.font.name = 'Times New Roman'
-    run.font.size = Pt(20)
+    run.font.size = Pt(16)
 
-    # Testator name
+    # Testator name (no underline — matches law firm format)
     name_para = doc.add_paragraph()
     name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     name_para.paragraph_format.space_after = Pt(8)
     run = name_para.add_run(testator_name)
     run.bold = True
-    run.underline = True
     run.font.name = 'Times New Roman'
-    run.font.size = Pt(20)
+    run.font.size = Pt(16)
 
     # NRIC
     if nric:
@@ -368,13 +367,7 @@ def _add_cover_page(doc, testator_name: str, will_text: str, firm_info: dict = N
         run = nric_para.add_run(f'(NRIC No. {nric})')
         run.bold = True
         run.font.name = 'Times New Roman'
-        run.font.size = Pt(16)
-
-    # Decorative line
-    line_para2 = doc.add_paragraph()
-    line_para2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = line_para2.add_run('_' * 40)
-    run.font.size = Pt(10)
+        run.font.size = Pt(14)
 
     # Page break after cover
     doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
