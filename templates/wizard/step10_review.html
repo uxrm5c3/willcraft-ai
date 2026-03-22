@@ -511,6 +511,8 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 async function restoreWill() {
+    var btn = event.target.closest('button');
+    if (btn) { btn.disabled = true; btn.textContent = 'Restoring...'; }
     try {
         var resp = await fetch('/api/will/restore-generated', {
             method: 'POST',
@@ -521,9 +523,11 @@ async function restoreWill() {
             window.location.href = '/preview';
         } else {
             alert('Could not restore: ' + (data.error || 'No version found'));
+            if (btn) { btn.disabled = false; btn.textContent = 'Restore Previous Will'; }
         }
     } catch (err) {
-        alert('Network error. Please try again.');
+        alert('Network error: ' + err.message);
+        if (btn) { btn.disabled = false; btn.textContent = 'Restore Previous Will'; }
     }
 }
 </script>
