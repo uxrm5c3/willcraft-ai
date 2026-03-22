@@ -145,6 +145,19 @@
             </div>
         </div>
 
+        <!-- Discharge / Lien Clause for Properties -->
+        <div class="border border-gray-200 rounded-lg p-5 mb-4">
+            <label class="flex items-start">
+                <input type="checkbox" name="discharge_clause_enabled" value="1" {% if other.get('discharge_clause_enabled', true) %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-3 mt-0.5">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Property Discharge / Lien Clause</span>
+                    <p class="text-xs text-gray-500 mt-1">Include a clause directing that any sums required to discharge charges, private caveats, or liens on immovable properties shall be paid from the residuary estate. <strong>Recommended for all wills with property gifts.</strong></p>
+                    <p class="text-xs text-gray-400 mt-1 italic">"Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate."</p>
+                </div>
+            </label>
+        </div>
+
         <!-- Testator Satisfaction Clause -->
         <div class="border border-gray-200 rounded-lg p-5 mb-4">
             <label class="flex items-start">

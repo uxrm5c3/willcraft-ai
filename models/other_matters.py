@@ -20,6 +20,8 @@ class OtherMatters(BaseModel):
     unnamed_children_spouse_nric: Optional[str] = None
     # Joint bank account surviving holder clause
     joint_account_clause_enabled: bool = False
+    # Discharge / lien clause for properties
+    discharge_clause_enabled: bool = True  # Default ON
     # Testator satisfaction clause
     testator_satisfaction_enabled: bool = True  # Default ON
     # Translator / Interpreter attestation
