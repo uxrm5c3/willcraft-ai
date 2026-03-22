@@ -32,11 +32,11 @@ def _is_malaysian_nric(id_str: str) -> bool:
 
 def format_id_for_will(nric_passport: str, nationality: str = "Malaysian") -> str:
     """Format person ID for will text in parentheses.
-    - Malaysian NRIC: '(NRIC No. 123456-01-1234)'
+    - Malaysian NRIC: 'MALAYSIA (NRIC No. 123456-01-1234)'
     - Foreign ID: '([COUNTRY] Identification No. AB1234567)'
     """
     if _is_malaysian_nric(nric_passport):
-        return f"(NRIC No. {nric_passport})"
+        return f"MALAYSIA (NRIC No. {nric_passport})"
     else:
         nat = (nationality or 'Malaysian').upper()
         # Map common nationality values to country names

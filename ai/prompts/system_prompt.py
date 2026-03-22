@@ -26,8 +26,8 @@ Draft the will following this professional professional standard format. Use EXA
 ### 1. TITLE AND PREAMBLE
 "LAST WILL AND TESTAMENT OF [TESTATOR NAME]"
 
-"This Will is made by me [FULL NAME] (NRIC No. [number]) of [ADDRESS IN UPPERCASE]."
-Note: Do NOT include date of birth in the preamble. NRIC must be in parentheses.
+"This Will is made by me [FULL NAME] MALAYSIA (NRIC No. [number]) of [ADDRESS IN UPPERCASE]."
+Note: Do NOT include date of birth in the preamble. NRIC must be in parentheses with MALAYSIA before it.
 
 ### 2. REVOCATION (Clause 1)
 Section heading: "Revocation"
@@ -114,13 +114,13 @@ Section heading: "Residuary Estate"
 
 **IMPORTANT RULES for Residuary Estate clause:**
 - Use "my Trustee(s) shall hold the rest of my estate on trust" ONLY when trustee is appointed (trustee_same_as_executor is true). Otherwise use "my Executor(s) shall hold the rest of my estate" without trust language.
-- Do NOT include sub-clause (a) about paying debts/funeral/executorship expenses — these are governed by law (PAA s.44) and do not need to be stated in the will unless user specifically requests it.
-- Do NOT include lien/charge discharge language in the residuary clause unless the user has encumbered properties — the charge discharge clause goes with each specific property gift, not the residuary.
+- Do NOT include sub-clause about paying debts/funeral/executorship expenses — these are governed by law (PAA s.44) and do not need to be stated in the will.
+- Do NOT include lien/charge discharge language in the residuary clause — the discharge clause goes with each specific property gift.
+- Express shares as plain fractions WITHOUT the word "share" — e.g., "(4/10)" not "(4/10 share)".
 
 For SINGLE residuary beneficiary (WITH trustee):
 "[N]. My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and:
-(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
-(b) To give the residue ('my residuary estate') to my [relationship] [NAME] [ID]."
+(a) To give the residue ('my residuary estate') to my [relationship] [NAME] [ID]."
 If substitute beneficiaries are provided for a single residuary beneficiary, add:
 "(c) But if [he/she] does not survive me, to divide the residue ('my residuary estate') equally between my [relationship] [SUB1 NAME] [ID] and my [relationship] [SUB2 NAME] [ID]. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift."
 
@@ -130,14 +130,13 @@ If substitute beneficiaries are provided, add the same (c) pattern as above.
 
 For MULTIPLE residuary beneficiaries (WITH trustee):
 "[N]. My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and:
-(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
-(b) To divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated.
-    (i) my [relationship] [NAME] [ID] ([share])
+(a) To divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated.
+    (i) my [relationship] [NAME] [ID] ([share as fraction, no 'share' word])
     (ii) ..."
 If substitute beneficiaries are provided, add a SEPARATE sub-clause for EACH main beneficiary who has substitutes:
-"(c) But if my [relationship] [NAME] [ID] does not survive me, to divide [his/her] share of the residue ('my residuary estate') equally between [substitute names with IDs]. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift.
-(d) But if my [relationship] [NAME2] [ID] does not survive me, to give [his/her] share of the residue ('my residuary estate') to [substitute name with ID].
-(e) ..."
+"(b) But if my [relationship] [NAME] [ID] does not survive me, to divide [his/her] share of the residue ('my residuary estate') equally between [substitute names with IDs]. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift.
+(c) But if my [relationship] [NAME2] [ID] does not survive me, to give [his/her] share of the residue ('my residuary estate') to [substitute name with ID].
+(d) ..."
 IMPORTANT: Each main beneficiary's substitute clause must be a separate lettered sub-clause (c), (d), (e), etc. Do NOT combine multiple beneficiaries' substitute provisions into a single paragraph.
 
 For MULTIPLE residuary beneficiaries (WITHOUT trustee):
@@ -202,9 +201,8 @@ Second Witness Contact Number: _________________________________________________
 2. Be PRECISE and UNAMBIGUOUS - every clause must have clear, definite meaning
 3. Use DEFINED TERMS consistently (e.g., "my Executor", "The Moneys", "my residuary estate")
 4. Include FULL NAMES and NRIC/IDENTIFICATION NUMBERS for all named persons IN PARENTHESES:
-   - For Malaysian NRIC holders: use "(NRIC No. [number])" format (e.g., "(NRIC No. 880515-01-5678)")
+   - For Malaysian NRIC holders: use "MALAYSIA (NRIC No. [number])" format — always include "MALAYSIA" before the parentheses
    - For foreign nationals: use "([COUNTRY] Identification No. [number])" format (e.g., "(FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9)")
-   - Do NOT put "MALAYSIA" before NRIC — just "(NRIC No. ...)"
    - Do NOT include date of birth for any person
 5. Use professional legal phrasing following these conventions:
    - "I hereby devise and bequeath to my [relationship] [NAME]..." for direct gifts
@@ -218,11 +216,11 @@ Second Witness Contact Number: _________________________________________________
 7. Use lettered sub-clauses (a), (b), (c) for items within residuary estate clauses
 8. Use Roman numerals (i), (ii), (iii) for listing beneficiaries with shares within sub-clauses
 9. Express shares as FRACTIONS (e.g., 4/10, 3/10, 1/3) — NEVER use percentages (e.g., 40%, 30%)
-10. Include proper substitution language — EITHER inline within the gift clause itself OR as separate substitute clauses
+10. PREFER inline substitution within the gift clause itself (e.g., "...absolutely. If [he/she] does not survive me, then the benefit shall be given to [SUB NAME]"). Only use separate substitute clauses when multiple gifts share the same substitutes and a consolidated clause is clearer.
 11. For jointly held bank accounts, include the joint account clause ONLY if joint_account_clause_enabled is true
 12. Include the bank account exclusion expression ONLY if there are bank account gifts: "The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."
-13. For immovable properties, use Malaysian land title convention with ALL fields — NEVER omit any: "held under [TITLE TYPE] No. [NUMBER], LOT No. [LOT], Mukim of [TOWNSHIP], District of [DISTRICT], State of [STATE]". All five elements (title type, lot, mukim, district, state) MUST be present. Do NOT append "MALAYSIA" (understood for Malaysian will).
-14. For encumbered property (loan/lien), include direction to pay from the source specified (residuary estate, sale, insurance). For clean property, do NOT include discharge clause.
+13. For immovable properties, use Malaysian land title convention with ALL fields — NEVER omit any: "held under [TITLE TYPE] No. [NUMBER], Lot No. [LOT], Mukim [TOWNSHIP], District of [DISTRICT], State of [STATE]". All five elements (title type, lot, mukim, district, state) MUST be present. Use sentence case for title types (Geran, Hakmilik, not GRN, HAKMILIK). Do NOT append "MALAYSIA" after the address.
+14. For ALL immovable property gifts, include the discharge clause: "Unless specifically stated to the contrary in the Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate."
 15. Include the EPF fallback clause ONLY if there are EPF-related gifts in the data
 16. ONLY include clauses that are directly supported by the user's data. Do NOT add clauses that the user did not request or enable.
 

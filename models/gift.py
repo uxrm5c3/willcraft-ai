@@ -20,15 +20,30 @@ class PropertyDetails(BaseModel):
         parts = [f"{prefix} known as {self.property_address}"]
         title_parts = []
         if self.title_type and self.title_number:
-            title_parts.append(f"held under {self.title_type} No. {self.title_number}")
+            # Normalize title type to sentence case (Geran, Hakmilik, etc.)
+            tt = self.title_type
+            tt_map = {'GRN': 'Geran', 'GERAN': 'Geran', 'HAKMILIK': 'Hakmilik',
+                       'PAJAKAN': 'Pajakan Negeri'}
+            tt = tt_map.get(tt.upper(), tt) if tt else tt
+            title_parts.append(f"held under {tt} No. {self.title_number}")
         if self.lot_number:
-            title_parts.append(f"LOT No. {self.lot_number}")
+            title_parts.append(f"Lot No. {self.lot_number}")
         if self.bandar_pekan:
-            title_parts.append(f"Mukim of {self.bandar_pekan.upper()}")
+            # Strip leading "Mukim"/"MUKIM" to avoid "Mukim of MUKIM X"
+            mukim_val = self.bandar_pekan.upper()
+            if mukim_val.startswith('MUKIM '):
+                mukim_val = mukim_val[6:]
+            title_parts.append(f"Mukim {mukim_val}")
         if self.daerah:
-            title_parts.append(f"District of {self.daerah.upper()}")
+            daerah_val = self.daerah.upper()
+            if daerah_val.startswith('DAERAH '):
+                daerah_val = daerah_val[7:]
+            title_parts.append(f"District of {daerah_val}")
         if self.negeri:
-            title_parts.append(f"State of {self.negeri.upper()}")
+            negeri_val = self.negeri.upper()
+            if negeri_val.startswith('NEGERI '):
+                negeri_val = negeri_val[7:]
+            title_parts.append(f"State of {negeri_val}")
         if title_parts:
             parts.extend(title_parts)
         return ", ".join(parts) + ";"

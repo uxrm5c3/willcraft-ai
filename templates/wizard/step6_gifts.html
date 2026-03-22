@@ -249,12 +249,14 @@
                 <!-- Title & Land Search Fields -->
                 <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Title Type</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Title Type
+                            <span class="text-gray-400 cursor-help" title="Geran = Final Title (Freehold)&#10;Hakmilik = Ownership Title&#10;HSD = Interim Title (District)&#10;HSM = Interim Title (Mukim)&#10;Pajakan Negeri = State Lease&#10;&#10;Check your land title document for the correct type.">&#9432;</span>
+                        </label>
                         <select name="gift_prop_title_type_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                 onchange="updatePropertyPreview({{ loop.index0 }})">
                             <option value="">-- Select --</option>
                             {% for tt in ['Geran', 'Hakmilik', 'HSD', 'HSM', 'Pajakan Negeri', 'Other'] %}
-                            <option value="{{ tt }}" {% if pd.get('title_type', '') == tt %}selected{% endif %}>{{ tt }}</option>
+                            <option value="{{ tt }}" {% if pd.get('title_type', '') == tt or pd.get('title_type', '').upper() == tt.upper() or (tt == 'Geran' and pd.get('title_type', '').upper() in ('GRN', 'GERAN')) %}selected{% endif %}>{{ tt }}</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -273,7 +275,7 @@
                                placeholder="e.g., 7119" oninput="updatePropertyPreview({{ loop.index0 }})">
                     </div>
                 </div>
-                <div class="grid grid-cols-2 gap-3 mb-3">
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Mukim</label>
                         <input type="text" name="gift_prop_bandar_{{ loop.index0 }}"
@@ -287,6 +289,13 @@
                                value="{{ pd.get('daerah', '') }}"
                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview({{ loop.index0 }})">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Negeri (State) <span class="text-red-500">*</span></label>
+                        <input type="text" name="gift_prop_negeri_{{ loop.index0 }}"
+                               value="{{ pd.get('negeri', '') }}"
+                               class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
+                               placeholder="e.g., JOHOR" oninput="updatePropertyPreview({{ loop.index0 }})">
                     </div>
                 </div>
                 <!-- Live Preview -->
@@ -926,9 +935,10 @@ function buildPropertyPanelHtml(idx) {
             <div><label class="block text-xs font-medium text-gray-600 mb-1">Title Number</label><input type="text" name="gift_prop_title_number_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., 27395" oninput="updatePropertyPreview(${idx})"></div>
             <div><label class="block text-xs font-medium text-gray-600 mb-1">LOT Number</label><input type="text" name="gift_prop_lot_number_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., 7119" oninput="updatePropertyPreview(${idx})"></div>
         </div>
-        <div class="grid grid-cols-2 gap-3 mb-3">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
             <div><label class="block text-xs font-medium text-gray-600 mb-1">Mukim</label><input type="text" name="gift_prop_bandar_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})"></div>
             <div><label class="block text-xs font-medium text-gray-600 mb-1">Daerah (District)</label><input type="text" name="gift_prop_daerah_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})"></div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Negeri (State) <span class="text-red-500">*</span></label><input type="text" name="gift_prop_negeri_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., JOHOR" oninput="updatePropertyPreview(${idx})"></div>
         </div>
         <div class="p-3 bg-white rounded border border-blue-300">
             <label class="block text-xs font-medium text-blue-700 mb-1">Preview (Will Format):</label>
