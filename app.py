@@ -2196,6 +2196,71 @@ def api_persons_delete(person_id):
     return jsonify({'ok': True})
 
 
+@app.route('/api/persons/<person_id>', methods=['PATCH'])
+@login_required
+def api_persons_patch(person_id):
+    """Partial update of a person — for inline error correction."""
+    person = db.session.get(Person, person_id)
+    if not person:
+        return jsonify({'ok': False, 'error': 'Person not found'}), 404
+
+    data = request.get_json()
+    if not data:
+        return jsonify({'ok': False, 'error': 'No data provided'}), 400
+
+    # Only allow updating specific fields
+    allowed_fields = ['full_name', 'nric_passport', 'address', 'date_of_birth',
+                       'gender', 'nationality', 'email', 'phone', 'relationship']
+    updated = []
+    for field in allowed_fields:
+        if field in data:
+            setattr(person, field, data[field])
+            updated.append(field)
+
+    if updated:
+        db.session.commit()
+        _refresh_session_person_registry(person.client_id)
+        return jsonify({'ok': True, 'updated': updated})
+
+    return jsonify({'ok': False, 'error': 'No valid fields to update'}), 400
+
+
+@app.route('/api/validate/persons', methods=['GET'])
+@login_required
+def api_validate_persons():
+    """Validate all persons in the current will session."""
+    from validation.field_validator import validate_person
+    registry = session.get('person_registry', [])
+    results = {}
+    for p in registry:
+        errors = validate_person(p)
+        if errors:
+            results[p.get('id', '')] = {
+                'name': p.get('full_name', ''),
+                'errors': errors
+            }
+    return jsonify({'ok': True, 'results': results})
+
+
+@app.route('/api/validate/gifts', methods=['GET'])
+@login_required
+def api_validate_gifts():
+    """Validate all gift property details in the current will session."""
+    from validation.field_validator import validate_property_details
+    gifts = session.get('step5_gifts', [])
+    results = {}
+    for i, g in enumerate(gifts):
+        if g.get('gift_type') == 'property':
+            prop = g.get('property_details', {})
+            errors = validate_property_details(prop)
+            if errors:
+                results[str(i)] = {
+                    'description': prop.get('property_address', f'Gift {i+1}')[:50],
+                    'errors': errors
+                }
+    return jsonify({'ok': True, 'results': results})
+
+
 def _get_person_references(person_id, full_name):
     """Find all references to a person across will wizard session data."""
     refs = []

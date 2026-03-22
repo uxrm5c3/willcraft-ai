@@ -133,5 +133,55 @@ document.addEventListener('identitySaved', function() {
         }
     });
 })();
+
+// Validate identities on page load — show warnings for missing/invalid data
+(async function validateIdentities() {
+    try {
+        const resp = await fetch('/api/validate/persons');
+        const data = await resp.json();
+        if (!data.ok || !data.results) return;
+
+        const cards = document.querySelectorAll('.identity-card');
+        cards.forEach(card => {
+            const personId = card.dataset.id;
+            const validation = data.results[personId];
+            if (!validation) return;
+
+            // Add warning indicator
+            const errors = validation.errors.filter(e => e.severity === 'error');
+            const warnings = validation.errors.filter(e => e.severity === 'warning');
+            const allIssues = [...errors, ...warnings];
+
+            if (allIssues.length > 0) {
+                const badge = document.createElement('div');
+                badge.className = 'mt-1.5 flex flex-wrap gap-1';
+                allIssues.forEach(issue => {
+                    const tag = document.createElement('span');
+                    tag.className = issue.severity === 'error'
+                        ? 'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-600 border border-red-200 cursor-pointer hover:bg-red-100'
+                        : 'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-600 border border-amber-200 cursor-pointer hover:bg-amber-100';
+                    tag.innerHTML = (issue.severity === 'error' ? '⚠ ' : '⚡ ') + issue.message;
+                    tag.title = 'Click Edit to fix: ' + issue.message;
+                    tag.onclick = function(e) {
+                        e.stopPropagation();
+                        openEditIdentityModal(personId);
+                    };
+                    badge.appendChild(tag);
+                });
+                const infoDiv = card.querySelector('.flex-1.min-w-0');
+                if (infoDiv) infoDiv.appendChild(badge);
+
+                // Add border color
+                if (errors.length > 0) {
+                    card.classList.add('border-red-300', 'bg-red-50/30');
+                } else {
+                    card.classList.add('border-amber-300', 'bg-amber-50/30');
+                }
+            }
+        });
+    } catch (e) {
+        console.log('Validation check skipped:', e.message);
+    }
+})();
 </script>
 {% endblock %}
