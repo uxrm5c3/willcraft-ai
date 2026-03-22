@@ -816,8 +816,60 @@ function toggleAddressList(giftIndex) {
 
 function fillPropertyAddress(giftIndex, addr) {
     if (!addr) return;
-    const field = document.querySelector(`[name="gift_prop_address_${giftIndex}"]`);
-    if (field) { field.value = addr; field.classList.add('bg-green-50'); setTimeout(() => field.classList.remove('bg-green-50'), 2000); }
+    // Parse the combined address to extract postcode, city, state
+    // Typical format: "NO 16, JALAN TERATAI 20, TAMAN JOHOR JAYA, 81100 JOHOR BAHRU, JOHOR"
+    const parts = addr.split(',').map(p => p.trim());
+    let streetParts = [];
+    let postcode = '';
+    let city = '';
+    let state = '';
+
+    // Malaysian states for detection
+    const MY_STATES = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK',
+        'PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU',
+        'W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA','WILAYAH PERSEKUTUAN'];
+
+    for (let i = 0; i < parts.length; i++) {
+        const p = parts[i].toUpperCase();
+        // Check if this part is a state
+        if (MY_STATES.some(s => p === s || p.startsWith(s))) {
+            if (!state) state = parts[i].toUpperCase();
+            continue;
+        }
+        // Check if starts with postcode (5 digits)
+        const pcMatch = parts[i].match(/^(\d{5})\s+(.+)/);
+        if (pcMatch && !postcode) {
+            postcode = pcMatch[1];
+            city = pcMatch[2].toUpperCase();
+            continue;
+        }
+        // Check if this is a duplicate of already-extracted city/postcode
+        if (postcode && p.includes(postcode)) continue;
+        if (city && p === city) continue;
+        // Otherwise it's part of the street address
+        streetParts.push(parts[i]);
+    }
+
+    const streetAddr = streetParts.join(', ');
+    const addrField = document.querySelector(`[name="gift_prop_address_${giftIndex}"]`);
+    if (addrField) { addrField.value = streetAddr || addr; addrField.classList.add('bg-green-50'); setTimeout(() => addrField.classList.remove('bg-green-50'), 2000); }
+
+    // Fill postcode, city, state fields
+    if (postcode) {
+        const pcField = document.querySelector(`[name="gift_prop_postcode_${giftIndex}"]`);
+        if (pcField && !pcField.value) pcField.value = postcode;
+    }
+    if (city) {
+        const cityField = document.querySelector(`[name="gift_prop_city_${giftIndex}"]`);
+        if (cityField && !cityField.value) cityField.value = city;
+    }
+    if (state) {
+        const stateField = document.querySelector(`[name="gift_prop_state_${giftIndex}"]`);
+        if (stateField) stateField.value = state;
+        const negeriField = document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`);
+        if (negeriField && !negeriField.value) negeriField.value = state;
+    }
+
     const list = document.getElementById('addr-list-' + giftIndex);
     if (list) list.classList.add('hidden');
     updatePropertyPreview(giftIndex);
@@ -898,24 +950,52 @@ function updatePropertyPreview(giftIndex) {
     }
     let parts = [prefix + fullAddr];
     if (titleType && titleNum) parts.push('held under ' + titleType + ' No. ' + titleNum);
-    if (lotNum) parts.push('LOT No. ' + lotNum);
+    else if (!titleType || !titleNum) parts.push('held under [⚠ Title Type & Number required]');
+    if (lotNum) parts.push('Lot No. ' + lotNum);
+    else parts.push('[⚠ Lot No. required]');
+
+    // Mukim - required
     if (bandar) {
         let mukimVal = bandar.toUpperCase().replace(/^MUKIM\s+/i, '').replace(/^BANDAR\s+/i, '');
         parts.push('Mukim ' + mukimVal);
+    } else {
+        parts.push('[⚠ Mukim required]');
+        // Highlight the empty field
+        const mukimField = document.querySelector(`[name="gift_prop_bandar_${giftIndex}"]`);
+        if (mukimField) mukimField.classList.add('border-amber-400', 'bg-amber-50');
     }
+
+    // Daerah - required
     if (daerah) {
         let daerahVal = daerah.toUpperCase().replace(/^DAERAH\s+/i, '').replace(/^DISTRICT\s+OF\s+/i, '');
         parts.push('Daerah ' + daerahVal);
+    } else {
+        parts.push('[⚠ Daerah required]');
+        const daerahField = document.querySelector(`[name="gift_prop_daerah_${giftIndex}"]`);
+        if (daerahField) daerahField.classList.add('border-amber-400', 'bg-amber-50');
     }
+
+    // Negeri - required
     if (negeri) {
         let negeriVal = negeri.toUpperCase().replace(/^NEGERI\s+/i, '').replace(/^STATE\s+OF\s+/i, '');
         parts.push('Negeri ' + negeriVal);
+    } else {
+        parts.push('[⚠ Negeri required]');
+        const negeriField = document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`);
+        if (negeriField) negeriField.classList.add('border-red-400', 'bg-red-50');
     }
+
     if (country && country !== 'Malaysia') parts.push(country.toUpperCase());
 
     let suffix = ';';
     if (isSell) suffix = ' and distribute the net proceeds of the sale to the beneficiaries named below in the shares indicated.';
     if (isTrust) suffix = '; [Subject to Testamentary Trust — configure in Step 8]';
+
+    // Remove warning highlights when field is filled
+    ['bandar', 'daerah', 'negeri'].forEach(f => {
+        const fld = document.querySelector(`[name="gift_prop_${f}_${giftIndex}"]`);
+        if (fld && fld.value) fld.classList.remove('border-amber-400', 'bg-amber-50', 'border-red-400', 'bg-red-50');
+    });
 
     document.getElementById('property-preview-' + giftIndex).textContent = parts.join(', ') + suffix;
 }
