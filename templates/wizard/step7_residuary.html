@@ -113,11 +113,13 @@
             {% set substitute_groups = data.get('substitute_groups', []) %}
             {% for group in substitute_groups %}
             {% set group_idx = loop.index0 %}
-            <div class="substitute-group border border-gray-200 rounded-lg p-4 mb-4" data-group-index="{{ group_idx }}">
+            <div class="substitute-group border border-blue-100 bg-blue-50/30 rounded-lg p-4 mb-4" data-group-index="{{ group_idx }}">
                 <div class="flex justify-between items-center mb-3">
-                    <h4 class="font-medium text-gray-700">Substitute Group {{ loop.index }}
+                    <h4 class="font-medium text-gray-700">
                         {% if main_beneficiaries and group_idx < main_beneficiaries|length %}
-                        <span class="text-xs font-normal text-blue-600 ml-1">— for {{ main_beneficiaries[group_idx].get('beneficiary_name', '') }}</span>
+                        If <strong class="text-gray-900">{{ main_beneficiaries[group_idx].get('beneficiary_name', 'Main Beneficiary ' ~ loop.index) }}</strong> does not survive:
+                        {% else %}
+                        Substitute Group {{ loop.index }}
                         {% endif %}
                     </h4>
                     <button type="button" onclick="removeSubstituteGroup(this)" class="text-red-500 hover:text-red-700 text-sm">Remove Group</button>
@@ -213,8 +215,8 @@ function _buildBeneficiaryOptions() {
     return html;
 }
 
-// Get main beneficiary label for substitute group heading
-function _getMainBenLabel(groupIdx) {
+// Get main beneficiary heading for substitute group
+function _getMainBenHeading(groupIdx) {
     const nameField = document.querySelector(`[name="main_ben_name_${groupIdx}"]`);
     const selectField = document.querySelector(`[name="main_ben_person_id_${groupIdx}"]`);
     let name = '';
@@ -224,7 +226,7 @@ function _getMainBenLabel(groupIdx) {
         const opt = selectField.options[selectField.selectedIndex];
         name = opt ? opt.dataset.name || opt.textContent.split('(')[0].trim() : '';
     }
-    return name ? ` <span class="text-xs font-normal text-blue-600 ml-1">— for ${name}</span>` : '';
+    return name ? `If <strong class="text-gray-900">${name}</strong> does not survive:` : `Substitute Group ${groupIdx + 1}`;
 }
 
 // Sync hidden name field when dropdown changes
@@ -322,9 +324,9 @@ function addSubstituteGroup() {
     subCountsPerGroup[gIdx] = 1;
     const options = _buildBeneficiaryOptions();
     const html = `
-    <div class="substitute-group border border-gray-200 rounded-lg p-4 mb-4" data-group-index="${gIdx}">
+    <div class="substitute-group border border-blue-100 bg-blue-50/30 rounded-lg p-4 mb-4" data-group-index="${gIdx}">
         <div class="flex justify-between items-center mb-3">
-            <h4 class="font-medium text-gray-700">Substitute Group ${gIdx + 1}${_getMainBenLabel(gIdx)}</h4>
+            <h4 class="font-medium text-gray-700">${_getMainBenHeading(gIdx)}</h4>
             <button type="button" onclick="removeSubstituteGroup(this)" class="text-red-500 hover:text-red-700 text-sm">Remove Group</button>
         </div>
         <div class="substitute-entries space-y-3">
@@ -644,7 +646,7 @@ function followGiftSubstitutes(giftIdx) {
         const groupLabel = alloc.beneficiary_name ? `Substitute Group ${gIdx + 1} (for ${alloc.beneficiary_name})` : `Substitute Group ${gIdx + 1}`;
 
         const groupHtml = `
-        <div class="substitute-group border border-gray-200 rounded-lg p-4 mb-4" data-group-index="${gIdx}">
+        <div class="substitute-group border border-blue-100 bg-blue-50/30 rounded-lg p-4 mb-4" data-group-index="${gIdx}">
             <div class="flex justify-between items-center mb-3">
                 <h4 class="font-medium text-gray-700">${groupLabel}</h4>
                 <button type="button" onclick="removeSubstituteGroup(this)" class="text-red-500 hover:text-red-700 text-sm">Remove Group</button>
