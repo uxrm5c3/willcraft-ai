@@ -1220,28 +1220,49 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
     for (const [key, value] of Object.entries(extracted)) {
         // Skip internal/hidden fields
         if (key === 'error' || key === 'raw' || key === 'assets') continue;
-        if (key === 'owner_addresses' || key === 'document_type' || key === 'title_type_confidence') continue;
+        if (key === 'owner_addresses' || key === 'document_type' || key === 'title_type_confidence' || key === 'ownership_shares') continue;
 
-        // Special handling for owner_names array — show each as separate editable field
-        if (key === 'owner_names' && Array.isArray(value) && value.length > 0) {
-            let ownersHtml = `<div class="flex flex-col gap-2 p-3 border border-blue-200 bg-blue-50 rounded-lg">
-                <label class="text-sm font-semibold text-blue-800">Registered Owners (${value.length} found) — for reference only</label>
-                <p class="text-[10px] text-blue-500">Remove owners who are not the testator. Edit names if needed.</p>
-                <div id="ocr-owners-list" class="space-y-1">`;
-            value.forEach((name, i) => {
-                const cleanName = (name||'').trim();
-                if (!cleanName) return;
-                ownersHtml += `<div class="flex items-center gap-2 ocr-owner-row" data-idx="${i}">
-                    <input type="text" value="${cleanName.replace(/"/g,'&quot;')}" class="ocr-owner-name flex-1 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500">
-                    <button type="button" onclick="this.closest('.ocr-owner-row').remove()" class="px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded" title="Remove">✕</button>
+        // Special handling for owner_names — show each owner in separate editable field
+        if (key === 'owner_names' && value) {
+            // Normalize: convert string to array (split by comma, numbered patterns like "1) Name 2) Name")
+            let owners = [];
+            if (Array.isArray(value)) {
+                owners = value.map(n => (n||'').trim()).filter(Boolean);
+            } else {
+                const str = value.toString().trim();
+                // Try splitting by numbered patterns: "1) Name 2) Name" or "1. Name 2. Name"
+                const numbered = str.match(/\d+\)\s*[^)]+/g) || str.match(/\d+\.\s*[^.]+/g);
+                if (numbered) {
+                    owners = numbered.map(n => n.replace(/^\d+[.)]\s*/, '').trim()).filter(Boolean);
+                } else {
+                    // Every comma is a name separator
+                    owners = str.split(',').map(n => n.trim()).filter(Boolean);
+                }
+            }
+            if (owners.length > 0) {
+                const numOwners = parseInt(extracted.num_owners) || owners.length;
+                const sharePerOwner = numOwners > 0 ? `1/${numOwners}` : '';
+                let ownersHtml = `<div class="flex flex-col gap-2 p-3 border border-blue-200 bg-blue-50 rounded-lg">
+                    <label class="text-sm font-semibold text-blue-800">Registered Owners (${owners.length} found) — for reference</label>
+                    <p class="text-[10px] text-blue-500">Remove owners who are not the testator. Edit names and shares as needed.</p>
+                    <div id="ocr-owners-list" class="space-y-1.5">`;
+                owners.forEach((name, i) => {
+                    ownersHtml += `<div class="flex items-center gap-2 ocr-owner-row" data-idx="${i}">
+                        <span class="text-xs text-gray-400 w-4 flex-shrink-0">${i+1}.</span>
+                        <input type="text" value="${name.replace(/"/g,'&quot;')}" class="ocr-owner-name flex-1 px-2 py-1.5 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" placeholder="Owner name">
+                        <input type="text" value="${sharePerOwner}" class="ocr-owner-share w-16 px-2 py-1.5 text-sm border border-gray-300 rounded-lg text-center" placeholder="Share">
+                        <button type="button" onclick="this.closest('.ocr-owner-row').remove()" class="px-2 py-1.5 text-red-500 hover:bg-red-100 rounded-lg text-xs font-bold" title="Remove owner">✕</button>
+                    </div>`;
+                });
+                ownersHtml += `</div>
+                    <input type="hidden" name="ocr-field-owner_names" value="${owners.join('|').replace(/"/g,'&quot;')}">
                 </div>`;
-            });
-            ownersHtml += `</div>
-                <input type="hidden" name="ocr-field-owner_names" value="${value.join(',').replace(/"/g,'&quot;')}">
-            </div>`;
-            container.innerHTML += ownersHtml;
-            continue;
+                container.innerHTML += ownersHtml;
+                continue;
+            }
         }
+        // Skip ownership_shares — handled inline with owner names above
+        if (key === 'ownership_shares') continue;
 
         // Special handling for num_owners — show as read-only info
         if (key === 'num_owners') {
