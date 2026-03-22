@@ -3024,11 +3024,10 @@ def wizard_step_gifts():
         # Parse structured property details
         property_details = {}
         if gift_type == 'property':
-            # Ownership type and share
-            ownership = request.form.get(f'gift_prop_ownership_{gi}', 'sole').strip()
-            share_select = request.form.get(f'gift_prop_share_{gi}', '').strip()
-            share_custom = request.form.get(f'gift_prop_share_custom_{gi}', '').strip()
-            testator_share = share_custom if share_select == 'other' else share_select
+            # Undivided share and ownership
+            undivided = bool(request.form.get(f'gift_prop_undivided_{gi}'))
+            testator_share = request.form.get(f'gift_prop_share_{gi}', '').strip() if undivided else ''
+            ownership = 'joint' if undivided else request.form.get(f'gift_prop_ownership_{gi}', 'sole').strip()
 
             # Encumbrance
             encumbrance = request.form.get(f'gift_prop_encumbrance_{gi}', 'clean').strip()
@@ -3064,7 +3063,8 @@ def wizard_step_gifts():
                 'city': city,
                 'country': country,
                 'ownership_type': ownership,
-                'testator_share': testator_share if ownership == 'joint' else '',
+                'undivided_share': undivided,
+                'testator_share': testator_share,
                 'encumbrance_status': encumbrance,
                 'debt_source': debt_source,
             }

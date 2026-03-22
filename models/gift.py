@@ -109,10 +109,12 @@ class Gift(BaseModel):
 
     def _ownership_prefix(self) -> str:
         """Build ownership prefix for asset descriptions."""
-        if self.ownership_type == "joint" and self.testator_share:
-            frac = self.testator_share
+        if self.ownership_type == "joint":
             if self.gift_type == "property":
-                return f"my {frac} undivided share and interest in the property"
+                if self.testator_share:
+                    return f"all my {self.testator_share} undivided shares in the property"
+                else:
+                    return "my undivided share in the property"
             elif self.gift_type == "financial":
                 return f"my share of the moneys in my joint account at"
         return ""
