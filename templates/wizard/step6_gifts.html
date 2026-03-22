@@ -248,7 +248,7 @@
                 <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Title Type
-                            <span class="text-gray-400 cursor-help" title="Geran = Final Title (Freehold)&#10;Hakmilik = Ownership Title&#10;HSD = Interim Title (District)&#10;HSM = Interim Title (Mukim)&#10;Pajakan Negeri = State Lease&#10;&#10;Check your land title document for the correct type.">&#9432;</span>
+                            <button type="button" onclick="document.getElementById('title-type-help').classList.toggle('hidden')" class="text-blue-500 hover:text-blue-700 text-xs ml-1">&#9432; Help</button>
                         </label>
                         <select name="gift_prop_title_type_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                 onchange="updatePropertyPreview({{ loop.index0 }})">
@@ -272,6 +272,28 @@
                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                placeholder="e.g., 7119" oninput="updatePropertyPreview({{ loop.index0 }})">
                     </div>
+                </div>
+                <!-- Title Type Help Panel -->
+                <div id="title-type-help" class="hidden mb-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs">
+                    <div class="flex justify-between items-start mb-2">
+                        <span class="font-semibold text-blue-800">Which title type to select? Check the top of the land title document.</span>
+                        <button type="button" onclick="document.getElementById('title-type-help').classList.add('hidden')" class="text-blue-400 hover:text-blue-600">&times;</button>
+                    </div>
+                    <table class="w-full text-left border-collapse">
+                        <thead><tr class="border-b border-blue-200">
+                            <th class="py-1 pr-2 text-blue-700">Type</th>
+                            <th class="py-1 pr-2 text-blue-700">Full Name</th>
+                            <th class="py-1 text-blue-700">When to Select</th>
+                        </tr></thead>
+                        <tbody class="text-gray-700">
+                            <tr class="border-b border-blue-100"><td class="py-1 pr-2 font-medium">Geran</td><td class="py-1 pr-2">Geran Mukim / Grant</td><td class="py-1">Final title (freehold). Most common for residential properties</td></tr>
+                            <tr class="border-b border-blue-100"><td class="py-1 pr-2 font-medium">Hakmilik</td><td class="py-1 pr-2">Hakmilik</td><td class="py-1">Older title documents that say "HAKMILIK" at the top</td></tr>
+                            <tr class="border-b border-blue-100"><td class="py-1 pr-2 font-medium">HSD</td><td class="py-1 pr-2">Hakmilik Sementara</td><td class="py-1">Interim/temporary title. Common for new developments</td></tr>
+                            <tr class="border-b border-blue-100"><td class="py-1 pr-2 font-medium">HSM</td><td class="py-1 pr-2">Hakmilik Strata Master</td><td class="py-1">Strata title for condos, apartments, high-rise units</td></tr>
+                            <tr class="border-b border-blue-100"><td class="py-1 pr-2 font-medium">Pajakan Negeri</td><td class="py-1 pr-2">State Lease</td><td class="py-1">Leasehold land (e.g., 99-year lease). Common in Sabah, Sarawak, KL</td></tr>
+                            <tr><td class="py-1 pr-2 font-medium">Other</td><td class="py-1 pr-2">-</td><td class="py-1">EMR, PM, native land titles, or any type not listed above</td></tr>
+                        </tbody>
+                    </table>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
                     <div>
