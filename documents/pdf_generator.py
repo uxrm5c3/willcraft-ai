@@ -150,8 +150,8 @@ def _build_content_html(text: str) -> str:
                 while i < len(classified) and classified[i][0] in ('text', 'indented'):
                     group.append(classified[i][1])
                     i += 1
-            # Section groups flow naturally — no break-inside:avoid to prevent big gaps
-            html_lines.append('\n'.join(group))
+            # Wrap heading + first clause together to prevent orphaned headings
+            html_lines.append(f'<div class="section-group">\n' + '\n'.join(group) + '\n</div>')
 
         elif typ == 'clause-start':
             # Numbered clause: group with continuation paragraphs
@@ -540,6 +540,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     }}
 
     /* Section headings: Revocation, Appointment of Executor(s), etc. */
+    /* MUST stay with next content — never leave heading alone at bottom of page */
     h3.section-heading {{
         font-size: 12pt;
         font-weight: bold;
@@ -548,11 +549,14 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         text-decoration: underline;
         break-after: avoid;
         page-break-after: avoid;
+        orphans: 4;
+        widows: 4;
     }}
 
-    /* Section group: heading + first clause kept together, but CAN span pages */
+    /* Section group: heading + first clause kept together */
     .section-group {{
-        /* Sections CAN span 2 pages — don't force avoid */
+        break-inside: avoid;
+        page-break-inside: avoid;
     }}
 
     /* Clause group: keep paragraphs together to avoid mid-paragraph breaks */

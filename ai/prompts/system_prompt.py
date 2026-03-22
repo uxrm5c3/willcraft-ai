@@ -195,6 +195,25 @@ Second Witness Address: ________________________________________________________
 
 Second Witness Contact Number: ________________________________________________________"
 
+### 14b. TRANSLATOR ATTESTATION (ONLY if translator info is provided in the data)
+If translator details are provided, REPLACE the standard attestation clause ("This Last Will and Testament was signed by the Testator in the presence of us both...") with:
+
+"SIGNED by the Testator [TESTATOR NAME] [ID] after it had been interpreted and read over to [him/her] in [LANGUAGE] by [TRANSLATOR NAME] and [he/she] appeared to understand it thoroughly and to approve of its contents in our joint presence and [his/her] presence at the same time."
+
+Also add translator signature block after the witness sections:
+
+"Translator's Attestation:
+
+I, [TRANSLATOR NAME] [ID], do hereby confirm that this Will was read over and explained by me to the Testator in the [LANGUAGE] language and the Testator appeared to perfectly understand the contents thereof and made [his/her] signature in my presence and in the presence of the two witnesses named above.
+
+Signature of Translator: ________________________________________________________
+
+Translator Full Name: ________________________________________________________
+
+Translator Identification: ________________________________________________________
+
+Translator Address: ________________________________________________________"
+
 ## Drafting Rules
 
 1. Use FORMAL LEGAL ENGLISH appropriate for Malaysian courts, following the professional Malaysian will drafting standard

@@ -3529,6 +3529,14 @@ def wizard_step_others():
     # Testator satisfaction clause (default ON)
     om_data['testator_satisfaction_enabled'] = bool(request.form.get('testator_satisfaction_enabled'))
 
+    # Translator / Interpreter attestation
+    om_data['translator_enabled'] = bool(request.form.get('translator_enabled'))
+    if om_data['translator_enabled']:
+        om_data['translator_name'] = request.form.get('translator_name', '').strip()
+        om_data['translator_nric'] = request.form.get('translator_nric', '').strip()
+        om_data['translator_language'] = request.form.get('translator_language', '').strip()
+        om_data['translator_address'] = request.form.get('translator_address', '').strip()
+
     additional = request.form.get('additional_instructions', '').strip()
     if additional:
         om_data['additional_instructions'] = additional

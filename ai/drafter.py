@@ -295,6 +295,18 @@ def format_will_data(will_data) -> str:
             other_lines.append("  Joint Account Clause: NOT enabled — do NOT include any joint bank account clause")
         if getattr(om, 'testator_satisfaction_enabled', True):
             other_lines.append("  Testator Satisfaction Clause: ENABLED — include clause: 'In making this Will, I have conscientiously considered all aspects and all my surrounding circumstances and I am thoroughly satisfied that the provisions made in this Will absolutely reflect my wishes and intentions.'")
+        if getattr(om, 'translator_enabled', False):
+            t_name = getattr(om, 'translator_name', '') or ''
+            t_nric = getattr(om, 'translator_nric', '') or ''
+            t_lang = getattr(om, 'translator_language', '') or ''
+            t_addr = getattr(om, 'translator_address', '') or ''
+            other_lines.append(f"  Translator Attestation: ENABLED")
+            other_lines.append(f"    Translator Name: {t_name}")
+            other_lines.append(f"    Translator NRIC: {t_nric}")
+            other_lines.append(f"    Language: {t_lang}")
+            if t_addr:
+                other_lines.append(f"    Translator Address: {t_addr}")
+            other_lines.append(f"    USE TRANSLATOR ATTESTATION format instead of standard attestation clause.")
         if om.additional_instructions:
             other_lines.append(f"  Additional: {om.additional_instructions}")
 

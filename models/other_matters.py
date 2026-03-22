@@ -22,5 +22,11 @@ class OtherMatters(BaseModel):
     joint_account_clause_enabled: bool = False
     # Testator satisfaction clause
     testator_satisfaction_enabled: bool = True  # Default ON
+    # Translator / Interpreter attestation
+    translator_enabled: bool = False
+    translator_name: Optional[str] = None
+    translator_nric: Optional[str] = None
+    translator_language: Optional[str] = None
+    translator_address: Optional[str] = None
     # Additional instructions
     additional_instructions: Optional[str] = None
