@@ -128,16 +128,17 @@ def generate_verification_pdf(persons, gifts, documents_map, testator_name=""):
     </body></html>"""
 
     # Generate PDF
+    safe_name = "".join(c for c in testator_name if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_') or 'Will'
     try:
         import weasyprint
         tmp_dir = tempfile.mkdtemp()
-        filepath = os.path.join(tmp_dir, f"Verification_{testator_name.replace(' ', '_')}.pdf")
+        filepath = os.path.join(tmp_dir, f"Verification_{safe_name}.pdf")
         weasyprint.HTML(string=full_html).write_pdf(filepath)
         return filepath
     except Exception as e:
         # Fallback: save as HTML
         tmp_dir = tempfile.mkdtemp()
-        filepath = os.path.join(tmp_dir, f"Verification_{testator_name.replace(' ', '_')}.html")
+        filepath = os.path.join(tmp_dir, f"Verification_{safe_name}.html")
         with open(filepath, 'w') as f:
             f.write(full_html)
         return filepath

@@ -3838,7 +3838,7 @@ def download_verification_pdf():
         return redirect(url_for('wizard_step', step=10))
 
     return send_file(filepath, as_attachment=True,
-                     download_name=f"Verification_{testator_name.replace(' ', '_')}.pdf",
+                     download_name=f"Verification_{''.join(c for c in testator_name if c.isalnum() or c in (' ', '-', '_')).strip().replace(' ', '_')}.pdf",
                      mimetype='application/pdf')
 
 
