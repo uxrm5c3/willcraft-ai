@@ -9,12 +9,48 @@ from datetime import datetime
 
 
 def _image_to_data_uri(file_path):
-    """Convert image file to base64 data URI."""
+    """Convert image or PDF file to base64 data URI for embedding in HTML.
+    For PDFs, converts first page to JPEG image."""
     if not file_path or not os.path.exists(file_path):
         return None
     ext = os.path.splitext(file_path)[1].lower()
+
+    if ext == '.pdf':
+        # Convert first page of PDF to image
+        try:
+            import subprocess
+            import tempfile
+            tmp = tempfile.mktemp(suffix='.jpg')
+            # Try pdftoppm first (poppler)
+            result = subprocess.run(
+                ['pdftoppm', '-jpeg', '-r', '150', '-f', '1', '-l', '1', '-singlefile', file_path, tmp.replace('.jpg', '')],
+                capture_output=True, timeout=10
+            )
+            out_file = tmp.replace('.jpg', '') + '.jpg'
+            if os.path.exists(out_file):
+                with open(out_file, 'rb') as f:
+                    data = base64.b64encode(f.read()).decode('utf-8')
+                os.unlink(out_file)
+                return f"data:image/jpeg;base64,{data}"
+        except Exception:
+            pass
+        # Fallback: try using WeasyPrint/PIL
+        try:
+            from PIL import Image
+            import fitz  # PyMuPDF
+            doc = fitz.open(file_path)
+            page = doc[0]
+            pix = page.get_pixmap(dpi=150)
+            img_data = pix.tobytes("jpeg")
+            doc.close()
+            data = base64.b64encode(img_data).decode('utf-8')
+            return f"data:image/jpeg;base64,{data}"
+        except Exception:
+            pass
+        return None
+
     mime_map = {'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                '.gif': 'image/gif', '.webp': 'image/webp', '.pdf': 'application/pdf'}
+                '.gif': 'image/gif', '.webp': 'image/webp'}
     mime = mime_map.get(ext, 'image/png')
     with open(file_path, 'rb') as f:
         data = base64.b64encode(f.read()).decode('utf-8')
@@ -87,6 +123,11 @@ def generate_verification_pdf(persons, gifts, documents_map, testator_name=""):
             docs = g.get('documents', [])
             first_doc = docs[0] if docs else {}
             doc_id = first_doc.get('document_id', '')
+            # Extract document_id from URL if not set directly
+            if not doc_id and first_doc.get('url'):
+                url_parts = first_doc['url'].rstrip('/').split('/')
+                if len(url_parts) >= 3:
+                    doc_id = url_parts[-1]
             doc_path = documents_map.get(doc_id) if doc_id else None
             data_uri = _image_to_data_uri(doc_path) if doc_path else None
 

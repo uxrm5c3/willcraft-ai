@@ -159,7 +159,7 @@ def _build_content_html(text: str) -> str:
             group = [htm]
             i += 1
             line_count = 1
-            MAX_GROUP_LINES = 8  # Max lines to keep together — prevents big gaps
+            MAX_GROUP_LINES = 5  # Max lines to keep together — prevents big gaps
             while i < len(classified) and line_count < MAX_GROUP_LINES:
                 next_typ = classified[i][0]
                 if next_typ in ('text', 'indented'):
@@ -540,7 +540,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     }}
 
     /* Section headings: Revocation, Appointment of Executor(s), etc. */
-    /* MUST stay with next content — never leave heading alone at bottom of page */
+    /* break-after:avoid keeps heading with next paragraph — never orphaned at page bottom */
     h3.section-heading {{
         font-size: 12pt;
         font-weight: bold;
@@ -549,14 +549,10 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         text-decoration: underline;
         break-after: avoid;
         page-break-after: avoid;
-        orphans: 4;
-        widows: 4;
     }}
 
-    /* Section group: heading + first clause kept together */
+    /* Section group: NO break-inside — let content flow naturally to avoid big gaps */
     .section-group {{
-        break-inside: avoid;
-        page-break-inside: avoid;
     }}
 
     /* Clause group: keep paragraphs together to avoid mid-paragraph breaks */
