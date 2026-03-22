@@ -207,7 +207,7 @@
     {% endif %}
 
     <!-- Version History (when multiple versions exist) -->
-    {% if versions and versions|length > 1 %}
+    {% if versions and (versions|length > 1 or edit_logs) %}
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
         <button onclick="document.getElementById('version-history-body').classList.toggle('hidden')" class="w-full bg-gray-50 border-b border-gray-200 px-6 py-3 flex items-center justify-between hover:bg-gray-100 transition-colors cursor-pointer">
             <span class="text-sm font-medium text-gray-600 flex items-center">
@@ -216,7 +216,7 @@
             </span>
             <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
         </button>
-        <div id="version-history-body" class="divide-y divide-gray-100 {% if not viewing_version %}hidden{% endif %}">
+        <div id="version-history-body" class="divide-y divide-gray-100 {% if not viewing_version and not edit_logs %}hidden{% endif %}">
             {% for v in versions %}
             <div class="px-6 py-3 {% if viewing_version and viewing_version.version_number == v.version_number %}bg-blue-50{% elif loop.first and not viewing_version %}bg-green-50{% else %}hover:bg-gray-50{% endif %}">
                 <div class="flex items-center justify-between gap-3">
