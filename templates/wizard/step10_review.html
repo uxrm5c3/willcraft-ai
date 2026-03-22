@@ -440,16 +440,6 @@
     {% endif %}
 
     <div class="text-center">
-        {% if not session.get('generated_will_text') and has_versions %}
-        <div class="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg inline-block">
-            <p class="text-sm text-amber-800 mb-3">A previously generated will was deleted. You can restore it from version history.</p>
-            <button type="button" onclick="restoreWill()"
-                    class="px-6 py-2 bg-amber-500 text-white font-medium rounded-lg hover:bg-amber-600 transition-colors">
-                <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                Restore Previous Will
-            </button>
-        </div>
-        {% endif %}
         <p class="text-sm text-gray-500 mb-4">This will use Claude AI to draft your will. The process may take 30-60 seconds.</p>
 
         <form method="POST" action="/wizard/generate" class="inline-block">
@@ -519,25 +509,5 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
-async function restoreWill() {
-    var btn = event.target.closest('button');
-    if (btn) { btn.disabled = true; btn.textContent = 'Restoring...'; }
-    try {
-        var resp = await fetch('/api/will/restore-generated', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'}
-        });
-        var data = await resp.json();
-        if (data.ok) {
-            window.location.href = '/preview';
-        } else {
-            alert('Could not restore: ' + (data.error || 'No version found'));
-            if (btn) { btn.disabled = false; btn.textContent = 'Restore Previous Will'; }
-        }
-    } catch (err) {
-        alert('Network error: ' + err.message);
-        if (btn) { btn.disabled = false; btn.textContent = 'Restore Previous Will'; }
-    }
-}
 </script>
 {% endblock %}
