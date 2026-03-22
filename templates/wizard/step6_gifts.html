@@ -222,7 +222,7 @@
                     <div class="grid grid-cols-2 gap-2 mb-2">
                         <input type="text" name="gift_prop_postcode_{{ loop.index0 }}" value="{{ pd.get('postcode', '') }}"
                                class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                               placeholder="Postcode" maxlength="10" oninput="updatePropertyPreview({{ loop.index0 }})">
+                               placeholder="Postcode" maxlength="10" oninput="updatePropertyPreview({{ loop.index0 }}); if(this.value.length===5 && typeof autoFillMukimDaerah==='function') autoFillMukimDaerah({{ loop.index0 }})">
                         <input type="text" name="gift_prop_city_{{ loop.index0 }}" value="{{ pd.get('city', '') }}"
                                class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                placeholder="City" oninput="updatePropertyPreview({{ loop.index0 }})">
@@ -677,6 +677,9 @@ function _buildGiftBenOptions(selectedName) {
     return html;
 }
 const GIFT_STATES = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK','PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU','W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA'];
+// Load postcode lookup for auto-filling Mukim/Daerah
+(function(){var s=document.createElement('script');s.src='/static/js/my_postcode_lookup.js';document.head.appendChild(s);})();
+
 const GIFT_TITLE_TYPES = ['Geran','Hakmilik','HSD','HSM','Pajakan Negeri','Other'];
 const GIFT_ASSET_TYPES = ['Savings Account','Current Account','Fixed Deposit','Investment Account','Unit Trust','Shares/Stocks','Insurance Policy','EPF','ASB/ASN','Tabung Haji','Vehicle','Jewellery','Other'];
 
@@ -909,7 +912,12 @@ function fillPropertyAddress(giftIndex, addr) {
 
     const list = document.getElementById('addr-list-' + giftIndex);
     if (list) list.classList.add('hidden');
-    updatePropertyPreview(giftIndex);
+
+    // Auto-fill Mukim/Daerah from postcode lookup
+    setTimeout(() => {
+        if (typeof autoFillMukimDaerah === 'function') autoFillMukimDaerah(giftIndex);
+        updatePropertyPreview(giftIndex);
+    }, 100);
 }
 
 function toggleOwnership(giftIndex, type) {
@@ -1099,7 +1107,7 @@ function buildPropertyPanelHtml(idx) {
             </div>
             <input type="text" name="gift_prop_address_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg mb-2" placeholder="e.g., No. 11, JALAN BERLIAN, KIM TENG PARK" oninput="updatePropertyPreview(${idx})">
             <div class="grid grid-cols-2 gap-2 mb-2">
-                <input type="text" name="gift_prop_postcode_${idx}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="Postcode" maxlength="10" oninput="updatePropertyPreview(${idx})">
+                <input type="text" name="gift_prop_postcode_${idx}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="Postcode" maxlength="10" oninput="updatePropertyPreview(${idx}); if(this.value.length===5 && typeof autoFillMukimDaerah==='function') autoFillMukimDaerah(${idx})">
                 <input type="text" name="gift_prop_city_${idx}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="City" oninput="updatePropertyPreview(${idx})">
             </div>
             <div class="grid grid-cols-2 gap-2">

@@ -65,21 +65,31 @@ This could be one of:
 - Cukai Pintu (Door Tax) - look for property address
 - Sale & Purchase Agreement (SPA) - look for property details in the schedule
 
-Return ONLY a JSON object with these fields (use empty string if not found, use null for unknown numbers):
+CRITICAL: You must understand Malaysian land title document structure to avoid misinterpreting data:
+
+**IMPORTANT DISTINCTIONS on Malaysian Land Titles:**
+- "PERIHAL TANAH" / "BUTIR-BUTIR TANAH" section = PROPERTY details (Lot, Mukim, Daerah, Negeri, land area)
+- "TUAN PUNYA BERDAFTAR" / "TUAN PUNYA" section = OWNER details (names, IC numbers, addresses)
+- The address under "TUAN PUNYA" is the OWNER's residential address, NOT the property address
+- The PROPERTY address is derived from: the street/area name in the title + Mukim + Daerah + Negeri
+- If there is no street address on the title, use the Lot number + Mukim + Daerah as the property location
+
+Return ONLY a JSON object with these fields (use empty string if not found):
 {{
-    "property_address": "Full property address including number, street, area, city, state",
+    "property_address": "Property location/address from PERIHAL TANAH section ONLY — NOT the owner's address",
     "title_type": "Geran, Hakmilik, HSD, HSM, or Pajakan Negeri",
-    "lot_number": "Lot/PT number only (digits)",
-    "title_number": "Title/Hakmilik/Geran number only (digits)",
-    "bandar_pekan": "Bandar/Pekan/Township name (without leading 'Mukim' or 'Bandar')",
-    "mukim": "Mukim name (without leading 'Mukim')",
-    "daerah": "Daerah/District name (without leading 'Daerah')",
-    "negeri": "State name (e.g., JOHOR, SELANGOR, PERAK)",
-    "property_description": "Brief description (residential, commercial, agricultural)",
+    "lot_number": "Lot/PT number from the title",
+    "title_number": "Title/Hakmilik/Geran number",
+    "bandar_pekan": "Bandar/Pekan/Township from title (without leading 'Mukim' or 'Bandar')",
+    "mukim": "Mukim name from title (without leading 'Mukim')",
+    "daerah": "Daerah/District from title (without leading 'Daerah')",
+    "negeri": "State from title (e.g., JOHOR, SELANGOR, PERAK)",
+    "property_description": "Brief description (residential, commercial, agricultural, etc.)",
     "num_owners": 1,
-    "owner_names": ["List of all owner names found on the document"],
-    "ownership_shares": "Share fraction if visible (e.g., '1/2 bahagian', '1/3 share'), empty if not found",
-    "title_type_confidence": "high if title type is clearly visible on document, low if guessed"
+    "owner_names": ["Each owner name as separate item — from TUAN PUNYA section"],
+    "owner_addresses": ["Each owner's residential address as separate item — from TUAN PUNYA section"],
+    "ownership_shares": "Share fraction if visible (e.g., '1/2 bahagian', '1/3 share'), empty if sole owner",
+    "title_type_confidence": "high if title type is clearly visible, low if uncertain"
 }}
 
 Malaysian title types (normalize to these values):
@@ -88,11 +98,6 @@ Malaysian title types (normalize to these values):
 - HSD = Hakmilik Sementara (Interim/Temporary Title)
 - HSM = Hakmilik Strata Master (Strata Title for condos/apartments)
 - Pajakan Negeri = State Lease / Leasehold (PN, PAJAKAN)
-
-For ownership detection:
-- Look for "TUAN PUNYA" (owner) section — count how many names are listed
-- If multiple owners, note the share fractions (e.g., "1/2 bahagian tak pecah")
-- If only one name, set num_owners to 1
 
 Return ONLY the JSON, no explanation."""
                 }
