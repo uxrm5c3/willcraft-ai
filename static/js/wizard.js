@@ -1218,9 +1218,43 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
     }
 
     for (const [key, value] of Object.entries(extracted)) {
-        if (key === 'error' || key === 'raw' || key === 'assets' || key === 'owner_addresses') continue;
-        // Skip internal fields
-        if (key === 'document_type' || key === 'title_type_confidence') continue;
+        // Skip internal/hidden fields
+        if (key === 'error' || key === 'raw' || key === 'assets') continue;
+        if (key === 'owner_addresses' || key === 'document_type' || key === 'title_type_confidence') continue;
+
+        // Special handling for owner_names array — show each as separate editable field
+        if (key === 'owner_names' && Array.isArray(value) && value.length > 0) {
+            let ownersHtml = `<div class="flex flex-col gap-2 p-3 border border-blue-200 bg-blue-50 rounded-lg">
+                <label class="text-sm font-semibold text-blue-800">Registered Owners (${value.length} found) — for reference only</label>
+                <p class="text-[10px] text-blue-500">Remove owners who are not the testator. Edit names if needed.</p>
+                <div id="ocr-owners-list" class="space-y-1">`;
+            value.forEach((name, i) => {
+                const cleanName = (name||'').trim();
+                if (!cleanName) return;
+                ownersHtml += `<div class="flex items-center gap-2 ocr-owner-row" data-idx="${i}">
+                    <input type="text" value="${cleanName.replace(/"/g,'&quot;')}" class="ocr-owner-name flex-1 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500">
+                    <button type="button" onclick="this.closest('.ocr-owner-row').remove()" class="px-2 py-1 text-xs text-red-500 hover:bg-red-50 rounded" title="Remove">✕</button>
+                </div>`;
+            });
+            ownersHtml += `</div>
+                <input type="hidden" name="ocr-field-owner_names" value="${value.join(',').replace(/"/g,'&quot;')}">
+            </div>`;
+            container.innerHTML += ownersHtml;
+            continue;
+        }
+
+        // Special handling for num_owners — show as read-only info
+        if (key === 'num_owners') {
+            const numVal = parseInt(value) || 1;
+            if (numVal > 1) {
+                container.innerHTML += `<div class="flex items-center gap-3 p-2 bg-amber-50 border border-amber-200 rounded-lg">
+                    <span class="text-sm text-amber-800 font-medium">⚠ ${numVal} owners detected on title</span>
+                    <span class="text-xs text-amber-600">Joint ownership will be auto-selected</span>
+                </div>`;
+            }
+            continue;
+        }
+
         const label = formatFieldLabel(key);
         const rawOcrVal = (value||'').toString().trim();
         const ocrVal = cleanOcrValue(key, rawOcrVal);

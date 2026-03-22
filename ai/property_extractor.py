@@ -111,6 +111,21 @@ Return ONLY the JSON, no explanation."""
         response_text = response_text.split('\n', 1)[1].rsplit('```', 1)[0].strip()
 
     try:
-        return json.loads(response_text)
+        result = json.loads(response_text)
+        # Clean up lot_number: strip PTD/PT/LOT prefix — just the number
+        if result.get('lot_number'):
+            import re as _re
+            result['lot_number'] = _re.sub(r'^(PTD|PT|LOT|NO\.?)\s*', '', result['lot_number'].strip(), flags=_re.IGNORECASE).strip()
+        # Clean up title_number: strip prefix
+        if result.get('title_number'):
+            result['title_number'] = _re.sub(r'^(NO\.?|GERAN|HAKMILIK|HSD|HSM)\s*', '', result['title_number'].strip(), flags=_re.IGNORECASE).strip()
+        # Clean up mukim/bandar_pekan: strip prefix
+        if result.get('mukim'):
+            result['mukim'] = _re.sub(r'^(MUKIM|BANDAR)\s+', '', result['mukim'].strip(), flags=_re.IGNORECASE).strip()
+        if result.get('bandar_pekan'):
+            result['bandar_pekan'] = _re.sub(r'^(MUKIM|BANDAR)\s+', '', result['bandar_pekan'].strip(), flags=_re.IGNORECASE).strip()
+        if result.get('daerah'):
+            result['daerah'] = _re.sub(r'^(DAERAH|DISTRICT\s+OF)\s+', '', result['daerah'].strip(), flags=_re.IGNORECASE).strip()
+        return result
     except json.JSONDecodeError:
         return {"error": "Could not parse extraction results", "raw": response_text}
