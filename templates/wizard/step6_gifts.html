@@ -90,36 +90,20 @@
 
                 <!-- Upload buttons for property docs -->
                 <div class="mb-3 space-y-2">
-                    <p class="text-xs font-semibold text-blue-700">📄 Upload Document or 📷 Take Photo to Auto-Fill:</p>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div class="flex items-center gap-1">
-                            <label class="text-xs font-medium text-blue-600 whitespace-nowrap w-20 flex-shrink-0">Title/Geran:</label>
-                            <input type="file" accept=".jpg,.jpeg,.png,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800 min-w-0"
-                                   onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'title')">
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <label class="text-xs font-medium text-blue-600 whitespace-nowrap w-20 flex-shrink-0">Cukai Harta:</label>
-                            <input type="file" accept=".jpg,.jpeg,.png,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800 min-w-0"
-                                   onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'cukai_harta')">
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <label class="text-xs font-medium text-blue-600 whitespace-nowrap w-20 flex-shrink-0">Cukai Pintu:</label>
-                            <input type="file" accept=".jpg,.jpeg,.png,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800 min-w-0"
-                                   onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'cukai_pintu')">
-                        </div>
-                        <div class="flex items-center gap-1">
-                            <label class="text-xs font-medium text-blue-600 whitespace-nowrap w-20 flex-shrink-0">SPA:</label>
-                            <input type="file" accept=".jpg,.jpeg,.png,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800 min-w-0"
-                                   onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'spa')">
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-2">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <label class="inline-flex items-center px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 cursor-pointer transition-colors">
+                            <svg class="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                            Upload Document
+                            <input type="file" accept=".jpg,.jpeg,.png,.pdf" class="hidden"
+                                   onchange="uploadAndExtractProperty(this, 'prop-status-{{ loop.index0 }}', {{ loop.index0 }}, 'auto')">
+                        </label>
                         <button type="button" onclick="openCameraForProperty({{ loop.index0 }})"
-                                class="px-3 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors whitespace-nowrap">
-                            📷 Take Photo of Document
+                                class="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 transition-colors">
+                            📷 Take Photo
                         </button>
                         <span id="prop-status-{{ loop.index0 }}" class="text-xs"></span>
                     </div>
+                    <p class="text-[10px] text-blue-500 mt-1">Upload any property document (Title, Cukai Harta, SPA, etc.) — AI will auto-detect the type and extract data.</p>
                     <!-- Uploaded Documents Preview -->
                     {% set saved_docs = gift.get('documents', []) %}
                     <div id="gift-docs-{{ gift_idx }}" class="{% if not saved_docs %}hidden{% endif %} mt-2 space-y-1">
@@ -1066,13 +1050,17 @@ function buildPropertyPanelHtml(idx) {
     <div id="property-panel-${idx}" class="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <h4 class="text-sm font-semibold text-blue-800 mb-3">Property Details</h4>
         <div class="mb-3 space-y-2">
-            <p class="text-xs font-semibold text-blue-700">📄 Upload Document:</p>
-            <div class="flex flex-wrap gap-2">
-                <input type="file" accept=".jpg,.jpeg,.png,.pdf" class="text-xs text-gray-500 file:py-0.5 file:px-2 file:rounded file:border-0 file:text-xs file:font-medium file:bg-blue-200 file:text-blue-800"
-                       onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'title')">
-                <button type="button" onclick="openCameraForProperty(${idx})" class="px-3 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-lg hover:bg-green-200">📷 Take Photo</button>
+            <div class="flex flex-wrap items-center gap-2">
+                <label class="inline-flex items-center px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 cursor-pointer transition-colors">
+                    <svg class="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                    Upload Document
+                    <input type="file" accept=".jpg,.jpeg,.png,.pdf" class="hidden"
+                           onchange="uploadAndExtractProperty(this, 'prop-status-${idx}', ${idx}, 'auto')">
+                </label>
+                <button type="button" onclick="openCameraForProperty(${idx})" class="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-xs font-medium rounded-lg hover:bg-green-700 transition-colors">📷 Take Photo</button>
                 <span id="prop-status-${idx}" class="text-xs"></span>
             </div>
+            <p class="text-[10px] text-blue-500">Upload any property document — AI will auto-detect the type and extract data.</p>
             <div id="gift-docs-${idx}" class="hidden mt-2 space-y-1"></div>
             <input type="hidden" name="gift_docs_${idx}" value="[]">
         </div>

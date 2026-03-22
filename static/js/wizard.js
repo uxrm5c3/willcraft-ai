@@ -1190,12 +1190,44 @@ function showOCRConfirmation(extracted, imageFile, callback, retryInputEl, retry
 
     const container = document.getElementById('ocr-fields-container');
     container.innerHTML = '';
+
+    // Normalize values for smart comparison (strip prefixes like PTD, Mukim, Bandar, etc.)
+    function normalizeForCompare(key, val) {
+        if (!val) return '';
+        val = val.toString().trim().toUpperCase();
+        // Strip common prefixes for lot/title numbers
+        if (key === 'lot_number') val = val.replace(/^(PTD|PT|LOT|NO\.?)\s*/i, '');
+        if (key === 'title_number') val = val.replace(/^(NO\.?|GERAN|HAKMILIK|HSD|HSM)\s*/i, '');
+        // Strip Mukim/Bandar prefix for mukim/bandar_pekan
+        if (key === 'mukim' || key === 'bandar_pekan') val = val.replace(/^(MUKIM|BANDAR|PEKAN)\s*/i, '');
+        if (key === 'daerah') val = val.replace(/^(DAERAH|DISTRICT\s+OF)\s*/i, '');
+        if (key === 'negeri') val = val.replace(/^(NEGERI|STATE\s+OF)\s*/i, '');
+        return val;
+    }
+
+    // Clean OCR values: strip prefixes from lot/title numbers
+    function cleanOcrValue(key, val) {
+        if (!val) return val;
+        val = val.toString().trim();
+        if (key === 'lot_number') val = val.replace(/^(PTD|PT|LOT|NO\.?)\s*/i, '');
+        if (key === 'title_number') val = val.replace(/^(NO\.?|GERAN|HAKMILIK|HSD|HSM)\s*/i, '');
+        if (key === 'mukim' || key === 'bandar_pekan') val = val.replace(/^(MUKIM|BANDAR|PEKAN)\s+/i, '');
+        if (key === 'daerah') val = val.replace(/^(DAERAH|DISTRICT\s+OF)\s+/i, '');
+        if (key === 'negeri') val = val.replace(/^(NEGERI|STATE\s+OF)\s+/i, '');
+        return val;
+    }
+
     for (const [key, value] of Object.entries(extracted)) {
-        if (key === 'error' || key === 'raw' || key === 'assets') continue;
+        if (key === 'error' || key === 'raw' || key === 'assets' || key === 'owner_addresses') continue;
+        // Skip internal fields
+        if (key === 'document_type' || key === 'title_type_confidence') continue;
         const label = formatFieldLabel(key);
-        const ocrVal = (value||'').toString().trim();
+        const rawOcrVal = (value||'').toString().trim();
+        const ocrVal = cleanOcrValue(key, rawOcrVal);
         const existVal = (existing[key]||'').toString().trim();
-        const hasConflict = existVal !== '' && ocrVal !== '' && existVal !== ocrVal;
+        const normOcr = normalizeForCompare(key, ocrVal);
+        const normExist = normalizeForCompare(key, existVal);
+        const hasConflict = existVal !== '' && ocrVal !== '' && normExist !== normOcr;
         const isEmpty = !ocrVal;
         const isAddress = key.toLowerCase().includes('address');
 
@@ -1500,9 +1532,10 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
         } else {
             if (statusEl) statusEl.innerHTML = '<span class="text-red-600">❌ Could not read the property document. Please try a clearer image.</span>';
         }
-        // Add document to preview list regardless of OCR success
+        // Add document to preview list — use auto-detected type if available
         if (data && data.ok) {
-            _addGiftDocPreview(giftIndex, file.name, data.document_url || '', docType || 'document');
+            const detectedType = (data.extracted && data.extracted.document_type) || docType || 'document';
+            _addGiftDocPreview(giftIndex, file.name, data.document_url || '', detectedType);
         }
     } catch (e) {
         console.error('Property upload error:', e);

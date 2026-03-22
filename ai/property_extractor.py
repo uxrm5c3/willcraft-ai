@@ -57,7 +57,7 @@ def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
                 {
                     "type": "text",
                     "text": f"""Extract property information from this Malaysian property document.
-Document type: {doc_type}
+Document type hint: {doc_type} (if 'auto', detect the document type automatically)
 
 This could be one of:
 - Land Title (Hakmilik Tanah) / Geran - look for No. Hakmilik, No. Lot, Mukim, Daerah, Negeri
@@ -76,6 +76,7 @@ CRITICAL: You must understand Malaysian land title document structure to avoid m
 
 Return ONLY a JSON object with these fields (use empty string if not found):
 {{
+    "document_type": "Detected type: 'title' (land title/geran/hakmilik), 'cukai_harta' (property tax), 'cukai_pintu' (door tax), 'spa' (sale agreement), or 'other'",
     "property_address": "Property location/address from PERIHAL TANAH section ONLY — NOT the owner's address",
     "title_type": "Geran, Hakmilik, HSD, HSM, or Pajakan Negeri",
     "lot_number": "Lot/PT number from the title",
