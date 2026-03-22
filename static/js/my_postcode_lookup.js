@@ -250,3 +250,81 @@ function autoFillMukimDaerah(giftIndex) {
 
     updatePropertyPreview(giftIndex);
 }
+
+/**
+ * Mukim → Daerah lookup for major Malaysian mukim areas.
+ * When Mukim is filled, auto-fill Daerah if empty.
+ */
+const MY_MUKIM_DAERAH_MAP = {
+    // Johor
+    'PLENTONG': 'Johor Bahru', 'TEBRAU': 'Johor Bahru', 'PULAI': 'Johor Bahru',
+    'JOHOR BAHRU': 'Johor Bahru', 'JELUTONG': 'Johor Bahru', 'PASIR GUDANG': 'Johor Bahru',
+    'ULU TIRAM': 'Johor Bahru', 'SENAI': 'Kulai', 'KULAI': 'Kulai',
+    'BATU PAHAT': 'Batu Pahat', 'SIMPANG KANAN': 'Batu Pahat', 'SIMPANG KIRI': 'Batu Pahat',
+    'MUAR': 'Muar', 'SERI MENANTI': 'Muar', 'BANDAR MAHARANI': 'Muar',
+    'SEGAMAT': 'Segamat', 'KLUANG': 'Kluang', 'PONTIAN': 'Pontian',
+    'KOTA TINGGI': 'Kota Tinggi', 'MERSING': 'Mersing', 'TANGKAK': 'Tangkak',
+    'ISKANDAR PUTERI': 'Johor Bahru', 'NUSAJAYA': 'Johor Bahru',
+    'GELANG PATAH': 'Johor Bahru', 'SKUDAI': 'Johor Bahru',
+    // Selangor
+    'PETALING': 'Petaling', 'DAMANSARA': 'Petaling', 'SUNGAI BULOH': 'Petaling',
+    'PUCHONG': 'Petaling', 'SUBANG': 'Petaling', 'KELANA JAYA': 'Petaling',
+    'KLANG': 'Klang', 'KAPAR': 'Klang', 'MERU': 'Klang',
+    'KAJANG': 'Hulu Langat', 'CHERAS': 'Hulu Langat', 'BALAKONG': 'Hulu Langat',
+    'SERDANG': 'Petaling', 'SEMENYIH': 'Hulu Langat', 'BANGI': 'Hulu Langat',
+    'HULU LANGAT': 'Hulu Langat', 'BERANANG': 'Hulu Langat',
+    'RAWANG': 'Gombak', 'GOMBAK': 'Gombak', 'SELAYANG': 'Gombak', 'BATU CAVES': 'Gombak',
+    'SEPANG': 'Sepang', 'DENGKIL': 'Sepang',
+    'KUALA SELANGOR': 'Kuala Selangor', 'BANTING': 'Kuala Langat',
+    'HULU SELANGOR': 'Hulu Selangor', 'KUALA KUBU BHARU': 'Hulu Selangor',
+    'SABAK BERNAM': 'Sabak Bernam',
+    'SHAH ALAM': 'Petaling', 'CYBERJAYA': 'Sepang',
+    // KL
+    'KUALA LUMPUR': 'Kuala Lumpur', 'BATU': 'Kuala Lumpur', 'SETAPAK': 'Kuala Lumpur',
+    'CHERAS KL': 'Kuala Lumpur', 'BANGSAR': 'Kuala Lumpur', 'KEPONG': 'Kuala Lumpur',
+    'SEGAMBUT': 'Kuala Lumpur', 'WANGSA MAJU': 'Kuala Lumpur', 'TITIWANGSA': 'Kuala Lumpur',
+    // Penang
+    'GEORGETOWN': 'Timur Laut', 'TANJUNG BUNGAH': 'Timur Laut',
+    'BAYAN LEPAS': 'Barat Daya', 'GELUGOR': 'Timur Laut', 'JELUTONG PG': 'Timur Laut',
+    'BUTTERWORTH': 'Seberang Perai Utara', 'BUKIT MERTAJAM': 'Seberang Perai Tengah',
+    'NIBONG TEBAL': 'Seberang Perai Selatan', 'BALIK PULAU': 'Barat Daya',
+    // Perak
+    'IPOH': 'Kinta', 'MENGLEMBU': 'Kinta', 'LAHAT': 'Kinta', 'GOPENG': 'Kampar',
+    'KAMPAR': 'Kampar', 'CHEMOR': 'Kinta', 'TANJUNG RAMBUTAN': 'Kinta',
+    'TAIPING': 'Larut, Matang & Selama', 'TELUK INTAN': 'Hilir Perak',
+    'SITIAWAN': 'Manjung', 'LUMUT': 'Manjung',
+    // Negeri Sembilan
+    'SEREMBAN': 'Seremban', 'PORT DICKSON': 'Port Dickson', 'NILAI': 'Seremban',
+    // Melaka
+    'MELAKA TENGAH': 'Melaka Tengah', 'ALOR GAJAH': 'Alor Gajah', 'JASIN': 'Jasin',
+    // Pahang
+    'KUANTAN': 'Kuantan', 'TEMERLOH': 'Temerloh', 'BENTONG': 'Bentong',
+    // Kedah
+    'ALOR SETAR': 'Kota Setar', 'SUNGAI PETANI': 'Kuala Muda', 'KULIM': 'Kulim',
+    'LANGKAWI': 'Langkawi',
+    // Kelantan
+    'KOTA BHARU': 'Kota Bharu',
+    // Terengganu
+    'KUALA TERENGGANU': 'Kuala Terengganu',
+    // Putrajaya
+    'PUTRAJAYA': 'Putrajaya',
+};
+
+function autoFillDaerahFromMukim(giftIndex) {
+    const mukimField = document.querySelector(`[name="gift_prop_bandar_${giftIndex}"]`);
+    const daerahField = document.querySelector(`[name="gift_prop_daerah_${giftIndex}"]`);
+    if (!mukimField || !daerahField) return;
+    if (daerahField.value.trim()) return; // Already has value
+
+    const mukim = mukimField.value.trim().toUpperCase();
+    if (!mukim) return;
+
+    const daerah = MY_MUKIM_DAERAH_MAP[mukim];
+    if (daerah) {
+        daerahField.value = daerah;
+        daerahField.classList.add('bg-blue-50');
+        daerahField.title = 'Auto-filled from Mukim: ' + mukimField.value;
+        setTimeout(() => daerahField.classList.remove('bg-blue-50'), 3000);
+        updatePropertyPreview(giftIndex);
+    }
+}

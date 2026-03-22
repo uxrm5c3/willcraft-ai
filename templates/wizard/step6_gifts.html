@@ -283,9 +283,9 @@
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Mukim</label>
                         <input type="text" name="gift_prop_bandar_{{ loop.index0 }}"
-                               value="{{ pd.get('bandar_pekan', '') }}"
+                               value="{{ pd.get('bandar_pekan', pd.get('mukim', '')) }}"
                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                               placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview({{ loop.index0 }})">
+                               placeholder="e.g., Plentong" oninput="updatePropertyPreview({{ loop.index0 }})" onblur="if(typeof autoFillDaerahFromMukim==='function') autoFillDaerahFromMukim({{ loop.index0 }})">
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Daerah (District)</label>

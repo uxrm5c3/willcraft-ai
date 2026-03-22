@@ -116,9 +116,28 @@ Return ONLY the JSON, no explanation."""
         if result.get('lot_number'):
             import re as _re
             result['lot_number'] = _re.sub(r'^(PTD|PT|LOT|NO\.?)\s*', '', result['lot_number'].strip(), flags=_re.IGNORECASE).strip()
-        # Clean up title_number: strip prefix
+        # Clean up title_number: strip prefix AND infer title_type from prefix if empty
         if result.get('title_number'):
-            result['title_number'] = _re.sub(r'^(NO\.?|GERAN|HAKMILIK|HSD|HSM)\s*', '', result['title_number'].strip(), flags=_re.IGNORECASE).strip()
+            tn = result['title_number'].strip()
+            # Detect title type from prefix if title_type is empty
+            if not result.get('title_type'):
+                tn_upper = tn.upper()
+                if tn_upper.startswith('HS(D)') or tn_upper.startswith('HSD'):
+                    result['title_type'] = 'HSD'
+                    result['title_type_confidence'] = 'high'
+                elif tn_upper.startswith('HS(M)') or tn_upper.startswith('HSM'):
+                    result['title_type'] = 'HSM'
+                    result['title_type_confidence'] = 'high'
+                elif tn_upper.startswith('GERAN') or tn_upper.startswith('GRN') or tn_upper.startswith('GM'):
+                    result['title_type'] = 'Geran'
+                    result['title_type_confidence'] = 'high'
+                elif tn_upper.startswith('HAKMILIK'):
+                    result['title_type'] = 'Hakmilik'
+                    result['title_type_confidence'] = 'high'
+                elif tn_upper.startswith('PN') or tn_upper.startswith('PAJAKAN'):
+                    result['title_type'] = 'Pajakan Negeri'
+                    result['title_type_confidence'] = 'high'
+            result['title_number'] = _re.sub(r'^(NO\.?|HS\(D\)|HS\(M\)|HSD|HSM|GERAN|GRN|GM|HAKMILIK|PAJAKAN\s*NEGERI|PN)\s*\.?\s*(NO\.?)?\s*', '', tn, flags=_re.IGNORECASE).strip()
         # Clean up mukim/bandar_pekan: strip prefix
         if result.get('mukim'):
             result['mukim'] = _re.sub(r'^(MUKIM|BANDAR)\s+', '', result['mukim'].strip(), flags=_re.IGNORECASE).strip()
@@ -126,6 +145,17 @@ Return ONLY the JSON, no explanation."""
             result['bandar_pekan'] = _re.sub(r'^(MUKIM|BANDAR)\s+', '', result['bandar_pekan'].strip(), flags=_re.IGNORECASE).strip()
         if result.get('daerah'):
             result['daerah'] = _re.sub(r'^(DAERAH|DISTRICT\s+OF)\s+', '', result['daerah'].strip(), flags=_re.IGNORECASE).strip()
+        # Remove owner_addresses — not needed in frontend
+        result.pop('owner_addresses', None)
+        # Ensure owner_names is always an array
+        if isinstance(result.get('owner_names'), str):
+            # Split comma-separated string into array
+            result['owner_names'] = [n.strip() for n in result['owner_names'].split(',') if n.strip()]
+        # Remove bandar_pekan — not needed for probate/land search
+        # Keep mukim only (mukim is what matters for land office)
+        if result.get('bandar_pekan') and not result.get('mukim'):
+            result['mukim'] = result['bandar_pekan']
+        result.pop('bandar_pekan', None)
         return result
     except json.JSONDecodeError:
         return {"error": "Could not parse extraction results", "raw": response_text}
