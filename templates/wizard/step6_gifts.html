@@ -970,33 +970,31 @@ function updatePropertyPreview(giftIndex) {
         document.getElementById('property-preview-' + giftIndex).textContent = '(Fill in property address to see preview)';
         return;
     }
-    // Build clean address for will preview — street only, no postcode/city/state duplication
-    // First, strip any postcode/city/state that leaked into the address field
+    // Build clean address for will — ONLY street + area, no postcode/city/state
+    // The title details (Mukim, Daerah, Negeri) handle the location
     let fullAddr = addr;
+    // Strip postcode+city+state from address field (they're in separate fields)
+    if (postcode) {
+        const pcRegex = new RegExp(',?\\s*' + postcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^,]*', 'gi');
+        fullAddr = fullAddr.replace(pcRegex, '');
+    }
     const MY_STATES_PREV = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK',
         'PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU',
         'W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA','KUALA LUMPUR'];
-    if (postcode) {
-        // Remove ALL postcode+city patterns from address
-        const pcRegex = new RegExp(',?\\s*' + postcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[^,]*', 'gi');
-        fullAddr = fullAddr.replace(pcRegex, '');
-    }
-    // Remove standalone state names
     for (const st of MY_STATES_PREV) {
-        const stRegex = new RegExp(',\\s*' + st.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:,|$)', 'gi');
-        fullAddr = fullAddr.replace(stRegex, ',');
+        fullAddr = fullAddr.replace(new RegExp(',\\s*' + st.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:,|$)', 'gi'), ',');
     }
-    // Remove standalone city if it's just duplicated
-    if (city) {
-        const cityRegex = new RegExp(',\\s*' + city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:,|$)', 'gi');
-        fullAddr = fullAddr.replace(cityRegex, ',');
+    // Remove city from address if same as Daerah/Mukim (avoids "Johor Bahru" appearing 3 times)
+    if (city && (city.toUpperCase() === daerah.toUpperCase() || city.toUpperCase() === bandar.toUpperCase().replace(/^BANDAR\s+/i,''))) {
+        fullAddr = fullAddr.replace(new RegExp(',\\s*' + city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:,|$)', 'gi'), ',');
     }
-    // Clean up trailing commas and spaces
     fullAddr = fullAddr.replace(/,\s*,/g, ',').replace(/^,\s*/, '').replace(/,\s*$/, '').trim();
-
-    // Append postcode+city once
-    if (postcode || city) {
-        fullAddr += ', ' + [postcode, city].filter(Boolean).join(' ');
+    // Only add city if it's different from Daerah AND different from Mukim
+    const cityUpper = city.toUpperCase();
+    const daerahUpper = daerah.toUpperCase().replace(/^DAERAH\s+/i,'').replace(/^DISTRICT\s+OF\s+/i,'');
+    const mukimUpper = bandar.toUpperCase().replace(/^MUKIM\s+/i,'').replace(/^BANDAR\s+/i,'');
+    if (city && cityUpper !== daerahUpper && cityUpper !== mukimUpper) {
+        fullAddr += ', ' + city;
     }
 
     // Check gift handling mode
@@ -1020,20 +1018,19 @@ function updatePropertyPreview(giftIndex) {
     if (lotNum) parts.push('Lot No. ' + lotNum);
     else parts.push('[⚠ Lot No. required]');
 
-    // Mukim - required
+    // Mukim - required (use proper case, not uppercase)
     if (bandar) {
-        let mukimVal = bandar.toUpperCase().replace(/^MUKIM\s+/i, '').replace(/^BANDAR\s+/i, '');
+        let mukimVal = bandar.replace(/^mukim\s+/i, '').replace(/^bandar\s+/i, '');
         parts.push('Mukim ' + mukimVal);
     } else {
         parts.push('[⚠ Mukim required]');
-        // Highlight the empty field
         const mukimField = document.querySelector(`[name="gift_prop_bandar_${giftIndex}"]`);
         if (mukimField) mukimField.classList.add('border-amber-400', 'bg-amber-50');
     }
 
     // Daerah - required
     if (daerah) {
-        let daerahVal = daerah.toUpperCase().replace(/^DAERAH\s+/i, '').replace(/^DISTRICT\s+OF\s+/i, '');
+        let daerahVal = daerah.replace(/^daerah\s+/i, '').replace(/^district\s+of\s+/i, '');
         parts.push('Daerah ' + daerahVal);
     } else {
         parts.push('[⚠ Daerah required]');
@@ -1041,9 +1038,9 @@ function updatePropertyPreview(giftIndex) {
         if (daerahField) daerahField.classList.add('border-amber-400', 'bg-amber-50');
     }
 
-    // Negeri - required
+    // Negeri - required (use the full name from dropdown, not uppercased)
     if (negeri) {
-        let negeriVal = negeri.toUpperCase().replace(/^NEGERI\s+/i, '').replace(/^STATE\s+OF\s+/i, '');
+        let negeriVal = negeri.replace(/^negeri\s+/i, '').replace(/^state\s+of\s+/i, '');
         parts.push('Negeri ' + negeriVal);
     } else {
         parts.push('[⚠ Negeri required]');
