@@ -296,10 +296,16 @@
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Negeri (State) <span class="text-red-500">*</span></label>
-                        <input type="text" name="gift_prop_negeri_{{ loop.index0 }}"
-                               value="{{ pd.get('negeri', '') }}"
+                        <select name="gift_prop_negeri_{{ loop.index0 }}"
                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
-                               placeholder="e.g., JOHOR" oninput="updatePropertyPreview({{ loop.index0 }})">
+                               onchange="updatePropertyPreview({{ loop.index0 }})">
+                            <option value="">-- Select --</option>
+                            {% set state_map = {'JOHOR': "Johor Darul Ta'zim", 'KEDAH': 'Kedah Darul Aman', 'KELANTAN': 'Kelantan Darul Naim', 'MELAKA': 'Melaka', 'NEGERI SEMBILAN': 'Negeri Sembilan Darul Khusus', 'PAHANG': 'Pahang Darul Makmur', 'PERAK': 'Perak Darul Ridzuan', 'PERLIS': 'Perlis Indera Kayangan', 'PULAU PINANG': 'Pulau Pinang', 'SABAH': 'Sabah', 'SARAWAK': 'Sarawak', 'SELANGOR': 'Selangor Darul Ehsan', 'TERENGGANU': 'Terengganu Darul Iman', 'W.P. KUALA LUMPUR': 'Wilayah Persekutuan Kuala Lumpur', 'W.P. LABUAN': 'Wilayah Persekutuan Labuan', 'W.P. PUTRAJAYA': 'Wilayah Persekutuan Putrajaya'} %}
+                            {% set cur_negeri = pd.get('negeri', '').upper() %}
+                            {% for code, full in state_map.items() %}
+                            <option value="{{ full }}" {% if cur_negeri == code or cur_negeri == full.upper() or cur_negeri in code %}selected{% endif %}>{{ full }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
                 </div>
                 <!-- Live Preview -->
@@ -660,7 +666,19 @@ function _buildGiftBenOptions(selectedName) {
     }
     return html;
 }
-const GIFT_STATES = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK','PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU','W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA'];
+// Malaysian states with official full names for will/probate documents
+const MY_STATE_FULL_NAMES = {
+    'JOHOR': 'Johor Darul Ta\'zim', 'KEDAH': 'Kedah Darul Aman',
+    'KELANTAN': 'Kelantan Darul Naim', 'MELAKA': 'Melaka',
+    'NEGERI SEMBILAN': 'Negeri Sembilan Darul Khusus', 'PAHANG': 'Pahang Darul Makmur',
+    'PERAK': 'Perak Darul Ridzuan', 'PERLIS': 'Perlis Indera Kayangan',
+    'PULAU PINANG': 'Pulau Pinang', 'SABAH': 'Sabah', 'SARAWAK': 'Sarawak',
+    'SELANGOR': 'Selangor Darul Ehsan', 'TERENGGANU': 'Terengganu Darul Iman',
+    'W.P. KUALA LUMPUR': 'Wilayah Persekutuan Kuala Lumpur',
+    'W.P. LABUAN': 'Wilayah Persekutuan Labuan',
+    'W.P. PUTRAJAYA': 'Wilayah Persekutuan Putrajaya',
+};
+const GIFT_STATES = Object.keys(MY_STATE_FULL_NAMES);
 // Load postcode lookup for auto-filling Mukim/Daerah
 (function(){var s=document.createElement('script');s.src='/static/js/my_postcode_lookup.js';document.head.appendChild(s);})();
 
@@ -891,7 +909,11 @@ function fillPropertyAddress(giftIndex, addr) {
         const stateField = document.querySelector(`[name="gift_prop_state_${giftIndex}"]`);
         if (stateField) stateField.value = state;
         const negeriField = document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`);
-        if (negeriField && !negeriField.value) negeriField.value = state;
+        if (negeriField && !negeriField.value) {
+            // Map to full official state name
+            const fullState = MY_STATE_FULL_NAMES[state] || state;
+            negeriField.value = fullState;
+        }
     }
 
     const list = document.getElementById('addr-list-' + giftIndex);
@@ -1045,7 +1067,7 @@ function updatePropertyPreview(giftIndex) {
 
 function buildPropertyPanelHtml(idx) {
     const titleOptions = GIFT_TITLE_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
-    const stateOptions = GIFT_STATES.map(s => `<option value="${s}">${s}</option>`).join('');
+    const stateOptions = GIFT_STATES.map(s => `<option value="${MY_STATE_FULL_NAMES[s]}">${MY_STATE_FULL_NAMES[s]}</option>`).join('');
     return `
     <div id="property-panel-${idx}" class="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
         <h4 class="text-sm font-semibold text-blue-800 mb-3">Property Details</h4>

@@ -1544,7 +1544,13 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
                 if (confirmed.daerah) setFieldValue(`gift_prop_daerah_${giftIndex}`, confirmed.daerah);
                 if (confirmed.negeri) {
                     const ng = document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`);
-                    if (ng) { ng.value = confirmed.negeri.toUpperCase(); ng.classList.add('bg-yellow-50'); }
+                    if (ng) {
+                        // Map short state name to full official name
+                        const stateKey = confirmed.negeri.toUpperCase();
+                        const fullName = (typeof MY_STATE_FULL_NAMES !== 'undefined' && MY_STATE_FULL_NAMES[stateKey]) || confirmed.negeri;
+                        ng.value = fullName;
+                        ng.classList.add('bg-yellow-50');
+                    }
                 }
                 // Feature 5: Auto-detect joint ownership from OCR
                 const numOwners = parseInt(confirmed.num_owners) || 1;
