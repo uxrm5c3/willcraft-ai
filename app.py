@@ -124,8 +124,8 @@ TENANT_CONFIG = {
         'email_from': 'enquiry@alantanjb.com',
         'email_cc': ['kylie.tan@alantanjb.com'],
         'firm_name': 'Tetuan Alan Tan & Associates',
-        'firm_address': '24-01 & 24-02, Jalan Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor',
-        'firm_phone': '07-588 5979',
+        'firm_address': "24-01 & 24-02, Jln Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor Darul Ta'zim",
+        'firm_phone': '011-3953 2638',
         'lawyer_name': 'FAIZUL HANAFI BIN TOKIRAN',
         'lawyer_bar_number': 'BC/F/167',
         'default_users': [
@@ -1588,7 +1588,17 @@ def api_will_send_email(will_id):
         logo = None
         if will_record.include_logo:
             logo = _get_logo_path()
-        filepath = generate_pdf(will_text, safe_name, logo_path=logo)
+        # Build firm info for cover page and prepared-by page
+        tenant = get_tenant()
+        firm_info = None
+        if tenant.get('firm_name'):
+            firm_info = {
+                'firm_name': tenant.get('firm_name', ''),
+                'firm_address': tenant.get('firm_address', ''),
+                'firm_phone': tenant.get('firm_phone', ''),
+                'firm_email': tenant.get('email_from', ''),
+            }
+        filepath = generate_pdf(will_text, safe_name, logo_path=logo, firm_info=firm_info)
         with open(filepath, 'rb') as f:
             pdf_data = f.read()
     except Exception as e:
@@ -3862,7 +3872,21 @@ def download(fmt):
 
     if fmt == 'docx':
         from documents.docx_generator import generate_docx
-        filepath = generate_docx(will_text, safe_name)
+        tenant = get_tenant()
+        firm_info = None
+        logo = None
+        if tenant.get('firm_name'):
+            firm_info = {
+                'firm_name': tenant.get('firm_name', ''),
+                'firm_address': tenant.get('firm_address', ''),
+                'firm_phone': tenant.get('firm_phone', ''),
+                'firm_email': tenant.get('email_from', ''),
+            }
+        if will_id:
+            wr = db.session.get(Will, will_id)
+            if wr and wr.include_logo:
+                logo = _get_logo_path()
+        filepath = generate_docx(will_text, safe_name, firm_info=firm_info, logo_path=logo)
     elif fmt == 'pdf':
         from documents.pdf_generator import generate_pdf
         # Check will's include_logo flag
@@ -3873,7 +3897,17 @@ def download(fmt):
                 logo = _get_logo_path()
         else:
             logo = _get_logo_path()
-        filepath = generate_pdf(will_text, safe_name, logo_path=logo)
+        # Build firm info for cover page and prepared-by page
+        tenant = get_tenant()
+        firm_info = None
+        if tenant.get('firm_name'):
+            firm_info = {
+                'firm_name': tenant.get('firm_name', ''),
+                'firm_address': tenant.get('firm_address', ''),
+                'firm_phone': tenant.get('firm_phone', ''),
+                'firm_email': tenant.get('email_from', ''),
+            }
+        filepath = generate_pdf(will_text, safe_name, logo_path=logo, firm_info=firm_info)
     else:
         flash('Unsupported download format.', 'error')
         return redirect(url_for('preview'))

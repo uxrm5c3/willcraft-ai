@@ -293,8 +293,66 @@ def _logo_to_data_uri(logo_path: str) -> str:
     return f'data:{mime};base64,{data}'
 
 
+def _build_cover_page_html(testator_name: str, will_text: str, logo_html: str, firm_info: dict = None) -> str:
+    """Build cover page HTML with firm logo, testator name, and NRIC."""
+    if not firm_info:
+        return ''  # No cover page if no firm info
+
+    # Extract NRIC from will text
+    import re
+    nric_match = re.search(r'NRIC\s*No\.?\s*[:\s]*(\d{6}-\d{2}-\d{4})', will_text)
+    nric = nric_match.group(1) if nric_match else ''
+
+    firm_name = html.escape(firm_info.get('firm_name', ''))
+    firm_address = html.escape(firm_info.get('firm_address', ''))
+
+    cover_logo = logo_html.replace('header-logo', 'cover-logo') if logo_html else ''
+
+    return f"""
+    <div class="cover-page">
+        {cover_logo}
+        <div class="cover-firm-address">{firm_address}</div>
+        <hr class="cover-line">
+        <div class="cover-title">The Last Will &amp; Testament</div>
+        <div class="cover-title">of</div>
+        <div class="cover-testator">{testator_name}</div>
+        {'<div class="cover-nric">(NRIC No. ' + nric + ')</div>' if nric else ''}
+        <hr class="cover-line">
+    </div>"""
+
+
+def _build_prepared_by_html(firm_info: dict = None) -> str:
+    """Build 'Prepared By' last page HTML."""
+    if not firm_info:
+        return ''
+
+    firm_name = html.escape(firm_info.get('firm_name', ''))
+    firm_address = html.escape(firm_info.get('firm_address', ''))
+    firm_phone = html.escape(firm_info.get('firm_phone', ''))
+    firm_email = html.escape(firm_info.get('firm_email', ''))
+
+    details = []
+    if firm_address:
+        details.append(firm_address)
+    if firm_phone:
+        details.append(f'TEL NO: {firm_phone}')
+    if firm_email:
+        details.append(f'EMAIL: {firm_email}')
+
+    return f"""
+    <div class="prepared-page">
+        <hr class="prepared-line">
+        <div class="prepared-heading">PREPARED BY:</div>
+        <hr class="prepared-line">
+        <div class="prepared-firm">{firm_name}</div>
+        <div class="prepared-subtitle">ADVOCATES &amp; SOLICITORS</div>
+        <div class="prepared-detail">{'<br>'.join(details)}</div>
+        <hr class="prepared-line">
+    </div>"""
+
+
 def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
-                       logo_path: str = None) -> str:
+                       logo_path: str = None, firm_info: dict = None) -> str:
     """Convert plain-text will into styled HTML suitable for PDF rendering.
 
     Follows Rockwills Trustee Berhad professional format with:
@@ -348,6 +406,22 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
             content: element(pageFooter);
             width: 100%;
         }}
+    }}
+
+    /* Cover page: no header, no footer */
+    @page cover {{
+        size: A4;
+        margin: 3cm 3.18cm 3cm 3.18cm;
+        @top-center {{ content: none; }}
+        @bottom-center {{ content: none; }}
+    }}
+
+    /* Prepared-by page: no header, no footer */
+    @page prepared {{
+        size: A4;
+        margin: 3cm 3.18cm 3cm 3.18cm;
+        @top-center {{ content: none; }}
+        @bottom-center {{ content: none; }}
     }}
 
     /* Signing page: NO footer boxes, smaller bottom margin */
@@ -572,6 +646,85 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         font-size: 10pt;
         font-weight: bold;
     }}
+
+    /* === Cover Page === */
+    .cover-page {{
+        page: cover;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        min-height: 85vh;
+        page-break-after: always;
+    }}
+    .cover-logo {{
+        max-height: 180pt;
+        max-width: 280pt;
+        margin-bottom: 30pt;
+    }}
+    .cover-firm-address {{
+        font-size: 11pt;
+        color: #333;
+        margin-bottom: 60pt;
+        line-height: 1.6;
+    }}
+    .cover-title {{
+        font-size: 20pt;
+        font-weight: bold;
+        line-height: 1.6;
+        margin-bottom: 10pt;
+    }}
+    .cover-testator {{
+        font-size: 20pt;
+        font-weight: bold;
+        margin-bottom: 10pt;
+        text-decoration: underline;
+    }}
+    .cover-nric {{
+        font-size: 16pt;
+        font-weight: bold;
+    }}
+    .cover-line {{
+        width: 60%;
+        border: none;
+        border-top: 2pt solid #000;
+        margin: 10pt auto;
+    }}
+
+    /* === Prepared By Page === */
+    .prepared-page {{
+        page: prepared;
+        page-break-before: always;
+        text-align: center;
+        padding-top: 120pt;
+    }}
+    .prepared-heading {{
+        font-size: 14pt;
+        font-weight: bold;
+        text-decoration: underline;
+        margin-bottom: 30pt;
+    }}
+    .prepared-firm {{
+        font-size: 14pt;
+        font-weight: bold;
+        margin-bottom: 4pt;
+    }}
+    .prepared-subtitle {{
+        font-size: 12pt;
+        font-weight: bold;
+        margin-bottom: 20pt;
+    }}
+    .prepared-detail {{
+        font-size: 11pt;
+        line-height: 1.8;
+    }}
+    .prepared-line {{
+        width: 40%;
+        border: none;
+        border-top: 1pt solid #000;
+        margin: 20pt auto;
+    }}
 </style>
 </head>
 <body>
@@ -600,14 +753,16 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     <div class="footer-info">Page| <span class="page-num"></span></div>
 </div>
 
+{_build_cover_page_html(escaped_testator, will_text, logo_html, firm_info)}
 {content_html}
 {signing_html}
+{_build_prepared_by_html(firm_info)}
 </body>
 </html>"""
 
 
 def generate_pdf(will_text: str, filename_base: str = "Will",
-                 logo_path: str = None) -> str:
+                 logo_path: str = None, firm_info: dict = None) -> str:
     """
     Generate a PDF from the will text.
 
@@ -618,6 +773,8 @@ def generate_pdf(will_text: str, filename_base: str = "Will",
         will_text: The full will text to render.
         filename_base: Base name for the output file (without extension).
         logo_path: Optional path to a firm logo image to embed in the header.
+        firm_info: Optional dict with firm details for cover page and last page:
+            {firm_name, firm_address, firm_phone, firm_email}
 
     Returns:
         Absolute path to the generated .pdf file.
@@ -626,7 +783,7 @@ def generate_pdf(will_text: str, filename_base: str = "Will",
     filepath = os.path.join(tmp_dir, f'{filename_base}_Will.pdf')
     html_content = _will_text_to_html(
         will_text, title=f"{filename_base} - Last Will and Testament",
-        logo_path=logo_path)
+        logo_path=logo_path, firm_info=firm_info)
 
     try:
         from weasyprint import HTML

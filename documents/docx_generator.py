@@ -291,13 +291,194 @@ def _add_signing_page(doc):
     run_end.font.size = Pt(10)
 
 
-def generate_docx(will_text: str, filename_base: str = "Will") -> str:
+def _add_cover_page(doc, testator_name: str, will_text: str, firm_info: dict = None, logo_path: str = None):
+    """Add a cover page with firm logo, testator name, and NRIC."""
+    import re
+
+    if not firm_info:
+        return
+
+    # Extract NRIC from will text
+    nric_match = re.search(r'NRIC\s*No\.?\s*[:\s]*(\d{6}-\d{2}-\d{4})', will_text)
+    nric = nric_match.group(1) if nric_match else ''
+
+    # Add firm logo if available
+    if logo_path and os.path.isfile(logo_path):
+        try:
+            logo_para = doc.add_paragraph()
+            logo_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            logo_para.paragraph_format.space_before = Pt(60)
+            logo_para.paragraph_format.space_after = Pt(20)
+            run = logo_para.add_run()
+            run.add_picture(logo_path, width=Inches(3))
+        except Exception:
+            pass
+
+    # Firm address
+    if firm_info.get('firm_address'):
+        addr_para = doc.add_paragraph()
+        addr_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        addr_para.paragraph_format.space_after = Pt(60)
+        run = addr_para.add_run(firm_info['firm_address'])
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(11)
+
+    # Decorative line
+    line_para = doc.add_paragraph()
+    line_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = line_para.add_run('_' * 40)
+    run.font.size = Pt(10)
+
+    # Spacer
+    doc.add_paragraph().paragraph_format.space_after = Pt(20)
+
+    # Title: "The Last Will & Testament"
+    title_para = doc.add_paragraph()
+    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    title_para.paragraph_format.space_after = Pt(4)
+    run = title_para.add_run('The Last Will & Testament')
+    run.bold = True
+    run.font.name = 'Times New Roman'
+    run.font.size = Pt(20)
+
+    # "of"
+    of_para = doc.add_paragraph()
+    of_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    of_para.paragraph_format.space_after = Pt(4)
+    run = of_para.add_run('of')
+    run.bold = True
+    run.font.name = 'Times New Roman'
+    run.font.size = Pt(20)
+
+    # Testator name
+    name_para = doc.add_paragraph()
+    name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    name_para.paragraph_format.space_after = Pt(8)
+    run = name_para.add_run(testator_name)
+    run.bold = True
+    run.underline = True
+    run.font.name = 'Times New Roman'
+    run.font.size = Pt(20)
+
+    # NRIC
+    if nric:
+        nric_para = doc.add_paragraph()
+        nric_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        nric_para.paragraph_format.space_after = Pt(10)
+        run = nric_para.add_run(f'(NRIC No. {nric})')
+        run.bold = True
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(16)
+
+    # Decorative line
+    line_para2 = doc.add_paragraph()
+    line_para2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = line_para2.add_run('_' * 40)
+    run.font.size = Pt(10)
+
+    # Page break after cover
+    doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+
+
+def _add_prepared_by_page(doc, firm_info: dict = None):
+    """Add 'Prepared By' page at the end of the document."""
+    if not firm_info:
+        return
+
+    # Page break before
+    doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+
+    # Spacers
+    for _ in range(6):
+        doc.add_paragraph().paragraph_format.space_after = Pt(0)
+
+    # Decorative line
+    line1 = doc.add_paragraph()
+    line1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = line1.add_run('_' * 30)
+    run.font.size = Pt(10)
+
+    # "PREPARED BY:"
+    heading = doc.add_paragraph()
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    heading.paragraph_format.space_before = Pt(20)
+    heading.paragraph_format.space_after = Pt(20)
+    run = heading.add_run('PREPARED BY:')
+    run.bold = True
+    run.underline = True
+    run.font.name = 'Times New Roman'
+    run.font.size = Pt(14)
+
+    # Decorative line
+    line2 = doc.add_paragraph()
+    line2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = line2.add_run('_' * 30)
+    run.font.size = Pt(10)
+
+    # Firm name
+    if firm_info.get('firm_name'):
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_before = Pt(16)
+        p.paragraph_format.space_after = Pt(2)
+        run = p.add_run(firm_info['firm_name'].upper())
+        run.bold = True
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(14)
+
+    # "ADVOCATES & SOLICITORS"
+    sub = doc.add_paragraph()
+    sub.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sub.paragraph_format.space_after = Pt(16)
+    run = sub.add_run('ADVOCATES & SOLICITORS')
+    run.bold = True
+    run.font.name = 'Times New Roman'
+    run.font.size = Pt(12)
+
+    # Address
+    if firm_info.get('firm_address'):
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_after = Pt(4)
+        run = p.add_run(firm_info['firm_address'])
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(11)
+
+    # Phone
+    if firm_info.get('firm_phone'):
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_after = Pt(4)
+        run = p.add_run(f"TEL NO: {firm_info['firm_phone']}")
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(11)
+
+    # Email
+    if firm_info.get('firm_email'):
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_after = Pt(10)
+        run = p.add_run(f"EMAIL: {firm_info['firm_email']}")
+        run.font.name = 'Times New Roman'
+        run.font.size = Pt(11)
+
+    # Decorative line
+    line3 = doc.add_paragraph()
+    line3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = line3.add_run('_' * 30)
+    run.font.size = Pt(10)
+
+
+def generate_docx(will_text: str, filename_base: str = "Will",
+                  firm_info: dict = None, logo_path: str = None) -> str:
     """
     Generate a Word document from the will text.
 
     Args:
         will_text: The full will text to render.
         filename_base: Base name for the output file (without extension).
+        firm_info: Optional dict with firm details for cover and prepared-by pages.
+        logo_path: Optional path to firm logo for cover page.
 
     Returns:
         Absolute path to the generated .docx file.
@@ -312,6 +493,9 @@ def generate_docx(will_text: str, filename_base: str = "Will") -> str:
     section.bottom_margin = Cm(3.5)
     section.left_margin = Cm(3.18)
     section.right_margin = Cm(3.18)
+
+    # -- Cover page (if firm info available) -----------------------------------
+    _add_cover_page(doc, testator_name, will_text, firm_info, logo_path)
 
     # -- Add running header ---------------------------------------------------
     _add_header(doc, testator_name)
@@ -435,6 +619,9 @@ def generate_docx(will_text: str, filename_base: str = "Will") -> str:
     # -- Add signing page -----------------------------------------------------
     if signing_section:
         _add_signing_page(doc)
+
+    # -- Add "Prepared By" page (if firm info available) ----------------------
+    _add_prepared_by_page(doc, firm_info)
 
     # -- Save to temp file ----------------------------------------------------
     tmp_dir = tempfile.mkdtemp()
