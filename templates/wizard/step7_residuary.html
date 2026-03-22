@@ -115,7 +115,11 @@
             {% set group_idx = loop.index0 %}
             <div class="substitute-group border border-gray-200 rounded-lg p-4 mb-4" data-group-index="{{ group_idx }}">
                 <div class="flex justify-between items-center mb-3">
-                    <h4 class="font-medium text-gray-700">Substitute Group {{ loop.index }}</h4>
+                    <h4 class="font-medium text-gray-700">Substitute Group {{ loop.index }}
+                        {% if main_beneficiaries and group_idx < main_beneficiaries|length %}
+                        <span class="text-xs font-normal text-blue-600 ml-1">— for {{ main_beneficiaries[group_idx].get('beneficiary_name', '') }}</span>
+                        {% endif %}
+                    </h4>
                     <button type="button" onclick="removeSubstituteGroup(this)" class="text-red-500 hover:text-red-700 text-sm">Remove Group</button>
                 </div>
 
@@ -207,6 +211,20 @@ function _buildBeneficiaryOptions() {
         html += `<option value="${val}" data-name="${b.full_name}">${b.full_name} (${b.relationship})</option>`;
     }
     return html;
+}
+
+// Get main beneficiary label for substitute group heading
+function _getMainBenLabel(groupIdx) {
+    const nameField = document.querySelector(`[name="main_ben_name_${groupIdx}"]`);
+    const selectField = document.querySelector(`[name="main_ben_person_id_${groupIdx}"]`);
+    let name = '';
+    if (nameField && nameField.value) {
+        name = nameField.value;
+    } else if (selectField) {
+        const opt = selectField.options[selectField.selectedIndex];
+        name = opt ? opt.dataset.name || opt.textContent.split('(')[0].trim() : '';
+    }
+    return name ? ` <span class="text-xs font-normal text-blue-600 ml-1">— for ${name}</span>` : '';
 }
 
 // Sync hidden name field when dropdown changes
@@ -306,7 +324,7 @@ function addSubstituteGroup() {
     const html = `
     <div class="substitute-group border border-gray-200 rounded-lg p-4 mb-4" data-group-index="${gIdx}">
         <div class="flex justify-between items-center mb-3">
-            <h4 class="font-medium text-gray-700">Substitute Group ${gIdx + 1}</h4>
+            <h4 class="font-medium text-gray-700">Substitute Group ${gIdx + 1}${_getMainBenLabel(gIdx)}</h4>
             <button type="button" onclick="removeSubstituteGroup(this)" class="text-red-500 hover:text-red-700 text-sm">Remove Group</button>
         </div>
         <div class="substitute-entries space-y-3">
