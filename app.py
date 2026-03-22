@@ -1251,6 +1251,21 @@ def api_will_edit_text(will_id):
         details='\n'.join(change_details) if change_details else None,
     )
     db.session.add(log_entry)
+
+    # Save as a new version so edited text can be found later
+    latest_ver = WillVersion.query.filter_by(will_id=will_id).order_by(
+        WillVersion.version_number.desc()
+    ).first()
+    next_ver_num = (latest_ver.version_number + 1) if latest_ver else 1
+    edit_version = WillVersion(
+        will_id=will_id,
+        version_number=next_ver_num,
+        will_text=new_text,
+        generated_by=session['user_id'],
+        generated_by_name=editor_name,
+        note=f'Edited ({summary.split(" — ")[0]})',
+    )
+    db.session.add(edit_version)
     db.session.commit()
 
     # Save change log file in client folder
