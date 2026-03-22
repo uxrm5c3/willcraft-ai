@@ -104,7 +104,10 @@ Use the substitute mode specified in the gift data:
   "[N]. Pursuant to Clauses [X, Y, Z] above, if my [relationship] [MAIN BEN NAME] [ID] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] [ID]."
   If multiple substitutes: "...shall be given to my [relationship] [SUB1 NAME] [ID] and my [relationship] [SUB2 NAME] [ID] in equal shares or to the survivor of them if one of them does not survive me."
   For foreign nationals, use "[COUNTRY] Identification No. [number]" format (e.g., "FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9").
-— **Sell directive**: When SELL DIRECTIVE is specified, use: "I direct my Executor(s) to sell [property description] and distribute the net proceeds of the sale to [beneficiary clause]."
+— **Sell directive**: When SELL DIRECTIVE is specified, use: "I direct my Executor to sell my undivided share in the property known as [ADDRESS], held under [TITLE] No. [NUMBER], LOT No. [LOT], Mukim of [TOWNSHIP], District of [DISTRICT], State of [STATE] and distribute the net proceeds of the sale to the following beneficiaries named below in the shares indicated.
+    (i) my [relationship] [NAME] [ID] ([share])
+    (ii) ..."
+  For a single beneficiary, use inline: "...and distribute the net proceeds of the sale to my [relationship] [NAME] [ID]."
 
 ### 11. RESIDUARY ESTATE
 Section heading: "Residuary Estate"

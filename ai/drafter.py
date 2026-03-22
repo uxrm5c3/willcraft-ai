@@ -718,9 +718,22 @@ def draft_will_mock(will_data) -> str:
 
             gift_clause_map[gi] = next_clause
 
-            if len(alloc_parts) == 1:
+            is_sell = getattr(g, 'sell_property', False) and g.gift_type == 'property'
+
+            if is_sell and len(alloc_parts) > 1:
+                # Sell directive with multiple beneficiaries: use sub-items
+                specific_gifts_text += f"""
+
+{next_clause}.  I direct my Executor to sell my undivided share in {desc.lstrip('my ').rstrip(';')} and distribute the net proceeds of the sale to the following beneficiaries named below in the shares indicated."""
+                roman = ['(i)', '(ii)', '(iii)', '(iv)', '(v)', '(vi)']
+                for idx_a, a in enumerate(g.allocations):
+                    r = roman[idx_a] if idx_a < len(roman) else f'({idx_a+1})'
+                    specific_gifts_text += f"\n{r}  {alloc_parts[idx_a]} ({_to_fraction(a.share)} share)"
+            elif len(alloc_parts) == 1:
                 ben_text = alloc_parts[0]
-                share_text = ""
+                specific_gifts_text += f"""
+
+{next_clause}.  I hereby devise and bequeath to {ben_text} {desc}"""
             else:
                 ben_text = ", ".join(alloc_parts[:-1]) + " and " + alloc_parts[-1]
                 shares = [_to_fraction(a.share) for a in g.allocations]
@@ -729,7 +742,7 @@ def draft_will_mock(will_data) -> str:
                 else:
                     share_text = f" in the shares indicated ({', '.join(shares)})"
 
-            specific_gifts_text += f"""
+                specific_gifts_text += f"""
 
 {next_clause}.  I hereby devise and bequeath to {ben_text} {desc}{share_text}."""
 
