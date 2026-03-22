@@ -1459,10 +1459,37 @@ async function uploadAndExtractProperty(inputOrFile, statusElId, giftIndex, docT
                     const ng = document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`);
                     if (ng) { ng.value = confirmed.negeri.toUpperCase(); ng.classList.add('bg-yellow-50'); }
                 }
+                // Feature 5: Auto-detect joint ownership from OCR
+                const numOwners = parseInt(confirmed.num_owners) || 1;
+                if (numOwners > 1) {
+                    const undividedCb = document.querySelector(`[name="gift_prop_undivided_${giftIndex}"]`);
+                    if (undividedCb && !undividedCb.checked) {
+                        undividedCb.checked = true;
+                        if (typeof toggleUndivided === 'function') toggleUndivided(giftIndex, true);
+                    }
+                    if (confirmed.ownership_shares) {
+                        const shareField = document.querySelector(`[name="gift_prop_testator_share_${giftIndex}"]`);
+                        if (shareField) { shareField.value = confirmed.ownership_shares; shareField.classList.add('bg-yellow-50'); }
+                    }
+                    const ownerNames = (confirmed.owner_names || []).join(', ');
+                    if (statusEl) statusEl.innerHTML = `<span class="text-amber-600">⚠ ${numOwners} owners detected: ${ownerNames}. Joint ownership selected — please verify your share.</span>`;
+                    setTimeout(() => { if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Property data applied!</span>'; }, 8000);
+                }
+                // Feature 4: Show title type confidence
+                if (confirmed.title_type_confidence === 'high') {
+                    const ttEl = document.querySelector(`[name="gift_prop_title_type_${giftIndex}"]`);
+                    if (ttEl) {
+                        ttEl.parentElement.querySelector('.ocr-badge')?.remove();
+                        const badge = document.createElement('span');
+                        badge.className = 'ocr-badge ml-1 text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-medium';
+                        badge.textContent = '✓ OCR Verified';
+                        ttEl.parentElement.querySelector('label')?.appendChild(badge);
+                    }
+                }
                 const pr = document.querySelector(`[name="gift_type_${giftIndex}"][value="property"]`);
                 if (pr) { pr.checked = true; switchGiftType(giftIndex, 'property'); }
                 if (typeof updatePropertyPreview === 'function') updatePropertyPreview(giftIndex);
-                if (statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Property data applied!</span>';
+                if (numOwners <= 1 && statusEl) statusEl.innerHTML = '<span class="text-green-600">✓ Property data applied!</span>';
                 setTimeout(() => { if (statusEl) statusEl.innerHTML = ''; }, 5000);
             }, (inputOrFile instanceof HTMLElement) ? inputOrFile : null, null,
             { callback: (f) => uploadAndExtractProperty(f, statusElId, giftIndex, docType), docType: 'property' },

@@ -1342,6 +1342,85 @@ Rules:
     return jsonify({'ok': True, 'text': cleaned_text})
 
 
+@app.route('/api/will/<will_id>/ai-edit', methods=['POST'])
+@login_required
+def api_will_ai_edit(will_id):
+    """AI-assisted will editing: user describes changes, AI identifies clause and suggests replacement."""
+    will_record = db.session.get(Will, will_id)
+    if not will_record:
+        return jsonify({'ok': False, 'error': 'Will not found'}), 404
+
+    data = request.get_json()
+    if not data or 'instruction' not in data or 'will_text' not in data:
+        return jsonify({'ok': False, 'error': 'Missing instruction or will_text'}), 400
+
+    instruction = data['instruction'].strip()
+    will_text = data['will_text'].strip()
+    if not instruction or not will_text:
+        return jsonify({'ok': False, 'error': 'Instruction and will text are required'}), 400
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=os.environ.get('CLAUDE_MODEL', 'claude-sonnet-4-20250514'),
+            max_tokens=4000,
+            system="""You are a Malaysian will editing assistant. The user wants to make changes to their will.
+
+Your task:
+1. Read the user's instruction carefully
+2. Identify the specific clause(s) in the will text that need to be changed
+3. Generate the suggested replacement text for that clause
+4. Explain what you changed and why
+
+Rules:
+- Use proper Malaysian legal drafting language
+- Use "I hereby devise and bequeath" for property gifts
+- Use Malay terms for property: Mukim, Daerah, Negeri
+- Use fractions (4/10) not percentages (40%)
+- For Malaysian NRIC: "MALAYSIA (NRIC No. XXXXXX-XX-XXXX)"
+- Include discharge/lien clause for property gifts
+- Keep the same formatting style as the rest of the will
+- If the instruction is unclear, ask for clarification in the explanation field
+
+Return ONLY a JSON object:
+{
+    "original_text": "The exact text from the will that should be replaced (copy verbatim)",
+    "suggested_text": "The new text to replace it with",
+    "explanation": "Brief explanation of what was changed",
+    "clause_number": "The clause number affected (e.g., '5' or '5,6' for multiple)"
+}
+
+If the instruction cannot be applied (e.g., refers to something not in the will), return:
+{
+    "original_text": "",
+    "suggested_text": "",
+    "explanation": "Explanation of why the change cannot be made",
+    "clause_number": ""
+}""",
+            messages=[{
+                'role': 'user',
+                'content': f"Here is the current will text:\n\n{will_text}\n\n---\n\nUser's instruction: {instruction}"
+            }],
+        )
+        result_text = response.content[0].text.strip()
+        if result_text.startswith('```'):
+            result_text = result_text.split('\n', 1)[1].rsplit('```', 1)[0].strip()
+
+        import json as json_mod
+        result = json_mod.loads(result_text)
+        return jsonify({'ok': True, 'result': result})
+    except json_mod.JSONDecodeError:
+        return jsonify({'ok': True, 'result': {
+            'original_text': '',
+            'suggested_text': result_text,
+            'explanation': 'AI returned a text response instead of structured edit. You may need to apply manually.',
+            'clause_number': ''
+        }})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'AI edit failed: {str(e)}'}), 500
+
+
 # ---------------------------------------------------------------------------
 # Email sending
 # ---------------------------------------------------------------------------

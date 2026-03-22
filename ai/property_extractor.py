@@ -65,25 +65,34 @@ This could be one of:
 - Cukai Pintu (Door Tax) - look for property address
 - Sale & Purchase Agreement (SPA) - look for property details in the schedule
 
-Return ONLY a JSON object with these fields (use empty string if not found):
+Return ONLY a JSON object with these fields (use empty string if not found, use null for unknown numbers):
 {{
     "property_address": "Full property address including number, street, area, city, state",
-    "title_type": "HAKMILIK, HSD, HSM, GRN, EMR, PM, PN, PAJAKAN, GERAN or other title type",
+    "title_type": "Geran, Hakmilik, HSD, HSM, or Pajakan Negeri",
     "lot_number": "Lot/PT number only (digits)",
-    "title_number": "Title/Hakmilik number only (digits)",
-    "bandar_pekan": "Bandar/Pekan/Township name",
-    "mukim": "Mukim name",
-    "daerah": "Daerah/District name",
+    "title_number": "Title/Hakmilik/Geran number only (digits)",
+    "bandar_pekan": "Bandar/Pekan/Township name (without leading 'Mukim' or 'Bandar')",
+    "mukim": "Mukim name (without leading 'Mukim')",
+    "daerah": "Daerah/District name (without leading 'Daerah')",
     "negeri": "State name (e.g., JOHOR, SELANGOR, PERAK)",
-    "property_description": "Brief description (residential, commercial, agricultural)"
+    "property_description": "Brief description (residential, commercial, agricultural)",
+    "num_owners": 1,
+    "owner_names": ["List of all owner names found on the document"],
+    "ownership_shares": "Share fraction if visible (e.g., '1/2 bahagian', '1/3 share'), empty if not found",
+    "title_type_confidence": "high if title type is clearly visible on document, low if guessed"
 }}
 
-Malaysian title types:
-- HAKMILIK = General ownership title
-- HSD = Hakmilik Sementara Daerah (Interim Title - District)
-- HSM = Hakmilik Sementara Mukim (Interim Title - Mukim)
-- GRN = Geran (Final Title - Freehold)
-- EMR = Pajakan Mukim (Leasehold)
+Malaysian title types (normalize to these values):
+- Geran = Final Title / Grant (Geran Mukim, GRN)
+- Hakmilik = General ownership title (HAKMILIK)
+- HSD = Hakmilik Sementara (Interim/Temporary Title)
+- HSM = Hakmilik Strata Master (Strata Title for condos/apartments)
+- Pajakan Negeri = State Lease / Leasehold (PN, PAJAKAN)
+
+For ownership detection:
+- Look for "TUAN PUNYA" (owner) section — count how many names are listed
+- If multiple owners, note the share fractions (e.g., "1/2 bahagian tak pecah")
+- If only one name, set num_owners to 1
 
 Return ONLY the JSON, no explanation."""
                 }
