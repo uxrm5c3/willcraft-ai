@@ -323,12 +323,6 @@ def _add_cover_page(doc, testator_name: str, will_text: str, firm_info: dict = N
         run.font.name = 'Times New Roman'
         run.font.size = Pt(11)
 
-    # Thin line separator
-    line_para = doc.add_paragraph()
-    line_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    pBdr = parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="4" w:space="1" w:color="000000"/></w:pBdr>')
-    line_para._element.get_or_add_pPr().append(pBdr)
-
     # Title: "The Last Will & Testament"
     title_para = doc.add_paragraph()
     title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER

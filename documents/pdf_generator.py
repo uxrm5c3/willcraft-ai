@@ -668,10 +668,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         line-height: 1.5;
     }}
     .cover-line {{
-        width: 100%;
-        border: none;
-        border-top: 0.5pt solid #000;
-        margin: 16pt auto;
+        display: none;
     }}
     .cover-title {{
         font-size: 16pt;
