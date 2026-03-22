@@ -3361,6 +3361,9 @@ def wizard_step_others():
     # Joint bank account clause
     om_data['joint_account_clause_enabled'] = bool(request.form.get('joint_account_clause_enabled'))
 
+    # Testator satisfaction clause (default ON)
+    om_data['testator_satisfaction_enabled'] = bool(request.form.get('testator_satisfaction_enabled'))
+
     additional = request.form.get('additional_instructions', '').strip()
     if additional:
         om_data['additional_instructions'] = additional

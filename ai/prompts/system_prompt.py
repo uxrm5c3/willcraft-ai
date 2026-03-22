@@ -153,6 +153,10 @@ Section heading: "Declaration"
 
 "[N]. For the purpose of ascertaining entitlement under this Will any beneficiary who does not survive me by 30 days shall be treated as having died before me."
 
+### 14. TESTATOR SATISFACTION CLAUSE (if enabled in Other Matters)
+"[N]. In making this Will, I have conscientiously considered all aspects and all my surrounding circumstances and I am thoroughly satisfied that the provisions made in this Will absolutely reflect my wishes and intentions."
+**IMPORTANT: Only include this clause if Testator Satisfaction Clause is ENABLED in the data.**
+
 Then: "----------------------- THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK -----------------------"
 
 ### 14. ATTESTATION PAGE

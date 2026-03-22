@@ -253,7 +253,7 @@
                         <select name="gift_prop_title_type_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                 onchange="updatePropertyPreview({{ loop.index0 }})">
                             <option value="">-- Select --</option>
-                            {% for tt in ['HAKMILIK', 'HSD', 'HSM', 'GRN', 'EMR', 'PM', 'PN', 'PAJAKAN', 'GERAN', 'Other'] %}
+                            {% for tt in ['Geran', 'Hakmilik', 'HSD', 'HSM', 'Pajakan Negeri', 'Other'] %}
                             <option value="{{ tt }}" {% if pd.get('title_type', '') == tt %}selected{% endif %}>{{ tt }}</option>
                             {% endfor %}
                         </select>
@@ -275,7 +275,7 @@
                 </div>
                 <div class="grid grid-cols-2 gap-3 mb-3">
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1">Bandar / Pekan</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Mukim</label>
                         <input type="text" name="gift_prop_bandar_{{ loop.index0 }}"
                                value="{{ pd.get('bandar_pekan', '') }}"
                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
@@ -395,7 +395,7 @@
                                {% if gift.get('sell_property') %}checked{% endif %}
                                onchange="onGiftHandlingChange({{ loop.index0 }})"
                                class="text-primary-600 mr-2">
-                        <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
+                        <span class="text-sm text-gray-700">Direct Executor to sell property & distribute net proceeds</span>
                     </label>
                     <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
                         <input type="radio" name="gift_handling_{{ loop.index0 }}" value="trust"
@@ -648,7 +648,7 @@ function _buildGiftBenOptions(selectedName) {
     return html;
 }
 const GIFT_STATES = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK','PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU','W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA'];
-const GIFT_TITLE_TYPES = ['HAKMILIK','HSD','HSM','GRN','EMR','PM','PN','PAJAKAN','GERAN','Other'];
+const GIFT_TITLE_TYPES = ['Geran','Hakmilik','HSD','HSM','Pajakan Negeri','Other'];
 const GIFT_ASSET_TYPES = ['Savings Account','Current Account','Fixed Deposit','Investment Account','Unit Trust','Shares/Stocks','Insurance Policy','EPF','ASB/ASN','Tabung Haji','Vehicle','Jewellery','Other'];
 
 {% set gifts = data.get('gifts', []) %}
@@ -859,7 +859,7 @@ function updatePropertyPreview(giftIndex) {
     if (country && country !== 'Malaysia') parts.push(country.toUpperCase());
 
     let suffix = ';';
-    if (isSell) suffix = ' and distribute the nett proceeds of the sale to the beneficiaries named below in the shares indicated.';
+    if (isSell) suffix = ' and distribute the net proceeds of the sale to the beneficiaries named below in the shares indicated.';
     if (isTrust) suffix = '; [Subject to Testamentary Trust — configure in Step 8]';
 
     document.getElementById('property-preview-' + giftIndex).textContent = parts.join(', ') + suffix;
@@ -927,7 +927,7 @@ function buildPropertyPanelHtml(idx) {
             <div><label class="block text-xs font-medium text-gray-600 mb-1">LOT Number</label><input type="text" name="gift_prop_lot_number_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., 7119" oninput="updatePropertyPreview(${idx})"></div>
         </div>
         <div class="grid grid-cols-2 gap-3 mb-3">
-            <div><label class="block text-xs font-medium text-gray-600 mb-1">Bandar / Pekan</label><input type="text" name="gift_prop_bandar_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})"></div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Mukim</label><input type="text" name="gift_prop_bandar_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})"></div>
             <div><label class="block text-xs font-medium text-gray-600 mb-1">Daerah (District)</label><input type="text" name="gift_prop_daerah_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., JOHOR BAHRU" oninput="updatePropertyPreview(${idx})"></div>
         </div>
         <div class="p-3 bg-white rounded border border-blue-300">
@@ -1021,7 +1021,7 @@ function addGift() {
                 </label>
                 <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50 gift-sell-option" data-gift-index="${idx}">
                     <input type="radio" name="gift_handling_${idx}" value="sell" onchange="onGiftHandlingChange(${idx})" class="text-primary-600 mr-2">
-                    <span class="text-sm text-gray-700">Direct Executor to sell property & distribute nett proceeds</span>
+                    <span class="text-sm text-gray-700">Direct Executor to sell property & distribute net proceeds</span>
                 </label>
                 <label class="flex items-center cursor-pointer p-2 rounded-lg hover:bg-gray-50">
                     <input type="radio" name="gift_handling_${idx}" value="trust" onchange="onGiftHandlingChange(${idx})" class="text-primary-600 mr-2">

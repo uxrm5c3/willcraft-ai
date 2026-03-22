@@ -14,7 +14,7 @@
 </div>
 
 <form method="POST" action="/wizard/step/9" class="space-y-8">
-    {% set other = data.get('other_matters', {}) %}
+    {% set other = data %}
 
     <!-- Section H: Terms of Endearment -->
     <div>
@@ -143,6 +143,19 @@
                     <p class="text-xs text-blue-700 italic">Will wording: "In the event that any moneys standing to my credit in any joint account do not form part of my estate by reason of the right of survivorship, then the provisions in this Will relating to such moneys shall be of no effect."</p>
                 </div>
             </div>
+        </div>
+
+        <!-- Testator Satisfaction Clause -->
+        <div class="border border-gray-200 rounded-lg p-5 mb-4">
+            <label class="flex items-start">
+                <input type="checkbox" name="testator_satisfaction_enabled" value="1" {% if other.get('testator_satisfaction_enabled', true) %}checked{% endif %}
+                       class="rounded border-gray-300 text-primary-600 mr-3 mt-0.5">
+                <div>
+                    <span class="text-sm font-medium text-gray-700">Testator Satisfaction Clause</span>
+                    <p class="text-xs text-gray-500 mt-1">Include a declaration that the testator has conscientiously considered all aspects and is thoroughly satisfied that the provisions reflect their wishes and intentions.</p>
+                    <p class="text-xs text-gray-400 mt-1 italic">"In making this Will, I have conscientiously considered all aspects and all my surrounding circumstances and I am thoroughly satisfied that the provisions made in this Will absolutely reflect my wishes and intentions."</p>
+                </div>
+            </label>
         </div>
 
         <!-- Additional Instructions -->

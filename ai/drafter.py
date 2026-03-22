@@ -293,6 +293,8 @@ def format_will_data(will_data) -> str:
             other_lines.append("  Joint Account Clause: ENABLED — include the joint bank account surviving holder clause")
         else:
             other_lines.append("  Joint Account Clause: NOT enabled — do NOT include any joint bank account clause")
+        if getattr(om, 'testator_satisfaction_enabled', True):
+            other_lines.append("  Testator Satisfaction Clause: ENABLED — include clause: 'In making this Will, I have conscientiously considered all aspects and all my surrounding circumstances and I am thoroughly satisfied that the provisions made in this Will absolutely reflect my wishes and intentions.'")
         if om.additional_instructions:
             other_lines.append(f"  Additional: {om.additional_instructions}")
 
