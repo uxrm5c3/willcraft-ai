@@ -12,12 +12,37 @@ class PropertyDetails(BaseModel):
     daerah: str = ""            # District
     negeri: str = ""            # State
 
+    def _clean_address(self) -> str:
+        """Remove duplicate postcode/city/state from property address."""
+        import re
+        addr = self.property_address
+        if not addr:
+            return addr
+        # Find first 5-digit postcode
+        pc_match = re.search(r',\s*(\d{5})\s+', addr)
+        if pc_match:
+            # Keep only text before the first postcode occurrence
+            street = addr[:pc_match.start()].rstrip(', ')
+            postcode = pc_match.group(1)
+            # Extract city (text after postcode until comma)
+            after = addr[pc_match.end():]
+            city_match = re.match(r'([^,]+)', after)
+            city = city_match.group(1).strip() if city_match else ''
+            # Rebuild: street + postcode city (once)
+            if postcode and city:
+                return f"{street}, {postcode} {city}"
+            elif postcode:
+                return f"{street}, {postcode}"
+            return street
+        return addr
+
     def to_formatted_description(self, ownership_prefix: str = "") -> str:
         """Generate Malaysian standard property description (top-tier law firm format)."""
         if not self.property_address:
             return ""
         prefix = ownership_prefix or "my property"
-        parts = [f"{prefix} known as {self.property_address}"]
+        clean_addr = self._clean_address()
+        parts = [f"{prefix} known as {clean_addr}"]
         title_parts = []
         if self.title_type and self.title_number:
             # Normalize title type to proper case

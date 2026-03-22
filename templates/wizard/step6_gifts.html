@@ -816,52 +816,89 @@ function toggleAddressList(giftIndex) {
 
 function fillPropertyAddress(giftIndex, addr) {
     if (!addr) return;
-    // Parse the combined address to extract postcode, city, state
-    // Typical format: "NO 16, JALAN TERATAI 20, TAMAN JOHOR JAYA, 81100 JOHOR BAHRU, JOHOR"
-    const parts = addr.split(',').map(p => p.trim());
-    let streetParts = [];
+    // Aggressively parse address: extract ONLY the street portion
+    // Remove ALL postcode+city+state patterns to get clean street address
+    const MY_STATES = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK',
+        'PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU',
+        'W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA','WILAYAH PERSEKUTUAN','KUALA LUMPUR'];
+
+    // Step 1: Find the FIRST postcode (5 digits) — everything before it is street address
+    const postcodeMatch = addr.match(/,\s*(\d{5})\s+/);
+    let streetAddr = addr;
     let postcode = '';
     let city = '';
     let state = '';
 
-    // Malaysian states for detection
-    const MY_STATES = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK',
-        'PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU',
-        'W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA','WILAYAH PERSEKUTUAN'];
+    if (postcodeMatch) {
+        // Everything before the first postcode is the street
+        streetAddr = addr.substring(0, postcodeMatch.index).replace(/,\s*$/, '').trim();
+        postcode = postcodeMatch[1];
 
-    for (let i = 0; i < parts.length; i++) {
-        const p = parts[i].toUpperCase();
-        // Check if this part is a state
-        if (MY_STATES.some(s => p === s || p.startsWith(s))) {
-            if (!state) state = parts[i].toUpperCase();
-            continue;
-        }
-        // Check if starts with postcode (5 digits)
-        const pcMatch = parts[i].match(/^(\d{5})\s+(.+)/);
-        if (pcMatch && !postcode) {
-            postcode = pcMatch[1];
-            city = pcMatch[2].toUpperCase();
-            continue;
-        }
-        // Check if this is a duplicate of already-extracted city/postcode
-        if (postcode && p.includes(postcode)) continue;
-        if (city && p === city) continue;
-        // Otherwise it's part of the street address
-        streetParts.push(parts[i]);
+        // Extract city: text after postcode until next comma or state
+        const afterPostcode = addr.substring(postcodeMatch.index + postcodeMatch[0].length);
+        const cityMatch = afterPostcode.match(/^([^,]+)/);
+        if (cityMatch) city = cityMatch[1].trim().toUpperCase();
     }
 
-    const streetAddr = streetParts.join(', ');
-    const addrField = document.querySelector(`[name="gift_prop_address_${giftIndex}"]`);
-    if (addrField) { addrField.value = streetAddr || addr; addrField.classList.add('bg-green-50'); setTimeout(() => addrField.classList.remove('bg-green-50'), 2000); }
+    // Step 2: Find state from remaining parts
+    const addrUpper = addr.toUpperCase();
+    for (const s of MY_STATES) {
+        if (addrUpper.includes(s)) {
+            state = s;
+            break;
+        }
+    }
 
-    // Fill postcode, city, state fields
+    // Step 3: If no postcode found, try splitting by comma and detecting state/city
+    if (!postcodeMatch) {
+        const parts = addr.split(',').map(p => p.trim());
+        const cleanParts = [];
+        const seen = new Set();
+        for (const p of parts) {
+            const pUp = p.toUpperCase();
+            // Skip if it's a state
+            if (MY_STATES.some(s => pUp === s)) { if (!state) state = pUp; continue; }
+            // Skip if it's a postcode+city
+            if (/^\d{5}\s/.test(p)) {
+                if (!postcode) { const m = p.match(/^(\d{5})\s+(.*)/); postcode = m[1]; city = m[2].toUpperCase(); }
+                continue;
+            }
+            // Skip duplicates
+            if (seen.has(pUp)) continue;
+            seen.add(pUp);
+            // Skip if same as city
+            if (city && pUp === city) continue;
+            cleanParts.push(p);
+        }
+        streetAddr = cleanParts.join(', ');
+    }
+
+    // Step 4: Final cleanup — remove any remaining postcode/city/state from street
+    if (postcode) {
+        // Remove all occurrences of "postcode city" or just "postcode"
+        const pcCityRegex = new RegExp(',?\\s*' + postcode + '\\s*' + (city || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '?', 'gi');
+        streetAddr = streetAddr.replace(pcCityRegex, '').replace(/,\s*$/, '').trim();
+    }
+    if (state) {
+        const stateRegex = new RegExp(',?\\s*' + state.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*', 'gi');
+        streetAddr = streetAddr.replace(stateRegex, '').replace(/,\s*$/, '').trim();
+    }
+    if (city) {
+        // Remove standalone city occurrences (but not if part of a street name like "TAMAN JOHOR JAYA")
+        const cityRegex = new RegExp(',\\s*' + city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:,|$)', 'gi');
+        streetAddr = streetAddr.replace(cityRegex, '').replace(/,\s*$/, '').trim();
+    }
+
+    // Set fields
+    const addrField = document.querySelector(`[name="gift_prop_address_${giftIndex}"]`);
+    if (addrField) { addrField.value = streetAddr; addrField.classList.add('bg-green-50'); setTimeout(() => addrField.classList.remove('bg-green-50'), 2000); }
     if (postcode) {
         const pcField = document.querySelector(`[name="gift_prop_postcode_${giftIndex}"]`);
-        if (pcField && !pcField.value) pcField.value = postcode;
+        if (pcField) pcField.value = postcode;
     }
     if (city) {
         const cityField = document.querySelector(`[name="gift_prop_city_${giftIndex}"]`);
-        if (cityField && !cityField.value) cityField.value = city;
+        if (cityField) cityField.value = city;
     }
     if (state) {
         const stateField = document.querySelector(`[name="gift_prop_state_${giftIndex}"]`);
@@ -918,19 +955,33 @@ function updatePropertyPreview(giftIndex) {
         document.getElementById('property-preview-' + giftIndex).textContent = '(Fill in property address to see preview)';
         return;
     }
-    // Build address — avoid duplicating postcode/city/state if already in address
+    // Build clean address for will preview — street only, no postcode/city/state duplication
+    // First, strip any postcode/city/state that leaked into the address field
     let fullAddr = addr;
-    // Strip trailing postcode/city/state from address if they're in separate fields
-    if (postcode && city) {
-        const dupRegex = new RegExp(',\\s*' + postcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+' + city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\s*,\\s*' + (state || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')?', 'gi');
-        fullAddr = fullAddr.replace(dupRegex, '').replace(/,\s*$/, '');
+    const MY_STATES_PREV = ['JOHOR','KEDAH','KELANTAN','MELAKA','NEGERI SEMBILAN','PAHANG','PERAK',
+        'PERLIS','PULAU PINANG','SABAH','SARAWAK','SELANGOR','TERENGGANU',
+        'W.P. KUALA LUMPUR','W.P. LABUAN','W.P. PUTRAJAYA','KUALA LUMPUR'];
+    if (postcode) {
+        // Remove ALL postcode+city patterns from address
+        const pcRegex = new RegExp(',?\\s*' + postcode.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[^,]*', 'gi');
+        fullAddr = fullAddr.replace(pcRegex, '');
     }
-    // Only append postcode/city if not already in address
-    if ((postcode || city) && !fullAddr.includes(postcode)) {
+    // Remove standalone state names
+    for (const st of MY_STATES_PREV) {
+        const stRegex = new RegExp(',\\s*' + st.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:,|$)', 'gi');
+        fullAddr = fullAddr.replace(stRegex, ',');
+    }
+    // Remove standalone city if it's just duplicated
+    if (city) {
+        const cityRegex = new RegExp(',\\s*' + city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:,|$)', 'gi');
+        fullAddr = fullAddr.replace(cityRegex, ',');
+    }
+    // Clean up trailing commas and spaces
+    fullAddr = fullAddr.replace(/,\s*,/g, ',').replace(/^,\s*/, '').replace(/,\s*$/, '').trim();
+
+    // Append postcode+city once
+    if (postcode || city) {
         fullAddr += ', ' + [postcode, city].filter(Boolean).join(' ');
-    }
-    if (state && !fullAddr.toUpperCase().includes(state.toUpperCase())) {
-        fullAddr += ', ' + state.toUpperCase();
     }
 
     // Check gift handling mode
