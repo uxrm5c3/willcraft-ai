@@ -3823,8 +3823,18 @@ def download_verification_pdf():
     doc_ids = [p['document_id'] for p in persons if p.get('document_id')]
     for g in gifts:
         for d in g.get('documents', []):
-            if d.get('document_id'):
-                doc_ids.append(d['document_id'])
+            did = d.get('document_id', '')
+            # Extract document_id from URL if not set directly
+            if not did and d.get('url'):
+                url = d['url']
+                # URL format: /api/documents/UUID
+                parts = url.rstrip('/').split('/')
+                if len(parts) >= 3:
+                    did = parts[-1]
+            if did:
+                doc_ids.append(did)
+                # Also store the mapping so verification PDF can find it
+                d['document_id'] = did
     for doc_id in doc_ids:
         doc = db.session.get(Document, doc_id)
         if doc and doc.file_path:

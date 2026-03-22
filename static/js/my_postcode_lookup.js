@@ -382,73 +382,141 @@ function validatePropertyData(giftIndex) {
     const lotNum = document.querySelector(`[name="gift_prop_lot_number_${giftIndex}"]`)?.value?.trim() || '';
 
     const warnings = [];
+    const postcode = document.querySelector(`[name="gift_prop_postcode_${giftIndex}"]`)?.value?.trim() || '';
 
-    // 1. Check Daerah-State mismatch
+    // 1. Daerah-State mismatch — with fix recommendation
     if (daerah && negeri) {
         const daerahUpper = daerah.toUpperCase().replace(/^DAERAH\s+/i, '');
         const expectedState = MY_DAERAH_STATE_MAP[daerahUpper];
         if (expectedState) {
             const negeriUpper = negeri.toUpperCase();
-            // Check if the negeri contains the expected state
             if (!negeriUpper.includes(expectedState) && !expectedState.includes(negeriUpper.split(' ')[0])) {
+                const fullStateName = (typeof MY_STATE_FULL_NAMES !== 'undefined') ? (MY_STATE_FULL_NAMES[expectedState] || expectedState) : expectedState;
                 warnings.push({
                     field: 'negeri',
-                    message: `Daerah "${daerah}" is in ${expectedState}, but Negeri is "${negeri}". Please verify.`,
-                    severity: 'error'
+                    message: `Daerah "${daerah}" is in ${expectedState}, but Negeri is "${negeri}".`,
+                    severity: 'error',
+                    fix: { label: `Change to ${fullStateName}`, action: `fixNegeri(${giftIndex}, '${fullStateName.replace(/'/g,"\\'")}')` }
                 });
             }
         }
     }
 
-    // 2. Check address completeness — should have house number + street + area/taman
+    // 2. Address duplicates — with fix to clean them
+    if (addr && daerah) {
+        const daerahClean = daerah.replace(/^daerah\s+/i, '').replace(/^district\s+of\s+/i, '');
+        const daerahRegex = new RegExp(daerahClean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        const matches = addr.match(daerahRegex);
+        if (matches && matches.length > 1) {
+            // Build cleaned address
+            let cleaned = addr;
+            // Remove all but first occurrence of the city/daerah name after a comma
+            let count = 0;
+            cleaned = cleaned.replace(new RegExp(',\\s*' + daerahClean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\s*,|\\s*$)', 'gi'), (m) => {
+                count++;
+                return count > 1 ? '' : m;
+            });
+            cleaned = cleaned.replace(/,\s*,/g, ',').replace(/,\s*$/, '').trim();
+            warnings.push({
+                field: 'address',
+                message: `"${daerahClean}" appears ${matches.length} times in the address.`,
+                severity: 'warning',
+                fix: { label: 'Remove duplicates', action: `fixAddress(${giftIndex}, '${cleaned.replace(/'/g,"\\'")}')` }
+            });
+        }
+    }
+
+    // 3. Address completeness
     if (addr) {
         const parts = addr.split(',').map(p => p.trim());
         if (parts.length < 2) {
             warnings.push({
                 field: 'address',
-                message: 'Address may be incomplete. Should include house number, street name, and area/taman.',
-                severity: 'warning'
-            });
-        }
-        // Check if address has only numbers (just a lot number, not a full address)
-        if (/^(no\.?\s*)?\d+$/i.test(addr)) {
-            warnings.push({
-                field: 'address',
-                message: 'Address appears to be just a number. Please add full street address.',
-                severity: 'warning'
+                message: 'Address may be incomplete — add street name and area/taman.',
+                severity: 'warning',
+                fix: null
             });
         }
     }
 
-    // 3. Check for duplicate data across fields
-    if (addr && daerah) {
-        const addrUpper = addr.toUpperCase();
-        const daerahClean = daerah.toUpperCase().replace(/^DAERAH\s+/i, '');
-        // Count occurrences of daerah name in address
-        const daerahRegex = new RegExp(daerahClean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-        const matches = addr.match(daerahRegex);
-        if (matches && matches.length > 1) {
+    // 4. Missing Mukim — recommend from postcode lookup
+    if (!mukim) {
+        const lookup = postcode ? MY_POSTCODE_MAP[postcode] : null;
+        if (lookup) {
             warnings.push({
-                field: 'address',
-                message: `"${daerah}" appears ${matches.length} times in the address. Consider removing duplicates.`,
-                severity: 'warning'
+                field: 'mukim',
+                message: `Mukim is required. Based on postcode ${postcode}:`,
+                severity: 'error',
+                fix: { label: `Use "${lookup.mukim}"`, action: `fixMukim(${giftIndex}, '${lookup.mukim}')` }
             });
+        } else {
+            warnings.push({field: 'mukim', message: 'Mukim is required for land search. Check your title document.', severity: 'error', fix: null});
         }
     }
 
-    // 4. Check required fields
-    if (!titleType) warnings.push({field: 'title_type', message: 'Title Type is required', severity: 'error'});
-    if (!titleNum) warnings.push({field: 'title_number', message: 'Title Number is required', severity: 'error'});
-    if (!lotNum) warnings.push({field: 'lot_number', message: 'Lot Number is required', severity: 'error'});
-    if (!mukim) warnings.push({field: 'mukim', message: 'Mukim is required for land search', severity: 'error'});
-    if (!daerah) warnings.push({field: 'daerah', message: 'Daerah is required for land search', severity: 'error'});
-    if (!negeri) warnings.push({field: 'negeri', message: 'Negeri is required', severity: 'error'});
+    // 5. Missing Daerah — recommend from mukim or postcode lookup
+    if (!daerah) {
+        const mukimUpper = mukim.toUpperCase().replace(/^MUKIM\s+/i, '').replace(/^BANDAR\s+/i, '');
+        const fromMukim = MY_MUKIM_DAERAH_MAP[mukimUpper];
+        const lookup = postcode ? MY_POSTCODE_MAP[postcode] : null;
+        const recommended = fromMukim || (lookup ? lookup.daerah : null);
+        if (recommended) {
+            warnings.push({
+                field: 'daerah',
+                message: `Daerah is required.${fromMukim ? ' Based on Mukim "'+mukim+'":' : ' Based on postcode '+postcode+':'}`,
+                severity: 'error',
+                fix: { label: `Use "${recommended}"`, action: `fixDaerah(${giftIndex}, '${recommended}')` }
+            });
+        } else {
+            warnings.push({field: 'daerah', message: 'Daerah is required for land search. Check your title document.', severity: 'error', fix: null});
+        }
+    }
+
+    // 6. Missing Negeri — recommend from daerah
+    if (!negeri && daerah) {
+        const daerahUpper = daerah.toUpperCase().replace(/^DAERAH\s+/i, '');
+        const stateCode = MY_DAERAH_STATE_MAP[daerahUpper];
+        if (stateCode) {
+            const fullName = (typeof MY_STATE_FULL_NAMES !== 'undefined') ? (MY_STATE_FULL_NAMES[stateCode] || stateCode) : stateCode;
+            warnings.push({
+                field: 'negeri',
+                message: `Negeri is required. Based on Daerah "${daerah}":`,
+                severity: 'error',
+                fix: { label: `Use "${fullName}"`, action: `fixNegeri(${giftIndex}, '${fullName.replace(/'/g,"\\'")}')` }
+            });
+        }
+    } else if (!negeri) {
+        warnings.push({field: 'negeri', message: 'Negeri (State) is required.', severity: 'error', fix: null});
+    }
+
+    // 7. Other required fields
+    if (!titleType) warnings.push({field: 'title_type', message: 'Title Type is required. Upload title document to auto-detect.', severity: 'error', fix: null});
+    if (!titleNum) warnings.push({field: 'title_number', message: 'Title Number is required. Check your title document.', severity: 'error', fix: null});
+    if (!lotNum) warnings.push({field: 'lot_number', message: 'Lot Number is required. Check your title document.', severity: 'error', fix: null});
 
     return warnings;
 }
 
+// Quick-fix functions called from warning buttons
+function fixNegeri(gi, val) {
+    const el = document.querySelector(`[name="gift_prop_negeri_${gi}"]`);
+    if (el) { el.value = val; updatePropertyPreview(gi); }
+}
+function fixDaerah(gi, val) {
+    const el = document.querySelector(`[name="gift_prop_daerah_${gi}"]`);
+    if (el) { el.value = val; updatePropertyPreview(gi); }
+}
+function fixMukim(gi, val) {
+    const el = document.querySelector(`[name="gift_prop_bandar_${gi}"]`);
+    if (el) { el.value = val; updatePropertyPreview(gi); }
+}
+function fixAddress(gi, val) {
+    const el = document.querySelector(`[name="gift_prop_address_${gi}"]`);
+    if (el) { el.value = val; updatePropertyPreview(gi); }
+}
+
 /**
- * Show validation warnings in the property preview area.
+ * Show validation warnings with fix buttons below property preview.
  */
 function showPropertyWarnings(giftIndex) {
     const warnings = validatePropertyData(giftIndex);
