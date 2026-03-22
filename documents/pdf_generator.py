@@ -77,13 +77,18 @@ def _build_content_html(text: str) -> str:
     escaped = html.escape(text)
     lines = escaped.split('\n')
 
-    # First pass: classify each line
+    # First pass: classify each line (collapse consecutive blank lines)
     classified = []  # list of (type, html_str) tuples
+    prev_blank = False
     for line in lines:
         stripped = line.strip()
         if not stripped:
+            if prev_blank:
+                continue  # Skip consecutive blank lines
+            prev_blank = True
             classified.append(('spacer', '<div class="spacer"></div>'))
             continue
+        prev_blank = False
 
         # Skip header/footer content
         if 'LAST WILL AND TESTAMENT' in stripped.upper():
@@ -448,7 +453,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     body {{
         font-family: 'Times New Roman', Times, serif;
         font-size: 12pt;
-        line-height: 1.8;
+        line-height: 1.4;
         color: #000;
     }}
 
@@ -464,7 +469,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     h3.section-heading {{
         font-size: 12pt;
         font-weight: bold;
-        margin: 18pt 0 6pt 0;
+        margin: 10pt 0 4pt 0;
         font-family: 'Times New Roman', Times, serif;
         text-decoration: underline;
         break-after: avoid;
@@ -486,14 +491,14 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     /* Numbered clause headings (all-uppercase like "1. REVOCATION") */
     p.clause-heading {{
         font-weight: bold;
-        margin-top: 14pt;
+        margin-top: 8pt;
         break-after: avoid;
         page-break-after: avoid;
     }}
 
     /* Numbered clause start (regular case like "4. I direct...") */
     p.clause-start {{
-        margin-top: 3pt;
+        margin-top: 2pt;
     }}
 
     /* Indented sub-clauses */
@@ -508,9 +513,9 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         widows: 3;
     }}
 
-    /* Spacer between paragraphs */
+    /* Spacer between paragraphs — minimal to prevent content alteration */
     div.spacer {{
-        height: 6pt;
+        height: 4pt;
     }}
 
     /* "THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK" */

@@ -324,17 +324,27 @@ def generate_docx(will_text: str, filename_base: str = "Will") -> str:
     font = style.font
     font.name = 'Times New Roman'
     font.size = Pt(12)
-    style.paragraph_format.space_after = Pt(6)
-    style.paragraph_format.line_spacing = 1.5
+    style.paragraph_format.space_after = Pt(2)
+    style.paragraph_format.line_spacing = 1.15
 
     # -- Parse and add main content -------------------------------------------
+    # Collapse consecutive blank lines to max 1 to prevent excessive whitespace
     lines = main_content.split('\n')
+    prev_blank = False
     for line in lines:
         stripped = line.strip()
 
         if not stripped:
-            doc.add_paragraph('')
+            if prev_blank:
+                continue  # Skip consecutive blank lines
+            prev_blank = True
+            # Add minimal spacer paragraph instead of full empty line
+            spacer = doc.add_paragraph('')
+            spacer.paragraph_format.space_before = Pt(0)
+            spacer.paragraph_format.space_after = Pt(0)
+            spacer.paragraph_format.line_spacing = Pt(6)
             continue
+        prev_blank = False
 
         # Skip title lines (already in header)
         if 'LAST WILL AND TESTAMENT OF' in stripped.upper():
@@ -389,7 +399,8 @@ def generate_docx(will_text: str, filename_base: str = "Will") -> str:
         if is_section_heading:
             para = doc.add_paragraph()
             para.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            para.paragraph_format.space_before = Pt(18)
+            para.paragraph_format.space_before = Pt(12)
+            para.paragraph_format.keep_with_next = True  # Prevent heading alone at page bottom
             run = para.add_run(stripped)
             run.bold = True
             run.underline = True
@@ -398,6 +409,7 @@ def generate_docx(will_text: str, filename_base: str = "Will") -> str:
         elif is_heading:
             para = doc.add_paragraph()
             para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            para.paragraph_format.keep_with_next = True
             run = para.add_run(stripped)
             run.bold = True
             run.font.size = Pt(14 if 'LAST WILL' in stripped else 12)
@@ -405,11 +417,12 @@ def generate_docx(will_text: str, filename_base: str = "Will") -> str:
         elif is_clause_heading:
             para = doc.add_paragraph()
             para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            para.paragraph_format.keep_with_next = True
             run = para.add_run(stripped)
             run.bold = True
             run.font.size = Pt(12)
             run.font.name = 'Times New Roman'
-            para.paragraph_format.space_before = Pt(12)
+            para.paragraph_format.space_before = Pt(8)
         else:
             para = doc.add_paragraph()
             # Preserve leading whitespace / indentation
