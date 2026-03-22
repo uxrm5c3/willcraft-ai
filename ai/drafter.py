@@ -31,12 +31,12 @@ def _is_malaysian_nric(id_str: str) -> bool:
 
 
 def format_id_for_will(nric_passport: str, nationality: str = "Malaysian") -> str:
-    """Format person ID for will text.
-    - Malaysian NRIC: 'MALAYSIA NRIC No. 123456-01-1234'
-    - Foreign ID: '[COUNTRY] Identification No. AB1234567'
+    """Format person ID for will text in parentheses.
+    - Malaysian NRIC: '(NRIC No. 123456-01-1234)'
+    - Foreign ID: '([COUNTRY] Identification No. AB1234567)'
     """
     if _is_malaysian_nric(nric_passport):
-        return f"MALAYSIA NRIC No. {nric_passport}"
+        return f"(NRIC No. {nric_passport})"
     else:
         nat = (nationality or 'Malaysian').upper()
         # Map common nationality values to country names
@@ -53,7 +53,7 @@ def format_id_for_will(nric_passport: str, nationality: str = "Malaysian") -> st
             'CANADIAN': 'CANADA', 'NEW ZEALANDER': 'NEW ZEALAND',
         }
         country = nat_map.get(nat, nat)
-        return f"{country} Identification No. {nric_passport}"
+        return f"({country} Identification No. {nric_passport})"
 
 
 def format_will_data(will_data) -> str:
@@ -536,12 +536,12 @@ def draft_will_mock(will_data) -> str:
         pe0, pe1 = primary_executors[0], primary_executors[1]
         exec_clause = f"""Appointment of Executor(s)
 
-2.  I appoint as my joint Executors {_format_executor(pe0)} and {_format_executor(pe1)}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall acts as my sole Executor."""
+2.  I hereby appoint {_format_executor(pe0)} and {_format_executor(pe1)} as my joint Executors. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall act as my sole Executor."""
     elif primary_executors:
         pe0 = primary_executors[0]
         exec_clause = f"""Appointment of Executor(s)
 
-2.  I appoint as my sole Executor {_format_executor(pe0)}."""
+2.  I hereby appoint {_format_executor(pe0)} as my sole Executor."""
 
     next_clause = 3
     substitute_clause = ""
@@ -556,12 +556,12 @@ def draft_will_mock(will_data) -> str:
         if len(substitute_executors) >= 2:
             sub_names = " and ".join(_format_sub_exec(s) for s in substitute_executors)
             substitute_clause = f"""
-{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my joint Substitute Executors {sub_names}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Substitute Executor named herein shall act as my sole Executor."""
+{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I hereby appoint {sub_names} as my joint Substitute Executors. If any of them is unwilling or unable to act for whatsoever reason then the remaining Substitute Executor named herein shall act as my sole Executor."""
         else:
             sub = substitute_executors[0]
             sub_text = _format_sub_exec(sub)
             substitute_clause = f"""
-{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Substitute Executor {sub_text}."""
+{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I hereby appoint {sub_text} as my Substitute Executor."""
         next_clause += 1
 
     # Trustee clause
@@ -676,21 +676,19 @@ def draft_will_mock(will_data) -> str:
     # Non-residuary gifts
     non_residuary_text = f"""Non Residuary Gift(s)
 
-{next_clause}.  I give the moneys standing to my credit in all my joint bank accounts to the respective joint account holder(s), if more than one in equal shares."""
+{next_clause}.  I hereby devise and bequeath the moneys standing to my credit in all my joint bank accounts to the respective joint account holder(s), if more than one in equal shares."""
     next_clause += 1
 
     # Bank accounts gift
     non_residuary_text += f"""
 
-{next_clause}.  I give to my Executor the moneys standing to my credit in all my bank accounts. If my Executor does not survive me, then the benefit shall form part of my residuary estate.
-
-The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."""
+{next_clause}.  I hereby devise and bequeath to my Executor the moneys standing to my credit in all my bank accounts. If my Executor does not survive me, then the benefit shall form part of my residuary estate. The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."""
     next_clause += 1
 
     # EPF fallback
     non_residuary_text += f"""
 
-{next_clause}.  If the nomination(s) made by me in my Employees' Provident Fund do(es) not take effect for whatsoever reason, then I give the benefits of the nomination(s) to form part of my residuary estate."""
+{next_clause}.  If the nomination(s) made by me in my Employees' Provident Fund do(es) not take effect for whatsoever reason, then I hereby devise and bequeath the benefits of the nomination(s) to form part of my residuary estate."""
     next_clause += 1
 
     # Specific gift clauses
@@ -733,7 +731,7 @@ The expression 'all bank accounts' in this clause shall exclude any account whic
 
             specific_gifts_text += f"""
 
-{next_clause}.  I give to {ben_text} {desc}{share_text}."""
+{next_clause}.  I hereby devise and bequeath to {ben_text} {desc}{share_text}."""
 
             # Add substitute clause inline for equal/prorata modes
             sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
@@ -800,11 +798,11 @@ The expression 'all bank accounts' in this clause shall exclude any account whic
     will_text = f"""LAST WILL AND TESTAMENT OF
 {t.full_name.upper()}
 
-This Will is made by me {t.full_name.upper()} {t_id} born on {t.date_of_birth} of {t.residential_address.upper()}.
+This Will is made by me {t.full_name.upper()} {t_id} of {t.residential_address.upper()}.
 
 Revocation
 
-1.  By signing this Will, I revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly. I hereby declare that I am domiciled in Malaysia.
+1.  By signing this Will, I revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly.
 
 {exec_clause}
 {substitute_clause}

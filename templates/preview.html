@@ -336,17 +336,39 @@
         </button>
         <div id="change-log-body" class="divide-y divide-gray-100">
             {% for log in edit_logs %}
-            <div class="px-6 py-3 flex items-start gap-3">
-                <div class="flex-shrink-0 w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mt-0.5">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-                </div>
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <span class="text-sm font-semibold text-gray-800">{{ log.edited_by_name }}</span>
-                        <span class="text-xs text-gray-400">{{ log.edited_at|myt }}</span>
+            <div class="px-6 py-3">
+                <div class="flex items-start gap-3">
+                    <div class="flex-shrink-0 w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mt-0.5">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
                     </div>
-                    <p class="text-sm text-gray-500 mt-0.5">{{ log.summary }}</p>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="text-sm font-semibold text-gray-800">{{ log.edited_by_name }}</span>
+                            <span class="text-xs text-gray-400">{{ log.edited_at|myt }}</span>
+                        </div>
+                        <p class="text-sm text-gray-500 mt-0.5">
+                            {{ log.summary.split(' — ')[0] if ' — ' in log.summary else log.summary }}
+                            {% if log.details %}
+                            <button onclick="document.getElementById('edit-detail-{{ log.id }}').classList.toggle('hidden')" class="ml-1 text-blue-500 hover:text-blue-700 text-xs font-medium">View changes</button>
+                            {% endif %}
+                        </p>
+                    </div>
                 </div>
+                {% if log.details %}
+                <div id="edit-detail-{{ log.id }}" class="hidden mt-2 ml-11 bg-gray-50 rounded-lg p-3 text-xs font-mono space-y-1 max-h-64 overflow-y-auto border border-gray-200">
+                    {% for line in log.details.split('\n') %}
+                    {% if line.startswith('+ ') %}
+                    <div class="text-green-700 bg-green-50 px-2 py-0.5 rounded">{{ line }}</div>
+                    {% elif line.startswith('- ') %}
+                    <div class="text-red-700 bg-red-50 px-2 py-0.5 rounded">{{ line }}</div>
+                    {% elif '→' in line %}
+                    <div class="text-amber-700 bg-amber-50 px-2 py-0.5 rounded">{{ line }}</div>
+                    {% else %}
+                    <div class="text-gray-600">{{ line }}</div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+                {% endif %}
             </div>
             {% endfor %}
         </div>

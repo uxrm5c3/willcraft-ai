@@ -26,7 +26,8 @@ Draft the will following this professional professional standard format. Use EXA
 ### 1. TITLE AND PREAMBLE
 "LAST WILL AND TESTAMENT OF [TESTATOR NAME]"
 
-"This Will is made by me [FULL NAME] MALAYSIA NRIC No. [number] born on [date] of [ADDRESS IN UPPERCASE]."
+"This Will is made by me [FULL NAME] (NRIC No. [number]) of [ADDRESS IN UPPERCASE]."
+Note: Do NOT include date of birth in the preamble. NRIC must be in parentheses.
 
 ### 2. REVOCATION (Clause 1)
 Section heading: "Revocation"
@@ -37,13 +38,13 @@ Section heading: "Revocation"
 Section heading: "Appointment of Executor(s)"
 
 For a SINGLE executor with substitute:
-"2. I appoint as my Executor my [relationship] [NAME] MALAYSIA NRIC No. [number] of [ADDRESS] but if [he/she] is unwilling or unable to act for whatsoever reason, then I appoint my [relationship] [SUBSTITUTE NAME] MALAYSIA NRIC No. [number] of [ADDRESS]."
+"2. I hereby appoint my [relationship] [NAME] (NRIC No. [number]) of [ADDRESS] as my sole Executor but if [he/she] is unwilling or unable to act for whatsoever reason, then I appoint my [relationship] [SUBSTITUTE NAME] (NRIC No. [number]) of [ADDRESS] as my substitute Executor."
 
 For JOINT executors:
-"2. I appoint as my joint Executors my [relationship] [NAME] MALAYSIA NRIC No. [number] of [ADDRESS] and my [relationship] [NAME] MALAYSIA NRIC No. [number] of [ADDRESS]. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall acts as my sole Executor."
+"2. I hereby appoint my [relationship] [NAME] (NRIC No. [number]) of [ADDRESS] and my [relationship] [NAME] (NRIC No. [number]) of [ADDRESS] as my joint Executors. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall act as my sole Executor."
 
 For a separate SUBSTITUTE executor clause:
-"3. With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Executor [SUBSTITUTE NAME as provided in the data]."
+"3. With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I hereby appoint [SUBSTITUTE NAME as provided in the data] as my substitute Executor."
 **IMPORTANT: Only include a substitute executor clause if a substitute executor is explicitly named in the data. Do NOT invent or add any corporate trustee (e.g. Rockwills, Amanah Raya) as substitute unless it is explicitly provided in the data.**
 
 ### 4. EXECUTOR AS TRUSTEE (ONLY if trustee appointment is enabled in the data)
@@ -51,7 +52,7 @@ For a separate SUBSTITUTE executor clause:
 **IMPORTANT: SKIP this clause entirely if the data says trustee_same_as_executor is false or no trustee is appointed. Only include when the user has explicitly enabled trustee appointment.**
 
 ### 5. CONTEMPLATION OF MARRIAGE (if applicable)
-"I declare that this Will is made in contemplation of my marriage to [NAME] MALAYSIA NRIC No. [number] and that this Will shall not be revoked by such marriage."
+"I declare that this Will is made in contemplation of my marriage to [NAME] (NRIC No. [number]) and that this Will shall not be revoked by such marriage."
 
 ### 6. APPOINTMENT OF GUARDIAN(S) (if applicable)
 Section heading: "Appointment of Guardian(s)"
@@ -68,25 +69,21 @@ Draft the non-residuary gifts using these specific patterns depending on the typ
 **IMPORTANT: Do NOT include this clause unless the user explicitly enabled the joint account surviving holder clause in Step 9 Other Matters.**
 
 **Sole bank accounts — given directly to beneficiary with inline substitute**:
-"[N]. I give to my [relationship] [NAME] MALAYSIA NRIC No. [number] the moneys standing to my credit in all my bank accounts. If my [relationship] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] and my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] in equal shares or to the survivor of them if one of them does not survive me.
-
-The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."
+"[N]. I hereby devise and bequeath to my [relationship] [NAME] (NRIC No. [number]) the moneys standing to my credit in all my bank accounts. If my [relationship] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] (NRIC No. [number]) and my [relationship] [SUB NAME] (NRIC No. [number]) in equal shares or to the survivor of them if one of them does not survive me. The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."
 
 **Sole bank accounts — pooled into "The Moneys"** (alternative approach when multiple assets are pooled):
 "[N]. I direct my Executor to transfer the moneys standing to my credit in all my bank accounts in Malaysia and in any foreign countries that are held under my sole name and those held under joint names (subject to the laws and regulations of the particular country) to form part of 'The Moneys' mentioned in Clause [X] below."
 
 **EPF fallback** (include only if EPF beneficiaries are specified in the data):
-"[N]. If the nomination(s) made by me in my Employees' Provident Fund do(es) not take effect for whatsoever reason, then I give the benefits of the nomination(s) to my [relationship] [NAME] MALAYSIA NRIC No. [number]."
-— Or if multiple beneficiaries: "...to my [rel] [NAME] NRIC No. [number] and my [rel] [NAME] NRIC No. [number] in equal shares or to the survivor of them if one of them does not survive me."
+"[N]. If the nomination(s) made by me in my Employees' Provident Fund do(es) not take effect for whatsoever reason, then I hereby devise and bequeath the benefits of the nomination(s) to my [relationship] [NAME] (NRIC No. [number])."
+— Or if multiple beneficiaries: "...to my [rel] [NAME] (NRIC No. [number]) and my [rel] [NAME] (NRIC No. [number]) in equal shares or to the survivor of them if one of them does not survive me."
 — Or pool into The Moneys: "...then the benefits of the nomination(s) shall form part of 'The Moneys' mentioned in Clause [X] below."
 
 **Insurance policies fallback** (include if testator has insurance):
 Same pattern as EPF but referencing "insurance policies".
 
 **Immovable property gift — given directly to beneficiary with inline substitute**:
-"[N]. I give to my [relationship] [NAME] MALAYSIA NRIC No. [number] my undivided share in the property known as [ADDRESS]. If my [relationship] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] and my [relationship] [SUB NAME] MALAYSIA NRIC No. [number] in equal shares or to the survivor of them if one of them does not survive me.
-
-Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a lien attached to this property shall be paid out of my residuary estate."
+"[N]. I hereby devise and bequeath to my [relationship] [NAME] (NRIC No. [number]) my undivided share in the property known as [ADDRESS]. If my [relationship] does not survive me, then the benefit [he/she] would have received shall be given to my [relationship] [SUB NAME] (NRIC No. [number]) and my [relationship] [SUB NAME] (NRIC No. [number]) in equal shares or to the survivor of them if one of them does not survive me. Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a lien attached to this property shall be paid out of my residuary estate."
 
 **Immovable properties — sold and pooled into "The Moneys"** (alternative approach):
 "[N]. I direct my Executor to sell all the immovable properties listed below and the net proceeds of the sale shall form part of 'The Moneys' mentioned in Clause [X] below.
@@ -96,7 +93,7 @@ Unless specifically stated to the contrary in this Will, I direct that any sums 
 
 ### 9. DISTRIBUTION OF "THE MONEYS" (if assets were pooled)
 "[N]. With reference to Clause [X] to Clause [Y] above, I direct my Executor to give the fund and assets stated in the respective clauses and any other provisions set aside for this clause (hereinafter known as 'The Moneys') to the beneficiaries named below in the shares indicated.
-(i) my [relationship] [NAME] MALAYSIA NRIC No. [number] ([X/Y] share)
+(i) my [relationship] [NAME] (NRIC No. [number]) ([X/Y] share)
 (ii) ..."
 
 ### 10. SUBSTITUTE BENEFICIARIES (if applicable)
@@ -197,12 +194,14 @@ Second Witness Contact Number: _________________________________________________
 1. Use FORMAL LEGAL ENGLISH appropriate for Malaysian courts, following the professional Malaysian will drafting standard
 2. Be PRECISE and UNAMBIGUOUS - every clause must have clear, definite meaning
 3. Use DEFINED TERMS consistently (e.g., "my Executor", "The Moneys", "my residuary estate")
-4. Include FULL NAMES and NRIC/IDENTIFICATION NUMBERS for all named persons:
-   - For Malaysian NRIC holders: use "MALAYSIA NRIC No." format (e.g., "MALAYSIA NRIC No. 880515-01-5678")
-   - For foreign nationals: use "[COUNTRY] Identification No." format (e.g., "FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9", "SINGAPORE Identification No. E1234567")
+4. Include FULL NAMES and NRIC/IDENTIFICATION NUMBERS for all named persons IN PARENTHESES:
+   - For Malaysian NRIC holders: use "(NRIC No. [number])" format (e.g., "(NRIC No. 880515-01-5678)")
+   - For foreign nationals: use "([COUNTRY] Identification No. [number])" format (e.g., "(FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9)")
+   - Do NOT put "MALAYSIA" before NRIC — just "(NRIC No. ...)"
+   - Do NOT include date of birth for any person
 5. Use professional legal phrasing following these conventions:
-   - "I give to my [relationship] [NAME]..." for direct gifts
-   - "I give my undivided share in the property known as..." for property gifts
+   - "I hereby devise and bequeath to my [relationship] [NAME]..." for direct gifts
+   - "I hereby devise and bequeath to my [relationship] [NAME]... my undivided share in the property known as..." for property gifts
    - "does not survive me" instead of "predeceases me"
    - "for whatsoever reason" for catch-all inability clauses
    - "Unless specifically stated to the contrary in this Will" for exception clauses
@@ -215,7 +214,7 @@ Second Witness Contact Number: _________________________________________________
 10. Include proper substitution language — EITHER inline within the gift clause itself OR as separate substitute clauses
 11. For jointly held bank accounts, include the joint account clause ONLY if joint_account_clause_enabled is true
 12. Include the bank account exclusion expression ONLY if there are bank account gifts: "The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."
-13. For immovable properties, use Malaysian land title convention: "held under [TITLE TYPE] No. [NUMBER], LOT No. [LOT], Mukim of [TOWNSHIP], District of [DISTRICT], State of [STATE]". Do NOT append "MALAYSIA" (understood for Malaysian will).
+13. For immovable properties, use Malaysian land title convention with ALL fields — NEVER omit any: "held under [TITLE TYPE] No. [NUMBER], LOT No. [LOT], Mukim of [TOWNSHIP], District of [DISTRICT], State of [STATE]". All five elements (title type, lot, mukim, district, state) MUST be present. Do NOT append "MALAYSIA" (understood for Malaysian will).
 14. For encumbered property (loan/lien), include direction to pay from the source specified (residuary estate, sale, insurance). For clean property, do NOT include discharge clause.
 15. Include the EPF fallback clause ONLY if there are EPF-related gifts in the data
 16. ONLY include clauses that are directly supported by the user's data. Do NOT add clauses that the user did not request or enable.
@@ -236,7 +235,9 @@ Use these section headings (NOT numbered, placed on their own line before the re
 - Use numbered clauses with period (1., 2., 3., etc.)
 - Use lettered sub-clauses ((a), (b), (c))
 - Use roman numeral sub-items ((i), (ii), (iii))
-- Include proper paragraph spacing between clauses
+- COMPACT formatting: minimize empty space between clauses. A will must NOT have excessive blank space between paragraphs to prevent unauthorised alteration of content. Use single blank line between clauses only.
+- Each clause should flow continuously without unnecessary line breaks within the clause body
+- "THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK" must be on ONE single line — do NOT split across two lines
 
 ## Important Notes
 

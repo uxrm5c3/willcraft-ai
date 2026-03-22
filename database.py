@@ -121,6 +121,7 @@ class WillEditLog(db.Model):
     edited_by_name = db.Column(db.String(100))
     edited_at = db.Column(db.DateTime, default=datetime.utcnow)
     summary = db.Column(db.Text)  # e.g. "3 lines changed, 1 line added"
+    details = db.Column(db.Text)  # Full list of changes, one per line
 
 
 class WillVersion(db.Model):

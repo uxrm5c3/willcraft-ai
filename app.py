@@ -281,6 +281,7 @@ with app.app_context():
         ("probate_applications", "will_document_id", "VARCHAR(36)"),
         ("probate_applications", "deleted_at", "DATETIME"),
         ("wills", "deleted_at", "DATETIME"),
+        ("will_edit_logs", "details", "TEXT"),
     ]:
         try:
             with db.engine.connect() as conn:
@@ -1247,6 +1248,7 @@ def api_will_edit_text(will_id):
         edited_by_name=editor_name,
         edited_at=datetime.utcnow(),
         summary=summary,
+        details='\n'.join(change_details) if change_details else None,
     )
     db.session.add(log_entry)
     db.session.commit()
