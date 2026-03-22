@@ -120,6 +120,7 @@
                             <span class="text-gray-500 flex-shrink-0">{{ fext }}</span>
                             {% if durl %}
                             <button type="button" onclick="viewGiftDocument('{{ durl }}', '{{ fname }}')" class="px-2.5 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium flex-shrink-0">View</button>
+                            <a href="{{ durl }}" download="{{ fname }}" class="px-2.5 py-1 bg-green-50 text-green-600 rounded hover:bg-green-100 font-medium flex-shrink-0 no-underline">Download</a>
                             {% endif %}
                             <button type="button" onclick="_removeGiftDoc('{{ did }}', {{ gift_idx }})"
                                     class="px-2.5 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 font-medium flex-shrink-0">Delete</button>

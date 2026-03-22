@@ -2881,7 +2881,8 @@ function _addGiftDocPreview(giftIndex, fileName, docUrl, docType) {
          data-filename="${fileName.replace(/"/g, '&quot;')}" data-url="${(docUrl||'').replace(/"/g, '&quot;')}" data-doctype="${docType||'document'}">
         <span class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded font-medium flex-shrink-0">${typeLabel}</span>
         <span class="text-gray-500 flex-shrink-0">${ext}</span>
-        ${docUrl ? `<button type="button" onclick="viewGiftDocument('${docUrl}', '${fileName.replace(/'/g, "\\'")}')" class="px-2.5 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium flex-shrink-0">View</button>` : ''}
+        ${docUrl ? `<button type="button" onclick="viewGiftDocument('${docUrl}', '${fileName.replace(/'/g, "\\'")}')" class="px-2.5 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 font-medium flex-shrink-0">View</button>
+        <a href="${docUrl}" download="${fileName.replace(/"/g, '&quot;')}" class="px-2.5 py-1 bg-green-50 text-green-600 rounded hover:bg-green-100 font-medium flex-shrink-0 no-underline">Download</a>` : ''}
         <button type="button" onclick="_removeGiftDoc('${docId}', ${giftIndex})"
                 class="px-2.5 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100 font-medium flex-shrink-0">Delete</button>
     </div>`;
