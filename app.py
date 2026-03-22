@@ -1689,6 +1689,29 @@ def api_will_delete_generated():
     return jsonify({'ok': True})
 
 
+@app.route('/api/will/restore-generated', methods=['POST'])
+@login_required
+def api_will_restore_generated():
+    """Restore the generated will text from the latest version."""
+    will_id = session.get('will_id')
+    if not will_id:
+        return jsonify({'ok': False, 'error': 'No will in session'}), 400
+    wr = db.session.get(Will, will_id)
+    if not wr:
+        return jsonify({'ok': False, 'error': 'Will not found'}), 404
+    # Find the latest version
+    latest = WillVersion.query.filter_by(will_id=will_id).order_by(
+        WillVersion.version_number.desc()
+    ).first()
+    if not latest or not latest.will_text:
+        return jsonify({'ok': False, 'error': 'No version found to restore'}), 404
+    wr.generated_will_text = latest.will_text
+    wr.status = 'generated'
+    session['generated_will_text'] = latest.will_text
+    db.session.commit()
+    return jsonify({'ok': True, 'version': latest.version_number})
+
+
 @app.route('/api/will/version/<int:version_id>/delete', methods=['POST'])
 @login_required
 def api_will_delete_version(version_id):
@@ -3411,6 +3434,7 @@ def wizard_step_review():
         has_errors=len(errors) > 0,
         has_logo=has_logo,
         include_logo=include_logo,
+        has_versions=WillVersion.query.filter_by(will_id=session.get('will_id', '')).count() > 0 if session.get('will_id') else False,
     )
 
 

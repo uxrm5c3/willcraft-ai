@@ -791,7 +791,7 @@ async function sendWillEmail(willId) {
 
 /* Delete generated will text */
 async function deleteGeneratedWill() {
-    if (!confirm('This will permanently delete the generated will text.\nYou can regenerate it from the Review page.\n\nAre you sure?')) return;
+    if (!confirm('Delete the generated will text?\n\nYou can restore it from version history or regenerate from the Review page.')) return;
     try {
         var resp = await fetch('/api/will/delete-generated', {
             method: 'POST',
@@ -799,9 +799,32 @@ async function deleteGeneratedWill() {
         });
         var data = await resp.json();
         if (data.ok) {
-            window.location.href = '/wizard/step/10';
+            // Show restore option instead of immediately redirecting
+            if (confirm('Will text deleted.\n\nClick OK to restore it, or Cancel to go back to Review page.')) {
+                await restoreGeneratedWill();
+            } else {
+                window.location.href = '/wizard/step/10';
+            }
         } else {
             alert('Error: ' + (data.error || 'Failed to delete'));
+        }
+    } catch (err) {
+        alert('Network error. Please try again.');
+    }
+}
+
+async function restoreGeneratedWill() {
+    try {
+        var resp = await fetch('/api/will/restore-generated', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'}
+        });
+        var data = await resp.json();
+        if (data.ok) {
+            window.location.reload();
+        } else {
+            alert('Could not restore: ' + (data.error || 'No version found'));
+            window.location.href = '/wizard/step/10';
         }
     } catch (err) {
         alert('Network error. Please try again.');
