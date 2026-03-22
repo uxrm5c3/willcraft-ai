@@ -3827,8 +3827,13 @@ def download_verification_pdf():
                 doc_ids.append(d['document_id'])
     for doc_id in doc_ids:
         doc = db.session.get(Document, doc_id)
-        if doc and doc.file_path and os.path.exists(doc.file_path):
-            documents_map[doc_id] = doc.file_path
+        if doc and doc.file_path:
+            # file_path may be relative — prepend UPLOAD_DIR if not absolute
+            fp = doc.file_path
+            if not os.path.isabs(fp):
+                fp = os.path.join(UPLOAD_DIR, fp)
+            if os.path.exists(fp):
+                documents_map[doc_id] = fp
 
     testator_name = session.get('step1', {}).get('full_name', 'Unknown')
 
