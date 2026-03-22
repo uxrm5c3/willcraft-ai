@@ -328,3 +328,150 @@ function autoFillDaerahFromMukim(giftIndex) {
         updatePropertyPreview(giftIndex);
     }
 }
+
+/**
+ * Daerah → State mapping for validation.
+ */
+const MY_DAERAH_STATE_MAP = {
+    // Johor
+    'JOHOR BAHRU': 'JOHOR', 'KULAI': 'JOHOR', 'BATU PAHAT': 'JOHOR', 'MUAR': 'JOHOR',
+    'SEGAMAT': 'JOHOR', 'KLUANG': 'JOHOR', 'PONTIAN': 'JOHOR', 'KOTA TINGGI': 'JOHOR',
+    'MERSING': 'JOHOR', 'TANGKAK': 'JOHOR', 'LEDANG': 'JOHOR',
+    // Selangor
+    'PETALING': 'SELANGOR', 'KLANG': 'SELANGOR', 'HULU LANGAT': 'SELANGOR', 'GOMBAK': 'SELANGOR',
+    'SEPANG': 'SELANGOR', 'KUALA SELANGOR': 'SELANGOR', 'KUALA LANGAT': 'SELANGOR',
+    'HULU SELANGOR': 'SELANGOR', 'SABAK BERNAM': 'SELANGOR',
+    // KL
+    'KUALA LUMPUR': 'W.P. KUALA LUMPUR',
+    // Penang
+    'TIMUR LAUT': 'PULAU PINANG', 'BARAT DAYA': 'PULAU PINANG',
+    'SEBERANG PERAI UTARA': 'PULAU PINANG', 'SEBERANG PERAI TENGAH': 'PULAU PINANG',
+    'SEBERANG PERAI SELATAN': 'PULAU PINANG',
+    // Perak
+    'KINTA': 'PERAK', 'KAMPAR': 'PERAK', 'MANJUNG': 'PERAK',
+    'LARUT, MATANG & SELAMA': 'PERAK', 'HILIR PERAK': 'PERAK',
+    'BATANG PADANG': 'PERAK', 'PERAK TENGAH': 'PERAK',
+    // N.Sembilan
+    'SEREMBAN': 'NEGERI SEMBILAN', 'PORT DICKSON': 'NEGERI SEMBILAN',
+    'JEMPOL': 'NEGERI SEMBILAN', 'KUALA PILAH': 'NEGERI SEMBILAN',
+    // Melaka
+    'MELAKA TENGAH': 'MELAKA', 'ALOR GAJAH': 'MELAKA', 'JASIN': 'MELAKA',
+    // Pahang
+    'KUANTAN': 'PAHANG', 'TEMERLOH': 'PAHANG', 'BENTONG': 'PAHANG', 'RAUB': 'PAHANG',
+    // Kedah
+    'KOTA SETAR': 'KEDAH', 'KUALA MUDA': 'KEDAH', 'KULIM': 'KEDAH', 'LANGKAWI': 'KEDAH',
+    // Kelantan
+    'KOTA BHARU': 'KELANTAN',
+    // Terengganu
+    'KUALA TERENGGANU': 'TERENGGANU',
+    // Putrajaya
+    'PUTRAJAYA': 'W.P. PUTRAJAYA',
+};
+
+/**
+ * Validate property data for consistency.
+ * Returns array of {field, message, severity} warnings.
+ */
+function validatePropertyData(giftIndex) {
+    const addr = document.querySelector(`[name="gift_prop_address_${giftIndex}"]`)?.value?.trim() || '';
+    const mukim = document.querySelector(`[name="gift_prop_bandar_${giftIndex}"]`)?.value?.trim() || '';
+    const daerah = document.querySelector(`[name="gift_prop_daerah_${giftIndex}"]`)?.value?.trim() || '';
+    const negeri = document.querySelector(`[name="gift_prop_negeri_${giftIndex}"]`)?.value?.trim() || '';
+    const titleType = document.querySelector(`[name="gift_prop_title_type_${giftIndex}"]`)?.value || '';
+    const titleNum = document.querySelector(`[name="gift_prop_title_number_${giftIndex}"]`)?.value?.trim() || '';
+    const lotNum = document.querySelector(`[name="gift_prop_lot_number_${giftIndex}"]`)?.value?.trim() || '';
+
+    const warnings = [];
+
+    // 1. Check Daerah-State mismatch
+    if (daerah && negeri) {
+        const daerahUpper = daerah.toUpperCase().replace(/^DAERAH\s+/i, '');
+        const expectedState = MY_DAERAH_STATE_MAP[daerahUpper];
+        if (expectedState) {
+            const negeriUpper = negeri.toUpperCase();
+            // Check if the negeri contains the expected state
+            if (!negeriUpper.includes(expectedState) && !expectedState.includes(negeriUpper.split(' ')[0])) {
+                warnings.push({
+                    field: 'negeri',
+                    message: `Daerah "${daerah}" is in ${expectedState}, but Negeri is "${negeri}". Please verify.`,
+                    severity: 'error'
+                });
+            }
+        }
+    }
+
+    // 2. Check address completeness — should have house number + street + area/taman
+    if (addr) {
+        const parts = addr.split(',').map(p => p.trim());
+        if (parts.length < 2) {
+            warnings.push({
+                field: 'address',
+                message: 'Address may be incomplete. Should include house number, street name, and area/taman.',
+                severity: 'warning'
+            });
+        }
+        // Check if address has only numbers (just a lot number, not a full address)
+        if (/^(no\.?\s*)?\d+$/i.test(addr)) {
+            warnings.push({
+                field: 'address',
+                message: 'Address appears to be just a number. Please add full street address.',
+                severity: 'warning'
+            });
+        }
+    }
+
+    // 3. Check for duplicate data across fields
+    if (addr && daerah) {
+        const addrUpper = addr.toUpperCase();
+        const daerahClean = daerah.toUpperCase().replace(/^DAERAH\s+/i, '');
+        // Count occurrences of daerah name in address
+        const daerahRegex = new RegExp(daerahClean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        const matches = addr.match(daerahRegex);
+        if (matches && matches.length > 1) {
+            warnings.push({
+                field: 'address',
+                message: `"${daerah}" appears ${matches.length} times in the address. Consider removing duplicates.`,
+                severity: 'warning'
+            });
+        }
+    }
+
+    // 4. Check required fields
+    if (!titleType) warnings.push({field: 'title_type', message: 'Title Type is required', severity: 'error'});
+    if (!titleNum) warnings.push({field: 'title_number', message: 'Title Number is required', severity: 'error'});
+    if (!lotNum) warnings.push({field: 'lot_number', message: 'Lot Number is required', severity: 'error'});
+    if (!mukim) warnings.push({field: 'mukim', message: 'Mukim is required for land search', severity: 'error'});
+    if (!daerah) warnings.push({field: 'daerah', message: 'Daerah is required for land search', severity: 'error'});
+    if (!negeri) warnings.push({field: 'negeri', message: 'Negeri is required', severity: 'error'});
+
+    return warnings;
+}
+
+/**
+ * Show validation warnings in the property preview area.
+ */
+function showPropertyWarnings(giftIndex) {
+    const warnings = validatePropertyData(giftIndex);
+    const previewEl = document.getElementById('property-preview-' + giftIndex);
+    if (!previewEl) return;
+
+    // Remove old warnings
+    const oldWarnings = previewEl.parentElement.querySelector('.prop-warnings');
+    if (oldWarnings) oldWarnings.remove();
+
+    if (warnings.length === 0) return;
+
+    const errors = warnings.filter(w => w.severity === 'error');
+    const warns = warnings.filter(w => w.severity === 'warning');
+
+    let html = '<div class="prop-warnings mt-2 space-y-1">';
+    errors.forEach(w => {
+        html += `<div class="flex items-start gap-1.5 text-xs text-red-600"><span>⚠</span><span>${w.message}</span></div>`;
+    });
+    warns.forEach(w => {
+        html += `<div class="flex items-start gap-1.5 text-xs text-amber-600"><span>⚡</span><span>${w.message}</span></div>`;
+    });
+    html += '</div>';
+
+    previewEl.insertAdjacentHTML('afterend', html);
+}

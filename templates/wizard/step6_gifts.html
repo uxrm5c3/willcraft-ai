@@ -1061,6 +1061,9 @@ function updatePropertyPreview(giftIndex) {
     });
 
     document.getElementById('property-preview-' + giftIndex).textContent = parts.join(', ') + suffix;
+
+    // Run validation and show warnings
+    if (typeof showPropertyWarnings === 'function') showPropertyWarnings(giftIndex);
 }
 
 function buildPropertyPanelHtml(idx) {
