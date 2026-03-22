@@ -3783,6 +3783,55 @@ def preview():
 
 # -- Download -----------------------------------------------------------------
 
+@app.route('/download/verification-pdf')
+@login_required
+def download_verification_pdf():
+    """Generate and download verification PDF with documents + field data."""
+    from documents.verification_pdf import generate_verification_pdf
+
+    client_id = session.get('client_id')
+    if not client_id:
+        flash('No client loaded.', 'error')
+        return redirect(url_for('wizard_step', step=1))
+
+    # Gather persons with documents
+    persons = []
+    for p in session.get('person_registry', []):
+        person_record = db.session.get(Person, p.get('id'))
+        if person_record:
+            pdata = {k: getattr(person_record, k, '') for k in
+                     ['full_name', 'nric_passport', 'nationality', 'date_of_birth',
+                      'gender', 'address', 'relationship', 'document_id']}
+            pdata['id'] = person_record.id
+            persons.append(pdata)
+
+    # Gather gifts with documents
+    gifts = session.get('step5_gifts', [])
+
+    # Build documents map: document_id -> file_path
+    documents_map = {}
+    doc_ids = [p['document_id'] for p in persons if p.get('document_id')]
+    for g in gifts:
+        for d in g.get('documents', []):
+            if d.get('document_id'):
+                doc_ids.append(d['document_id'])
+    for doc_id in doc_ids:
+        doc = db.session.get(Document, doc_id)
+        if doc and doc.file_path and os.path.exists(doc.file_path):
+            documents_map[doc_id] = doc.file_path
+
+    testator_name = session.get('step1', {}).get('full_name', 'Unknown')
+
+    filepath = generate_verification_pdf(persons, gifts, documents_map, testator_name)
+    if not filepath or not os.path.exists(filepath):
+        flash('Could not generate verification PDF.', 'error')
+        return redirect(url_for('wizard_step', step=10))
+
+    return send_file(filepath, as_attachment=True,
+                     download_name=f"Verification_{testator_name.replace(' ', '_')}.pdf",
+                     mimetype='application/pdf')
+
+
 @app.route('/download/<fmt>')
 @login_required
 def download(fmt):
