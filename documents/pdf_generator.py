@@ -135,22 +135,18 @@ def _build_content_html(text: str) -> str:
         typ, htm = classified[i]
 
         if typ == 'section':
-            # Section heading: wrap with the next clause/content to keep together
+            # Section heading: wrap with ONLY the first clause start to prevent orphaned heading
+            # Keep group small (heading + 1 clause line) so it doesn't cause big gaps
             group = [htm]
             i += 1
             # Skip spacers after section heading
             while i < len(classified) and classified[i][0] == 'spacer':
-                group.append(classified[i][1])
-                i += 1
-            # Include the first clause block after the section heading
+                i += 1  # Don't include spacers — they're unnecessary between heading and clause
+            # Include ONLY the first clause/text line (not continuation)
             if i < len(classified) and classified[i][0] in ('clause-start', 'text', 'heading'):
                 group.append(classified[i][1])
                 i += 1
-                # Include continuation lines (non-numbered, non-heading, non-section)
-                while i < len(classified) and classified[i][0] in ('text', 'indented'):
-                    group.append(classified[i][1])
-                    i += 1
-            # Wrap heading + first clause together to prevent orphaned headings
+            # Wrap heading + first line only — small group that won't cause big gaps
             html_lines.append(f'<div class="section-group">\n' + '\n'.join(group) + '\n</div>')
 
         elif typ == 'clause-start':
@@ -551,8 +547,10 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         page-break-after: avoid;
     }}
 
-    /* Section group: NO break-inside — let content flow naturally to avoid big gaps */
+    /* Section group: heading + first 2-3 lines MUST stay together */
     .section-group {{
+        break-inside: avoid;
+        page-break-inside: avoid;
     }}
 
     /* Clause group: keep paragraphs together to avoid mid-paragraph breaks */
