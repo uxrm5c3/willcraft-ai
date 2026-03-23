@@ -139,6 +139,13 @@ def _build_content_html(text: str) -> str:
             classified.append(('heading', f'<h2 class="will-heading">{stripped}</h2>'))
             in_clause_block = False
         elif is_numbered:
+            # Replace first space after "N." with non-breaking spaces to prevent
+            # justified text from stretching the gap between number and text
+            dot_pos = stripped.find('.')
+            if dot_pos > 0 and dot_pos + 1 < len(stripped):
+                num_part = stripped[:dot_pos + 1]
+                text_part = stripped[dot_pos + 1:].lstrip()
+                stripped = f'{num_part}&nbsp;&nbsp;{text_part}'
             classified.append(('clause-start', f'<p class="clause-start">{stripped}</p>'))
             in_clause_block = True
         elif is_subclause or is_indented:
