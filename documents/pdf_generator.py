@@ -603,20 +603,20 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     /* Numbered clause start — hanging indent: number at left, text indented */
     p.clause-start {{
         margin-top: 14pt;
-        margin-left: 42pt;
-        text-indent: -42pt;
+        margin-left: 28pt;
+        text-indent: -28pt;
     }}
 
     /* Continuation paragraphs within a clause (no number) */
     p.clause-continuation {{
-        margin-left: 42pt;
+        margin-left: 28pt;
         margin-top: 10pt;
     }}
 
-    /* Indented sub-clauses (a), (b), (c) */
+    /* Indented sub-clauses (a), (b), (i), (ii) */
     p.indented {{
-        margin-left: 72pt;
-        text-indent: -30pt;
+        margin-left: 56pt;
+        text-indent: -28pt;
         margin-top: 10pt;
     }}
 
