@@ -487,6 +487,57 @@ def _inject_missing_substitutes(will_text: str, will_data) -> str:
     return before + inject_text + after
 
 
+DISCHARGE_CLAUSE = "Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate."
+
+
+def _inject_missing_discharge(will_text: str, will_data) -> str:
+    """Post-process: inject discharge clause after each property gift if missing.
+    Only runs when discharge_clause_enabled=True and discharge_placement='per_property'."""
+    om = will_data.other_matters
+    if not om or not getattr(om, 'discharge_clause_enabled', True):
+        return will_text
+    if getattr(om, 'discharge_placement', 'per_property') != 'per_property':
+        return will_text
+
+    # Check if any discharge clause already exists
+    if 'discharge a charge' in will_text.lower() or 'withdraw a private caveat' in will_text.lower():
+        return will_text
+
+    # Find property gift clauses and inject discharge after each
+    lines = will_text.split('\n')
+    result = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        result.append(line)
+
+        # Detect property gift clause (contains "property known as" or "held under")
+        stripped = line.strip()
+        is_property_clause = ('property known as' in stripped.lower() or 'held under' in stripped.lower())
+
+        if is_property_clause:
+            # Look ahead to find end of this clause (next numbered clause or section heading)
+            j = i + 1
+            while j < len(lines):
+                next_line = lines[j].strip()
+                # Next numbered clause or section heading
+                if re_mod.match(r'^\d+\.', next_line) or (next_line and next_line[0].isupper() and next_line.endswith(':')):
+                    break
+                result.append(lines[j])
+                j += 1
+
+            # Insert discharge clause before the next clause
+            result.append('')
+            result.append(DISCHARGE_CLAUSE)
+            result.append('')
+            i = j
+            continue
+
+        i += 1
+
+    return '\n'.join(result)
+
+
 def draft_will(will_data) -> str:
     """Use Claude API to draft a complete will document."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -525,6 +576,9 @@ Draft the complete will now, following the professional format and clause orderi
 
     # Post-process: inject missing specific substitute clauses
     will_text = _inject_missing_substitutes(will_text, will_data)
+
+    # Post-process: inject missing discharge clauses on property gifts
+    will_text = _inject_missing_discharge(will_text, will_data)
 
     return will_text
 
