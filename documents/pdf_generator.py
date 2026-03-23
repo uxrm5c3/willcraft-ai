@@ -578,16 +578,14 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         page-break-after: avoid;
     }}
 
-    /* Section group: heading + first 2-3 lines MUST stay together */
+    /* Section group: heading + first clause line stay together */
     .section-group {{
         break-inside: avoid;
         page-break-inside: avoid;
     }}
 
-    /* Clause group: keep paragraphs together to avoid mid-paragraph breaks */
+    /* Clause group: allow breaks inside — prevents large empty spaces */
     .clause-group {{
-        break-inside: avoid;
-        page-break-inside: avoid;
     }}
 
     /* Numbered clause headings (all-uppercase like "1. REVOCATION") */
