@@ -225,7 +225,7 @@ Translator Address: ________________________________________________________"
    - Do NOT include date of birth for any person
 5. Use professional legal phrasing following these conventions:
    - "I hereby devise and bequeath to my [relationship] [NAME]..." for direct gifts
-   - "I hereby devise and bequeath to my [relationship] [NAME]... my undivided share in the property known as..." for property gifts
+   - For property gifts: use the property description EXACTLY as provided in the gift data (it already includes ownership prefix like "my property known as..." or "all my 1/3 undivided shares in the property known as..."). Do NOT add your own "my undivided share in the property known as" prefix on top of it.
    - "does not survive me" instead of "predeceases me"
    - "for whatsoever reason" for catch-all inability clauses
    - "Unless specifically stated to the contrary in this Will" for exception clauses

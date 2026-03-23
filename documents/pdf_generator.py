@@ -77,11 +77,19 @@ def _build_content_html(text: str) -> str:
     escaped = html.escape(text)
 
     # Bold person names + NRIC — matches patterns like:
+    # Bold person names + NRIC/ID — matches patterns like:
     # "PHEK YI JING (MALAYSIA NRIC NO. 910503-01-5670)"
     # "SIVANESAN S/O APPUKUDDY (FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9)"
-    # Also matches testator in preamble: "KANAGARANY A/P APPUKUDDY (MALAYSIA NRIC No. ...)"
+    # "KANAGARANY A/P APPUKUDDY MALAYSIA (NRIC No. 480728-71-5064)" — MALAYSIA before parens
+    # "JANENIE MOHGAN MALAYSIA (NRIC No. 910312-14-5480)" — MALAYSIA between name and NRIC
     escaped = re.sub(
-        r'([A-Z][A-Z\s/\'\.]+?)\s*(\([A-Z][\w\s\.]*(?:NRIC|Identification|Passport)\s*(?:No\.?|NO\.?)\s*[\w\-/\s]+\))',
+        r'([A-Z][A-Z\s/\'\.]+?)(\s+MALAYSIA)?\s*(\((?:MALAYSIA\s+)?(?:NRIC|Identification|Passport)\s*(?:No\.?|NO\.?)\s*[\w\-/\s]+\))',
+        r'<strong>\1\2 \3</strong>',
+        escaped
+    )
+    # Also bold: "NAME (COUNTRY Identification No. XXX)" for foreign nationals
+    escaped = re.sub(
+        r'([A-Z][A-Z\s/\'\.]+?)\s*(\([A-Z][A-Z\s]+(?:Identification|Passport)\s*(?:No\.?|NO\.?)\s*[\w\-/\s]+\))',
         r'<strong>\1 \2</strong>',
         escaped
     )

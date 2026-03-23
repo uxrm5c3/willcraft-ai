@@ -75,6 +75,20 @@ class PropertyDetails(BaseModel):
                 if negeri_val.upper().startswith(pfx.upper()):
                     negeri_val = negeri_val[len(pfx):]
                     break
+            # Normalize to official state name with honorific
+            _STATE_NAMES = {
+                'JOHOR': 'Johor Darul Ta\'zim', 'KEDAH': 'Kedah Darul Aman',
+                'KELANTAN': 'Kelantan Darul Naim', 'MELAKA': 'Melaka',
+                'NEGERI SEMBILAN': 'Negeri Sembilan Darul Khusus',
+                'PAHANG': 'Pahang Darul Makmur', 'PERAK': 'Perak Darul Ridzuan',
+                'PERLIS': 'Perlis Indera Kayangan', 'PULAU PINANG': 'Pulau Pinang',
+                'SABAH': 'Sabah', 'SARAWAK': 'Sarawak',
+                'SELANGOR': 'Selangor Darul Ehsan', 'TERENGGANU': 'Terengganu Darul Iman',
+                'W.P. KUALA LUMPUR': 'Wilayah Persekutuan Kuala Lumpur',
+                'W.P. LABUAN': 'Wilayah Persekutuan Labuan',
+                'W.P. PUTRAJAYA': 'Wilayah Persekutuan Putrajaya',
+            }
+            negeri_val = _STATE_NAMES.get(negeri_val.upper(), negeri_val)
             title_parts.append(f"Negeri {negeri_val}")
         if title_parts:
             parts.extend(title_parts)
@@ -140,15 +154,19 @@ class Gift(BaseModel):
     account_ownership: Literal["individual", "joint"] = "individual"
 
     def _ownership_prefix(self) -> str:
-        """Build ownership prefix for asset descriptions."""
-        if self.ownership_type == "joint":
-            if self.gift_type == "property":
-                if self.testator_share:
-                    return f"all my {self.testator_share} undivided shares in the property"
-                else:
-                    return "my undivided share in the property"
-            elif self.gift_type == "financial":
-                return f"my share of the moneys in my joint account at"
+        """Build ownership prefix for asset descriptions.
+        Returns prefix ending with 'property' — to_formatted_description appends 'known as [address]'.
+        """
+        if self.gift_type == "property":
+            if self.testator_share:
+                return f"all my {self.testator_share} undivided shares in the property"
+            elif self.ownership_type == "joint":
+                return "my undivided share in the property"
+            else:
+                return "my property"
+        elif self.gift_type == "financial":
+            if self.ownership_type == "joint":
+                return "my share of the moneys in my joint account at"
         return ""
 
     def get_formatted_description(self) -> str:
