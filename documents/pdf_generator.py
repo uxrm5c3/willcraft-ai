@@ -139,13 +139,12 @@ def _build_content_html(text: str) -> str:
             classified.append(('heading', f'<h2 class="will-heading">{stripped}</h2>'))
             in_clause_block = False
         elif is_numbered:
-            # Replace first space after "N." with non-breaking spaces to prevent
-            # justified text from stretching the gap between number and text
             dot_pos = stripped.find('.')
             if dot_pos > 0 and dot_pos + 1 < len(stripped):
                 num_part = stripped[:dot_pos + 1]
                 text_part = stripped[dot_pos + 1:].lstrip()
-                stripped = f'{num_part}&nbsp;&nbsp;{text_part}'
+                # Use a fixed-width span for the number so all clauses align consistently
+                stripped = f'<span class="clause-num">{num_part}</span>{text_part}'
             classified.append(('clause-start', f'<p class="clause-start">{stripped}</p>'))
             in_clause_block = True
         elif is_subclause or is_indented:
@@ -597,22 +596,24 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         page-break-after: avoid;
     }}
 
-    /* Numbered clause start — hanging indent: number at left, text body indented */
-    p.clause-start {{
-        margin-top: 14pt;
-        margin-left: 28pt;
-        text-indent: -28pt;
+    /* Clause number span — inline with minimal fixed spacing */
+    span.clause-num {{
+        margin-right: 6pt;
     }}
 
-    /* Continuation paragraphs within a clause (discharge clause etc.) */
+    /* Numbered clause start — no hanging indent */
+    p.clause-start {{
+        margin-top: 14pt;
+    }}
+
+    /* Continuation paragraphs within a clause (discharge clause etc.) — slight indent */
     p.clause-continuation {{
-        margin-left: 28pt;
         margin-top: 10pt;
     }}
 
     /* Indented sub-clauses (a), (b), (i), (ii) */
     p.indented {{
-        margin-left: 52pt;
+        margin-left: 24pt;
         text-indent: -24pt;
         margin-top: 10pt;
     }}
