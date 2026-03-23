@@ -80,6 +80,7 @@ def _build_content_html(text: str) -> str:
     # First pass: classify each line (max 1 consecutive blank line — minimal spacing)
     classified = []  # list of (type, html_str) tuples
     blank_count = 0
+    in_clause_block = False  # Track if we're inside a numbered clause for continuation detection
     for line in lines:
         stripped = line.strip()
         if not stripped:
@@ -113,6 +114,9 @@ def _build_content_html(text: str) -> str:
         )
         is_indented = line.startswith('    ') or line.startswith('\t')
 
+        # Detect sub-clauses like (a), (b), (i), (ii)
+        is_subclause = bool(re_mod.match(r'^\([a-z]\)|^\([ivxlc]+\)', stripped))
+
         if is_section:
             classified.append(('section', f'<h3 class="section-heading">{stripped}</h3>'))
         elif is_numbered and is_heading:
@@ -123,10 +127,19 @@ def _build_content_html(text: str) -> str:
         elif is_numbered:
             # Numbered clause like "4. I direct my Executor..."
             classified.append(('clause-start', f'<p class="clause-start">{stripped}</p>'))
-        elif is_indented:
+        elif is_subclause or is_indented:
             classified.append(('indented', f'<p class="indented">{stripped}</p>'))
+        elif in_clause_block:
+            # Non-numbered text following a numbered clause = continuation
+            classified.append(('text', f'<p class="clause-continuation">{stripped}</p>'))
         else:
             classified.append(('text', f'<p>{stripped}</p>'))
+
+        # Track whether we're inside a clause block
+        if is_numbered:
+            in_clause_block = True
+        elif is_section:
+            in_clause_block = False
 
     # Second pass: group into clause blocks to prevent page-break splits
     html_lines = []
@@ -523,8 +536,9 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     body {{
         font-family: 'Times New Roman', Times, serif;
         font-size: 12pt;
-        line-height: 1.6;
+        line-height: 1.5;
         color: #000;
+        text-align: justify;
     }}
 
     /* Will title (first occurrence in content - hide since it's in header) */
@@ -536,13 +550,13 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     }}
 
     /* Section headings: Revocation, Appointment of Executor(s), etc. */
-    /* break-after:avoid keeps heading with next paragraph — never orphaned at page bottom */
     h3.section-heading {{
         font-size: 12pt;
         font-weight: bold;
-        margin: 16pt 0 8pt 0;
+        margin: 20pt 0 12pt 0;
         font-family: 'Times New Roman', Times, serif;
         text-decoration: underline;
+        text-align: left;
         break-after: avoid;
         page-break-after: avoid;
     }}
@@ -562,31 +576,41 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     /* Numbered clause headings (all-uppercase like "1. REVOCATION") */
     p.clause-heading {{
         font-weight: bold;
-        margin-top: 8pt;
+        margin-top: 12pt;
         break-after: avoid;
         page-break-after: avoid;
     }}
 
-    /* Numbered clause start (regular case like "4. I direct...") */
+    /* Numbered clause start — hanging indent: number at left, text indented */
     p.clause-start {{
-        margin-top: 2pt;
+        margin-top: 14pt;
+        margin-left: 42pt;
+        text-indent: -42pt;
     }}
 
-    /* Indented sub-clauses */
+    /* Continuation paragraphs within a clause (no number) */
+    p.clause-continuation {{
+        margin-left: 42pt;
+        margin-top: 10pt;
+    }}
+
+    /* Indented sub-clauses (a), (b), (c) */
     p.indented {{
-        margin-left: 36pt;
+        margin-left: 72pt;
+        text-indent: -30pt;
+        margin-top: 10pt;
     }}
 
     /* Regular paragraphs */
     p {{
-        margin: 6pt 0;
+        margin: 8pt 0;
         orphans: 4;
         widows: 3;
     }}
 
     /* Spacer between clauses — visible gap for readability */
     div.spacer {{
-        height: 8pt;
+        height: 12pt;
     }}
 
     /* "THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK" */
