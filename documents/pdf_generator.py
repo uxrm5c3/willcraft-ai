@@ -143,9 +143,11 @@ def _build_content_html(text: str) -> str:
             if dot_pos > 0 and dot_pos + 1 < len(stripped):
                 num_part = stripped[:dot_pos + 1]
                 text_part = stripped[dot_pos + 1:].lstrip()
-                # Use a fixed-width span for the number so all clauses align consistently
-                stripped = f'<span class="clause-num">{num_part}</span>{text_part}'
-            classified.append(('clause-start', f'<p class="clause-start">{stripped}</p>'))
+                # Use flex layout: fixed-width number column + justified text column
+                html_out = f'<div class="clause-row"><div class="clause-num">{num_part}</div><div class="clause-body">{text_part}</div></div>'
+            else:
+                html_out = f'<p class="clause-start">{stripped}</p>'
+            classified.append(('clause-start', html_out))
             in_clause_block = True
         elif is_subclause or is_indented:
             classified.append(('indented', f'<p class="indented">{stripped}</p>'))
@@ -596,24 +598,35 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         page-break-after: avoid;
     }}
 
-    /* Clause number span — inline with minimal fixed spacing */
-    span.clause-num {{
-        margin-right: 6pt;
+    /* Clause container — two-column: number + text body */
+    div.clause-row {{
+        display: flex;
+        margin-top: 14pt;
+    }}
+    div.clause-row .clause-num {{
+        flex: 0 0 28pt;
+        min-width: 28pt;
+        text-align: left;
+    }}
+    div.clause-row .clause-body {{
+        flex: 1;
+        text-align: justify;
     }}
 
-    /* Numbered clause start — no hanging indent */
+    /* Numbered clause (fallback if not using clause-row) */
     p.clause-start {{
         margin-top: 14pt;
     }}
 
-    /* Continuation paragraphs within a clause (discharge clause etc.) — slight indent */
+    /* Continuation paragraphs within a clause (discharge clause etc.) */
     p.clause-continuation {{
+        margin-left: 28pt;
         margin-top: 10pt;
     }}
 
     /* Indented sub-clauses (a), (b), (i), (ii) */
     p.indented {{
-        margin-left: 24pt;
+        margin-left: 52pt;
         text-indent: -24pt;
         margin-top: 10pt;
     }}
