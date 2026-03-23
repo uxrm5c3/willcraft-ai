@@ -493,6 +493,7 @@ DISCHARGE_CLAUSE = "Unless specifically stated to the contrary in this Will, I d
 def _inject_missing_discharge(will_text: str, will_data) -> str:
     """Post-process: inject discharge clause after each property gift if missing.
     Only runs when discharge_clause_enabled=True and discharge_placement='per_property'."""
+    import re as re_mod
     om = will_data.other_matters
     if not om or not getattr(om, 'discharge_clause_enabled', True):
         return will_text
