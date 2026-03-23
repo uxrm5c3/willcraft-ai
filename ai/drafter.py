@@ -294,7 +294,11 @@ def format_will_data(will_data) -> str:
         else:
             other_lines.append("  Joint Account Clause: NOT enabled — do NOT include any joint bank account clause")
         if getattr(om, 'discharge_clause_enabled', True):
-            other_lines.append("  Discharge Clause: ENABLED — include discharge/lien clause for EVERY property gift: 'Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.'")
+            placement = getattr(om, 'discharge_placement', 'per_property')
+            if placement == 'per_property':
+                other_lines.append("  Discharge Clause: ENABLED (PER PROPERTY) — include discharge/lien clause UNDER EACH property gift clause: 'Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.'")
+            else:
+                other_lines.append("  Discharge Clause: ENABLED (RESIDUARY ONLY) — do NOT put discharge clause under each property. Instead include ONLY in the residuary estate clause: 'To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any private caveat or lien on any of my immovable properties, funeral and executorship expenses.'")
         else:
             other_lines.append("  Discharge Clause: NOT enabled — do NOT include discharge/lien clause on property gifts")
         if getattr(om, 'testator_satisfaction_enabled', True):

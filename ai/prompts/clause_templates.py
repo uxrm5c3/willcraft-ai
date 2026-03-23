@@ -255,7 +255,7 @@ PROPERTY_FORMAT_BY_TITLE = {
 # TESTIMONIUM AND ATTESTATION
 # ============================================================
 
-BLANK_PAGE_TEMPLATE = """----------------------- THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK -----------------------"""
+BLANK_PAGE_TEMPLATE = """***************** the remaining page is intentionally left blank *****************"""
 
 ATTESTATION_TEMPLATE = """Signature of the Testator: ________________________________________________________
 

@@ -22,6 +22,7 @@ class OtherMatters(BaseModel):
     joint_account_clause_enabled: bool = False
     # Discharge / lien clause for properties
     discharge_clause_enabled: bool = True  # Default ON
+    discharge_placement: str = 'per_property'  # 'per_property' or 'residuary_only'
     # Testator satisfaction clause
     testator_satisfaction_enabled: bool = True  # Default ON
     # Translator / Interpreter attestation

@@ -523,7 +523,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     body {{
         font-family: 'Times New Roman', Times, serif;
         font-size: 12pt;
-        line-height: 1.4;
+        line-height: 1.6;
         color: #000;
     }}
 
@@ -540,7 +540,7 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     h3.section-heading {{
         font-size: 12pt;
         font-weight: bold;
-        margin: 10pt 0 4pt 0;
+        margin: 16pt 0 8pt 0;
         font-family: 'Times New Roman', Times, serif;
         text-decoration: underline;
         break-after: avoid;
@@ -579,23 +579,26 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
 
     /* Regular paragraphs */
     p {{
-        margin: 3pt 0;
+        margin: 6pt 0;
         orphans: 4;
         widows: 3;
     }}
 
-    /* Spacer between paragraphs — minimal to prevent content alteration */
+    /* Spacer between clauses — visible gap for readability */
     div.spacer {{
-        height: 3pt;
+        height: 8pt;
     }}
 
     /* "THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK" */
     p.blank-notice {{
         text-align: center;
         margin-top: 24pt;
-        font-size: 10pt;
-        letter-spacing: 0.5pt;
+        font-size: 9pt;
+        letter-spacing: 0;
+        white-space: nowrap;
+        overflow: visible;
         break-before: auto;
+        break-inside: avoid;
     }}
 
     /* === Signing Page Styles === */

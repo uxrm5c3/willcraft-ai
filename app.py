@@ -3528,6 +3528,7 @@ def wizard_step_others():
 
     # Discharge / lien clause for properties (default ON)
     om_data['discharge_clause_enabled'] = bool(request.form.get('discharge_clause_enabled'))
+    om_data['discharge_placement'] = request.form.get('discharge_placement', 'per_property')
 
     # Testator satisfaction clause (default ON)
     om_data['testator_satisfaction_enabled'] = bool(request.form.get('testator_satisfaction_enabled'))

@@ -149,13 +149,27 @@
         <div class="border border-gray-200 rounded-lg p-5 mb-4">
             <label class="flex items-start">
                 <input type="checkbox" name="discharge_clause_enabled" value="1" {% if other.get('discharge_clause_enabled', true) %}checked{% endif %}
-                       class="rounded border-gray-300 text-primary-600 mr-3 mt-0.5">
+                       class="rounded border-gray-300 text-primary-600 mr-3 mt-0.5"
+                       onchange="document.getElementById('discharge-placement').classList.toggle('hidden', !this.checked)">
                 <div>
                     <span class="text-sm font-medium text-gray-700">Property Discharge / Lien Clause</span>
                     <p class="text-xs text-gray-500 mt-1">Include a clause directing that any sums required to discharge charges, private caveats, or liens on immovable properties shall be paid from the residuary estate. <strong>Recommended for all wills with property gifts.</strong></p>
                     <p class="text-xs text-gray-400 mt-1 italic">"Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate."</p>
                 </div>
             </label>
+            <div id="discharge-placement" class="ml-8 mt-3 space-y-2 {% if not other.get('discharge_clause_enabled', true) %}hidden{% endif %}">
+                <p class="text-xs font-medium text-gray-600">Placement:</p>
+                <label class="flex items-center text-sm text-gray-700">
+                    <input type="radio" name="discharge_placement" value="per_property" {% if other.get('discharge_placement', 'per_property') == 'per_property' %}checked{% endif %}
+                           class="mr-2 text-primary-600 border-gray-300">
+                    Under each property clause <span class="text-xs text-gray-400 ml-1">(Recommended — follows top-tier law firm standard)</span>
+                </label>
+                <label class="flex items-center text-sm text-gray-700">
+                    <input type="radio" name="discharge_placement" value="residuary_only" {% if other.get('discharge_placement') == 'residuary_only' %}checked{% endif %}
+                           class="mr-2 text-primary-600 border-gray-300">
+                    In residuary clause only <span class="text-xs text-gray-400 ml-1">(Consolidated — one clause covers all properties)</span>
+                </label>
+            </div>
         </div>
 
         <!-- Testator Satisfaction Clause -->
