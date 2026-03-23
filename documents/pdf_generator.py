@@ -590,19 +590,22 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
         page-break-after: avoid;
     }}
 
-    /* Numbered clause start — no hanging indent, just top margin for spacing */
+    /* Numbered clause start — hanging indent: number at left, text body indented */
     p.clause-start {{
         margin-top: 14pt;
+        margin-left: 28pt;
+        text-indent: -28pt;
     }}
 
     /* Continuation paragraphs within a clause (discharge clause etc.) */
     p.clause-continuation {{
+        margin-left: 28pt;
         margin-top: 10pt;
     }}
 
     /* Indented sub-clauses (a), (b), (i), (ii) */
     p.indented {{
-        margin-left: 24pt;
+        margin-left: 52pt;
         text-indent: -24pt;
         margin-top: 10pt;
     }}
