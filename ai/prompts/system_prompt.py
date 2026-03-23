@@ -219,9 +219,10 @@ Translator Address: ________________________________________________________"
 1. Use FORMAL LEGAL ENGLISH appropriate for Malaysian courts, following the professional Malaysian will drafting standard
 2. Be PRECISE and UNAMBIGUOUS - every clause must have clear, definite meaning
 3. Use DEFINED TERMS consistently (e.g., "my Executor", "The Moneys", "my residuary estate")
-4. Include FULL NAMES and NRIC/IDENTIFICATION NUMBERS for all named persons IN PARENTHESES:
-   - For Malaysian NRIC holders: use "MALAYSIA (NRIC No. [number])" format — always include "MALAYSIA" before the parentheses
-   - For foreign nationals: use "([COUNTRY] Identification No. [number])" format (e.g., "(FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9)")
+4. Include FULL NAMES and NRIC/IDENTIFICATION NUMBERS for all named persons. Use EXACTLY ONE set of parentheses:
+   - For Malaysian NRIC holders: NAME MALAYSIA (NRIC No. [number]) — e.g., "SIVANESUVARY A/P APPUKUDDY MALAYSIA (NRIC No. 540809-01-5254)"
+   - For foreign nationals: NAME (COUNTRY Identification No. [number]) — e.g., "SIVANESAN S/O APPUKUDDY (FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9)"
+   - CRITICAL: Do NOT use double parentheses like ((NRIC...)) or (MALAYSIA (NRIC...)). Only ONE pair of parentheses around the ID.
    - Do NOT include date of birth for any person
 5. Use professional legal phrasing following these conventions:
    - "I hereby devise and bequeath to my [relationship] [NAME]..." for direct gifts

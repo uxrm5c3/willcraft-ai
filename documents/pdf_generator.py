@@ -78,18 +78,11 @@ def _build_content_html(text: str) -> str:
 
     # Bold person names + NRIC — matches patterns like:
     # Bold person names + NRIC/ID — matches patterns like:
-    # "PHEK YI JING (MALAYSIA NRIC NO. 910503-01-5670)"
+    # "SIVANESUVARY A/P APPUKUDDY MALAYSIA (NRIC No. 540809-01-5254)"
     # "SIVANESAN S/O APPUKUDDY (FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9)"
-    # "KANAGARANY A/P APPUKUDDY MALAYSIA (NRIC No. 480728-71-5064)" — MALAYSIA before parens
-    # "JANENIE MOHGAN MALAYSIA (NRIC No. 910312-14-5480)" — MALAYSIA between name and NRIC
+    # Pattern: UPPERCASE NAME [MALAYSIA] (NRIC/Identification No. XXX)
     escaped = re.sub(
-        r'([A-Z][A-Z\s/\'\.]+?)(\s+MALAYSIA)?\s*(\((?:MALAYSIA\s+)?(?:NRIC|Identification|Passport)\s*(?:No\.?|NO\.?)\s*[\w\-/\s]+\))',
-        r'<strong>\1\2 \3</strong>',
-        escaped
-    )
-    # Also bold: "NAME (COUNTRY Identification No. XXX)" for foreign nationals
-    escaped = re.sub(
-        r'([A-Z][A-Z\s/\'\.]+?)\s*(\([A-Z][A-Z\s]+(?:Identification|Passport)\s*(?:No\.?|NO\.?)\s*[\w\-/\s]+\))',
+        r'([A-Z][A-Z\s/\'\.]+?(?:\s+MALAYSIA)?)\s*(\((?:NRIC|MALAYSIA\s+NRIC|Identification|Passport|FEDERAL[^)]+)\s*(?:No\.?|NO\.?)\s*[\w\-/\s]+\))',
         r'<strong>\1 \2</strong>',
         escaped
     )
@@ -138,27 +131,24 @@ def _build_content_html(text: str) -> str:
 
         if is_section:
             classified.append(('section', f'<h3 class="section-heading">{stripped}</h3>'))
+            in_clause_block = False
         elif is_numbered and is_heading:
-            # Uppercase numbered heading like "1. REVOCATION"
             classified.append(('clause-start', f'<p class="clause-heading">{stripped}</p>'))
+            in_clause_block = True
         elif is_heading:
             classified.append(('heading', f'<h2 class="will-heading">{stripped}</h2>'))
+            in_clause_block = False
         elif is_numbered:
-            # Numbered clause like "4. I direct my Executor..."
             classified.append(('clause-start', f'<p class="clause-start">{stripped}</p>'))
+            in_clause_block = True
         elif is_subclause or is_indented:
             classified.append(('indented', f'<p class="indented">{stripped}</p>'))
-        elif in_clause_block:
-            # Non-numbered text following a numbered clause = continuation
+        elif in_clause_block and stripped.startswith('Unless '):
+            # Discharge/lien clause — same indent as clause body
             classified.append(('text', f'<p class="clause-continuation">{stripped}</p>'))
         else:
+            # Regular text — no extra indentation
             classified.append(('text', f'<p>{stripped}</p>'))
-
-        # Track whether we're inside a clause block
-        if is_numbered:
-            in_clause_block = True
-        elif is_section:
-            in_clause_block = False
 
     # Second pass: group into clause blocks to prevent page-break splits
     html_lines = []

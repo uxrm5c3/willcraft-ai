@@ -575,6 +575,12 @@ Draft the complete will now, following the professional format and clause orderi
 
     will_text = message.content[0].text
 
+    # Post-process: fix double parentheses from AI output
+    import re as _re
+    will_text = _re.sub(r'\(MALAYSIA \(NRIC', r'MALAYSIA (NRIC', will_text)
+    will_text = _re.sub(r'\(\(FEDERAL', r'(FEDERAL', will_text)
+    will_text = _re.sub(r'No\.\s*[\w\-/]+\)\)', lambda m: m.group(0)[:-1], will_text)  # Remove trailing extra )
+
     # Post-process: inject missing specific substitute clauses
     will_text = _inject_missing_substitutes(will_text, will_data)
 
