@@ -143,11 +143,11 @@ def _build_content_html(text: str) -> str:
             in_clause_block = True
         elif is_subclause or is_indented:
             classified.append(('indented', f'<p class="indented">{stripped}</p>'))
-        elif in_clause_block and stripped.startswith('Unless '):
-            # Discharge/lien clause — same indent as clause body
+        elif in_clause_block:
+            # Text within a clause block — same indent as clause body
             classified.append(('text', f'<p class="clause-continuation">{stripped}</p>'))
         else:
-            # Regular text — no extra indentation
+            # Regular text outside clause blocks — no extra indentation
             classified.append(('text', f'<p>{stripped}</p>'))
 
     # Second pass: group into clause blocks to prevent page-break splits
