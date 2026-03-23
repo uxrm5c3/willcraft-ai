@@ -80,7 +80,7 @@ def _build_content_html(text: str) -> str:
     # "PHEK YI JING (MALAYSIA NRIC NO. 910503-01-5670)"
     # "SIVANESAN S/O APPUKUDDY (FEDERAL REPUBLIC OF GERMANY Identification No. L99HLH8T9)"
     # Also matches testator in preamble: "KANAGARANY A/P APPUKUDDY (MALAYSIA NRIC No. ...)"
-    escaped = re_mod.sub(
+    escaped = re.sub(
         r'([A-Z][A-Z\s/\'\.]+?)\s*(\([A-Z][\w\s\.]*(?:NRIC|Identification|Passport)\s*(?:No\.?|NO\.?)\s*[\w\-/\s]+\))',
         r'<strong>\1 \2</strong>',
         escaped
@@ -126,7 +126,7 @@ def _build_content_html(text: str) -> str:
         is_indented = line.startswith('    ') or line.startswith('\t')
 
         # Detect sub-clauses like (a), (b), (i), (ii)
-        is_subclause = bool(re_mod.match(r'^\([a-z]\)|^\([ivxlc]+\)', stripped))
+        is_subclause = bool(re.match(r'^\([a-z]\)|^\([ivxlc]+\)', stripped))
 
         if is_section:
             classified.append(('section', f'<h3 class="section-heading">{stripped}</h3>'))
