@@ -21,6 +21,24 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config import FLASK_SECRET_KEY, ANTHROPIC_API_KEY, SQLALCHEMY_DATABASE_URI, DATA_DIR, UPLOAD_DIR, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
 from database import db, Client, Will, WillEditLog, WillVersion, Person, Document, User, ROLE_PERMS, ROLE_LABELS, ProbateApplication, ProbateFormTemplate, ProbateGeneratedForm, ChatSession, ChatMessage
 
+# Enable SQLite WAL mode + a 5s busy timeout on every new connection.
+# Without this, any concurrent write attempt (e.g. inbound email webhook
+# arriving while the chat polls or the wizard saves) raises
+# "database is locked". WAL allows readers + a single writer concurrently;
+# busy_timeout makes additional writers wait up to 5s instead of erroring.
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
+import sqlite3 as _sqlite3
+
+@event.listens_for(Engine, 'connect')
+def _enable_sqlite_wal(dbapi_connection, connection_record):
+    if isinstance(dbapi_connection, _sqlite3.Connection):
+        cur = dbapi_connection.cursor()
+        cur.execute('PRAGMA journal_mode=WAL')
+        cur.execute('PRAGMA busy_timeout=5000')
+        cur.execute('PRAGMA synchronous=NORMAL')
+        cur.close()
+
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
 app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URI
