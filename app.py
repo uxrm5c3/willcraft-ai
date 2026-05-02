@@ -3748,8 +3748,11 @@ def _try_delete_pending_identity(client_id: str, user_text: str):
 
 
 def _try_save_beneficiaries(client_id: str, user_text: str):
-    """If chat is at Step 5 (Beneficiaries) and user replied 'yes',
-    save the planner's auto-suggested likely-beneficiaries into step4_data.
+    """Step 5 (Beneficiaries) handler. Accepts:
+      - 'yes' / 'confirm' → save the auto-suggested likely list
+      - 'remove X' / 'remove X and Y' → save likely list minus X (by name OR
+        by relationship word, e.g. 'remove sister in law')
+      - 'only X, Y' / 'just X and Y' → save only X and Y
     Returns {'name', 'role', 'kind'} or None."""
     if not user_text:
         return None
@@ -3765,8 +3768,7 @@ def _try_save_beneficiaries(client_id: str, user_text: str):
     if not isinstance(s4, list):
         s4 = []
     if len(s4) > 0:
-        return None  # already set
-    # Need executor done first
+        return None
     try:
         s2 = json.loads(will.step2_data) if will.step2_data else {}
     except (json.JSONDecodeError, TypeError):
@@ -3774,35 +3776,91 @@ def _try_save_beneficiaries(client_id: str, user_text: str):
     if len(s2.get('executors') or []) == 0:
         return None
 
-    text_lower = user_text.lower().strip()
-    words = set(re.findall(r'\b[a-z]+\b', text_lower))
-    if not any(t in words for t in _CONFIRM_TOKENS):
-        return None  # only on explicit confirm for now
-
-    # Replicate planner's "likely beneficiary" filter
-    persons = Person.query.filter_by(client_id=client_id).all()
     BENEFICIARY_RELS = {
         'spouse', 'wife', 'husband', 'son', 'daughter', 'father', 'mother',
         'brother', 'sister', 'grandson', 'granddaughter', 'beneficiary',
         'stepson', 'stepdaughter', 'adopted son', 'adopted daughter',
     }
-    likely = []
-    for p in persons:
-        rel = (p.relationship or '').lower()
-        if rel in ('testator', 'witness'):
-            continue
-        if rel in BENEFICIARY_RELS or not rel or 'in-law' in rel:
-            likely.append({
-                'full_name': p.full_name, 'nric_passport': p.nric_passport or '',
-                'address': p.address or '', 'relationship': p.relationship or '',
-                'person_id': p.id,
-            })
-    if not likely:
+    persons = Person.query.filter_by(client_id=client_id).all()
+    eligible = [p for p in persons
+                if (p.relationship or '').lower() not in ('testator', 'witness')]
+
+    text_lower = user_text.lower().strip()
+    words = set(re.findall(r'\b[a-z\-]+\b', text_lower))
+
+    def _match_persons(phrase):
+        """Find Persons whose name OR relationship matches the phrase."""
+        out = []
+        ph = phrase.strip().lower().replace('-', ' ')
+        if not ph:
+            return out
+        for p in eligible:
+            nm = (p.full_name or '').lower()
+            rel = (p.relationship or '').lower().replace('-', ' ')
+            if (nm and (ph in nm or any(part in nm for part in ph.split() if len(part) > 2))) \
+               or (rel and ph in rel):
+                out.append(p)
+        return out
+
+    def _serialize(p_list):
+        return [{
+            'full_name': p.full_name, 'nric_passport': p.nric_passport or '',
+            'address': p.address or '', 'relationship': p.relationship or '',
+            'person_id': p.id,
+        } for p in p_list]
+
+    final = None
+    # 1) ONLY/JUST X — explicit list
+    only_m = re.search(r'\b(?:only|just|keep)\s+(.+)', text_lower)
+    if only_m:
+        names_text = only_m.group(1)
+        # Split by commas, 'and'
+        parts = re.split(r',|\band\b', names_text)
+        keep = []
+        seen = set()
+        for part in parts:
+            for p in _match_persons(part):
+                if p.id not in seen:
+                    keep.append(p); seen.add(p.id)
+        if keep:
+            final = keep
+
+    # 2) REMOVE X — drop named/related people from the likely list
+    if final is None and 'remove' in words:
+        # Extract everything after 'remove'
+        rem_m = re.search(r'\bremove\b\s+(.+?)(?:\.|$)', text_lower)
+        if rem_m:
+            remove_text = rem_m.group(1)
+            parts = re.split(r',|\band\b', remove_text)
+            exclude_ids = set()
+            for part in parts:
+                for p in _match_persons(part):
+                    exclude_ids.add(p.id)
+            # Build likely list minus excluded
+            likely = []
+            for p in eligible:
+                rel = (p.relationship or '').lower()
+                if p.id in exclude_ids:
+                    continue
+                if rel in BENEFICIARY_RELS or not rel or 'in-law' in rel:
+                    likely.append(p)
+            final = likely
+
+    # 3) Plain confirm
+    if final is None and any(t in words for t in _CONFIRM_TOKENS):
+        likely = []
+        for p in eligible:
+            rel = (p.relationship or '').lower()
+            if rel in BENEFICIARY_RELS or not rel or 'in-law' in rel:
+                likely.append(p)
+        final = likely
+
+    if not final:
         return None
-    will.step4_data = json.dumps(likely)
+    will.step4_data = json.dumps(_serialize(final))
     db.session.commit()
-    names = ', '.join(b['full_name'] for b in likely)
-    return {'name': names, 'role': f'{len(likely)} beneficiaries', 'kind': 'beneficiaries'}
+    names = ', '.join(p.full_name for p in final)
+    return {'name': names, 'role': f'{len(final)} beneficiaries', 'kind': 'beneficiaries'}
 
 
 def _try_save_executor(client_id: str, user_text: str):
