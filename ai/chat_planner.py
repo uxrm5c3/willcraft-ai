@@ -69,7 +69,9 @@ def plan_turn(
     # ── 2. IDENTITY WALK-THROUGH — pending IC? ──────────────────────────
     if pending_ics:
         reply_parts.append(_identity_question(pending_ics, recent_text))
-        return _wrap(reply_parts, questions, patch, advice)
+        # Show the IC photo for the one being asked about so user can verify
+        focus = [pending_ics[0]['document_id']] if pending_ics[0].get('document_id') else []
+        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
 
     # No pending IC — Step 1 (Identities) is complete (or empty)
     s1 = current_will_data.get('step1') or {}
@@ -115,12 +117,13 @@ def plan_turn(
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
-def _wrap(parts, questions, patch, advice):
+def _wrap(parts, questions, patch, advice, focus_attachments=None):
     return {
         'reply': '\n\n'.join(p for p in parts if p).strip(),
         'clarifying_questions': questions,
         'proposed_patch': patch if patch else {},
         'advice': advice,
+        'focus_attachments': focus_attachments or [],
     }
 
 

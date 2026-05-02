@@ -3350,6 +3350,7 @@ def api_chat_message(client_id):
         session_id=cs.id,
         role='assistant',
         content=plan.get('reply', ''),
+        attachments_json=json.dumps(plan.get('focus_attachments') or []),
         clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
         proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
         advice_json=json.dumps(plan.get('advice', [])),
@@ -3517,6 +3518,7 @@ def api_chat_replan(client_id, message_id):
     asst_msg = ChatMessage(
         session_id=cs.id, role='assistant',
         content=plan.get('reply', ''),
+        attachments_json=json.dumps(plan.get('focus_attachments') or []),
         clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
         proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
         advice_json=json.dumps(plan.get('advice', [])),
@@ -3977,6 +3979,7 @@ def _process_inbound_message_async(app_obj, user_msg_id):
             asst_msg = ChatMessage(
                 session_id=cs.id, role='assistant',
                 content=plan.get('reply', ''),
+                attachments_json=json.dumps(plan.get('focus_attachments') or []),
                 clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
                 proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
                 advice_json=json.dumps(plan.get('advice', [])),
