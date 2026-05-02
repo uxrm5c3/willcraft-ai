@@ -1,35 +1,54 @@
 """Encode/decode per-client inbox addresses for the email-to-chat feature.
 
-Pattern: client-<short_id>@inbox.<host>
-where short_id is the first 8 hex chars of Client.id (matching folder_name).
+Pattern: <name_slug>-<short_id>@inbox.<host>
+  e.g.   koid_beng_sun-0590d69b@inbox.will.alantanjb.com
 
-We pick the short_id (not the full UUID) for two reasons:
-  1. It's already what the user sees in the folder name, so it's
-     copy-pasteable from the Client Folder UI without translation.
-  2. Email "To:" addresses look less intimidating in a phone contact card.
+The short_id (first 8 hex chars of Client.id) is the authoritative routing
+key — names can change, but the id never does. The name slug is a visual
+sanity check for the human pasting the address into a 'To:' field.
 
-Collisions on 8-hex chars are unlikely at our scale (~1 in 4 billion per
-pair); if a real collision happens we resolve by also matching the
-client's full_name from the email subject as a tiebreaker.
+Backward compatibility: old 'client-<short>@…' addresses still resolve
+because the regex below just looks for any '-<8hex>' chunk before the @,
+regardless of what comes before the hyphen.
 """
 import re
 from database import Client
 
 
-INBOX_RE = re.compile(r'^client-([0-9a-f]{8})(?:\+[^@]+)?@', re.IGNORECASE)
+# Match the LAST '-<8hex>' chunk before '@' in the local part. This
+# accepts both 'client-0590d69b@' and 'koid_beng_sun-0590d69b@'.
+INBOX_RE = re.compile(r'-([0-9a-f]{8})(?:\+[^@]+)?@', re.IGNORECASE)
+_PLACEHOLDER_NAMES = {'new_client', 'client', '', 'unknown'}
+
+
+def _name_slug(name: str) -> str:
+    """Lowercase, alphanumerics + underscores only. Collapses runs."""
+    if not name:
+        return ''
+    s = re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
+    return s
 
 
 def address_for_client(client, host: str) -> str:
     """Return the inbox address for a client, given the inbox host."""
     short = client.id[:8]
-    return f"client-{short}@{host}"
+    slug = _name_slug(client.full_name or '')
+    if not slug or slug in _PLACEHOLDER_NAMES:
+        # No real name yet — keep the legacy 'client-' prefix until they
+        # add one (avoids weird-looking addresses like 'new_client-…').
+        return f"client-{short}@{host}"
+    # Cap slug length so addresses stay reasonable (gmail rejects > 64 chars
+    # in the local part). 40 leaves room for the '-{8hex}' suffix.
+    if len(slug) > 40:
+        slug = slug[:40].rstrip('_')
+    return f"{slug}-{short}@{host}"
 
 
 def short_id_from_address(addr: str):
     """Extract the 8-char client short id from a 'To' address; returns None on miss."""
     if not addr:
         return None
-    m = INBOX_RE.match(addr.strip())
+    m = INBOX_RE.search(addr.strip())
     if not m:
         return None
     return m.group(1).lower()
