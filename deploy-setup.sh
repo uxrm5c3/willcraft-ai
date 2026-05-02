@@ -13,7 +13,7 @@ set -euo pipefail
 
 KEY_PATH="$HOME/.ssh/willcraft_deploy_ed25519"
 SERVER_USER="ubuntu"
-SERVER_HOST="52.221.231.214"
+SERVER_HOST="47.130.249.28"
 
 # 1. Generate key if not present
 if [ ! -f "$KEY_PATH" ]; then

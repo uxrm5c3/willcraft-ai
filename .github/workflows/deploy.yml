@@ -26,12 +26,12 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Pull + rebuild on server
+      - name: Pull + rebuild on server (will.alantanjb.com)
         run: |
           ssh -i ~/.ssh/id_ed25519 \
               -o StrictHostKeyChecking=no \
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-              'set -e; cd ~/willcraft-ai && git pull && docker compose up -d --build'
+              'bash ~/deploy-alantanjb.sh'
 
       - name: Smoke-check
         run: |
