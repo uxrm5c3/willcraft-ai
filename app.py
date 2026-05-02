@@ -3301,6 +3301,16 @@ def api_chat_message(client_id):
             except (TypeError, ValueError):
                 doc.extracted_data = None
 
+        # Dedupe: if this IC's extracted name already exists on another
+        # nric Document for this client, mark the new one as duplicate
+        # so it never enters the walk-through pool.
+        is_duplicate = False
+        if kind == 'nric' and extracted and not extracted.get('error'):
+            is_duplicate = _dedupe_ic_against_existing(client_id, doc, extracted)
+
+        if is_duplicate:
+            continue  # don't emit as an artifact — it's a duplicate
+
         artifacts.append({
             'document_id': doc.id,
             'kind': kind,
@@ -3622,6 +3632,38 @@ def _gather_recent_chat_text(client_id: str, max_chars: int = 8000) -> str:
 _CONFIRM_TOKENS = ('yes', 'confirm', 'correct', 'ok ', 'okay', 'yep', 'yeah', 'true', 'right')
 _SKIP_TOKENS = ('skip', 'later', 'pass')
 _DELETE_TOKENS = ('delete', 'remove', 'wrong', 'discard', 'trash', 'irrelevant', 'unrelated')
+
+
+def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
+    """If `doc` is an IC whose extracted name matches another nric Document
+    for this client, mark `doc` as 'duplicate' and return True. Caller
+    should skip emitting this doc as an artifact.
+
+    Matches case-insensitively on full_name. NRIC equality would be more
+    rigorous but full_name + client_id is plenty given our scale, and
+    handles the common case of OCR catching the same name twice from
+    re-forwards even if the NRIC was different (front vs back of card).
+    """
+    if not extracted:
+        return False
+    name = (extracted.get('full_name') or '').strip().upper()
+    if not name:
+        return False
+    siblings = Document.query.filter(
+        Document.client_id == client_id,
+        Document.category == 'nric',
+        Document.id != doc.id,
+    ).all()
+    for sib in siblings:
+        try:
+            sib_ex = json.loads(sib.extracted_data) if sib.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            sib_ex = {}
+        if (sib_ex.get('full_name') or '').strip().upper() == name:
+            doc.category = 'duplicate'
+            doc.description = f'(duplicate of {sib.original_filename or sib.id[:8]})'
+            return True
+    return False
 
 
 def _try_delete_pending_identity(client_id: str, user_text: str):
@@ -3997,12 +4039,21 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                         doc.extracted_data = json.dumps(extracted)
                     except (TypeError, ValueError):
                         doc.extracted_data = None
-                artifacts.append({
-                    'document_id': doc.id, 'kind': kind,
-                    'confidence': classification.get('confidence', 'low'),
-                    'extracted': extracted,
-                    'original_filename': doc.original_filename,
-                })
+
+                # Dedupe ICs by extracted name — if a previous Document
+                # for this client already has the same name, mark this
+                # new one as 'duplicate' and skip emitting as artifact.
+                is_dup = False
+                if kind == 'nric' and extracted and not extracted.get('error'):
+                    is_dup = _dedupe_ic_against_existing(client.id, doc, extracted)
+
+                if not is_dup:
+                    artifacts.append({
+                        'document_id': doc.id, 'kind': kind,
+                        'confidence': classification.get('confidence', 'low'),
+                        'extracted': extracted,
+                        'original_filename': doc.original_filename,
+                    })
                 # Commit per-document so partial progress is visible to chat
                 # polling — useful when there are many attachments.
                 db.session.commit()
