@@ -243,7 +243,7 @@ def find_executor_candidate(identities, executors, role, recent_text=''):
                 'evidence': 'marked Executor in identities',
                 'document_id': already.get('document_id') or None}
 
-    # 2) Email-text deduction (Claude)
+    # 2) Email-text deduction (Claude — by name)
     if recent_text:
         try:
             from ai.role_deducer import deduce_roles
@@ -260,6 +260,28 @@ def find_executor_candidate(identities, executors, role, recent_text=''):
                                     'document_id': match.get('document_id') or None}
         except Exception:
             pass
+
+    # 2.5) Heuristic — text mentions "executor: <relationship>" without
+    # naming the person. Cross-reference: find an identity with that
+    # relationship. e.g. "My Executor: my Sister in law" → identity tagged
+    # Sister-in-law.
+    if recent_text:
+        import re as _re
+        text_lower = recent_text.lower()
+        for m in _re.finditer(r'executor', text_lower):
+            window = text_lower[max(0, m.start()-100): m.end()+100]
+            for i in identities:
+                rel = (i.get('relationship') or '').lower().replace('-', ' ').strip()
+                if not rel or rel in ('testator',):
+                    continue
+                if rel in window and not _is_already_executor(i, executors):
+                    snippet_start = max(0, m.start()-30)
+                    snippet_end = min(len(recent_text), m.end()+30)
+                    return {'person_id': i.get('id'),
+                            'name': i.get('full_name'),
+                            'evidence': f"text mentions executor near '{rel}': "
+                                        f"…{recent_text[snippet_start:snippet_end].strip()}…",
+                            'document_id': i.get('document_id') or None}
 
     # 3) Substitute heuristic — adult spouse / child not already executor
     if role == 'substitute':
