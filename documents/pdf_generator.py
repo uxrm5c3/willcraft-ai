@@ -63,7 +63,8 @@ def _is_numbered_clause(stripped: str) -> bool:
 
 _SECTION_HEADINGS = {
     'Revocation', 'Appointment of Executor(s)', 'Appointment of Guardian(s)',
-    'Non Residuary Gift(s)', 'Residuary Estate', 'Declaration',
+    'Non-Residuary Gift(s)', 'Non Residuary Gift(s)',  # accept both for back-compat
+    'Residuary Estate', 'Declaration',
     'Testamentary Trust', 'Guardian Allowance', 'Contemplation of Marriage',
 }
 
@@ -550,9 +551,10 @@ def _will_text_to_html(will_text: str, title: str = "Last Will and Testament",
     }}
 
     /* === Body Styles === */
+    /* Match Alan & Tan PHEK YI TING sample: 11pt body, justified, 1.5 line height */
     body {{
         font-family: 'Times New Roman', Times, serif;
-        font-size: 12pt;
+        font-size: 11pt;
         line-height: 1.5;
         color: #000;
         text-align: justify;

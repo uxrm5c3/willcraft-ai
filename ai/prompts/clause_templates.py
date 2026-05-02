@@ -1,5 +1,6 @@
 """Professional will clause templates for Malaysian wills.
-Based on Rockwills Trustee Berhad standard format and professional Malaysian estate planning practice."""
+Based on Alan Tan & Associates established format (PHEK YI TING DRAFT, April 2026).
+The format is fixed — only names, NRICs, addresses, and asset details change between wills."""
 
 # ============================================================
 # TITLE AND PREAMBLE
@@ -8,33 +9,44 @@ Based on Rockwills Trustee Berhad standard format and professional Malaysian est
 TITLE_TEMPLATE = """LAST WILL AND TESTAMENT OF
 {testator_name}"""
 
-PREAMBLE_TEMPLATE = """This Will is made by me {testator_name} MALAYSIA NRIC No. {nric} born on {date_of_birth} of {address}."""
+# Sample: "This Will is made by me PHEK YI TING (MALAYSIA NRIC No. 841212-01-6001) of
+# NO. 68, JALAN SONGKIT 3, TAMAN SENTOSA, 80150 JOHOR BAHRU, JOHOR, MALAYSIA."
+PREAMBLE_TEMPLATE = """This Will is made by me {testator_name} (MALAYSIA NRIC No. {nric}) of {address}."""
 
 # ============================================================
-# REVOCATION (Clause 1)
+# REVOCATION (Clause 1) — verbatim Alan & Tan boilerplate
 # ============================================================
 
 REVOCATION_TEMPLATE = """Revocation
 
-1.  By signing this Will, I revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have made a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly."""
+1.  By signing this Will, I hereby revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly."""
 
 # ============================================================
-# APPOINTMENT OF EXECUTOR(S) (Clause 2)
+# APPOINTMENT OF EXECUTOR(S) (Clause 2) — Alan & Tan inline-substitute pattern
 # ============================================================
 
+# Single executor (no substitute named)
 EXECUTOR_SINGLE_TEMPLATE = """Appointment of Executor(s)
 
-2.  I appoint as my sole Executor my {relationship} {executor_name} MALAYSIA NRIC No. {nric} of {address}."""
+2.  I hereby appoint my {relationship} {executor_name} (MALAYSIA NRIC No. {nric}) of {address} as the Executor of this Will."""
 
+# Single executor + inline substitute (matches PHEK YI TING sample, clause 2)
+EXECUTOR_SINGLE_WITH_SUBSTITUTE_TEMPLATE = """Appointment of Executor(s)
+
+2.  I hereby appoint my {relationship} {executor_name} (MALAYSIA NRIC No. {nric}) of {address} as the Executor of this Will. In the event that {he_she} is unable or unwilling to act for whatsoever reason, then I appoint my {sub_relationship} {substitute_name} (MALAYSIA NRIC No. {sub_nric}) of {sub_address} to be the Executor of this Will."""
+
+# Joint executors
 EXECUTOR_JOINT_TEMPLATE = """Appointment of Executor(s)
 
-2.  I appoint as my joint Executors my {rel1} {name1} MALAYSIA NRIC No. {nric1} of {address1} and my {rel2} {name2} MALAYSIA NRIC No. {nric2} of {address2}. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall acts as my sole Executor."""
+2.  I hereby appoint my {rel1} {name1} (MALAYSIA NRIC No. {nric1}) of {address1} and my {rel2} {name2} (MALAYSIA NRIC No. {nric2}) of {address2} as my joint Executors of this Will. If any of them is unwilling or unable to act for whatsoever reason, then the remaining Executor named herein shall act as my sole Executor."""
 
-EXECUTOR_SUBSTITUTE_TEMPLATE = """3.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Executor {substitute_name} MALAYSIA NRIC No. {nric} of {address} ({relationship})."""
+# Separate substitute clause (only when joint executors + a third backup person)
+EXECUTOR_SUBSTITUTE_TEMPLATE = """3.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint my {relationship} {substitute_name} (MALAYSIA NRIC No. {nric}) of {address} as my Executor."""
 
-EXECUTOR_CORPORATE_SUBSTITUTE_TEMPLATE = """3.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint as my Executor Rockwills Trustee Berhad [Company No. 200501026798 (708932-T)]. The conditions on which Rockwills Trustee Berhad [Company No. 200501026798 (708932-T)] acts as Executor shall be based on the terms last published before the date of this Will and Rockwills Trustee Berhad [Company No. 200501026798 (708932-T)] shall be remunerated in accordance with scale of fees current at my death as varied from time to time during the administration of any trust arising under this Will."""
+EXECUTOR_CORPORATE_SUBSTITUTE_TEMPLATE = """3.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I appoint Rockwills Trustee Berhad [Company No. 200501026798 (708932-T)] as my Executor. The conditions on which Rockwills Trustee Berhad acts as Executor shall be based on the terms last published before the date of this Will and Rockwills Trustee Berhad shall be remunerated in accordance with scale of fees current at my death as varied from time to time during the administration of any trust arising under this Will."""
 
-EXECUTOR_AS_TRUSTEE_TEMPLATE = """4.  In this Will unless it is specifically stated to the contrary, my Executor(s) shall also act as my Trustee(s)."""
+# Executor-as-trustee combination clause (Alan & Tan clause 3 in single-executor scenario)
+EXECUTOR_AS_TRUSTEE_TEMPLATE = """{clause_num}.  In this Will unless it is specifically stated to the contrary, my Executor(s) shall also act as my Trustee(s)."""
 
 # ============================================================
 # CONTEMPLATION OF MARRIAGE
@@ -56,7 +68,7 @@ GUARDIAN_ALLOWANCE_TEMPLATE = """I direct my Executor to pay to the guardian(s) 
 # NON-RESIDUARY GIFTS / SPECIFIC GIFTS
 # ============================================================
 
-NON_RESIDUARY_HEADING = """Non Residuary Gift(s)"""
+NON_RESIDUARY_HEADING = """Non-Residuary Gift(s)"""
 
 # Joint bank accounts - give to joint holder(s)
 JOINT_BANK_ACCOUNTS_TEMPLATE = """{clause_num}.  I give the moneys standing to my credit in all my joint bank accounts to the respective joint account holder(s), if more than one in equal shares."""
@@ -133,27 +145,23 @@ RESIDUARY_ESTATE_HEADING = """Residuary Estate"""
 
 RESIDUARY_TEMPLATE = """{clause_num}.  Unless specifically stated to the contrary in this Will, my Trustee(s) shall hold the rest of my estate on trust to retain or sell any part thereof and:
 
-(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
+(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any private caveat or lien on any of my immovable properties, funeral and executorship expenses;
 
-(b) To give the residue ('my residuary estate') to my {relationship} {beneficiary_name} MALAYSIA NRIC No. {nric}."""
+(b) To give the residue ('my residuary estate') to my {relationship} {beneficiary_name} (MALAYSIA NRIC No. {nric})."""
 
 RESIDUARY_WITH_SUBSTITUTE_TEMPLATE = """{clause_num}.  Unless specifically stated to the contrary in this Will, my Trustee(s) shall hold the rest of my estate on trust to retain or sell any part thereof and:
 
-(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
+(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any private caveat or lien on any of my immovable properties, funeral and executorship expenses;
 
-(b) To give the residue ('my residuary estate') to my {relationship} {beneficiary_name} MALAYSIA NRIC No. {nric}.
+(b) To give the residue ('my residuary estate') to my {relationship} {beneficiary_name} (MALAYSIA NRIC No. {nric}).
 
 (c) But if {he_she} does not survive me, to divide the residue ('my residuary estate') equally between {substitute_beneficiaries}. If one of them does not survive me, then the other named beneficiary in this clause shall be the sole beneficiary of this gift."""
 
 RESIDUARY_MULTIPLE_TEMPLATE = """{clause_num}.  Unless specifically stated to the contrary in this Will, my Trustee(s) shall hold the rest of my estate on trust to retain or sell any part thereof and:
 
-(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
+(a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any private caveat or lien on any of my immovable properties, funeral and executorship expenses;
 
-(b) To divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated. If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares.
-
-{beneficiary_list}
-
-(c) But if all of them do not survive me, to give the residue ('my residuary estate') to {fallback_beneficiary}."""
+(b) To give the residue ('my residuary estate') to {beneficiary_list_text} in equal shares."""
 
 # ============================================================
 # TESTAMENTARY TRUST
@@ -169,7 +177,11 @@ TESTAMENTARY_TRUST_TRUSTEE_TEMPLATE = """I hereby appoint my {relationship} {tru
 
 DECLARATION_HEADING = """Declaration"""
 
-COMMORIENTES_TEMPLATE = """{clause_num}.  For the purpose of ascertaining entitlement under this Will any beneficiary who does not survive me by {days} days shall be treated as having died before me."""
+# Alan & Tan clause 8 (intentional exclusion) — verbatim
+INTENTIONAL_EXCLUSION_TEMPLATE = """{clause_num}.  I have given due consideration to all the other Beneficiaries who may have an interest in my abovementioned properties upon my death before I make this Will. Nevertheless, I do not intend to give any party or portion of the abovementioned properties to them and I leave the abovementioned properties to the persons specifically mentioned herein."""
+
+# Alan & Tan clause 9 (30-day survivorship) — verbatim
+COMMORIENTES_TEMPLATE = """{clause_num}.  For the purpose of ascertaining entitlement under this Will any beneficiary who does not survive me by thirty days shall be treated as having died before me."""
 
 TESTATOR_DECLARATION_TEMPLATE = """{clause_num}.  In making this Will, I have conscientiously considered all aspects and all my surrounding circumstances and I am thoroughly satisfied that the provisions made in this Will absolutely reflect my wishes and intentions."""
 
@@ -255,13 +267,14 @@ PROPERTY_FORMAT_BY_TITLE = {
 # TESTIMONIUM AND ATTESTATION
 # ============================================================
 
-BLANK_PAGE_TEMPLATE = """***************** the remaining page is intentionally left blank *****************"""
+BLANK_PAGE_TEMPLATE = """********************the remaining page is intentionally left blank*********************"""
 
+# Alan & Tan attestation — note "(appeared thoroughly to understand this WILL and approve it)"
 ATTESTATION_TEMPLATE = """Signature of the Testator: ________________________________________________________
 
 Date of this Will: _____________________________________________(dd/mm/yyyy)
 
-This Last Will and Testament was signed by the Testator in the presence of us both and attested by us in the presence of both Testator and of each other:
+This Last Will and Testament was signed by the Testator (appeared thoroughly to understand this WILL and approve it) in the presence of us both and attested by us in the presence of both testator and of each other:
 
 Signature of First Witness: ________________________________________________________
 

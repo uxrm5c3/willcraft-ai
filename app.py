@@ -3,7 +3,7 @@ WillCraft AI - Malaysian AI Will Writing System
 Flask application with multi-step wizard for will drafting.
 """
 
-from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify, g, make_response
+from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify, g, make_response, Response
 from functools import wraps
 import difflib
 import json
@@ -987,6 +987,80 @@ def admin_settings():
     logo_path = _get_logo_path()
     logo_url = url_for('admin_serve_logo') if logo_path else None
     return render_template('admin/settings.html', logo_url=logo_url)
+
+
+@app.route('/admin/will-format-preview')
+@role_required('admin')
+def admin_will_format_preview():
+    """
+    Render the verbatim Alan & Tan PHEK YI TING sample through the current
+    PDF/Word generator. Use this to compare against the original sample and
+    iterate on the format until it matches exactly.
+
+    Query params:
+      ?format=pdf   → PDF (default)
+      ?format=docx  → Microsoft Word .docx (downloads, editable in Word)
+      ?download=1   → force download even for PDF
+    """
+    from documents.sample_will_phek_yi_ting import SAMPLE_WILL_TEXT_PHEK_YI_TING
+
+    fmt = (request.args.get('format') or 'pdf').lower()
+
+    logo = _get_logo_path()
+    tenant = get_tenant()
+    firm_info = None
+    if tenant.get('firm_name'):
+        firm_info = {
+            'firm_name': tenant.get('firm_name', ''),
+            'firm_address': tenant.get('firm_address', ''),
+            'firm_phone': tenant.get('firm_phone', ''),
+            'firm_email': tenant.get('email_from', ''),
+        }
+
+    if fmt == 'docx':
+        from documents.will_docx import build_will_docx
+        try:
+            filepath = build_will_docx(SAMPLE_WILL_TEXT_PHEK_YI_TING, firm_info=firm_info)
+            with open(filepath, 'rb') as f:
+                data = f.read()
+        except Exception as e:
+            app.logger.error(f'Will format preview (docx) failed: {e}')
+            return f'Preview generation (docx) failed: {e}', 500
+        return Response(
+            data,
+            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            headers={
+                'Content-Disposition': 'attachment; filename="PHEK_YI_TING_Format_Preview.docx"',
+            },
+        )
+
+    # Default: PDF
+    from documents.pdf_generator import generate_pdf
+    try:
+        filepath = generate_pdf(
+            SAMPLE_WILL_TEXT_PHEK_YI_TING,
+            'PHEK_YI_TING_Format_Preview',
+            logo_path=logo,
+            firm_info=firm_info,
+        )
+        with open(filepath, 'rb') as f:
+            pdf_data = f.read()
+    except Exception as e:
+        app.logger.error(f'Will format preview failed: {e}')
+        return f'Preview generation failed: {e}', 500
+
+    download = request.args.get('download') == '1'
+    return Response(
+        pdf_data,
+        mimetype='application/pdf',
+        headers={
+            'Content-Disposition': (
+                'attachment; filename="PHEK_YI_TING_Format_Preview.pdf"'
+                if download
+                else 'inline; filename="PHEK_YI_TING_Format_Preview.pdf"'
+            ),
+        },
+    )
 
 
 @app.route('/admin/settings/logo')
