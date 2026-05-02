@@ -48,12 +48,23 @@ def answer_question(user_text: str, current_stage_summary: str = '') -> str:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         nudge = (f"\n\nNow back to **{current_stage_summary}** — please continue."
                  if current_stage_summary else "")
+        # Pull excerpts from the legal library if any Acts are loaded
+        excerpts_block = ''
+        try:
+            from services.legal_library import relevant_excerpts
+            ex = relevant_excerpts(user_text)
+            if ex:
+                excerpts_block = "\n\nRELEVANT ACT PROVISIONS (cite these by section if applicable):\n"
+                for e in ex:
+                    excerpts_block += f"\n--- {e['title']} ---\n{e['excerpt']}\n"
+        except Exception:
+            pass
         msg = client.messages.create(
             model=CLAUDE_MODEL_FAST,
             max_tokens=700,
             messages=[{
                 'role': 'user',
-                'content': f"""You're an assistant helping a Malaysian advisor draft a non-Muslim will.
+                'content': f"""You're an assistant helping a Malaysian advisor draft a non-Muslim will.{excerpts_block}
 The user paused the workflow to ask a question. Answer concisely (max 3 short
 paragraphs, 200 words). Cite the relevant Malaysian act + section when
 useful: Wills Act 1959, Probate and Administration Act 1959, Distribution

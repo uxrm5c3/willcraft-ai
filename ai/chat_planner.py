@@ -466,14 +466,58 @@ def _step5_beneficiaries_question(will_data):
     return '\n\n'.join(parts)
 
 
+def _format_property_description(ex: Dict[str, Any]) -> str:
+    """Render the property in Malaysian legal-doc style, matching the
+    Alan & Tan PHEK YI TING template:
+
+      <ADDRESS> held under <Title Type> <Title No>, Lot <Lot>, Mukim <Mukim>,
+      District of <Daerah>, Negeri <Negeri>
+
+    Mirrors models.gift.PropertyDetails.to_formatted_description so the
+    chat preview matches the will text the drafter will produce.
+    """
+    addr = (ex.get('property_address') or ex.get('description') or '').strip()
+    title_type = (ex.get('title_type') or '').strip()
+    title_no = (ex.get('title_number') or '').strip()
+    lot_no = (ex.get('lot_number') or '').strip()
+    mukim = (ex.get('mukim') or ex.get('bandar_pekan') or '').strip()
+    daerah = (ex.get('daerah') or '').strip()
+    negeri = (ex.get('negeri') or '').strip()
+
+    # Normalise prefixes (drop leading "MUKIM ", "DAERAH ", etc.)
+    for prefix in ('MUKIM ', 'BANDAR ', 'DAERAH ', 'NEGERI ', 'STATE OF '):
+        if mukim.upper().startswith(prefix): mukim = mukim[len(prefix):]
+        if daerah.upper().startswith(prefix): daerah = daerah[len(prefix):]
+        if negeri.upper().startswith(prefix): negeri = negeri[len(prefix):]
+
+    if not addr and not title_no:
+        return '(address & title both unreadable)'
+
+    parts = []
+    if addr:
+        parts.append(f"**{addr}**")
+    held = []
+    if title_type and title_no:
+        # Use 'Strata Title Geran' phrasing for strata-format title numbers
+        is_strata = '/' in title_no
+        prefix = 'Strata Title ' if is_strata else ''
+        held.append(f"held under {prefix}{title_type} {title_no}")
+    elif title_no:
+        held.append(f"held under title {title_no}")
+    if lot_no: held.append(f"Lot {lot_no}")
+    if mukim:  held.append(f"Mukim {mukim}")
+    if daerah: held.append(f"District of {daerah}")
+    if negeri: held.append(f"Negeri {negeri}")
+    if held:
+        parts.append(', '.join(held))
+    return '\n\n'.join(parts)
+
+
 def _step6_property_question(pending_props, recent_text, will_data):
     """Walk one property at a time: show the title + ask who inherits + share."""
     p = pending_props[0]
     ex = p.get('extracted') or {}
-    addr = ex.get('property_address') or ex.get('description') or '(address unreadable)'
-    title_type = ex.get('title_type') or ''
-    title_no = ex.get('title_number') or ''
-    title_ref = f"{title_type} No. {title_no}".strip() if (title_type or title_no) else '(title unreadable)'
+    formatted = _format_property_description(ex)
 
     # Try deduction by Claude — find shares mentioned near property keywords
     deduced = ''
@@ -496,8 +540,7 @@ def _step6_property_question(pending_props, recent_text, will_data):
     n_left = len(pending_props)
     parts = [
         f"### 🏠 Step 6: Specific Gifts — Property ({n_left} remaining)",
-        f"**{addr}**",
-        f"_{title_ref}_",
+        formatted,
     ]
     if deduced:
         parts.append("📌 From the email, possible beneficiaries:" + deduced)
