@@ -55,7 +55,23 @@ jobs:
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/inbound.env
           ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-              'set -e; F=/home/ubuntu/willcraft-ai/.env; touch "$F"; \
+              'set -e; \
+               PROJ=""; \
+               for d in ~/willcraft-ai ~/will.alantanjb.com ~/will-writing-ai ~/willcraft ~/app /opt/willcraft /srv/willcraft; do \
+                 if [ -f "$d/docker-compose.yml" ]; then PROJ="$d"; break; fi; \
+               done; \
+               if [ -z "$PROJ" ]; then \
+                 PROJ=$(find ~ -maxdepth 4 -name docker-compose.yml -not -path "*/node_modules/*" 2>/dev/null | head -1); \
+                 [ -n "$PROJ" ] && PROJ=$(dirname "$PROJ"); \
+               fi; \
+               if [ -z "$PROJ" ]; then \
+                 echo "ERROR: could not locate project directory (no docker-compose.yml in usual paths)"; \
+                 echo "Home contents:"; ls -la ~; \
+                 exit 1; \
+               fi; \
+               echo "Project directory: $PROJ"; \
+               F="$PROJ/.env"; \
+               touch "$F"; \
                while IFS= read -r line; do \
                  [ -z "$line" ] && continue; \
                  key="${line%%=*}"; \
