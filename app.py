@@ -5,12 +5,15 @@ Flask application with multi-step wizard for will drafting.
 
 from flask import Flask, render_template, request, redirect, url_for, session, flash, send_file, jsonify, g, make_response, Response
 from functools import wraps
+import base64
 import difflib
 import json
 import os
+import re
 import sys
 import tempfile
 import traceback
+import uuid
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -3112,11 +3115,19 @@ def _serialise_chat_message(m):
 @login_required
 def chat_page(client_id):
     """Render the per-client AI chat page."""
+    from services.inbound_address import address_for_client
     client = db.session.get(Client, client_id)
     if not client:
         flash('Client not found.', 'error')
         return redirect(url_for('clients_list'))
-    return render_template('chat.html', client=client)
+    # Derive the inbox host from the request host. Production: will.alantanjb.com → inbox.will.alantanjb.com
+    host = request.host.split(':')[0] if request else 'localhost'
+    inbox_host = f"inbox.{host}"
+    inbox_address = address_for_client(client, inbox_host)
+    inbox_enabled = bool(os.environ.get('POSTMARK_INBOUND_USER') and os.environ.get('POSTMARK_INBOUND_PASS'))
+    return render_template('chat.html', client=client,
+                           inbox_address=inbox_address,
+                           inbox_enabled=inbox_enabled)
 
 
 @app.route('/api/chat/<client_id>/history')
@@ -3373,6 +3384,208 @@ def api_chat_reject(client_id, message_id):
     m.rejected_at = datetime.utcnow()
     db.session.commit()
     return jsonify({'ok': True, 'message': _serialise_chat_message(m)})
+
+
+# -- Inbound email → chat (Postmark webhook) --------------------------------
+
+_REPLY_QUOTE_RE = re.compile(
+    r'(?:^On .{0,80}wrote:.*\Z)|(?:^>+.*$)|(?:^-{2,}\s*Original Message\s*-{2,}.*\Z)',
+    re.MULTILINE | re.DOTALL,
+)
+_INBOUND_FILE_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp', 'pdf'}
+
+
+def _strip_reply_quotes(text: str) -> str:
+    """Trim 'On X, Y wrote:' tails and quoted '>' lines from email bodies."""
+    if not text:
+        return ''
+    cleaned = _REPLY_QUOTE_RE.sub('', text)
+    return '\n'.join(line for line in cleaned.splitlines() if line.strip()).strip()
+
+
+def _extract_inbox_to(payload: dict):
+    """Find the inbox-formatted recipient in a Postmark inbound payload."""
+    from services.inbound_address import short_id_from_address
+    for t in payload.get('ToFull') or []:
+        addr = (t.get('Email') or '').strip()
+        if short_id_from_address(addr):
+            return addr
+    raw = payload.get('To') or ''
+    for part in raw.split(','):
+        part = part.strip()
+        if '<' in part and '>' in part:
+            part = part[part.index('<') + 1: part.index('>')]
+        if short_id_from_address(part):
+            return part
+    return None
+
+
+@app.route('/api/inbound-email', methods=['POST'])
+def api_inbound_email():
+    """Postmark inbound webhook — turns a forwarded email into a chat message.
+
+    Auth: HTTP Basic, credentials in env vars POSTMARK_INBOUND_USER /
+    POSTMARK_INBOUND_PASS. If either is unset, the endpoint refuses
+    everything (so a half-configured deploy can't be abused).
+
+    Sender allowlist: env var INBOUND_ALLOWED_DOMAINS (comma-separated,
+    default 'alantanjb.com'). Mail from outside is silently dropped with
+    HTTP 200 so Postmark doesn't keep retrying.
+    """
+    from services.inbound_address import find_client_by_address
+    from uploads import MAX_FILE_SIZE
+    from ai.file_classifier import classify_file
+    from ai.ocr import extract_nric_data
+    from ai.chat_planner import plan_turn
+
+    expected_user = os.environ.get('POSTMARK_INBOUND_USER', '')
+    expected_pass = os.environ.get('POSTMARK_INBOUND_PASS', '')
+    if not expected_user or not expected_pass:
+        return jsonify({'ok': False, 'error': 'Inbound webhook not configured'}), 503
+    auth = request.authorization
+    if not auth or auth.username != expected_user or auth.password != expected_pass:
+        return jsonify({'ok': False, 'error': 'Unauthorized'}), 401
+
+    payload = request.get_json(silent=True) or {}
+
+    matched_to = _extract_inbox_to(payload)
+    if not matched_to:
+        return jsonify({'ok': True, 'ignored': 'no inbox address in To'}), 200
+
+    subject = (payload.get('Subject') or '').strip()
+    client = find_client_by_address(matched_to, hint_subject=subject)
+    if not client:
+        return jsonify({'ok': True, 'ignored': 'unknown client', 'to': matched_to}), 200
+
+    from_email = (
+        ((payload.get('FromFull') or {}).get('Email')) or payload.get('From') or ''
+    ).strip().lower()
+    # If From has "Name <addr>" wrap, strip it
+    if '<' in from_email and '>' in from_email:
+        from_email = from_email[from_email.index('<') + 1: from_email.index('>')]
+    allowed = [d.strip().lower() for d in
+               os.environ.get('INBOUND_ALLOWED_DOMAINS', 'alantanjb.com').split(',')
+               if d.strip()]
+    if not any(from_email.endswith('@' + d) for d in allowed):
+        return jsonify({'ok': True, 'ignored': 'sender not allowlisted', 'from': from_email}), 200
+
+    text_body = (payload.get('TextBody') or '').strip()
+    if not text_body and payload.get('HtmlBody'):
+        text_body = re.sub(r'<[^>]+>', ' ', payload['HtmlBody'])
+        text_body = re.sub(r'\s+', ' ', text_body).strip()
+    text_body = _strip_reply_quotes(text_body)
+
+    attachments = payload.get('Attachments') or []
+    if not text_body and not attachments:
+        return jsonify({'ok': True, 'ignored': 'empty email'}), 200
+
+    body_with_meta = f"_(forwarded via email from {from_email})_\n\n"
+    if subject:
+        body_with_meta += f"**Subject:** {subject}\n\n"
+    body_with_meta += text_body
+
+    cs = _get_or_create_chat_session(client.id, user_id=None)
+    user_msg = ChatMessage(
+        session_id=cs.id, role='user', content=body_with_meta,
+        attachments_json='[]',
+    )
+    db.session.add(user_msg)
+    db.session.flush()
+
+    folder_name = client.folder_name
+    attachment_ids = []
+    artifacts = []
+    file_errors = []
+
+    for att in attachments:
+        name = att.get('Name', 'attachment')
+        b64 = att.get('Content', '')
+        if not b64:
+            continue
+        ext = name.rsplit('.', 1)[-1].lower() if '.' in name else ''
+        if ext not in _INBOUND_FILE_EXTS:
+            file_errors.append(f"{name}: unsupported file type")
+            continue
+        try:
+            data = base64.b64decode(b64)
+        except Exception:
+            file_errors.append(f"{name}: could not decode")
+            continue
+        if len(data) > MAX_FILE_SIZE:
+            file_errors.append(f"{name}: larger than 20MB")
+            continue
+
+        safe_basename = uuid.uuid4().hex[:12] + '.' + ext
+        folder = os.path.join(UPLOAD_DIR, folder_name, 'documents', 'chat_inbox')
+        os.makedirs(folder, exist_ok=True)
+        abs_path = os.path.join(folder, safe_basename)
+        with open(abs_path, 'wb') as f:
+            f.write(data)
+        rel_path = os.path.join(folder_name, 'documents', 'chat_inbox', safe_basename)
+
+        doc = Document(
+            client_id=client.id, chat_message_id=user_msg.id,
+            filename=safe_basename, original_filename=name,
+            file_path=rel_path, file_type=att.get('ContentType') or '',
+            file_size=len(data), category='chat_inbox',
+        )
+        db.session.add(doc)
+        db.session.flush()
+        attachment_ids.append(doc.id)
+
+        classification = classify_file(abs_path)
+        kind = classification.get('kind', 'other')
+        extracted = None
+        if kind == 'nric':
+            try:
+                extracted = extract_nric_data(abs_path)
+            except Exception as e:
+                extracted = {'error': str(e)}
+        doc.category = kind if kind != 'other' else 'chat_inbox'
+        doc.description = (classification.get('reason') or '')[:500] or None
+        if extracted is not None:
+            try:
+                doc.extracted_data = json.dumps(extracted)
+            except (TypeError, ValueError):
+                doc.extracted_data = None
+
+        artifacts.append({
+            'document_id': doc.id, 'kind': kind,
+            'confidence': classification.get('confidence', 'low'),
+            'extracted': extracted, 'original_filename': name,
+        })
+
+    user_msg.attachments_json = json.dumps(attachment_ids)
+
+    active_will = (Will.query.filter_by(client_id=client.id, status='draft')
+                   .filter(Will.deleted_at.is_(None))
+                   .order_by(Will.updated_at.desc()).first())
+    will_snapshot = _will_data_snapshot(active_will)
+    plan = plan_turn(text_body, artifacts, will_snapshot)
+
+    if file_errors:
+        plan['reply'] = (plan.get('reply') or '') + (
+            "\n\n**Some attachments were rejected:**\n- " + "\n- ".join(file_errors)
+        )
+
+    asst_msg = ChatMessage(
+        session_id=cs.id, role='assistant',
+        content=plan.get('reply', ''),
+        clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
+        proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
+        advice_json=json.dumps(plan.get('advice', [])),
+        target_will_id=active_will.id if active_will else None,
+    )
+    db.session.add(asst_msg)
+    db.session.commit()
+
+    return jsonify({
+        'ok': True,
+        'client_id': client.id,
+        'message_id': user_msg.id,
+        'reply_id': asst_msg.id,
+        'attachments': len(attachment_ids),
+    })
 
 
 # -- Step 1: Identity Management ---------------------------------------------

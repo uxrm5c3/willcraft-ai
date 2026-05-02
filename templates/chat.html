@@ -25,8 +25,32 @@
         </div>
     </div>
 
+    <!-- Email-to-chat banner -->
+    <div class="mb-3 bg-gradient-to-r from-indigo-50 to-purple-50 border border-indigo-200 rounded-xl p-3 flex flex-wrap items-center gap-3">
+        <div class="flex items-center gap-2 text-indigo-700 flex-shrink-0">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            <span class="text-xs font-semibold uppercase tracking-wide">Forward from WhatsApp</span>
+        </div>
+        <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+                <code id="inbox-addr" class="px-2 py-1 bg-white text-indigo-800 text-xs sm:text-sm rounded border border-indigo-100 font-mono break-all">{{ inbox_address }}</code>
+                <button onclick="copyInboxAddress()" class="text-xs px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-1" title="Copy address">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                    Copy
+                </button>
+                <a href="mailto:{{ inbox_address }}" class="text-xs px-2 py-1 border border-indigo-300 text-indigo-700 rounded hover:bg-white" title="Open in mail app">
+                    Open in Mail
+                </a>
+            </div>
+            <p class="text-[11px] text-indigo-600/80 mt-1.5">
+                In WhatsApp: long-press a message or photo → <strong>Share</strong> → <strong>Mail</strong> → paste this address as the recipient. Anything you send arrives here within seconds.
+                {% if not inbox_enabled %}<span class="text-amber-700 font-semibold">⚠️ Inbound mail isn't enabled on this server yet.</span>{% endif %}
+            </p>
+        </div>
+    </div>
+
     <!-- Two-pane layout -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4" style="height: calc(100vh - 200px); min-height: 500px;">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4" style="height: calc(100vh - 280px); min-height: 480px;">
         <!-- LEFT: Chat thread + input (2 cols on desktop) -->
         <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
             <!-- Thread -->
