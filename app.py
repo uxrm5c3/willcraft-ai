@@ -3466,9 +3466,11 @@ def api_inbound_email():
     POSTMARK_INBOUND_PASS. If either is unset, the endpoint refuses
     everything (so a half-configured deploy can't be abused).
 
-    Sender allowlist: env var INBOUND_ALLOWED_DOMAINS (comma-separated,
-    default 'alantanjb.com'). Mail from outside is silently dropped with
-    HTTP 200 so Postmark doesn't keep retrying.
+    Sender allowlist: opt-in via env var INBOUND_ALLOWED_DOMAINS (comma-
+    separated). Default = empty = accept any sender (clients email their
+    own client-<id>@inbox address directly). Set the env var to lock the
+    inbox down to specific domains. Off-allowlist mail is silently dropped
+    with HTTP 200 so Postmark doesn't keep retrying.
     """
     from services.inbound_address import find_client_by_address
     from uploads import MAX_FILE_SIZE
@@ -3501,11 +3503,16 @@ def api_inbound_email():
     # If From has "Name <addr>" wrap, strip it
     if '<' in from_email and '>' in from_email:
         from_email = from_email[from_email.index('<') + 1: from_email.index('>')]
-    allowed = [d.strip().lower() for d in
-               os.environ.get('INBOUND_ALLOWED_DOMAINS', 'alantanjb.com').split(',')
-               if d.strip()]
-    if not any(from_email.endswith('@' + d) for d in allowed):
-        return jsonify({'ok': True, 'ignored': 'sender not allowlisted', 'from': from_email}), 200
+    # Sender allowlist is OPT-IN. If INBOUND_ALLOWED_DOMAINS is unset, empty,
+    # or '*', accept mail from anyone — clients are expected to email their
+    # inbox directly from their own gmail/yahoo/etc. Set the env var to a
+    # comma-separated domain list (e.g. 'alantanjb.com,gmail.com') only if
+    # you want to restrict.
+    allowed_raw = os.environ.get('INBOUND_ALLOWED_DOMAINS', '').strip()
+    if allowed_raw and allowed_raw != '*':
+        allowed = [d.strip().lower() for d in allowed_raw.split(',') if d.strip()]
+        if not any(from_email.endswith('@' + d) for d in allowed):
+            return jsonify({'ok': True, 'ignored': 'sender not allowlisted', 'from': from_email}), 200
 
     text_body = (payload.get('TextBody') or '').strip()
     if not text_body and payload.get('HtmlBody'):
