@@ -2875,35 +2875,130 @@ def api_parse_will():
     # The parser returns objects like {step2_executors: {executors: [...]}} —
     # unwrap the nested arrays so the session matches what the wizard expects.
     def _unwrap(obj, key):
-        """Accept either a list directly or a dict like {key: [...]}."""
         if isinstance(obj, list):
             return obj
         if isinstance(obj, dict):
             return obj.get(key, []) or []
         return []
 
-    if 'step1_testator' in parsed:
-        s1 = parsed['step1_testator'] or {}
-        # Normalise DOB to YYYY-MM-DD if parser returned DD/MM/YYYY
-        dob = s1.get('date_of_birth', '')
-        if dob and '/' in dob:
+    def _normalise_dob(dob):
+        """Accept DD/MM/YYYY or YYYY-MM-DD. Return YYYY-MM-DD."""
+        if not dob:
+            return ''
+        if '/' in dob:
             parts = dob.split('/')
             if len(parts) == 3 and len(parts[-1]) == 4:
-                s1['date_of_birth'] = f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+                return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+        return dob
+
+    # ── Create Person SQL records for every extracted individual so the
+    # wizard's person-registry can resolve person_id lookups. Without this,
+    # step 4/5 pickers come up empty and step submissions error out.
+    def _ensure_person(name, nric, address='', relationship='', dob='',
+                       nationality='Malaysian'):
+        if not name or not (name or '').strip():
+            return None
+        nric = (nric or '').strip()
+        clean_name = name.strip()
+        # Reuse existing person if name + NRIC already in the client's roster
+        existing = Person.query.filter_by(client_id=client_id, full_name=clean_name).first()
+        if existing:
+            # Update missing fields opportunistically
+            if not existing.nric_passport and nric:
+                existing.nric_passport = nric
+            if not existing.address and address:
+                existing.address = address
+            if not existing.relationship and relationship:
+                existing.relationship = relationship
+            if not existing.date_of_birth and dob:
+                existing.date_of_birth = _normalise_dob(dob)
+            db.session.flush()
+            return existing.id
+        new_p = Person(
+            client_id=client_id,
+            full_name=clean_name,
+            nric_passport=nric,
+            address=address or None,
+            relationship=relationship or None,
+            date_of_birth=_normalise_dob(dob) or None,
+            nationality=nationality or 'Malaysian',
+        )
+        db.session.add(new_p)
+        db.session.flush()
+        return new_p.id
+
+    # ── Step 1: Testator ─────────────────────────────────────────────
+    if 'step1_testator' in parsed:
+        s1 = dict(parsed['step1_testator'] or {})
+        s1['date_of_birth'] = _normalise_dob(s1.get('date_of_birth', ''))
+        # Create / update the testator's Person record
+        testator_pid = _ensure_person(
+            s1.get('full_name'), s1.get('nric_passport'),
+            address=s1.get('residential_address', ''),
+            relationship='Testator',
+            dob=s1.get('date_of_birth', ''),
+            nationality=s1.get('nationality', 'Malaysian'),
+        )
+        if testator_pid:
+            s1['person_id'] = testator_pid
         session['step1'] = s1
 
+    # ── Step 2: Executors ────────────────────────────────────────────
     if 'step2_executors' in parsed:
-        execs = _unwrap(parsed['step2_executors'], 'executors')
+        raw_execs = _unwrap(parsed['step2_executors'], 'executors')
+        execs = []
+        for ex in raw_execs:
+            pid = _ensure_person(
+                ex.get('full_name'), ex.get('nric_passport'),
+                address=ex.get('address', ''),
+                relationship=ex.get('relationship', ''),
+                nationality=ex.get('nationality', 'Malaysian'),
+            )
+            ex_clean = dict(ex)
+            if pid:
+                ex_clean['person_id'] = pid
+            execs.append(ex_clean)
         session['step2_executors'] = execs
         session['step3_executor_type'] = 'joint' if len(execs) > 1 else 'single'
         session['step3_trustees'] = {'same_as_executor': True, 'trustees': [{}]}
 
+    # ── Step 3: Guardians ────────────────────────────────────────────
     if 'step3_guardians' in parsed:
-        session['step3_guardians'] = _unwrap(parsed['step3_guardians'], 'guardians')
+        raw_g = _unwrap(parsed['step3_guardians'], 'guardians')
+        guardians = []
+        for g in raw_g:
+            pid = _ensure_person(g.get('full_name'), g.get('nric_passport'),
+                                  address=g.get('address', ''),
+                                  relationship=g.get('relationship', ''))
+            gd = dict(g)
+            if pid:
+                gd['person_id'] = pid
+            guardians.append(gd)
+        session['step3_guardians'] = guardians
+
+    # ── Step 4: Beneficiaries ────────────────────────────────────────
     if 'step4_beneficiaries' in parsed:
-        session['step4_beneficiaries'] = _unwrap(parsed['step4_beneficiaries'], 'beneficiaries')
+        raw_b = _unwrap(parsed['step4_beneficiaries'], 'beneficiaries')
+        bens = []
+        for b in raw_b:
+            pid = _ensure_person(
+                b.get('full_name'),
+                b.get('nric_passport') or b.get('nric_passport_birthcert'),
+                relationship=b.get('relationship', ''),
+            )
+            bd = dict(b)
+            if pid:
+                bd['person_id'] = pid
+            # Wizard expects nric_passport_birthcert
+            if 'nric_passport' in bd and 'nric_passport_birthcert' not in bd:
+                bd['nric_passport_birthcert'] = bd.pop('nric_passport')
+            bens.append(bd)
+        session['step4_beneficiaries'] = bens
+
+    # ── Step 5: Gifts ────────────────────────────────────────────────
     if 'step5_gifts' in parsed:
         session['step5_gifts'] = _unwrap(parsed['step5_gifts'], 'gifts')
+    # ── Step 6/7/8: Residuary / Trust / Others ───────────────────────
     if 'step6_residuary' in parsed:
         s6 = parsed['step6_residuary']
         session['step6_residuary'] = s6 if isinstance(s6, dict) else {}
@@ -2913,6 +3008,10 @@ def api_parse_will():
     if 'step8_other_matters' in parsed:
         s8 = parsed['step8_other_matters']
         session['step8_others'] = s8 if isinstance(s8, dict) else {}
+
+    # Commit Person creates + refresh registry so wizard pickers see them
+    db.session.commit()
+    _refresh_session_person_registry(client_id)
 
     # Mark all steps with imported data as complete so the wizard shows them
     # in green and the user can jump straight to step 10 (Review & Generate).
