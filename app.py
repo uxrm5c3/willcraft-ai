@@ -3351,6 +3351,30 @@ def api_chat_message(client_id):
     #    with a relationship keyword OR confirmation. If not, see if they
     #    asked to delete the focused doc. Then refresh the pending list so
     #    the planner asks about the NEXT one.
+    # Q&A digression: if user asked a side-quest question (not files-only),
+    # answer it without advancing the step. They'll come back and answer
+    # the original question on the next turn.
+    if user_text and not files:
+        from ai.legal_qa import is_question, answer_question
+        # But don't intercept short keyword-style replies (yes/skip/delete/relationship)
+        if is_question(user_text):
+            from services.identity_walker import get_pending_ic_documents as _gpi
+            current_will = (Will.query.filter_by(client_id=client_id, status='draft')
+                            .filter(Will.deleted_at.is_(None))
+                            .order_by(Will.updated_at.desc()).first())
+            stage = _current_stage_label(client_id, current_will)
+            ans = answer_question(user_text, stage)
+            if ans:
+                qa_msg = ChatMessage(session_id=cs.id, role='assistant', content=ans,
+                                     attachments_json='[]')
+                db.session.add(qa_msg)
+                db.session.commit()
+                return jsonify({
+                    'ok': True,
+                    'user_message': _serialise_chat_message(user_msg),
+                    'assistant_message': _serialise_chat_message(qa_msg),
+                })
+
     just_assigned = _try_assign_pending_identity(client_id, user_text)
     just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)
     # If past Step 1, attempt executor save then beneficiaries save
@@ -3745,6 +3769,27 @@ def _try_delete_pending_identity(client_id: str, user_text: str):
     db.session.commit()
     label = name or target.get('original_filename', 'this document')
     return {'name': label, 'action': 'deleted', 'count': count}
+
+
+def _current_stage_label(client_id: str, will) -> str:
+    """Short human-readable label for the planner's current stage. Used by
+    the Q&A nudge to remind the user where to come back to."""
+    from services.identity_walker import get_pending_ic_documents
+    if get_pending_ic_documents(client_id):
+        return "Step 1: Identity walk-through"
+    if not will:
+        return "Step 1: setup"
+    try:
+        s2 = json.loads(will.step2_data) if will.step2_data else {}
+        s4 = json.loads(will.step4_data) if will.step4_data else []
+    except (json.JSONDecodeError, TypeError):
+        s2, s4 = {}, []
+    n_exec = len((s2 or {}).get('executors') or [])
+    if n_exec < 2:
+        return f"Step 3: {'main' if n_exec == 0 else 'substitute'} Executor"
+    if not isinstance(s4, list) or len(s4) == 0:
+        return "Step 5: Confirm Beneficiaries"
+    return "Step 6: Specific Gifts"
 
 
 def _try_save_beneficiaries(client_id: str, user_text: str):
