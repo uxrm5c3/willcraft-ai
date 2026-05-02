@@ -2872,23 +2872,46 @@ def api_parse_will():
     if parsed.get('error'):
         return jsonify({'ok': False, 'error': parsed['error']}), 500
 
-    # Populate session with parsed data
+    # Populate session with parsed data — session keys must match the
+    # ones used by the wizard step routes (step2_executors, step3_guardians,
+    # step4_beneficiaries, etc.) so the imported data shows up in each step.
     if 'step1_testator' in parsed:
         session['step1'] = parsed['step1_testator']
     if 'step2_executors' in parsed:
-        session['step2'] = parsed['step2_executors']
+        execs = parsed['step2_executors'] or []
+        session['step2_executors'] = execs
+        session['step3_executor_type'] = 'joint' if len(execs) > 1 else 'single'
+        session['step3_trustees'] = {'same_as_executor': True, 'trustees': [{}]}
     if 'step3_guardians' in parsed:
-        session['step3'] = parsed['step3_guardians']
+        session['step3_guardians'] = parsed['step3_guardians']
     if 'step4_beneficiaries' in parsed:
-        session['step4'] = parsed['step4_beneficiaries']
+        session['step4_beneficiaries'] = parsed['step4_beneficiaries']
     if 'step5_gifts' in parsed:
-        session['step5'] = parsed['step5_gifts']
+        session['step5_gifts'] = parsed['step5_gifts']
     if 'step6_residuary' in parsed:
-        session['step6'] = parsed['step6_residuary']
+        session['step6_residuary'] = parsed['step6_residuary']
     if 'step7_trust' in parsed:
-        session['step7'] = parsed['step7_trust']
+        session['step7_trust'] = parsed['step7_trust']
     if 'step8_other_matters' in parsed:
-        session['step8'] = parsed['step8_other_matters']
+        session['step8_others'] = parsed['step8_other_matters']
+
+    # Mark all steps with imported data as complete so the wizard shows them
+    # in green and the user can jump straight to step 10 (Review & Generate).
+    completed = set(session.get('completed_steps', []))
+    for n, has in [
+        (1, 'step1_testator' in parsed),
+        (2, 'step1_testator' in parsed),
+        (3, 'step2_executors' in parsed),
+        (4, 'step3_guardians' in parsed),
+        (5, 'step4_beneficiaries' in parsed),
+        (6, 'step5_gifts' in parsed),
+        (7, 'step6_residuary' in parsed),
+        (8, 'step7_trust' in parsed),
+        (9, 'step8_other_matters' in parsed),
+    ]:
+        if has:
+            completed.add(n)
+    session['completed_steps'] = sorted(completed)
 
     session['will_title'] = f"Imported: {file.filename}"
     session.modified = True
