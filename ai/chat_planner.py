@@ -63,8 +63,10 @@ def plan_turn(
             f"✅ Saved **{just_assigned.get('name','')}** as **{just_assigned.get('role','')}**."
         )
     if just_deleted:
+        n = just_deleted.get('count', 1)
+        suffix = f" ({n} duplicate{'s' if n != 1 else ''} removed)" if n > 1 else ''
         reply_parts.append(
-            f"🗑 Removed **{just_deleted.get('name','')}** from this client's records."
+            f"🗑 Removed **{just_deleted.get('name','')}** from this client's records{suffix}."
         )
 
     # ── 1. INTAKE — fresh attachments this turn ─────────────────────────

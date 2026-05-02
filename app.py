@@ -3625,9 +3625,11 @@ _DELETE_TOKENS = ('delete', 'remove', 'wrong', 'discard', 'trash', 'irrelevant',
 
 
 def _try_delete_pending_identity(client_id: str, user_text: str):
-    """If user replies with a delete keyword, mark the focused IC's
-    Document as removed so the walk-through skips it.
-    Returns {'name', 'action': 'deleted'} or None."""
+    """If user replies with a delete keyword, bulk-delete every Document
+    that shares the focused IC's extracted name (re-uploads of the same
+    person create multiple docs; one 'delete' should remove them all so
+    the walk-through doesn't loop on duplicates).
+    Returns {'name', 'action': 'deleted', 'count'} or None."""
     if not user_text:
         return None
     from services.identity_walker import get_pending_ic_documents
@@ -3640,13 +3642,34 @@ def _try_delete_pending_identity(client_id: str, user_text: str):
         return None
     target = pending[0]
     ex = target['extracted'] or {}
-    name = (ex.get('full_name') or '').strip() or target.get('original_filename', 'this document')
+    name = (ex.get('full_name') or '').strip()
+    if name:
+        # Bulk delete: every nric Document for this client whose extracted
+        # name matches (case-insensitive). Catches re-uploads + slight OCR
+        # variants would NOT match — that's intentional, false dedup is
+        # worse than a second prompt.
+        target_upper = name.upper()
+        all_nric = Document.query.filter_by(client_id=client_id, category='nric').all()
+        count = 0
+        for d in all_nric:
+            try:
+                exd = json.loads(d.extracted_data) if d.extracted_data else {}
+            except (json.JSONDecodeError, TypeError):
+                exd = {}
+            if (exd.get('full_name') or '').strip().upper() == target_upper:
+                d.category = 'deleted'
+                d.description = '(removed by user from chat walk-through)'
+                count += 1
+        db.session.commit()
+        return {'name': name, 'action': 'deleted', 'count': count}
+    # Unreadable IC — just delete this single document
     doc = db.session.get(Document, target['document_id'])
+    label = target.get('original_filename', 'this document')
     if doc:
         doc.category = 'deleted'
         doc.description = '(removed by user from chat walk-through)'
         db.session.commit()
-    return {'name': name, 'action': 'deleted'}
+    return {'name': label, 'action': 'deleted', 'count': 1}
 
 
 def _try_assign_pending_identity(client_id: str, user_text: str):
