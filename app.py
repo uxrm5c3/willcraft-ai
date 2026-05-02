@@ -3697,7 +3697,7 @@ def _api_inbound_email_impl():
     # Spawn the slow processing in the background. The webhook returns NOW.
     threading.Thread(
         target=_process_inbound_message_async,
-        args=(app._get_current_object(), user_msg.id),
+        args=(app, user_msg.id),
         daemon=True,
     ).start()
 
