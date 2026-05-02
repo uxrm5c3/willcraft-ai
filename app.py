@@ -675,7 +675,11 @@ def build_will_data():
     )
 
     # -- Section B: Executors --------------------------------------------------
-    executors = [Executor(**e) for e in session.get('step2_executors', [])]
+    # Coerce all session list fields to [] in case parser left them as None
+    def _list(key):
+        v = session.get(key)
+        return v if isinstance(v, list) else []
+    executors = [Executor(**e) for e in _list('step2_executors')]
 
     # -- Section B2: Trustees (separate from executors) -----------------------
     trustee_session = session.get('step3_trustees', {'same_as_executor': True})
@@ -705,7 +709,7 @@ def build_will_data():
                 substitute_trustees = [substitute_trustee]
 
     # -- Section C: Guardians (optional) --------------------------------------
-    guardians_data = session.get('step3_guardians', [])
+    guardians_data = _list('step3_guardians')
     guardians = [Guardian(**g) for g in guardians_data] if guardians_data else None
 
     ga_data = session.get('step3_guardian_allowance', {})
@@ -716,16 +720,17 @@ def build_will_data():
     )
 
     # -- Section D: Beneficiaries ---------------------------------------------
-    beneficiaries = [Beneficiary(**b) for b in session.get('step4_beneficiaries', [])]
+    beneficiaries = [Beneficiary(**b) for b in _list('step4_beneficiaries')]
 
     # -- Section E: Gifts (optional) ------------------------------------------
-    gifts_data = session.get('step5_gifts', [])
+    gifts_data = _list('step5_gifts')
     gifts = None
     if gifts_data:
         from models.gift import PropertyDetails, FinancialDetails
         gifts = []
         for gd in gifts_data:
-            allocations = [GiftAllocation(**a) for a in gd.get('allocations', [])]
+            allocs_raw = gd.get('allocations') or []
+            allocations = [GiftAllocation(**a) for a in allocs_raw]
             prop_details = None
             fin_details = None
             gift_type = gd.get('gift_type', 'other')
@@ -752,11 +757,14 @@ def build_will_data():
             ))
 
     # -- Section F: Residuary Estate ------------------------------------------
-    res_data = session.get('step6_residuary', {})
-    main_bens = [ResiduaryBeneficiary(**mb) for mb in res_data.get('main_beneficiaries', [])]
+    res_data = session.get('step6_residuary') or {}
+    if not isinstance(res_data, dict):
+        res_data = {}
+    main_bens_raw = res_data.get('main_beneficiaries') or []
+    main_bens = [ResiduaryBeneficiary(**mb) for mb in main_bens_raw]
     sub_groups = []
-    for sg in res_data.get('substitute_groups', []):
-        sub_groups.append([ResiduaryBeneficiary(**sb) for sb in sg])
+    for sg in (res_data.get('substitute_groups') or []):
+        sub_groups.append([ResiduaryBeneficiary(**sb) for sb in (sg or [])])
     residuary_estate = ResiduaryEstate(
         main_beneficiaries=main_bens,
         substitute_groups=sub_groups,
