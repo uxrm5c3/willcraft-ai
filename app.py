@@ -3460,6 +3460,17 @@ def _extract_inbox_to(payload: dict):
 
 @app.route('/api/inbound-email', methods=['POST'])
 def api_inbound_email():
+    """Wrapper that surfaces the underlying exception in JSON so failures
+    are debuggable end-to-end (instead of a generic 500). Postmark retries
+    on 5xx, so we still raise the original status."""
+    try:
+        return _api_inbound_email_impl()
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 500
+
+
+def _api_inbound_email_impl():
     """Postmark inbound webhook — turns a forwarded email into a chat message.
 
     Auth: HTTP Basic, credentials in env vars POSTMARK_INBOUND_USER /
