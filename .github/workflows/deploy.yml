@@ -32,31 +32,39 @@ jobs:
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
 
       - name: Sync inbound-mail env vars to server .env
-        # Idempotently upserts POSTMARK_* + INBOUND_ALLOWED_DOMAINS into
-        # /home/ubuntu/willcraft-ai/.env. Skips any var whose secret is empty
-        # so this step is safe to run before the secrets exist.
+        # Build the local fragment, scp it across, then a tiny ssh command
+        # merges it into /home/ubuntu/willcraft-ai/.env. Anything not
+        # mentioned in the fragment is left untouched. If the secrets are
+        # all empty the step still runs harmlessly (writes nothing).
         env:
           PM_USER: ${{ secrets.POSTMARK_INBOUND_USER }}
           PM_PASS: ${{ secrets.POSTMARK_INBOUND_PASS }}
           ALLOWED: ${{ secrets.INBOUND_ALLOWED_DOMAINS }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 \
-              -o StrictHostKeyChecking=no \
+          set -e
+          : > /tmp/inbound.env
+          [ -n "$PM_USER" ] && printf 'POSTMARK_INBOUND_USER=%s\n' "$PM_USER" >> /tmp/inbound.env
+          [ -n "$PM_PASS" ] && printf 'POSTMARK_INBOUND_PASS=%s\n' "$PM_PASS" >> /tmp/inbound.env
+          [ -n "$ALLOWED" ] && printf 'INBOUND_ALLOWED_DOMAINS=%s\n' "$ALLOWED" >> /tmp/inbound.env
+          echo "Fragment to sync ($(wc -l < /tmp/inbound.env) lines):"
+          cut -d= -f1 /tmp/inbound.env | sed 's/^/  - /'
+          if [ ! -s /tmp/inbound.env ]; then
+            echo "No inbound secrets set — skipping sync."; exit 0;
+          fi
+          scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no /tmp/inbound.env \
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/tmp/inbound.env
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-              bash -s -- "$PM_USER" "$PM_PASS" "$ALLOWED" <<'REMOTE'
-          set -eu
-          ENV_FILE=/home/ubuntu/willcraft-ai/.env
-          touch "$ENV_FILE"
-          set_var() {
-            local key="$1" val="$2"
-            [ -z "$val" ] && return 0
-            sed -i "/^${key}=/d" "$ENV_FILE"
-            printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
-          }
-          set_var POSTMARK_INBOUND_USER "$1"
-          set_var POSTMARK_INBOUND_PASS "$2"
-          set_var INBOUND_ALLOWED_DOMAINS "$3"
-          REMOTE
+              'set -e; F=/home/ubuntu/willcraft-ai/.env; touch "$F"; \
+               while IFS= read -r line; do \
+                 [ -z "$line" ] && continue; \
+                 key="${line%%=*}"; \
+                 sed -i "/^${key}=/d" "$F"; \
+                 printf "%s\n" "$line" >> "$F"; \
+                 echo "  upserted $key"; \
+               done < /tmp/inbound.env; \
+               rm -f /tmp/inbound.env; \
+               echo "Final .env keys: $(cut -d= -f1 "$F" | sort -u | tr "\n" " ")"'
 
       - name: Pull + rebuild on server (will.alantanjb.com)
         run: |
