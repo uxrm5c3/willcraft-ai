@@ -2872,28 +2872,47 @@ def api_parse_will():
     if parsed.get('error'):
         return jsonify({'ok': False, 'error': parsed['error']}), 500
 
-    # Populate session with parsed data — session keys must match the
-    # ones used by the wizard step routes (step2_executors, step3_guardians,
-    # step4_beneficiaries, etc.) so the imported data shows up in each step.
+    # The parser returns objects like {step2_executors: {executors: [...]}} —
+    # unwrap the nested arrays so the session matches what the wizard expects.
+    def _unwrap(obj, key):
+        """Accept either a list directly or a dict like {key: [...]}."""
+        if isinstance(obj, list):
+            return obj
+        if isinstance(obj, dict):
+            return obj.get(key, []) or []
+        return []
+
     if 'step1_testator' in parsed:
-        session['step1'] = parsed['step1_testator']
+        s1 = parsed['step1_testator'] or {}
+        # Normalise DOB to YYYY-MM-DD if parser returned DD/MM/YYYY
+        dob = s1.get('date_of_birth', '')
+        if dob and '/' in dob:
+            parts = dob.split('/')
+            if len(parts) == 3 and len(parts[-1]) == 4:
+                s1['date_of_birth'] = f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+        session['step1'] = s1
+
     if 'step2_executors' in parsed:
-        execs = parsed['step2_executors'] or []
+        execs = _unwrap(parsed['step2_executors'], 'executors')
         session['step2_executors'] = execs
         session['step3_executor_type'] = 'joint' if len(execs) > 1 else 'single'
         session['step3_trustees'] = {'same_as_executor': True, 'trustees': [{}]}
+
     if 'step3_guardians' in parsed:
-        session['step3_guardians'] = parsed['step3_guardians']
+        session['step3_guardians'] = _unwrap(parsed['step3_guardians'], 'guardians')
     if 'step4_beneficiaries' in parsed:
-        session['step4_beneficiaries'] = parsed['step4_beneficiaries']
+        session['step4_beneficiaries'] = _unwrap(parsed['step4_beneficiaries'], 'beneficiaries')
     if 'step5_gifts' in parsed:
-        session['step5_gifts'] = parsed['step5_gifts']
+        session['step5_gifts'] = _unwrap(parsed['step5_gifts'], 'gifts')
     if 'step6_residuary' in parsed:
-        session['step6_residuary'] = parsed['step6_residuary']
+        s6 = parsed['step6_residuary']
+        session['step6_residuary'] = s6 if isinstance(s6, dict) else {}
     if 'step7_trust' in parsed:
-        session['step7_trust'] = parsed['step7_trust']
+        s7 = parsed['step7_trust']
+        session['step7_trust'] = s7 if isinstance(s7, dict) else {}
     if 'step8_other_matters' in parsed:
-        session['step8_others'] = parsed['step8_other_matters']
+        s8 = parsed['step8_other_matters']
+        session['step8_others'] = s8 if isinstance(s8, dict) else {}
 
     # Mark all steps with imported data as complete so the wizard shows them
     # in green and the user can jump straight to step 10 (Review & Generate).
