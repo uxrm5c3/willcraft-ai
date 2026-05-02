@@ -3091,7 +3091,10 @@ def _get_or_create_active_will(client_id, user_id):
 
 
 def _will_data_snapshot(will_record):
-    """Parse a Will's step JSON columns into a single dict for the chat planner & UI."""
+    """Parse a Will's step JSON columns into a single dict for the chat planner & UI.
+    Also includes the live Person registry from DB so the chat's right-pane
+    sees identities as they're added in chat (they don't live in stepN_data
+    until the wizard saves)."""
     if not will_record:
         return {}
     def _j(s, default):
@@ -3099,6 +3102,15 @@ def _will_data_snapshot(will_record):
             return json.loads(s) if s else default
         except (json.JSONDecodeError, TypeError):
             return default
+    # Live identities from Person table — these are the single source of truth
+    # while the chat is running, before the wizard's save_will_to_db serializes
+    # them into identities_data.
+    persons = (Person.query.filter_by(client_id=will_record.client_id)
+               .order_by(Person.full_name.asc()).all())
+    identities = [{
+        'id': p.id, 'full_name': p.full_name,
+        'nric_passport': p.nric_passport, 'relationship': p.relationship or '',
+    } for p in persons]
     return {
         'will_id': will_record.id,
         'title': will_record.title,
@@ -3111,6 +3123,7 @@ def _will_data_snapshot(will_record):
         'step6': _j(will_record.step6_data, {}),
         'step7': _j(will_record.step7_data, {}),
         'step8': _j(will_record.step8_data, {}),
+        'identities': identities,
     }
 
 
@@ -3635,19 +3648,17 @@ _DELETE_TOKENS = ('delete', 'remove', 'wrong', 'discard', 'trash', 'irrelevant',
 
 
 def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
-    """If `doc` is an IC whose extracted name matches another nric Document
-    for this client, mark `doc` as 'duplicate' and return True. Caller
-    should skip emitting this doc as an artifact.
+    """If `doc` is an IC whose extracted name OR NRIC matches another nric
+    Document for this client, mark `doc` as 'duplicate' and return True.
+    Caller should skip emitting this doc as an artifact.
 
-    Matches case-insensitively on full_name. NRIC equality would be more
-    rigorous but full_name + client_id is plenty given our scale, and
-    handles the common case of OCR catching the same name twice from
-    re-forwards even if the NRIC was different (front vs back of card).
+    Match by NRIC (most reliable) OR by name (in case NRIC was unreadable).
     """
     if not extracted:
         return False
     name = (extracted.get('full_name') or '').strip().upper()
-    if not name:
+    nric = (extracted.get('nric_number') or '').strip()
+    if not name and not nric:
         return False
     siblings = Document.query.filter(
         Document.client_id == client_id,
@@ -3659,7 +3670,9 @@ def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
             sib_ex = json.loads(sib.extracted_data) if sib.extracted_data else {}
         except (json.JSONDecodeError, TypeError):
             sib_ex = {}
-        if (sib_ex.get('full_name') or '').strip().upper() == name:
+        sib_name = (sib_ex.get('full_name') or '').strip().upper()
+        sib_nric = (sib_ex.get('nric_number') or '').strip()
+        if (nric and sib_nric and nric == sib_nric) or (name and sib_name and name == sib_name):
             doc.category = 'duplicate'
             doc.description = f'(duplicate of {sib.original_filename or sib.id[:8]})'
             return True
@@ -3685,33 +3698,37 @@ def _try_delete_pending_identity(client_id: str, user_text: str):
     target = pending[0]
     ex = target['extracted'] or {}
     name = (ex.get('full_name') or '').strip()
-    if name:
-        # Bulk delete: every nric Document for this client whose extracted
-        # name matches (case-insensitive). Catches re-uploads + slight OCR
-        # variants would NOT match — that's intentional, false dedup is
-        # worse than a second prompt.
-        target_upper = name.upper()
-        all_nric = Document.query.filter_by(client_id=client_id, category='nric').all()
-        count = 0
-        for d in all_nric:
-            try:
-                exd = json.loads(d.extracted_data) if d.extracted_data else {}
-            except (json.JSONDecodeError, TypeError):
-                exd = {}
-            if (exd.get('full_name') or '').strip().upper() == target_upper:
-                d.category = 'deleted'
-                d.description = '(removed by user from chat walk-through)'
-                count += 1
-        db.session.commit()
-        return {'name': name, 'action': 'deleted', 'count': count}
-    # Unreadable IC — just delete this single document
-    doc = db.session.get(Document, target['document_id'])
-    label = target.get('original_filename', 'this document')
-    if doc:
-        doc.category = 'deleted'
-        doc.description = '(removed by user from chat walk-through)'
-        db.session.commit()
-    return {'name': label, 'action': 'deleted', 'count': 1}
+    nric = (ex.get('nric_number') or '').strip()
+
+    # Bulk delete: any nric Document where EITHER name OR nric matches.
+    # NRIC catches the case where one upload has unreadable name but
+    # the same IC number — those would otherwise re-appear in walk-through.
+    target_name = name.upper()
+    all_nric = Document.query.filter_by(client_id=client_id, category='nric').all()
+    count = 0
+    for d in all_nric:
+        try:
+            exd = json.loads(d.extracted_data) if d.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            exd = {}
+        d_name = (exd.get('full_name') or '').strip().upper()
+        d_nric = (exd.get('nric_number') or '').strip()
+        match = (target_name and d_name and target_name == d_name) or \
+                (nric and d_nric and nric == d_nric)
+        if match:
+            d.category = 'deleted'
+            d.description = '(removed by user from chat walk-through)'
+            count += 1
+    if count == 0:
+        # No name or NRIC to match on — just delete this single document
+        doc = db.session.get(Document, target['document_id'])
+        if doc:
+            doc.category = 'deleted'
+            doc.description = '(removed by user from chat walk-through)'
+            count = 1
+    db.session.commit()
+    label = name or target.get('original_filename', 'this document')
+    return {'name': label, 'action': 'deleted', 'count': count}
 
 
 def _try_assign_pending_identity(client_id: str, user_text: str):

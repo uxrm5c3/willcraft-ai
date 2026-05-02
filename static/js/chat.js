@@ -527,6 +527,31 @@
     willStatus.innerHTML = `<span class="inline-block w-2 h-2 rounded-full ${will.status === 'draft' ? 'bg-amber-400' : 'bg-green-500'} mr-1"></span>${escapeHtml(will.status)} · ${escapeHtml(will.title || 'Untitled')}`;
 
     const sections = [];
+
+    // Live identities from Person registry (added via chat walk-through)
+    const ids = will.identities || [];
+    if (ids.length) {
+      let body = '<table class="text-[11px] mt-1 ml-5"><tbody>';
+      for (const p of ids) {
+        const rel = p.relationship || '—';
+        const relColor = rel === 'Testator' ? 'text-purple-700 font-semibold'
+                       : rel === 'Executor' ? 'text-green-700'
+                       : '—';
+        body += `<tr><td class="pr-2 py-px text-gray-500 align-top truncate" style="max-width:9rem">${escapeHtml(p.full_name||'?')}</td>
+                 <td class="py-px ${relColor}">${escapeHtml(rel)}</td></tr>`;
+      }
+      body += '</tbody></table>';
+      sections.push(
+        `<div class="border-b border-gray-100 pb-2">
+           <a href="/wizard/step/1" class="hover:text-primary-600 flex items-center gap-1.5">
+             <svg class="w-3.5 h-3.5 text-green-600 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+             <span class="font-semibold">Identities (${ids.length})</span>
+           </a>
+           ${body}
+         </div>`
+      );
+    }
+
     const s1 = will.step1 || {};
     sections.push(snapshotSection(
       '1', 'Testator', s1.full_name ? '/wizard/step/2' : null,

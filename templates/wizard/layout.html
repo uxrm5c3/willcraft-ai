@@ -384,5 +384,54 @@
     window._testatorPersonId = {{ (testator_person_id | default('')) | tojson }};
 </script>
 <script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260320j"></script>
+
+<!-- Wizard-side chat sync: poll Person registry every 6s. When new identities
+     are added by the chat in another tab, show a toast offering Refresh. -->
+{% if session.client_id %}
+<div id="wizard-chat-toast" class="hidden fixed bottom-6 right-6 z-50 max-w-xs bg-accent-600 text-white rounded-xl shadow-2xl p-4">
+    <div class="flex items-start gap-2">
+        <span class="text-2xl">💬</span>
+        <div class="flex-1 min-w-0">
+            <p id="wizard-toast-title" class="font-semibold text-sm">New chat update</p>
+            <p id="wizard-toast-body" class="text-xs opacity-90 mt-0.5"></p>
+            <div class="flex gap-2 mt-2">
+                <button onclick="location.reload()" class="px-3 py-1 bg-white text-accent-700 text-xs font-semibold rounded">Refresh</button>
+                <button onclick="document.getElementById('wizard-chat-toast').classList.add('hidden')" class="px-3 py-1 bg-white/20 text-white text-xs rounded">Dismiss</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function () {
+    const CLIENT_ID = "{{ session.client_id }}";
+    let lastIdsCount = (window._personRegistry || []).length;
+    let lastIdsKey = (window._personRegistry || []).map(p => (p.id || p.full_name)).sort().join('|');
+    setInterval(async function () {
+        if (document.visibilityState !== 'visible') return;
+        try {
+            const r = await fetch(`/api/chat/${CLIENT_ID}/history`);
+            const d = await r.json();
+            if (!d.ok) return;
+            const ids = (d.will && d.will.identities) || [];
+            const key = ids.map(p => p.id).sort().join('|');
+            if (key !== lastIdsKey) {
+                const added = ids.length - lastIdsCount;
+                const t = document.getElementById('wizard-chat-toast');
+                const body = document.getElementById('wizard-toast-body');
+                if (added > 0) {
+                    body.textContent = `Chat added ${added} new ident${added > 1 ? 'ities' : 'ity'}: ${ids.slice(-added).map(p => p.full_name + ' (' + (p.relationship || '?') + ')').join(', ')}. Refresh to see.`;
+                } else {
+                    body.textContent = `Chat updated identities. Refresh to see latest.`;
+                }
+                t.classList.remove('hidden');
+                lastIdsCount = ids.length;
+                lastIdsKey = key;
+            }
+        } catch (e) { /* silent */ }
+    }, 6000);
+})();
+</script>
+{% endif %}
+
 {% block wizard_scripts %}{% endblock %}
 {% endblock %}
