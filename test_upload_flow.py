@@ -23,9 +23,18 @@ BASE_URL = os.environ.get('WILLCRAFT_BASE_URL', 'http://127.0.0.1:8000')
 ADMIN_EMAIL = os.environ.get('WILLCRAFT_ADMIN_EMAIL', 'kylie.tan@alantanjb.com')
 ADMIN_PASSWORD = os.environ.get('WILLCRAFT_ADMIN_PASSWORD', 'Aia12345#')
 
-DEFAULT_PDF = (
-    '/Users/gan/Downloads/PHEK YI TING DRAFT The Last Will and Testament 2 (1).pdf'
-)
+DEFAULT_PDF_CANDIDATES = [
+    '/Users/gan/Downloads/PHEK YI TING DRAFT The Last Will and Testament 2 (1).pdf',
+    '/Users/gan/Downloads/PHEK_YI_TING_Format_Preview.pdf',
+    '/Users/gan/Downloads/PHEK_YI_TING_AI_Generated_v01.docx',
+]
+
+
+def _resolve_default_pdf():
+    for p in DEFAULT_PDF_CANDIDATES:
+        if os.path.isfile(p):
+            return p
+    return None
 
 
 def ok(msg):
@@ -42,7 +51,13 @@ def warn(msg):
 
 
 def main():
-    pdf = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PDF
+    pdf = sys.argv[1] if len(sys.argv) > 1 else _resolve_default_pdf()
+    if not pdf:
+        fail(
+            'No PDF found in any default candidate path. Pass one as arg:\n'
+            '    python3 test_upload_flow.py /path/to/will.pdf\n'
+            'Default candidates checked: ' + ', '.join(DEFAULT_PDF_CANDIDATES)
+        )
     if not os.path.isfile(pdf):
         fail(f'PDF not found: {pdf}')
 
