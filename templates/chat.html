@@ -33,14 +33,15 @@
         </div>
         <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
-                <code id="inbox-addr" class="px-2 py-1 bg-white text-indigo-800 text-xs sm:text-sm rounded border border-indigo-100 font-mono break-all">{{ inbox_address }}</code>
+                {# Cloudflare's "Email Address Obfuscation" rewrites any visible email
+                   address to "[email protected]". Wrap in <!--email_off--> markers and
+                   use the .__cf_email_off class so Cloudflare leaves it alone. #}
+                <code id="inbox-addr" class="__cf_email_off px-2 py-1 bg-white text-indigo-800 text-xs sm:text-sm rounded border border-indigo-100 font-mono break-all"><!--email_off-->{{ inbox_address }}<!--/email_off--></code>
                 <button onclick="copyInboxAddress()" class="text-xs px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 flex items-center gap-1" title="Copy address">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                     Copy
                 </button>
-                <a href="mailto:{{ inbox_address }}" class="text-xs px-2 py-1 border border-indigo-300 text-indigo-700 rounded hover:bg-white" title="Open in mail app">
-                    Open in Mail
-                </a>
+                <a href="mailto:{{ inbox_address }}" class="__cf_email_off text-xs px-2 py-1 border border-indigo-300 text-indigo-700 rounded hover:bg-white" title="Open in mail app"><!--email_off-->Open in Mail<!--/email_off--></a>
             </div>
             <p class="text-[11px] text-indigo-600/80 mt-1.5">
                 In WhatsApp: long-press a message or photo → <strong>Share</strong> → <strong>Mail</strong> → paste this address as the recipient. Anything you send arrives here within seconds.
@@ -111,6 +112,21 @@
 
 <script>
 window.CHAT_CLIENT_ID = "{{ client.id }}";
+
+function copyInboxAddress() {
+    var el = document.getElementById('inbox-addr');
+    var txt = el ? el.textContent.trim() : '';
+    if (!txt) return;
+    navigator.clipboard.writeText(txt).then(function () {
+        var btn = event.target.closest('button');
+        if (!btn) return;
+        var orig = btn.innerHTML;
+        btn.innerHTML = '✓ Copied';
+        setTimeout(function () { btn.innerHTML = orig; }, 1400);
+    }).catch(function () {
+        prompt('Copy this address:', txt);
+    });
+}
 </script>
-<script src="{{ url_for('static', filename='js/chat.js') }}?v=20260503"></script>
+<script src="{{ url_for('static', filename='js/chat.js') }}?v=20260503b"></script>
 {% endblock %}
