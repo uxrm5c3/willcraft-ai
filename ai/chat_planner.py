@@ -98,10 +98,14 @@ def plan_turn(
         reply_parts.append(_step2_question(s1))
         return _wrap(reply_parts, questions, patch, advice)
 
-    # ── 4. STEP 3: Executor ─────────────────────────────────────────────
-    if n_executors == 0:
-        reply_parts.append(_step3_executor_question(current_will_data))
-        return _wrap(reply_parts, questions, patch, advice)
+    # ── 4. STEP 3: Executor (main + substitute) ─────────────────────────
+    # Walk through main first, then substitute. Only stop after both are
+    # set OR user typed `skip` for substitute (handled by _try_save_executor).
+    if n_executors < 2:
+        q = _step3_executor_question(current_will_data, recent_text=recent_text)
+        reply_parts.append(q['text'])
+        focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
+        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
 
     # ── 5. STEP 5: Beneficiaries ───────────────────────────────────────
     if n_beneficiaries == 0:
@@ -225,17 +229,131 @@ def _step2_question(s1: Dict[str, Any]) -> str:
     )
 
 
-def _step3_executor_question(will_data: Dict[str, Any]) -> str:
-    return (
-        "### ⚖️ Step 3: Executor & Trustees\n\n"
-        "Who should be the executor (the person who carries out your wishes)?\n\n"
-        "- A single executor is fine if they're trusted and capable.\n"
-        "- **Joint executors are recommended if any beneficiary is a minor**, "
-        "or if the estate is complex.\n"
-        "- The executor often doubles as the trustee.\n\n"
-        "Reply with the name(s), e.g. `Joshua` or `Joshua and Esther jointly`. "
-        "Pick from the identities you already added."
-    )
+def find_executor_candidate(identities, executors, role, recent_text=''):
+    """Pick the best candidate for main / substitute executor.
+    Returns {'person_id', 'name', 'evidence', 'document_id'} or None.
+    Used by both _step3_executor_question (to suggest in prompt) and the
+    chat-message route (to apply when user replies 'yes')."""
+    # 1) Already marked Executor in identities
+    already = next((i for i in identities
+                    if 'executor' in (i.get('relationship') or '').lower()), None)
+    if already and not _is_already_executor(already, executors):
+        return {'person_id': already.get('id'),
+                'name': already.get('full_name'),
+                'evidence': 'marked Executor in identities',
+                'document_id': already.get('document_id') or None}
+
+    # 2) Email-text deduction (Claude)
+    if recent_text:
+        try:
+            from ai.role_deducer import deduce_roles
+            names = [i['full_name'] for i in identities if i.get('full_name')]
+            if names:
+                ded = deduce_roles(recent_text, names)
+                for n, info in ded.items():
+                    if info.get('role') == 'Executor':
+                        match = next((i for i in identities if i['full_name'] == n), None)
+                        if match and not _is_already_executor(match, executors):
+                            return {'person_id': match.get('id'),
+                                    'name': n,
+                                    'evidence': info.get('evidence', ''),
+                                    'document_id': match.get('document_id') or None}
+        except Exception:
+            pass
+
+    # 3) Substitute heuristic — adult spouse / child not already executor
+    if role == 'substitute':
+        for i in identities:
+            rel = (i.get('relationship') or '').lower()
+            if rel in ('spouse', 'wife', 'husband', 'son', 'daughter') and \
+               not _is_already_executor(i, executors):
+                return {'person_id': i.get('id'),
+                        'name': i.get('full_name'),
+                        'evidence': f"adult {rel} — common substitute choice",
+                        'document_id': i.get('document_id') or None}
+    return None
+
+
+def _step3_executor_question(will_data: Dict[str, Any], recent_text: str = '') -> Dict[str, Any]:
+    """Returns {text, focus_doc_id} — the question to ask + which IC photo
+    to attach. Walks main → substitute executor based on what's already
+    saved in step2_data.executors."""
+    identities = will_data.get('identities') or []
+    s2 = will_data.get('step2') or {}
+    executors = s2.get('executors') or []
+    n_done = len(executors)
+    role = 'main' if n_done == 0 else 'substitute'
+
+    # Compute minors from DOB (only if we have DOBs)
+    from datetime import date
+    today = date.today()
+    minors = []
+    for i in identities:
+        dob = i.get('date_of_birth') or ''
+        try:
+            if dob and len(dob) == 10:
+                y, m, d = int(dob[:4]), int(dob[5:7]), int(dob[8:10])
+                age = today.year - y - ((today.month, today.day) < (m, d))
+                if 0 < age < 18:
+                    minors.append((i['full_name'], age))
+        except (ValueError, IndexError):
+            pass
+
+    candidate = find_executor_candidate(identities, executors, role, recent_text)
+
+    parts = [f"### ⚖️ Step 3: {'Main' if role=='main' else 'Substitute'} Executor"]
+
+    if role == 'main':
+        parts.append(
+            "Who should be the **main executor** — the person who carries out "
+            "your wishes when you pass on?"
+        )
+    else:
+        # Show who the main is for context
+        m = executors[0] if executors else {}
+        parts.append(
+            f"✓ Main executor: **{m.get('full_name','?')}**.\n\n"
+            "Now choose a **substitute (backup) executor** — they take over if "
+            "the main predeceases you or declines."
+        )
+
+    if candidate:
+        parts.append(
+            f"📌 Suggestion: **{candidate['name']}** "
+            f"(_{candidate['evidence']}_)."
+        )
+        parts.append(
+            "Reply **`yes`** to confirm, name someone else from your identities, "
+            "or **`skip`** to skip the substitute (only valid for substitute)."
+        )
+    else:
+        names = ', '.join(i['full_name'] for i in identities[:6])
+        parts.append(
+            f"Reply with a name from your identities ({names}{', …' if len(identities)>6 else ''})."
+        )
+        if role == 'substitute':
+            parts.append("Or **`skip`** if you don't want a substitute.")
+
+    # Tailored note — only if relevant
+    if minors and role == 'main':
+        parts.append(
+            f"⚠️ {len(minors)} minor beneficiary(ies) detected ({', '.join(n for n,_ in minors)}). "
+            "Joint executors strongly recommended; you'll also need a guardian (Step 4)."
+        )
+
+    return {'text': '\n\n'.join(parts), 'focus_doc_id': candidate.get('document_id') if candidate else None}
+
+
+def _is_already_executor(identity, executors):
+    """Has this identity already been added as an executor?"""
+    pid = identity.get('id')
+    name = (identity.get('full_name') or '').upper()
+    for e in executors:
+        if e.get('person_id') == pid:
+            return True
+        if (e.get('full_name') or '').upper() == name:
+            return True
+    return False
 
 
 def _is_confirmed(will_data: Dict[str, Any], section: str) -> bool:

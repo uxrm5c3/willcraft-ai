@@ -3110,6 +3110,8 @@ def _will_data_snapshot(will_record):
     identities = [{
         'id': p.id, 'full_name': p.full_name,
         'nric_passport': p.nric_passport, 'relationship': p.relationship or '',
+        'date_of_birth': p.date_of_birth or '',
+        'document_id': p.document_id or '',
     } for p in persons]
     return {
         'will_id': will_record.id,
@@ -3351,6 +3353,12 @@ def api_chat_message(client_id):
     #    the planner asks about the NEXT one.
     just_assigned = _try_assign_pending_identity(client_id, user_text)
     just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)
+    # If we're past Step 1, attempt executor save (main / substitute)
+    just_executor = None
+    if not just_assigned and not just_deleted:
+        from services.identity_walker import get_pending_ic_documents as _gpid
+        if not _gpid(client_id):  # Step 1 done
+            just_executor = _try_save_executor(client_id, user_text)
     from services.identity_walker import get_pending_ic_documents
     pending_ics = get_pending_ic_documents(client_id)
     recent_text = _gather_recent_chat_text(client_id)
@@ -3362,9 +3370,11 @@ def api_chat_message(client_id):
                    .order_by(Will.updated_at.desc())
                    .first())
     will_snapshot = _will_data_snapshot(active_will)
+    # Treat executor save as a "just_assigned" so the planner acknowledges
+    just = just_assigned or just_executor
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
-                     just_assigned=just_assigned, just_deleted=just_deleted)
+                     just_assigned=just, just_deleted=just_deleted)
 
     if file_errors:
         plan['reply'] = (plan.get('reply') or '') + (
@@ -3729,6 +3739,86 @@ def _try_delete_pending_identity(client_id: str, user_text: str):
     db.session.commit()
     label = name or target.get('original_filename', 'this document')
     return {'name': label, 'action': 'deleted', 'count': count}
+
+
+def _try_save_executor(client_id: str, user_text: str):
+    """If chat is at the executor stage and user replied with a name OR
+    'yes' (to confirm the suggested candidate), persist to the active
+    Will's step2_data. Returns {'name', 'role'} or None."""
+    if not user_text:
+        return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        s2 = json.loads(will.step2_data or '{}')
+        if not isinstance(s2, dict):
+            s2 = {}
+    except (json.JSONDecodeError, TypeError):
+        s2 = {}
+    executors = s2.get('executors') or []
+    if len(executors) >= 2:
+        return None
+    role = 'main' if len(executors) == 0 else 'substitute'
+
+    text_lower = user_text.lower().strip()
+    words = set(re.findall(r'\b[a-z]+\b', text_lower))
+
+    # Skip — only valid for substitute
+    if role == 'substitute' and any(t in words for t in _SKIP_TOKENS):
+        s2['_substitute_skipped'] = True
+        will.step2_data = json.dumps(s2)
+        db.session.commit()
+        return {'name': '(no substitute)', 'role': 'substitute', 'action': 'skipped'}
+
+    # Find a Person matching either a name in the text OR (if 'yes')
+    # the planner's suggested candidate.
+    persons = Person.query.filter_by(client_id=client_id).all()
+    chosen = None
+    for p in persons:
+        nm = (p.full_name or '').lower()
+        if nm and nm in text_lower:
+            chosen = p
+            break
+
+    if not chosen and any(t in words for t in _CONFIRM_TOKENS):
+        # User said yes — apply the candidate the planner suggested
+        from ai.chat_planner import find_executor_candidate
+        identities = [{
+            'id': p.id, 'full_name': p.full_name,
+            'relationship': p.relationship or '',
+            'date_of_birth': p.date_of_birth or '',
+            'document_id': p.document_id or '',
+        } for p in persons]
+        recent = _gather_recent_chat_text(client_id)
+        cand = find_executor_candidate(identities, executors, role, recent)
+        if cand:
+            chosen = next((p for p in persons if p.id == cand['person_id']), None)
+
+    if not chosen:
+        return None
+
+    # Don't add the same person twice
+    for e in executors:
+        if e.get('person_id') == chosen.id:
+            return None
+
+    executors.append({
+        'full_name': chosen.full_name,
+        'nric_passport': chosen.nric_passport or '',
+        'address': chosen.address or '',
+        'relationship': chosen.relationship or '',
+        'person_id': chosen.id,
+        'is_substitute': (role == 'substitute'),
+    })
+    s2['executors'] = executors
+    s2['executor_type'] = 'joint' if len(executors) > 1 else 'single'
+    s2['trustee_data'] = s2.get('trustee_data') or {'same_as_executor': True, 'trustees': [{}]}
+    will.step2_data = json.dumps(s2)
+    db.session.commit()
+    return {'name': chosen.full_name, 'role': f'{role} executor'}
 
 
 def _try_assign_pending_identity(client_id: str, user_text: str):
