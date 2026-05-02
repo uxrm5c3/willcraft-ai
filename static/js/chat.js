@@ -552,77 +552,73 @@
       );
     }
 
+    // Build per-step data — figure out which step is "current" so we can
+    // auto-expand it and collapse the rest.
     const s1 = will.step1 || {};
-    sections.push(snapshotSection(
-      '1', 'Testator', s1.full_name ? '/wizard/step/2' : null,
-      s1.full_name ? [
-        ['Name', s1.full_name],
-        ['NRIC', s1.nric_passport],
-        ['DOB', s1.date_of_birth],
-        ['Address', s1.residential_address],
-      ] : null
-    ));
-
-    // Step 2: Executors — show names with main/substitute role
     const execs = (will.step2 && will.step2.executors) || [];
-    sections.push(snapshotSection('2', 'Executors', execs.length ? '/wizard/step/3' : null,
-      execs.length
-        ? execs.map(e => [
-            e.is_substitute ? 'Substitute' : 'Main',
-            e.full_name + (e.relationship ? ` (${e.relationship})` : '')
-          ])
-        : null
-    ));
-
-    // Step 3: Guardians
     const guardians = (will.step3 && will.step3.guardians) || [];
-    sections.push(snapshotSection('3', 'Guardians', guardians.length ? '/wizard/step/4' : null,
-      guardians.length
-        ? guardians.map(g => [null, g.full_name || g.name || '?'])
-        : null
-    ));
-
-    // Step 4: Beneficiaries
     const benefs = Array.isArray(will.step4) ? will.step4 : [];
-    sections.push(snapshotSection('4', 'Beneficiaries', benefs.length ? '/wizard/step/5' : null,
-      benefs.length
-        ? benefs.map(b => [null, (b.full_name || b.name || '?') + (b.share ? ` — ${b.share}` : '')])
-        : null
-    ));
-
-    // Step 5: Specific Gifts
     const gifts = Array.isArray(will.step5) ? will.step5 : [];
-    sections.push(snapshotSection('5', 'Specific Gifts', gifts.length ? '/wizard/step/6' : null,
-      gifts.length
-        ? gifts.map(g => [null, (g.description || g.gift_type || 'Gift').slice(0, 60)])
-        : null
-    ));
-
-    // Steps 6-8: just configured/empty
-    const otherSteps = [
-      ['6', 'Residuary Estate', will.step6 && Object.keys(will.step6).length ? 'Configured' : null, '/wizard/step/7'],
-      ['7', 'Trust', will.step7 && Object.keys(will.step7).length ? 'Configured' : null, '/wizard/step/8'],
-      ['8', 'Other Matters', will.step8 && Object.keys(will.step8).length ? 'Configured' : null, '/wizard/step/9'],
+    // Step numbers MATCH the wizard sidebar (Identities=1 above, Testator=2,
+    // Executors=3, Guardians=4, Beneficiaries=5, Gifts=6, Residuary=7,
+    // Trust=8, Other=9). DB columns are step1_data…step8_data offset −1.
+    const stepData = [
+      { n: '2', name: 'Testator', link: '/wizard/step/2',
+        fields: s1.full_name ? [
+          ['Name', s1.full_name], ['NRIC', s1.nric_passport],
+          ['DOB', s1.date_of_birth], ['Address', s1.residential_address],
+        ] : null },
+      { n: '3', name: 'Executors', link: '/wizard/step/3',
+        fields: execs.length ? execs.map(e => [
+          e.is_substitute ? 'Substitute' : 'Main',
+          e.full_name + (e.relationship ? ` (${e.relationship})` : '')
+        ]) : null },
+      { n: '4', name: 'Guardians', link: '/wizard/step/4',
+        fields: guardians.length ? guardians.map(g => [null, g.full_name || g.name || '?']) : null },
+      { n: '5', name: 'Beneficiaries', link: '/wizard/step/5',
+        fields: benefs.length ? benefs.map(b => [null,
+          (b.full_name || b.name || '?') + (b.share ? ` — ${b.share}` : '')]) : null },
+      { n: '6', name: 'Specific Gifts', link: '/wizard/step/6',
+        fields: gifts.length ? gifts.map(g => [null,
+          (g.description || g.gift_type || 'Gift').slice(0, 60)]) : null },
+      { n: '7', name: 'Residuary Estate', link: '/wizard/step/7',
+        fields: will.step6 && Object.keys(will.step6).length ? [[null, 'Configured']] : null },
+      { n: '8', name: 'Trust', link: '/wizard/step/8',
+        fields: will.step7 && Object.keys(will.step7).length ? [[null, 'Configured']] : null },
+      { n: '9', name: 'Other Matters', link: '/wizard/step/9',
+        fields: will.step8 && Object.keys(will.step8).length ? [[null, 'Configured']] : null },
     ];
-    for (const [n, name, summary, link] of otherSteps) {
-      sections.push(snapshotSection(n, name, summary ? link : null, summary ? [[null, summary]] : null));
+
+    // "Current" step = first one without data. If all filled, last one.
+    let currentIdx = stepData.findIndex(s => !s.fields);
+    if (currentIdx === -1) currentIdx = stepData.length - 1;
+
+    for (let i = 0; i < stepData.length; i++) {
+      sections.push(snapshotSection(stepData[i], i === currentIdx));
     }
 
     willPane.innerHTML = sections.join('');
   }
 
-  function snapshotSection(num, name, link, fields) {
+  function snapshotSection(step, isCurrent) {
+    const { n, name, link, fields } = step;
     const isFilled = fields && fields.length;
     const checkmark = isFilled
       ? '<svg class="w-3.5 h-3.5 text-green-600 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>'
-      : '<span class="inline-block w-3.5 h-3.5 rounded-full border border-gray-300"></span>';
-    const header = link
-      ? `<a href="${link}" class="hover:text-primary-600 flex items-center gap-1.5">
-           ${checkmark}<span class="font-semibold">Step ${num}: ${escapeHtml(name)}</span>
-         </a>`
-      : `<div class="flex items-center gap-1.5 ${isFilled ? '' : 'text-gray-400'}">
-           ${checkmark}<span class="font-semibold">Step ${num}: ${escapeHtml(name)}</span>
-         </div>`;
+      : (isCurrent
+          ? '<span class="inline-block w-3.5 h-3.5 rounded-full bg-primary-500 animate-pulse"></span>'
+          : '<span class="inline-block w-3.5 h-3.5 rounded-full border border-gray-300"></span>');
+
+    // Inline summary in the <summary> tag — N items or first-line preview
+    let inlineSummary = '';
+    if (isFilled) {
+      const visibleFields = fields.filter(([k, v]) => v);
+      if (visibleFields.length === 1 && !visibleFields[0][0]) {
+        inlineSummary = visibleFields[0][1];
+      } else {
+        inlineSummary = `${visibleFields.length} item${visibleFields.length === 1 ? '' : 's'}`;
+      }
+    }
 
     let body = '';
     if (fields && fields.length) {
@@ -637,7 +633,25 @@
       }
       body += '</tbody></table>';
     }
-    return `<div class="border-b border-gray-100 pb-2 last:border-b-0">${header}${body}</div>`;
+
+    const headerInner = `${checkmark}<span class="font-semibold ${isCurrent ? 'text-primary-700' : (isFilled ? 'text-gray-800' : 'text-gray-400')}">Step ${n}: ${escapeHtml(name)}</span>`;
+    const summaryRight = inlineSummary
+      ? `<span class="ml-auto text-[11px] text-gray-500 truncate" style="max-width:9rem">${escapeHtml(inlineSummary)}</span>`
+      : '';
+    const linkBtn = (isFilled && link)
+      ? `<a href="${link}" onclick="event.stopPropagation()" class="ml-2 text-[11px] text-primary-600 hover:underline" title="Open in wizard">edit</a>`
+      : '';
+    const isOpen = isCurrent || !isFilled;
+
+    return `<details ${isOpen ? 'open' : ''} class="border-b border-gray-100 pb-1.5 last:border-b-0 group">
+      <summary class="cursor-pointer flex items-center gap-1.5 select-none py-1">
+        <svg class="w-3 h-3 text-gray-400 transition-transform group-open:rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M6 5l8 5-8 5V5z"/></svg>
+        ${headerInner}
+        ${summaryRight}
+        ${linkBtn}
+      </summary>
+      ${body}
+    </details>`;
   }
 
   // ── Load + render history ────────────────────────────────────────────
