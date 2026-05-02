@@ -430,6 +430,27 @@ def save_will_to_db():
     will_id = session.get('will_id')
     step1 = session.get('step1', {})
 
+    # Fallback: if step1 (testator) is empty but the user added someone marked
+    # 'Testator' in the Identities step (Step 1), pull their details so the
+    # Will title and Client name don't end up as "Will of Unknown" / "New Client".
+    if not (step1 or {}).get('full_name'):
+        for p in session.get('person_registry', []):
+            if (p.get('relationship') or '').strip().lower() == 'testator':
+                step1 = {
+                    'full_name': p.get('full_name', '') or '',
+                    'nric_passport': p.get('nric_passport', '') or '',
+                    'residential_address': p.get('address', '') or '',
+                    'date_of_birth': p.get('date_of_birth', '') or '',
+                    'nationality': p.get('nationality', 'Malaysian') or 'Malaysian',
+                    'gender': p.get('gender', '') or '',
+                    'email': p.get('email', '') or '',
+                    'phone': p.get('phone', '') or '',
+                    'person_id': p.get('id', '') or '',
+                }
+                session['step1'] = step1
+                session.modified = True
+                break
+
     if will_id:
         will_record = db.session.get(Will, will_id)
     else:
