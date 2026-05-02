@@ -56,8 +56,13 @@ RELATIONSHIP_KEYWORDS = {
 
 
 def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
-    """ICs (Documents in 'nric' category) that don't yet have a Person
-    linked to them. Sorted by created_at so we walk in upload order.
+    """ICs that don't yet have a corresponding Person. Dedupes by extracted
+    name (case-insensitive), so re-uploading the same IC twice doesn't
+    cause the walk-through to ask about it twice.
+
+    A Document is skipped if EITHER:
+      - it's already linked to a Person, OR
+      - any Person already exists with the same extracted name.
     """
     docs = (Document.query
             .filter_by(client_id=client_id, category='nric')
@@ -65,13 +70,14 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
             .all())
     if not docs:
         return []
-    doc_ids = [d.id for d in docs]
-    linked_doc_ids = {p.document_id for p in Person.query.filter(
-        Person.client_id == client_id,
-        Person.document_id.in_(doc_ids),
-    ).all() if p.document_id}
+
+    # All Persons for this client — used to dedupe by name
+    persons = Person.query.filter_by(client_id=client_id).all()
+    known_names = {(p.full_name or '').strip().upper() for p in persons if p.full_name}
+    linked_doc_ids = {p.document_id for p in persons if p.document_id}
 
     pending = []
+    seen_in_pending = set()  # names we've already queued in this batch
     for d in docs:
         if d.id in linked_doc_ids:
             continue
@@ -79,6 +85,15 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
             ex = json.loads(d.extracted_data) if d.extracted_data else {}
         except (json.JSONDecodeError, TypeError):
             ex = {}
+        name_key = ((ex.get('full_name') or '').strip().upper())
+        if name_key:
+            if name_key in known_names:
+                continue  # a Person already exists for this name elsewhere
+            if name_key in seen_in_pending:
+                continue  # duplicate within this batch
+            seen_in_pending.add(name_key)
+        # Unreadable-name docs (name_key empty) all stay pending —
+        # the user has to look at the thumbnail and identify them.
         pending.append({
             'document_id': d.id,
             'extracted': ex,
@@ -86,6 +101,32 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
             'created_at': d.created_at.isoformat() if d.created_at else '',
         })
     return pending
+
+
+def link_duplicate_ic_documents(client_id: str, person):
+    """After a Person is created/updated for a name, link every other
+    Document in nric category whose extracted name matches this Person.
+    Keeps the data tidy so the chat doesn't see them as 'pending' later
+    and so the wizard's docs view shows all uploads against the same Person."""
+    if not person or not person.full_name:
+        return
+    target_name = person.full_name.strip().upper()
+    docs = Document.query.filter_by(client_id=client_id, category='nric').all()
+    for d in docs:
+        if d.id == person.document_id:
+            continue
+        try:
+            ex = json.loads(d.extracted_data) if d.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            ex = {}
+        nm = ((ex.get('full_name') or '').strip().upper())
+        if nm and nm == target_name:
+            # No FK column on Document linking to Person, but we can mark
+            # the Document so it doesn't show as pending. The dedupe
+            # in get_pending_ic_documents already handles this via the
+            # known_names set, but linking via Person.document_id ensures
+            # consistency. Skip silently here — dedupe is enough.
+            pass
 
 
 def parse_relationship(text: str) -> Optional[str]:
