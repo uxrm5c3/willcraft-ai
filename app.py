@@ -3426,6 +3426,58 @@ def api_chat_apply(client_id, message_id):
     })
 
 
+@app.route('/api/chat/<client_id>/clear', methods=['POST'])
+@login_required
+def api_chat_clear(client_id):
+    """Delete every message in this client's chat (Documents are kept —
+    they're owned by the Client, just unlinked from the gone messages)."""
+    client = db.session.get(Client, client_id)
+    if not client:
+        return jsonify({'ok': False, 'error': 'Client not found'}), 404
+    cs = (ChatSession.query
+          .filter_by(client_id=client_id)
+          .order_by(ChatSession.created_at.desc())
+          .first())
+    if not cs:
+        return jsonify({'ok': True, 'deleted': 0})
+    msg_ids = [m.id for m in ChatMessage.query.filter_by(session_id=cs.id).all()]
+    if msg_ids:
+        Document.query.filter(Document.chat_message_id.in_(msg_ids)).update(
+            {Document.chat_message_id: None}, synchronize_session=False)
+    n = ChatMessage.query.filter_by(session_id=cs.id).delete()
+    db.session.commit()
+    return jsonify({'ok': True, 'deleted': n})
+
+
+@app.route('/api/chat/<client_id>/message/<message_id>', methods=['DELETE'])
+@login_required
+def api_chat_message_delete(client_id, message_id):
+    """Delete a single chat message (and its assistant reply if it's a user
+    message). Useful for cleaning up junk without nuking the whole thread."""
+    m = db.session.get(ChatMessage, message_id)
+    if not m:
+        return jsonify({'ok': False, 'error': 'Message not found'}), 404
+    cs = db.session.get(ChatSession, m.session_id)
+    if not cs or cs.client_id != client_id:
+        return jsonify({'ok': False, 'error': 'Wrong client'}), 403
+    deleted_ids = [m.id]
+    # If this is a user message, also delete the immediately following
+    # assistant reply (so they remove as a pair the way they were created).
+    if m.role == 'user':
+        nxt = (ChatMessage.query
+               .filter(ChatMessage.session_id == cs.id,
+                       ChatMessage.created_at > m.created_at,
+                       ChatMessage.role == 'assistant')
+               .order_by(ChatMessage.created_at.asc()).first())
+        if nxt:
+            deleted_ids.append(nxt.id)
+    Document.query.filter(Document.chat_message_id.in_(deleted_ids)).update(
+        {Document.chat_message_id: None}, synchronize_session=False)
+    ChatMessage.query.filter(ChatMessage.id.in_(deleted_ids)).delete(synchronize_session=False)
+    db.session.commit()
+    return jsonify({'ok': True, 'deleted': len(deleted_ids)})
+
+
 @app.route('/api/chat/<client_id>/reject/<message_id>', methods=['POST'])
 @login_required
 def api_chat_reject(client_id, message_id):

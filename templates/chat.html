@@ -20,6 +20,11 @@
             </h1>
         </div>
         <div class="flex gap-2">
+            <button type="button" onclick="clearChatHistory()"
+                    class="px-3 py-1.5 text-xs sm:text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+                    title="Delete every message in this chat (kept files stay)">
+                Clear Chat
+            </button>
             <a href="/clients/{{ client.id }}/files" class="px-3 py-1.5 text-xs sm:text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">Files</a>
             <a href="/wizard/step/1" class="px-3 py-1.5 text-xs sm:text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700">Open Wizard</a>
         </div>
@@ -134,5 +139,5 @@ function copyInboxAddress() {
     });
 }
 </script>
-<script src="{{ url_for('static', filename='js/chat.js') }}?v=20260503d"></script>
+<script src="{{ url_for('static', filename='js/chat.js') }}?v=20260503e"></script>
 {% endblock %}

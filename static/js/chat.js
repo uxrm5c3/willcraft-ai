@@ -296,10 +296,17 @@
 
     const bubble = document.createElement('div');
     bubble.className = m.role === 'user'
-      ? 'max-w-[85%] bg-primary-600 text-white rounded-2xl rounded-br-sm px-4 py-2.5 shadow-sm'
-      : 'max-w-[90%] bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm';
+      ? 'relative max-w-[85%] bg-primary-600 text-white rounded-2xl rounded-br-sm px-4 py-2.5 shadow-sm group'
+      : 'relative max-w-[90%] bg-white border border-gray-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm group';
 
     let html = '';
+    // Per-message delete button (only on persisted messages, not optimistic ones)
+    if (m.id && !String(m.id).startsWith('pending-')) {
+      const btnCls = m.role === 'user'
+        ? 'absolute -top-1.5 -right-1.5 w-5 h-5 bg-white/90 text-red-500 hover:bg-red-50 rounded-full text-xs leading-none shadow border border-red-200'
+        : 'absolute -top-1.5 -right-1.5 w-5 h-5 bg-white text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full text-xs leading-none shadow border border-gray-200';
+      html += `<button type="button" onclick="window.__deleteMessage('${m.id}')" class="${btnCls}" title="Delete this message">×</button>`;
+    }
     if (m.content) {
       html += `<div class="text-sm ${m.role === 'user' ? '' : 'text-gray-800'}">${inlineMd(m.content)}</div>`;
     }
@@ -416,6 +423,25 @@
     const el = document.getElementById(id);
     if (el) el.remove();
   }
+
+  // ── Clear / delete ───────────────────────────────────────────────────
+  window.clearChatHistory = async function () {
+    if (!confirm('Delete every message in this chat? Documents stay; the conversation thread is wiped. This cannot be undone.')) return;
+    const r = await fetch(`/api/chat/${CLIENT_ID}/clear`, { method: 'POST' });
+    const data = await r.json();
+    if (!data.ok) { alert(data.error || 'Clear failed'); return; }
+    lastSignature = null;  // force re-render
+    await loadChatHistory({ force: true });
+  };
+
+  window.__deleteMessage = async function (msgId) {
+    if (!confirm('Delete this message (and the assistant reply if any)?')) return;
+    const r = await fetch(`/api/chat/${CLIENT_ID}/message/${msgId}`, { method: 'DELETE' });
+    const data = await r.json();
+    if (!data.ok) { alert(data.error || 'Delete failed'); return; }
+    lastSignature = null;
+    await loadChatHistory({ force: true });
+  };
 
   // ── Apply / reject ───────────────────────────────────────────────────
   window.__applyPatch = async function (msgId) {
