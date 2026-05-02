@@ -3606,6 +3606,58 @@ def api_chat_replan(client_id, message_id):
     return jsonify({'ok': True, 'message_id': asst_msg.id, 'replaced_replies': n_deleted})
 
 
+@app.route('/api/chat/<client_id>/backfill-extractions', methods=['POST'])
+@login_required
+def api_chat_backfill_extractions(client_id):
+    """Re-run the appropriate extractor on every Document for this client
+    where extracted_data is empty (or only an error). Useful after fixing
+    extractor bugs without re-uploading."""
+    client = db.session.get(Client, client_id)
+    if not client:
+        return jsonify({'ok': False, 'error': 'Client not found'}), 404
+    docs = Document.query.filter_by(client_id=client_id).all()
+    done = []
+    for doc in docs:
+        if doc.category not in ('property_title', 'property_tax', 'bank_statement',
+                                'vehicle', 'insurance', 'epf_kwsp', 'nric'):
+            continue
+        try:
+            existing = json.loads(doc.extracted_data) if doc.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            existing = {}
+        # Skip if already has substantive data (no error + at least one truthy field)
+        if existing and not existing.get('error') and any(
+            v for k, v in existing.items() if k not in ('error', 'raw') and v
+        ):
+            continue
+        abs_path = os.path.join(UPLOAD_DIR, doc.file_path)
+        if not os.path.isfile(abs_path):
+            continue
+        try:
+            if doc.category == 'nric':
+                from ai.ocr import extract_nric_data
+                ext = extract_nric_data(abs_path)
+            elif doc.category in ('property_title', 'property_tax'):
+                from ai.property_extractor import extract_property_data
+                ext = extract_property_data(abs_path, doc_type='general')
+            elif doc.category == 'bank_statement':
+                from ai.ocr import extract_asset_document
+                ext = extract_asset_document(abs_path, asset_type='bank')
+            elif doc.category == 'vehicle':
+                from ai.ocr import extract_asset_document
+                ext = extract_asset_document(abs_path, asset_type='vehicle')
+            else:
+                from ai.ocr import extract_asset_document
+                ext = extract_asset_document(abs_path, asset_type='other')
+            doc.extracted_data = json.dumps(ext)
+            done.append({'id': doc.id, 'category': doc.category,
+                         'filename': doc.original_filename})
+            db.session.commit()
+        except Exception as e:
+            done.append({'id': doc.id, 'category': doc.category, 'error': str(e)})
+    return jsonify({'ok': True, 'updated': len(done), 'details': done[:30]})
+
+
 @app.route('/api/chat/<client_id>/clear', methods=['POST'])
 @login_required
 def api_chat_clear(client_id):
