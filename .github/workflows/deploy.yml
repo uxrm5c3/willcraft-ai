@@ -8,6 +8,11 @@ name: Deploy to production
 #   DEPLOY_USER    = ubuntu
 #   DEPLOY_SSH_KEY = (paste private key — see deploy-setup.sh in repo root)
 #
+# Optional secrets (used by the email-to-chat feature; absent = feature disabled):
+#   POSTMARK_INBOUND_USER     = the username half of the webhook Basic Auth
+#   POSTMARK_INBOUND_PASS     = the password half of the webhook Basic Auth
+#   INBOUND_ALLOWED_DOMAINS   = comma-separated sender allowlist (default 'alantanjb.com')
+#
 # Then every `git push origin main` triggers this workflow → live in ~90s.
 
 on:
@@ -25,6 +30,33 @@ jobs:
           echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Sync inbound-mail env vars to server .env
+        # Idempotently upserts POSTMARK_* + INBOUND_ALLOWED_DOMAINS into
+        # /home/ubuntu/willcraft-ai/.env. Skips any var whose secret is empty
+        # so this step is safe to run before the secrets exist.
+        env:
+          PM_USER: ${{ secrets.POSTMARK_INBOUND_USER }}
+          PM_PASS: ${{ secrets.POSTMARK_INBOUND_PASS }}
+          ALLOWED: ${{ secrets.INBOUND_ALLOWED_DOMAINS }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+              -o StrictHostKeyChecking=no \
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+              bash -s -- "$PM_USER" "$PM_PASS" "$ALLOWED" <<'REMOTE'
+          set -eu
+          ENV_FILE=/home/ubuntu/willcraft-ai/.env
+          touch "$ENV_FILE"
+          set_var() {
+            local key="$1" val="$2"
+            [ -z "$val" ] && return 0
+            sed -i "/^${key}=/d" "$ENV_FILE"
+            printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
+          }
+          set_var POSTMARK_INBOUND_USER "$1"
+          set_var POSTMARK_INBOUND_PASS "$2"
+          set_var INBOUND_ALLOWED_DOMAINS "$3"
+          REMOTE
 
       - name: Pull + rebuild on server (will.alantanjb.com)
         run: |
