@@ -1,0 +1,40 @@
+name: Deploy to production
+
+# Auto-deploys WillCraft to will.alantanjb.com (AWS EC2 i-05de038faf5163f3c)
+# whenever main is pushed. SSHes into the server, pulls latest, rebuilds Docker.
+#
+# One-time setup (Repository Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST    = 52.221.231.214
+#   DEPLOY_USER    = ubuntu
+#   DEPLOY_SSH_KEY = (paste private key — see deploy-setup.sh in repo root)
+#
+# Then every `git push origin main` triggers this workflow → live in ~90s.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # also allow manual trigger from Actions tab
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Pull + rebuild on server
+        run: |
+          ssh -i ~/.ssh/id_ed25519 \
+              -o StrictHostKeyChecking=no \
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+              'set -e; cd ~/willcraft-ai && git pull && docker compose up -d --build'
+
+      - name: Smoke-check
+        run: |
+          # Wait for the container to be healthy + simple HTTP check
+          sleep 10
+          curl -sSf -o /dev/null -w "HTTP %{http_code}\n" https://will.alantanjb.com/login || true
