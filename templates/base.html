@@ -53,7 +53,7 @@
                     </a>
                     {% endif %}
 
-                    <a href="/wizard/new" class="text-xs sm:text-sm bg-primary-600 text-white hover:bg-primary-700 font-medium px-3 py-1.5 rounded-lg">+ New Will</a>
+                    <button type="button" onclick="openNewWillModal()" class="text-xs sm:text-sm bg-primary-600 text-white hover:bg-primary-700 font-medium px-3 py-1.5 rounded-lg">+ New Will</button>
 
                     <!-- User menu -->
                     <div class="relative" id="user-menu-container">
@@ -444,6 +444,55 @@
         btn.disabled = false;
         btn.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg> Send Report';
     }
+    </script>
+    {% endif %}
+
+    <!-- + New Will modal (testator name is required before any draft is created) -->
+    {% if g.user %}
+    <div id="new-will-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4" onclick="if(event.target===this)closeNewWillModal()">
+        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full">
+            <form method="POST" action="/wizard/new" class="p-6 space-y-4">
+                <div>
+                    <h3 class="text-lg font-bold text-gray-900">Start a new will</h3>
+                    <p class="text-xs text-gray-500 mt-1">We need the testator's name first so the draft is filed under the right client.</p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Testator's full name <span class="text-red-500">*</span></label>
+                    <input type="text" name="full_name" id="new-will-name" required autocomplete="off"
+                           placeholder="e.g. Koid Beng Son"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">NRIC / Passport <span class="text-gray-400 font-normal">(optional)</span></label>
+                    <input type="text" name="nric_passport" autocomplete="off"
+                           placeholder="e.g. 800101-01-1234"
+                           class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500">
+                    <p class="text-[11px] text-gray-400 mt-1">Skip this if you'll use AI Chat to extract from an IC photo.</p>
+                </div>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" onclick="closeNewWillModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancel</button>
+                    <button type="submit" class="px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">Create Draft &rarr;</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <script>
+    function openNewWillModal() {
+        var m = document.getElementById('new-will-modal');
+        if (!m) return;
+        m.classList.remove('hidden');
+        setTimeout(function () {
+            var i = document.getElementById('new-will-name');
+            if (i) i.focus();
+        }, 50);
+    }
+    function closeNewWillModal() {
+        var m = document.getElementById('new-will-modal');
+        if (m) m.classList.add('hidden');
+    }
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') closeNewWillModal();
+    });
     </script>
     {% endif %}
 

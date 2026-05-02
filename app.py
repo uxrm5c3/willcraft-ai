@@ -4789,22 +4789,45 @@ def reset():
     return redirect(url_for('index'))
 
 
-@app.route('/wizard/new')
+@app.route('/wizard/new', methods=['GET', 'POST'])
 @login_required
 def wizard_new():
-    """Start a brand-new will by clearing the current session."""
+    """Start a brand-new will. Testator name is REQUIRED — collected via the
+    "+ New Will" modal (POST). GET without a name falls back to /wills with
+    a flash so users can't bypass the modal by deep-linking.
+    """
     # Preserve auth keys during session reset
-    user_id = session.get('user_id')
-    user_role = session.get('user_role')
-    user_name = session.get('user_name')
-    user_email = session.get('user_email')
-    session.clear()
-    if user_id:
-        session['user_id'] = user_id
-        session['user_role'] = user_role
-        session['user_name'] = user_name
-        session['user_email'] = user_email
-    return redirect(url_for('wizard_step_identities'))
+    auth_keys = {k: session.get(k) for k in
+                 ('user_id', 'user_role', 'user_name', 'user_email')}
+
+    if request.method == 'POST':
+        full_name = (request.form.get('full_name') or '').strip()
+        nric = (request.form.get('nric_passport') or '').strip()
+        if not full_name:
+            flash('Please enter the testator\'s full name to start a new will.', 'error')
+            return redirect(url_for('will_list'))
+
+        session.clear()
+        for k, v in auth_keys.items():
+            if v: session[k] = v
+        session['step1'] = {
+            'full_name': full_name,
+            'nric_passport': nric,
+            'nationality': 'Malaysian',
+        }
+        # Create Client + Person immediately so Wills list / Client folder UI
+        # show the right name from the very first page load.
+        client_id = ensure_client()
+        from services.person_registry import ensure_person
+        pid = ensure_person(client_id, full_name, nric=nric, relationship='Testator')
+        if pid:
+            session['step1']['person_id'] = pid
+        db.session.commit()
+        return redirect(url_for('wizard_step_identities'))
+
+    # GET — was the entry point for "+ New Will" before; now require the modal.
+    flash('Please use the "+ New Will" button so we can capture the testator\'s name.', 'warning')
+    return redirect(url_for('will_list'))
 
 
 # ---------------------------------------------------------------------------

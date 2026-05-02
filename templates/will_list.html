@@ -6,9 +6,9 @@
 <div class="max-w-5xl mx-auto px-4 py-6 sm:py-8">
     <div class="flex flex-wrap justify-between items-center gap-2 mb-4 sm:mb-6">
         <h1 class="text-xl sm:text-2xl font-bold text-gray-900">Saved Wills</h1>
-        <a href="/wizard/new" class="px-3 py-2 sm:px-4 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">
+        <button type="button" onclick="openNewWillModal()" class="px-3 py-2 sm:px-4 bg-primary-600 text-white text-sm font-medium rounded-lg hover:bg-primary-700 transition-colors">
             + New Will
-        </a>
+        </button>
     </div>
 
     <!-- Search Bar -->
@@ -163,7 +163,7 @@ Open will to see full text and edit.{% endif %}</pre>
         <a href="/wills" class="text-primary-600 hover:underline font-medium">Show all clients</a>
         {% else %}
         <p class="text-gray-500 mb-4">No saved wills yet.</p>
-        <a href="/wizard/new" class="text-primary-600 hover:underline font-medium">Start drafting your first will</a>
+        <button type="button" onclick="openNewWillModal()" class="text-primary-600 hover:underline font-medium">Start drafting your first will</button>
         {% endif %}
     </div>
     {% endif %}
