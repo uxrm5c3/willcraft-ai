@@ -3448,6 +3448,68 @@ def api_chat_apply(client_id, message_id):
     })
 
 
+@app.route('/api/chat/<client_id>/replan/<message_id>', methods=['POST'])
+@login_required
+def api_chat_replan(client_id, message_id):
+    """Re-run the planner over an existing user message's attachments using
+    already-classified Document data (no re-call to Claude vision). Deletes
+    any prior assistant replies that followed this message and replaces them
+    with a fresh one. Useful after planner-code upgrades."""
+    from ai.chat_planner import plan_turn
+    user_msg = db.session.get(ChatMessage, message_id)
+    if not user_msg or user_msg.role != 'user':
+        return jsonify({'ok': False, 'error': 'Not a user message'}), 404
+    cs = db.session.get(ChatSession, user_msg.session_id)
+    if not cs or cs.client_id != client_id:
+        return jsonify({'ok': False, 'error': 'Wrong client'}), 403
+
+    try:
+        doc_ids = json.loads(user_msg.attachments_json or '[]')
+    except (json.JSONDecodeError, TypeError):
+        doc_ids = []
+    docs = Document.query.filter(Document.id.in_(doc_ids)).all() if doc_ids else []
+
+    KNOWN_KINDS = {'nric', 'property_title', 'property_tax', 'bank_statement',
+                   'insurance', 'epf_kwsp', 'vehicle', 'will', 'voice'}
+    artifacts = []
+    for doc in docs:
+        try:
+            extracted = json.loads(doc.extracted_data) if doc.extracted_data else None
+        except (json.JSONDecodeError, TypeError):
+            extracted = None
+        kind = doc.category if doc.category in KNOWN_KINDS else 'other'
+        artifacts.append({
+            'document_id': doc.id, 'kind': kind,
+            'confidence': 'high', 'extracted': extracted,
+            'original_filename': doc.original_filename,
+        })
+
+    # Delete any assistant replies that came AFTER this user message
+    n_deleted = (ChatMessage.query
+                 .filter(ChatMessage.session_id == cs.id,
+                         ChatMessage.role == 'assistant',
+                         ChatMessage.created_at > user_msg.created_at)
+                 .delete(synchronize_session=False))
+
+    client = db.session.get(Client, cs.client_id)
+    active_will = (Will.query.filter_by(client_id=client.id, status='draft')
+                   .filter(Will.deleted_at.is_(None))
+                   .order_by(Will.updated_at.desc()).first())
+    plan = plan_turn(user_msg.content or '', artifacts, _will_data_snapshot(active_will))
+
+    asst_msg = ChatMessage(
+        session_id=cs.id, role='assistant',
+        content=plan.get('reply', ''),
+        clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
+        proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
+        advice_json=json.dumps(plan.get('advice', [])),
+        target_will_id=active_will.id if active_will else None,
+    )
+    db.session.add(asst_msg)
+    db.session.commit()
+    return jsonify({'ok': True, 'message_id': asst_msg.id, 'replaced_replies': n_deleted})
+
+
 @app.route('/api/chat/<client_id>/clear', methods=['POST'])
 @login_required
 def api_chat_clear(client_id):
