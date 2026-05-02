@@ -325,7 +325,7 @@ def format_will_data(will_data) -> str:
 
     # Build mandatory substitute clauses summary
     sub_clauses = []
-    for i, g in enumerate(will_data.gifts):
+    for i, g in enumerate(will_data.gifts or []):
         sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
         if sub_mode == 'specific':
             def _lookup_sub(name):
@@ -370,11 +370,11 @@ def _inject_missing_substitutes(will_text: str, will_data) -> str:
     processed_mbs = set()
 
     sub_entries = []
-    for gi, g in enumerate(will_data.gifts):
+    for gi, g in enumerate(will_data.gifts or []):
         sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
         if sub_mode != 'specific':
             continue
-        for a in g.allocations:
+        for a in (g.allocations or []):
             if not a.substitutes:
                 continue
 
