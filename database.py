@@ -168,14 +168,48 @@ class Document(db.Model):
     id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     client_id = db.Column(db.String(36), db.ForeignKey('clients.id'), nullable=False)
     will_id = db.Column(db.String(36), db.ForeignKey('wills.id'), nullable=True)
+    chat_message_id = db.Column(db.String(36), db.ForeignKey('chat_messages.id'), nullable=True)
     filename = db.Column(db.String(300), nullable=False)
     original_filename = db.Column(db.String(300), nullable=False)
     file_path = db.Column(db.String(500), nullable=False)
     file_type = db.Column(db.String(50))
     file_size = db.Column(db.Integer)
-    category = db.Column(db.String(50))  # nric, property, financial, will, death_certificate
+    category = db.Column(db.String(50))  # nric, property, financial, will, death_certificate, chat_inbox
     description = db.Column(db.String(500), nullable=True)
     extracted_data = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ChatSession(db.Model):
+    """A chat thread for a client. One per client (latest active)."""
+    __tablename__ = 'chat_sessions'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    client_id = db.Column(db.String(36), db.ForeignKey('clients.id'), nullable=False)
+    created_by = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    messages = db.relationship('ChatMessage', backref='session', lazy=True,
+                               order_by='ChatMessage.created_at.asc()')
+
+
+class ChatMessage(db.Model):
+    """A single message in a chat session — user input or assistant reply."""
+    __tablename__ = 'chat_messages'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = db.Column(db.String(36), db.ForeignKey('chat_sessions.id'), nullable=False)
+    role = db.Column(db.String(20), nullable=False)  # user, assistant, system
+    content = db.Column(db.Text, nullable=True)
+    # JSON arrays/objects as strings
+    attachments_json = db.Column(db.Text, default='[]')          # list of document_id
+    clarifying_questions_json = db.Column(db.Text, default='[]') # list of strings
+    proposed_patch_json = db.Column(db.Text, nullable=True)      # dict — see chat_planner
+    advice_json = db.Column(db.Text, default='[]')               # list of {section, severity, text}
+    # Apply tracking
+    target_will_id = db.Column(db.String(36), db.ForeignKey('wills.id'), nullable=True)
+    applied_at = db.Column(db.DateTime, nullable=True)
+    applied_by = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
+    rejected_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}Chat — {{ client.full_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-2 sm:px-4 py-3 sm:py-4">
+    <!-- Header -->
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div class="min-w-0">
+            <div class="flex items-center gap-2 text-xs text-gray-500">
+                <a href="/clients" class="hover:text-primary-600">Clients</a>
+                <span>/</span>
+                <a href="/clients/{{ client.id }}/files" class="hover:text-primary-600 truncate">{{ client.full_name }}</a>
+                <span>/</span>
+                <span>Chat</span>
+            </div>
+            <h1 class="text-lg sm:text-xl font-bold text-gray-900 truncate">
+                {{ client.full_name }}
+                {% if client.nric_passport %}<span class="text-sm text-gray-400 font-normal">({{ client.nric_passport }})</span>{% endif %}
+            </h1>
+        </div>
+        <div class="flex gap-2">
+            <a href="/clients/{{ client.id }}/files" class="px-3 py-1.5 text-xs sm:text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">Files</a>
+            <a href="/wizard/step/1" class="px-3 py-1.5 text-xs sm:text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700">Open Wizard</a>
+        </div>
+    </div>
+
+    <!-- Two-pane layout -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4" style="height: calc(100vh - 200px); min-height: 500px;">
+        <!-- LEFT: Chat thread + input (2 cols on desktop) -->
+        <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
+            <!-- Thread -->
+            <div id="chat-thread" class="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-50/50">
+                <div id="chat-empty" class="text-center text-sm text-gray-400 py-8">
+                    Drop an IC photo or describe what you'd like to add to this will. I'll extract the details and propose changes for you to confirm.
+                </div>
+            </div>
+
+            <!-- Input -->
+            <form id="chat-form" class="border-t border-gray-200 bg-white p-3" onsubmit="return false;">
+                <div id="file-pills" class="hidden flex flex-wrap gap-1 mb-2"></div>
+                <div class="flex items-end gap-2">
+                    <label class="cursor-pointer p-2 text-gray-500 hover:text-primary-600 rounded-lg hover:bg-gray-100 flex-shrink-0" title="Attach files">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
+                        <input type="file" id="chat-files" multiple class="hidden"
+                               accept=".jpg,.jpeg,.png,.gif,.heic,.heif,.webp,.bmp,.pdf">
+                    </label>
+                    <textarea id="chat-text" rows="1"
+                              placeholder="Describe what to add, or drop an IC / property title above…"
+                              class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                              style="max-height:120px;"></textarea>
+                    <button id="chat-send" type="button" onclick="sendChatMessage()"
+                            class="p-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex-shrink-0"
+                            title="Send (Enter)">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                    </button>
+                </div>
+                <p class="text-[10px] text-gray-400 mt-1.5 text-center sm:text-left">
+                    Drag &amp; drop photos here. Supported: JPG, PNG, HEIC, PDF. Max 20MB each.
+                </p>
+            </form>
+        </div>
+
+        <!-- RIGHT: Will snapshot -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col overflow-hidden">
+            <div class="p-3 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                    <h2 class="text-sm font-bold text-gray-900">Will Snapshot</h2>
+                    <p id="will-status" class="text-[11px] text-gray-500">Loading…</p>
+                </div>
+                <button onclick="loadChatHistory()" title="Refresh"
+                        class="p-1.5 text-gray-400 hover:text-primary-600 rounded hover:bg-gray-100">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                </button>
+            </div>
+            <div id="will-snapshot" class="flex-1 overflow-y-auto p-3 text-xs space-y-2"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Drag overlay -->
+<div id="drag-overlay" class="hidden fixed inset-0 bg-primary-500/20 border-4 border-dashed border-primary-500 z-50 pointer-events-none flex items-center justify-center">
+    <div class="bg-white px-6 py-4 rounded-xl shadow-2xl text-primary-700 font-semibold text-lg">
+        Drop files to attach
+    </div>
+</div>
+
+<script>
+window.CHAT_CLIENT_ID = "{{ client.id }}";
+</script>
+<script src="{{ url_for('static', filename='js/chat.js') }}?v=20260503"></script>
+{% endblock %}

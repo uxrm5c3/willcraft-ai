@@ -16,7 +16,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import FLASK_SECRET_KEY, ANTHROPIC_API_KEY, SQLALCHEMY_DATABASE_URI, DATA_DIR, UPLOAD_DIR, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
-from database import db, Client, Will, WillEditLog, WillVersion, Person, Document, User, ROLE_PERMS, ROLE_LABELS, ProbateApplication, ProbateFormTemplate, ProbateGeneratedForm
+from database import db, Client, Will, WillEditLog, WillVersion, Person, Document, User, ROLE_PERMS, ROLE_LABELS, ProbateApplication, ProbateFormTemplate, ProbateGeneratedForm, ChatSession, ChatMessage
 
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
@@ -266,6 +266,13 @@ with app.app_context():
             pass
     # Create new tables (WillEditLog, Probate etc.) if they don't exist
     db.create_all()
+    # Migrate: add chat_message_id column to documents (links a doc to the chat message that uploaded it)
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(db.text("ALTER TABLE documents ADD COLUMN chat_message_id VARCHAR(36)"))
+            conn.commit()
+    except Exception:
+        pass  # Column already exists
     # Migrate: add new probate columns if not exists
     for col_def in [
         ("probate_applications", "application_type", "VARCHAR(20) DEFAULT 'probate'"),
@@ -2889,51 +2896,12 @@ def api_parse_will():
             return obj.get(key, []) or []
         return []
 
-    def _normalise_dob(dob):
-        """Accept DD/MM/YYYY or YYYY-MM-DD. Return YYYY-MM-DD."""
-        if not dob:
-            return ''
-        if '/' in dob:
-            parts = dob.split('/')
-            if len(parts) == 3 and len(parts[-1]) == 4:
-                return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
-        return dob
+    from services.person_registry import ensure_person, normalise_dob as _normalise_dob
 
-    # ── Create Person SQL records for every extracted individual so the
-    # wizard's person-registry can resolve person_id lookups. Without this,
-    # step 4/5 pickers come up empty and step submissions error out.
     def _ensure_person(name, nric, address='', relationship='', dob='',
                        nationality='Malaysian'):
-        if not name or not (name or '').strip():
-            return None
-        nric = (nric or '').strip()
-        clean_name = name.strip()
-        # Reuse existing person if name + NRIC already in the client's roster
-        existing = Person.query.filter_by(client_id=client_id, full_name=clean_name).first()
-        if existing:
-            # Update missing fields opportunistically
-            if not existing.nric_passport and nric:
-                existing.nric_passport = nric
-            if not existing.address and address:
-                existing.address = address
-            if not existing.relationship and relationship:
-                existing.relationship = relationship
-            if not existing.date_of_birth and dob:
-                existing.date_of_birth = _normalise_dob(dob)
-            db.session.flush()
-            return existing.id
-        new_p = Person(
-            client_id=client_id,
-            full_name=clean_name,
-            nric_passport=nric,
-            address=address or None,
-            relationship=relationship or None,
-            date_of_birth=_normalise_dob(dob) or None,
-            nationality=nationality or 'Malaysian',
-        )
-        db.session.add(new_p)
-        db.session.flush()
-        return new_p.id
+        return ensure_person(client_id, name, nric=nric, address=address,
+                             relationship=relationship, dob=dob, nationality=nationality)
 
     # ── Step 1: Testator ─────────────────────────────────────────────
     if 'step1_testator' in parsed:
@@ -3046,6 +3014,365 @@ def api_parse_will():
     save_will_to_db()
 
     return jsonify({'ok': True})
+
+
+# -- Client Chat (per-client AI inbox) --------------------------------------
+
+def _get_or_create_chat_session(client_id, user_id):
+    """One ChatSession per client (the most recent). Create if missing."""
+    cs = (ChatSession.query
+          .filter_by(client_id=client_id)
+          .order_by(ChatSession.created_at.desc())
+          .first())
+    if cs:
+        return cs
+    cs = ChatSession(client_id=client_id, created_by=user_id)
+    db.session.add(cs)
+    db.session.flush()
+    return cs
+
+
+def _get_or_create_active_will(client_id, user_id):
+    """Most recently updated non-deleted draft Will for this client, or new one."""
+    will = (Will.query
+            .filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc())
+            .first())
+    if will:
+        return will
+    will = Will(client_id=client_id, created_by=user_id)
+    db.session.add(will)
+    db.session.flush()
+    return will
+
+
+def _will_data_snapshot(will_record):
+    """Parse a Will's step JSON columns into a single dict for the chat planner & UI."""
+    if not will_record:
+        return {}
+    def _j(s, default):
+        try:
+            return json.loads(s) if s else default
+        except (json.JSONDecodeError, TypeError):
+            return default
+    return {
+        'will_id': will_record.id,
+        'title': will_record.title,
+        'status': will_record.status,
+        'step1': _j(will_record.step1_data, {}),
+        'step2': _j(will_record.step2_data, {}),
+        'step3': _j(will_record.step3_data, {}),
+        'step4': _j(will_record.step4_data, []),
+        'step5': _j(will_record.step5_data, []),
+        'step6': _j(will_record.step6_data, {}),
+        'step7': _j(will_record.step7_data, {}),
+        'step8': _j(will_record.step8_data, {}),
+    }
+
+
+def _serialise_chat_message(m):
+    """Turn a ChatMessage row into a JSON-friendly dict for the UI."""
+    def _j(s, default):
+        try:
+            return json.loads(s) if s else default
+        except (json.JSONDecodeError, TypeError):
+            return default
+
+    attachment_ids = _j(m.attachments_json, [])
+    attachments = []
+    if attachment_ids:
+        docs = Document.query.filter(Document.id.in_(attachment_ids)).all()
+        doc_by_id = {d.id: d for d in docs}
+        for did in attachment_ids:
+            d = doc_by_id.get(did)
+            if not d:
+                continue
+            attachments.append({
+                'id': d.id,
+                'filename': d.original_filename,
+                'category': d.category,
+                'size': d.file_size,
+            })
+    return {
+        'id': m.id,
+        'role': m.role,
+        'content': m.content or '',
+        'attachments': attachments,
+        'clarifying_questions': _j(m.clarifying_questions_json, []),
+        'proposed_patch': _j(m.proposed_patch_json, None),
+        'advice': _j(m.advice_json, []),
+        'applied_at': m.applied_at.isoformat() if m.applied_at else None,
+        'rejected_at': m.rejected_at.isoformat() if m.rejected_at else None,
+        'created_at': m.created_at.isoformat() if m.created_at else None,
+    }
+
+
+@app.route('/chat/<client_id>')
+@login_required
+def chat_page(client_id):
+    """Render the per-client AI chat page."""
+    client = db.session.get(Client, client_id)
+    if not client:
+        flash('Client not found.', 'error')
+        return redirect(url_for('clients_list'))
+    return render_template('chat.html', client=client)
+
+
+@app.route('/api/chat/<client_id>/history')
+@login_required
+def api_chat_history(client_id):
+    """Return all messages in the client's chat session + current will snapshot."""
+    client = db.session.get(Client, client_id)
+    if not client:
+        return jsonify({'ok': False, 'error': 'Client not found'}), 404
+
+    cs = (ChatSession.query
+          .filter_by(client_id=client_id)
+          .order_by(ChatSession.created_at.desc())
+          .first())
+    messages = []
+    if cs:
+        for m in cs.messages:
+            messages.append(_serialise_chat_message(m))
+
+    active_will = (Will.query
+                   .filter_by(client_id=client_id, status='draft')
+                   .filter(Will.deleted_at.is_(None))
+                   .order_by(Will.updated_at.desc())
+                   .first())
+    snapshot = _will_data_snapshot(active_will)
+    return jsonify({'ok': True, 'messages': messages, 'will': snapshot})
+
+
+@app.route('/api/chat/<client_id>/message', methods=['POST'])
+@login_required
+def api_chat_message(client_id):
+    """Receive a chat message (text + optional file uploads) and return the assistant reply."""
+    from uploads import save_uploaded_file
+    from ai.file_classifier import classify_file
+    from ai.ocr import extract_nric_data
+    from ai.chat_planner import plan_turn
+
+    client = db.session.get(Client, client_id)
+    if not client:
+        return jsonify({'ok': False, 'error': 'Client not found'}), 404
+
+    user_text = (request.form.get('text') or '').strip()
+    files = request.files.getlist('files') if 'files' in request.files else []
+
+    if not user_text and not files:
+        return jsonify({'ok': False, 'error': 'Empty message'}), 400
+
+    user_id = session.get('user_id')
+    cs = _get_or_create_chat_session(client_id, user_id)
+
+    # 1. Persist the user message first so attachments can FK to it
+    user_msg = ChatMessage(
+        session_id=cs.id, role='user', content=user_text,
+        attachments_json='[]',
+    )
+    db.session.add(user_msg)
+    db.session.flush()
+
+    folder_name = client.folder_name
+    attachment_ids = []
+    artifacts = []
+    file_errors = []
+
+    for f in files:
+        if not f or not f.filename:
+            continue
+        try:
+            saved_name, rel_path, file_size = save_uploaded_file(
+                f, client_id, category='chat_inbox', folder_name=folder_name)
+        except ValueError as e:
+            file_errors.append(f"{f.filename}: {e}")
+            continue
+
+        doc = Document(
+            client_id=client_id,
+            chat_message_id=user_msg.id,
+            filename=saved_name, original_filename=f.filename,
+            file_path=rel_path, file_type=f.content_type,
+            file_size=file_size, category='chat_inbox',
+        )
+        db.session.add(doc)
+        db.session.flush()
+        attachment_ids.append(doc.id)
+
+        abs_path = os.path.join(UPLOAD_DIR, rel_path)
+
+        # 2. Classify
+        classification = classify_file(abs_path)
+        kind = classification.get('kind', 'other')
+
+        # 3. Extract (kind-specific) — slice 1: IC only, others queued for later slices
+        extracted = None
+        if kind == 'nric':
+            try:
+                extracted = extract_nric_data(abs_path)
+            except Exception as e:
+                extracted = {'error': str(e)}
+
+        # 4. Update Document with classification result
+        doc.category = kind if kind != 'other' else 'chat_inbox'
+        doc.description = classification.get('reason', '')[:500] if classification.get('reason') else None
+        if extracted is not None:
+            try:
+                doc.extracted_data = json.dumps(extracted)
+            except (TypeError, ValueError):
+                doc.extracted_data = None
+
+        artifacts.append({
+            'document_id': doc.id,
+            'kind': kind,
+            'confidence': classification.get('confidence', 'low'),
+            'extracted': extracted,
+            'original_filename': f.filename,
+        })
+
+    user_msg.attachments_json = json.dumps(attachment_ids)
+
+    # 5. Plan the assistant turn against the current Will state
+    active_will = (Will.query
+                   .filter_by(client_id=client_id, status='draft')
+                   .filter(Will.deleted_at.is_(None))
+                   .order_by(Will.updated_at.desc())
+                   .first())
+    will_snapshot = _will_data_snapshot(active_will)
+    plan = plan_turn(user_text, artifacts, will_snapshot)
+
+    if file_errors:
+        plan['reply'] = (plan.get('reply') or '') + (
+            "\n\n**Some files were rejected:**\n- " + "\n- ".join(file_errors)
+        )
+
+    asst_msg = ChatMessage(
+        session_id=cs.id,
+        role='assistant',
+        content=plan.get('reply', ''),
+        clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
+        proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
+        advice_json=json.dumps(plan.get('advice', [])),
+        target_will_id=active_will.id if active_will else None,
+    )
+    db.session.add(asst_msg)
+    db.session.commit()
+
+    return jsonify({
+        'ok': True,
+        'user_message': _serialise_chat_message(user_msg),
+        'assistant_message': _serialise_chat_message(asst_msg),
+    })
+
+
+@app.route('/api/chat/<client_id>/apply/<message_id>', methods=['POST'])
+@login_required
+def api_chat_apply(client_id, message_id):
+    """Apply the proposed_patch from an assistant message to the active Will."""
+    from services.person_registry import ensure_person
+
+    client = db.session.get(Client, client_id)
+    if not client:
+        return jsonify({'ok': False, 'error': 'Client not found'}), 404
+
+    m = db.session.get(ChatMessage, message_id)
+    if not m or m.role != 'assistant':
+        return jsonify({'ok': False, 'error': 'Message not found'}), 404
+    if m.applied_at:
+        return jsonify({'ok': False, 'error': 'Already applied'}), 400
+    if m.rejected_at:
+        return jsonify({'ok': False, 'error': 'Already rejected'}), 400
+    if not m.proposed_patch_json:
+        return jsonify({'ok': False, 'error': 'No patch on this message'}), 400
+
+    try:
+        patch = json.loads(m.proposed_patch_json)
+    except json.JSONDecodeError:
+        return jsonify({'ok': False, 'error': 'Patch JSON is malformed'}), 500
+
+    user_id = session.get('user_id')
+    will = _get_or_create_active_will(client_id, user_id)
+
+    # 1. Apply person actions first so we have person_ids to embed in step JSON
+    person_id_by_role = {}
+    for p in patch.pop('_persons', []):
+        pid = ensure_person(
+            client_id,
+            p.get('name', ''),
+            nric=p.get('nric', ''),
+            address=p.get('address', ''),
+            relationship=p.get('role', ''),
+            dob=p.get('dob', ''),
+            nationality=p.get('nationality', 'Malaysian'),
+            document_id=p.get('document_id'),
+        )
+        if pid:
+            person_id_by_role[p.get('role', '')] = pid
+
+    # 2. Merge each step patch into the corresponding step JSON column
+    step_attrs = {
+        'step1': 'step1_data', 'step2': 'step2_data', 'step3': 'step3_data',
+        'step4': 'step4_data', 'step5': 'step5_data', 'step6': 'step6_data',
+        'step7': 'step7_data', 'step8': 'step8_data',
+    }
+    for step_key, attr in step_attrs.items():
+        if step_key not in patch:
+            continue
+        new_partial = patch[step_key]
+        try:
+            current = json.loads(getattr(will, attr) or '{}')
+        except json.JSONDecodeError:
+            current = {}
+        if isinstance(current, list) or isinstance(new_partial, list):
+            # List-shaped steps: replace wholesale only if patch is a list
+            merged = new_partial if isinstance(new_partial, list) else current
+        else:
+            merged = dict(current)
+            merged.update(new_partial)
+        # Embed Testator person_id if we just created/updated one
+        if step_key == 'step1' and person_id_by_role.get('Testator'):
+            merged['person_id'] = person_id_by_role['Testator']
+        setattr(will, attr, json.dumps(merged))
+
+    # 3. Sync Client header from step1 if testator name/nric were just set
+    if 'step1' in patch:
+        s1 = json.loads(will.step1_data or '{}')
+        if s1.get('full_name'):
+            client.full_name = s1['full_name']
+        if s1.get('nric_passport'):
+            client.nric_passport = s1['nric_passport']
+        if s1.get('email'):
+            client.email = s1['email']
+        if s1.get('phone'):
+            client.phone = s1['phone']
+        will.title = f"Will of {s1.get('full_name', 'Unknown')}"
+
+    m.applied_at = datetime.utcnow()
+    m.applied_by = user_id
+    m.target_will_id = will.id
+    db.session.commit()
+
+    return jsonify({
+        'ok': True,
+        'message': _serialise_chat_message(m),
+        'will': _will_data_snapshot(will),
+    })
+
+
+@app.route('/api/chat/<client_id>/reject/<message_id>', methods=['POST'])
+@login_required
+def api_chat_reject(client_id, message_id):
+    """Mark a proposed patch as rejected (no changes applied)."""
+    m = db.session.get(ChatMessage, message_id)
+    if not m or m.role != 'assistant':
+        return jsonify({'ok': False, 'error': 'Message not found'}), 404
+    if m.applied_at or m.rejected_at:
+        return jsonify({'ok': False, 'error': 'Already resolved'}), 400
+    m.rejected_at = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'ok': True, 'message': _serialise_chat_message(m)})
 
 
 # -- Step 1: Identity Management ---------------------------------------------
