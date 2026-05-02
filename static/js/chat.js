@@ -312,12 +312,39 @@
     }
 
     if (m.attachments && m.attachments.length) {
-      html += '<div class="mt-2 flex flex-wrap gap-1.5">';
+      const isMany = m.attachments.length > 6;
+      html += `<div class="mt-2 grid ${isMany ? 'grid-cols-4 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-4'} gap-1.5">`;
       for (const a of m.attachments) {
-        const labelColor = m.role === 'user' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700';
-        html += `<span class="inline-flex items-center gap-1 px-2 py-0.5 ${labelColor} text-[11px] rounded">
-          📎 ${escapeHtml(a.filename)} <span class="opacity-60">· ${escapeHtml(categoryLabel(a.category))}</span>
-        </span>`;
+        const url = `/api/documents/${a.id}`;
+        const isImg = /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(a.filename || '');
+        const isPdf = /\.pdf$/i.test(a.filename || '');
+        const isAudio = /\.(mp3|m4a|wav|webm|ogg|oga)$/i.test(a.filename || '');
+        const catLabel = escapeHtml(categoryLabel(a.category));
+        const catColor = a.category === 'chat_inbox'
+          ? 'bg-amber-100 text-amber-700'
+          : a.category === 'nric'
+            ? 'bg-purple-100 text-purple-700'
+            : a.category === 'property_title'
+              ? 'bg-blue-100 text-blue-700'
+              : a.category === 'voice'
+                ? 'bg-pink-100 text-pink-700'
+                : 'bg-gray-100 text-gray-600';
+
+        let inner = '';
+        if (isImg) {
+          inner = `<img src="${url}" loading="lazy" alt="${escapeHtml(a.filename)}" class="w-full h-16 object-cover">`;
+        } else if (isAudio) {
+          inner = `<div class="w-full h-16 flex items-center justify-center bg-pink-50 text-pink-600 text-2xl">🎙</div>`;
+        } else if (isPdf) {
+          inner = `<div class="w-full h-16 flex items-center justify-center bg-red-50 text-red-600 text-2xl">📄</div>`;
+        } else {
+          inner = `<div class="w-full h-16 flex items-center justify-center bg-gray-50 text-gray-500 text-2xl">📎</div>`;
+        }
+        html += `<a href="${url}" target="_blank" rel="noopener" title="${escapeHtml(a.filename)} (${catLabel})"
+                    class="block bg-white border border-gray-200 rounded-md overflow-hidden hover:border-primary-400 hover:shadow transition-all">
+          ${inner}
+          <div class="px-1 py-0.5 text-[9px] truncate ${catColor} font-medium">${catLabel}</div>
+        </a>`;
       }
       html += '</div>';
     }

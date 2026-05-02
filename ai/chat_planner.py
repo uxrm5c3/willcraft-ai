@@ -2,18 +2,10 @@
 proposed patch against the wizard step JSON, plus a reply, clarifying
 questions, and advice.
 
-Slice 1 scope: IC images only. The pipeline is deterministic — no LLM
-call here, just mapping the IC fields into step1 (testator) shape and
-flagging missing fields. Later slices (property titles, WhatsApp text)
-will add an LLM-driven branch for free-form intents.
-
-Patch shape (subset of WillData):
-    {
-        "step1": {full_name, nric_passport, residential_address, date_of_birth, nationality, gender, person_link: {name, ic, ...}},
-        ...
-    }
-The applier (chat_apply route) deep-merges this into the target Will's
-step JSON, and uses person_link entries to call ensure_person.
+Emits ONE aggregated summary per artifact kind (not per file) so a 39-
+attachment email gets a tidy 5-bullet reply instead of a 39-paragraph
+monologue. The chat UI handles the per-thumbnail role assignment for
+multi-IC cases.
 """
 from typing import List, Dict, Any, Optional
 
@@ -24,32 +16,20 @@ def _ddmmyyyy_to_iso(dob: str) -> str:
         return ''
     parts = dob.split('-')
     if len(parts) == 3 and len(parts[2]) == 4 and parts[2].isdigit():
-        # Looks like DD-MM-YYYY
         return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
-    return dob  # already ISO or unknown — leave as-is
+    return dob
 
 
 def _ic_to_step1_patch(ic: Dict[str, Any]) -> Dict[str, Any]:
     """Map an extract_nric_data result to the step1 (testator) JSON shape."""
     return {
-        'full_name': ic.get('full_name', '').strip(),
-        'nric_passport': ic.get('nric_number', '').strip(),
-        'residential_address': ic.get('address', '').strip(),
-        'date_of_birth': _ddmmyyyy_to_iso(ic.get('date_of_birth', '')),
+        'full_name': (ic.get('full_name') or '').strip(),
+        'nric_passport': (ic.get('nric_number') or '').strip(),
+        'residential_address': (ic.get('address') or '').strip(),
+        'date_of_birth': _ddmmyyyy_to_iso(ic.get('date_of_birth') or ''),
         'nationality': ic.get('nationality') or 'Malaysian',
-        'gender': ic.get('gender', ''),
+        'gender': ic.get('gender') or '',
     }
-
-
-def _missing_fields(s1: Dict[str, Any]) -> List[str]:
-    out = []
-    if not s1.get('full_name'):
-        out.append('full name')
-    if not s1.get('nric_passport'):
-        out.append('NRIC / passport number')
-    if not s1.get('residential_address'):
-        out.append('residential address')
-    return out
 
 
 def plan_turn(
@@ -57,143 +37,170 @@ def plan_turn(
     artifacts: List[Dict[str, Any]],
     current_will_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Take this turn's input and return what to say + propose.
-
-    artifacts: list of dicts shaped like
-        {"document_id": str, "kind": str, "confidence": str,
-         "extracted": dict | None,        # extractor output, kind-specific
-         "original_filename": str}
-    current_will_data: dict of step1..step8 already in the active Will
-        (parsed JSON). Used to detect duplicates and produce advice.
-
-    Returns:
-        {
-          "reply": str,
-          "clarifying_questions": [str],
-          "proposed_patch": dict,         # may be empty if nothing to propose
-          "advice": [{"section": str, "severity": str, "text": str}],
-        }
-    """
+    """Take this turn's input and return what to say + propose."""
     current_will_data = current_will_data or {}
     reply_parts: List[str] = []
     questions: List[str] = []
     advice: List[Dict[str, str]] = []
     patch: Dict[str, Any] = {}
 
-    # ── Process artifacts (slice 1: IC only) ────────────────────────────
-    ic_artifacts = [a for a in artifacts if a.get('kind') == 'nric']
-    other_artifacts = [a for a in artifacts if a.get('kind') != 'nric']
+    # ── Bucket artifacts by kind ────────────────────────────────────────
+    buckets: Dict[str, List[Dict[str, Any]]] = {}
+    for art in artifacts:
+        buckets.setdefault(art.get('kind', 'other'), []).append(art)
 
-    if ic_artifacts:
-        # If multiple ICs in one turn, we only auto-propose for the first
-        # (typically the testator). Others are noted for the user.
-        primary = ic_artifacts[0]
-        ic = primary.get('extracted') or {}
-        if ic.get('error'):
-            reply_parts.append(
-                f"I couldn't read the IC clearly. Reason: {ic.get('error')}. "
-                "Try a clearer photo or enter the details manually in Step 1."
+    ic_arts = buckets.get('nric', [])
+    title_arts = buckets.get('property_title', [])
+    tax_arts = buckets.get('property_tax', [])
+    bank_arts = buckets.get('bank_statement', [])
+    insur_arts = buckets.get('insurance', [])
+    epf_arts = buckets.get('epf_kwsp', [])
+    vehicle_arts = buckets.get('vehicle', [])
+    will_arts = buckets.get('will', [])
+    voice_arts = buckets.get('voice', [])
+    other_arts = buckets.get('other', [])
+
+    if artifacts:
+        reply_parts.append(f"📥 Received **{len(artifacts)} attachment{'s' if len(artifacts)!=1 else ''}**:")
+
+    # ── ICs: aggregated, with names if extracted ────────────────────────
+    if ic_arts:
+        # Names we managed to read from the ICs
+        named = []
+        unnamed = 0
+        for a in ic_arts:
+            ex = a.get('extracted') or {}
+            name = (ex.get('full_name') or '').strip()
+            nric = (ex.get('nric_number') or '').strip()
+            if name and nric:
+                named.append({'name': name, 'nric': nric, 'document_id': a.get('document_id'),
+                              'extracted': ex})
+            elif name:
+                named.append({'name': name, 'nric': '', 'document_id': a.get('document_id'),
+                              'extracted': ex})
+            else:
+                unnamed += 1
+
+        line = f"📇 **{len(ic_arts)} IC{'s' if len(ic_arts)!=1 else ''}**"
+        if named:
+            line += " — read as: " + ", ".join(
+                f"{n['name']}" + (f" ({n['nric']})" if n['nric'] else "")
+                for n in named[:6]
             )
-        else:
-            s1 = _ic_to_step1_patch(ic)
-            existing_s1 = current_will_data.get('step1') or {}
-            existing_name = (existing_s1.get('full_name') or '').strip()
-            existing_nric = (existing_s1.get('nric_passport') or '').strip()
+            if len(named) > 6:
+                line += f", and {len(named)-6} more"
+        if unnamed:
+            line += f". {unnamed} couldn't be read clearly."
+        reply_parts.append(line)
 
-            # Duplicate / overwrite check
-            if existing_nric and s1['nric_passport'] and existing_nric != s1['nric_passport']:
-                advice.append({
-                    'section': 'Step 1 — Testator',
-                    'severity': 'warning',
-                    'text': (
-                        f"Testator NRIC is currently {existing_nric}. This IC shows "
-                        f"{s1['nric_passport']}. Applying will overwrite the existing testator. "
-                        "If this IC belongs to a different person (e.g. an executor or beneficiary), "
-                        "tell me their role instead of clicking Apply."
-                    ),
-                })
-            elif existing_name and s1['full_name'] and existing_name.upper() != s1['full_name'].upper():
-                advice.append({
-                    'section': 'Step 1 — Testator',
-                    'severity': 'info',
-                    'text': f"Testator name will change from \"{existing_name}\" to \"{s1['full_name']}\".",
-                })
+        # Pick a testator candidate: first IC with both name + NRIC
+        testator = next((n for n in named if n['name'] and n['nric']), None)
+        existing_s1 = current_will_data.get('step1') or {}
+        existing_nric = (existing_s1.get('nric_passport') or '').strip()
 
+        if testator and not existing_nric:
+            # No testator yet — propose using first readable IC
+            s1 = _ic_to_step1_patch(testator['extracted'])
             patch.setdefault('step1', {}).update(s1)
-            # Mark for the applier to create / link a Person row
             patch['_persons'] = patch.get('_persons', []) + [{
                 'role': 'Testator',
-                'name': s1['full_name'],
-                'nric': s1['nric_passport'],
-                'address': s1['residential_address'],
-                'dob': s1['date_of_birth'],
+                'name': s1['full_name'], 'nric': s1['nric_passport'],
+                'address': s1['residential_address'], 'dob': s1['date_of_birth'],
                 'nationality': s1['nationality'],
-                'document_id': primary.get('document_id'),
-                'link_to_step1': True,
+                'document_id': testator['document_id'], 'link_to_step1': True,
             }]
-
             reply_parts.append(
-                f"I read this as a Malaysian {ic.get('doc_type', 'IC').upper()} for "
-                f"**{s1['full_name'] or '(name unreadable)'}** "
-                f"({s1['nric_passport'] or 'NRIC unreadable'}). "
-                "I've drafted an update to Step 1 (Testator) — review the diff card and click Apply to confirm."
+                f"  ↳ Proposing **{s1['full_name']}** as Testator. "
+                "Click ✓ Apply on the diff card to confirm."
             )
+        elif testator and existing_nric and testator['nric'] != existing_nric:
+            advice.append({
+                'section': 'Step 1 — Testator',
+                'severity': 'info',
+                'text': (f"Testator already set to NRIC {existing_nric}. "
+                         f"This batch contains an IC for {testator['name']} ({testator['nric']}) "
+                         "— probably a different person (executor/beneficiary). "
+                         "Use the per-IC role picker to file each one."),
+            })
 
-            missing = _missing_fields(s1)
-            if missing:
-                questions.append(
-                    f"I couldn't read the {', '.join(missing)} from this IC. "
-                    "Could you provide it, or upload a clearer photo of the back of the card?"
-                )
-
-        if len(ic_artifacts) > 1:
-            count = len(ic_artifacts) - 1
-            reply_parts.append(
-                f"I see {count} more IC{'s' if count > 1 else ''} in this upload. "
-                "Tell me whose they are (executor, beneficiary, guardian, witness?) "
-                "and I'll file each one to the right section."
+        if len(ic_arts) > 1:
+            questions.append(
+                f"You uploaded {len(ic_arts)} ICs. The first becomes the Testator (if not set yet). "
+                f"For the others, tell me each role: Spouse, Son, Daughter, Executor, Guardian, Witness, Beneficiary."
             )
 
-    # ── Other kinds: acknowledge, defer to later slices ─────────────────
-    for art in other_artifacts:
-        kind = art.get('kind', 'other')
-        fname = art.get('original_filename', 'file')
-        if kind == 'property_title':
-            reply_parts.append(
-                f"I can see **{fname}** is a property title. "
-                "Property gifts (Step 6) aren't auto-filled yet in this version — "
-                "I've saved the document under property/ and you can add it from the wizard."
-            )
-        elif kind == 'will':
-            reply_parts.append(
-                f"**{fname}** looks like an existing Will. To re-import it, use "
-                "[Upload Will](/upload-will) — the chat doesn't replace that flow yet."
-            )
-        elif kind == 'other':
-            reply_parts.append(
-                f"I'm not sure what **{fname}** is. Could you tell me — IC, property title, "
-                "bank statement, or something else?"
-            )
-        else:
-            reply_parts.append(
-                f"I see **{fname}** is a {kind.replace('_', ' ')}. "
-                "Filing it under the matching folder. Auto-fill for this kind is coming soon."
-            )
+    # ── Property titles ─────────────────────────────────────────────────
+    if title_arts:
+        reply_parts.append(
+            f"🏠 **{len(title_arts)} property title{'s' if len(title_arts)!=1 else ''}** — filed under property/. "
+            "These need to be added as Specific Gifts (Step 6). Tell me who gets each property "
+            "(e.g. \"condo at Marina Cove → daughter Esther\")."
+        )
 
-    # ── Pure-text turn (no artifacts) ────────────────────────────────────
+    # ── Property tax / cukai ────────────────────────────────────────────
+    if tax_arts:
+        reply_parts.append(
+            f"🧾 **{len(tax_arts)} property tax notice{'s' if len(tax_arts)!=1 else ''}** "
+            "(cukai harta / cukai pintu) — filed under property/. Useful for matching to titles."
+        )
+
+    # ── Bank statements ─────────────────────────────────────────────────
+    if bank_arts:
+        reply_parts.append(
+            f"🏦 **{len(bank_arts)} bank statement{'s' if len(bank_arts)!=1 else ''}** — filed under bank/. "
+            "Tell me if any specific account goes to a specific beneficiary; otherwise it falls under residuary."
+        )
+
+    # ── Insurance / EPF / Vehicle: just acknowledge ─────────────────────
+    if insur_arts:
+        reply_parts.append(f"🛡 **{len(insur_arts)} insurance** doc{'s' if len(insur_arts)!=1 else ''} filed.")
+    if epf_arts:
+        reply_parts.append(f"💼 **{len(epf_arts)} EPF/KWSP** statement{'s' if len(epf_arts)!=1 else ''} filed (note: EPF goes via nominee, not the will).")
+    if vehicle_arts:
+        reply_parts.append(f"🚗 **{len(vehicle_arts)} vehicle** doc{'s' if len(vehicle_arts)!=1 else ''} filed.")
+
+    # ── Existing wills ─────────────────────────────────────────────────
+    if will_arts:
+        reply_parts.append(
+            f"📄 **{len(will_arts)} existing will document{'s' if len(will_arts)!=1 else ''}** detected. "
+            "If you want to import it as the starting point, use [Upload Will](/upload-will). "
+            "Otherwise it'll just live in the chat history for reference."
+        )
+
+    # ── Voice transcripts ──────────────────────────────────────────────
+    # (Already merged into user_text by the caller — don't repeat the
+    # transcript here, but note the count.)
+    if voice_arts:
+        reply_parts.append(
+            f"🎙 **{len(voice_arts)} voice note{'s' if len(voice_arts)!=1 else ''}** transcribed and added to the message text above."
+        )
+
+    # ── Unclassified — ask for help, structured ─────────────────────────
+    if other_arts:
+        reply_parts.append(
+            f"❓ **{len(other_arts)} attachment{'s' if len(other_arts)!=1 else ''}** I couldn't classify. "
+            "Tap each thumbnail in the message above to view it, then reply with what they are "
+            "(e.g. \"the third photo is a property title\")."
+        )
+
+    # ── Pure-text turn (no artifacts) ──────────────────────────────────
     if not artifacts:
-        if user_text.strip():
-            reply_parts.append(
-                "Got it — I've noted your message. Right now I can auto-fill the Testator section "
-                "from an IC photo. Try uploading a MyKad image or use the wizard directly for "
-                "executors, beneficiaries, and gifts."
-            )
+        if user_text and user_text.strip():
+            # If the user text mentions specific intent words, hint at next
+            # action; otherwise generic ack.
+            t = user_text.lower()
+            if any(k in t for k in ('ignore', 'wrong', 'mistake', 'delete')):
+                reply_parts.append(
+                    "Got it. Use the **× delete** button on a message to remove it, or **Clear Chat** to wipe everything."
+                )
+            else:
+                reply_parts.append(
+                    "Noted. I work best with attached IC photos, property titles, or short voice notes saying what to do with each."
+                )
         else:
-            reply_parts.append(
-                "Drop an IC photo or paste a WhatsApp message and I'll start sorting it out."
-            )
+            reply_parts.append("Drop a file or tap 🎤 to start.")
 
-    # ── Advice: missing-executor / share sums (basic checks) ────────────
+    # ── Advice (basic checks) ──────────────────────────────────────────
     advice.extend(_basic_will_checks(current_will_data, patch))
 
     return {
@@ -205,20 +212,14 @@ def plan_turn(
 
 
 def _basic_will_checks(current: Dict[str, Any], patch: Dict[str, Any]) -> List[Dict[str, str]]:
-    """A few sanity checks that are useful to surface in chat.
-
-    Kept tiny on purpose — the real advice engine comes in slice 4.
-    """
+    """Tiny set of sanity checks. Real advice engine comes in slice 4."""
     out: List[Dict[str, str]] = []
-    # Combined view: current state with patch applied (shallow per step)
     combined = dict(current)
     for k, v in patch.items():
         if k.startswith('_'):
             continue
         if isinstance(v, dict) and isinstance(combined.get(k), dict):
-            merged = dict(combined[k])
-            merged.update(v)
-            combined[k] = merged
+            merged = dict(combined[k]); merged.update(v); combined[k] = merged
         else:
             combined[k] = v
 
@@ -230,5 +231,4 @@ def _basic_will_checks(current: Dict[str, Any], patch: Dict[str, Any]) -> List[D
             'text': "Testator NRIC / passport is required before generating the will. "
                     "Add it in Step 1 or upload a clearer IC photo.",
         })
-
     return out
