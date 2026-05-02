@@ -3723,6 +3723,17 @@ def preview():
     if session.get('will_id'):
         will_record = db.session.get(Will, session['will_id'])
         if will_record:
+            # Auto-approve when an approver views a generated will (the approver is the
+            # lawyer — Kylie at Alan Tan & Associates — so an explicit submit-then-approve
+            # round-trip is unnecessary friction). Only fires once: status must be 'generated'.
+            if (will_record.status == 'generated'
+                and getattr(g, 'perms', {}).get('canApprove')
+                and getattr(g, 'user', None)):
+                will_record.status = 'approved'
+                will_record.approved_by = g.user.id
+                will_record.approved_at = datetime.utcnow()
+                will_record.approval_remarks = 'Auto-approved on preview by approver'
+                db.session.commit()
             # Load version history
             versions = WillVersion.query.filter_by(will_id=will_record.id).order_by(
                 WillVersion.version_number.desc()

@@ -563,8 +563,9 @@
             </div>
             <div class="mt-4 pt-3 border-t border-gray-100">
                 <button type="button" onclick="saveAndCollapseGift({{ gift_idx }})"
-                        class="w-full px-4 py-2 text-sm font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 border border-green-200 transition-colors">
-                    ✓ Done with Gift {{ loop.index }}
+                        class="w-full px-5 py-3 text-base font-semibold bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                    SAVE Gift {{ loop.index }}
                 </button>
             </div>
         </div><!-- /gift-body -->
@@ -746,16 +747,65 @@ function collapseGift(giftIdx) {
     if (chevron) chevron.style.transform = 'rotate(-90deg)';
 }
 
+function _validateGiftMissing(giftIdx) {
+    // Returns an array of human-readable missing-field messages.
+    const entry = document.querySelector(`.gift-entry[data-gift-index="${giftIdx}"]`);
+    if (!entry) return [];
+    const missing = [];
+    const type = entry.querySelector(`input[name="gift_type_${giftIdx}"]:checked`)?.value || 'other';
+    // Per gift-type required fields
+    if (type === 'property') {
+        const addr = entry.querySelector(`[name="gift_prop_address_${giftIdx}"]`)?.value?.trim() || '';
+        if (!addr) missing.push('Property Address');
+    } else if (type === 'financial') {
+        const inst = entry.querySelector(`[name="gift_fin_institution_${giftIdx}"]`)?.value?.trim() || '';
+        const acct = entry.querySelector(`[name="gift_fin_account_${giftIdx}"]`)?.value?.trim() || '';
+        if (!inst) missing.push('Financial Institution');
+        if (!acct) missing.push('Account Number');
+    } else if (type === 'other') {
+        const desc = entry.querySelector(`[name="gift_desc_${giftIdx}"]`)?.value?.trim() || '';
+        if (!desc) missing.push('Gift Description');
+    }
+    // Beneficiary check — at least one allocation with a name AND a share
+    const container = document.getElementById('allocations-' + giftIdx);
+    let hasNamedBen = false, hasShare = false;
+    if (container) {
+        container.querySelectorAll('.allocation-entry').forEach(e => {
+            const name = e.querySelector('.alloc-name-select')?.value?.trim() || '';
+            const share = e.querySelector('input[name*="_alloc_share_"]')?.value?.trim() || '';
+            if (name) hasNamedBen = true;
+            if (share) hasShare = true;
+        });
+    }
+    if (!hasNamedBen) missing.push('At least one beneficiary');
+    if (hasNamedBen && !hasShare) missing.push('Beneficiary share (%)');
+    return missing;
+}
+
 function saveAndCollapseGift(giftIdx) {
-    // Validate shares first
+    // Validate shares first (visual feedback only — doesn't block)
     if (typeof validateShareTotal === 'function') validateShareTotal(giftIdx);
+    // Check for missing key info — show reminder, allow skip
+    const missing = _validateGiftMissing(giftIdx);
+    if (missing.length > 0) {
+        const list = missing.map(m => '  • ' + m).join('\n');
+        const proceed = confirm(
+            'This gift has missing or incomplete fields:\n\n' + list +
+            '\n\nYou can come back later to finish. Save anyway?'
+        );
+        if (!proceed) return;
+    }
     // Collapse the gift
     collapseGift(giftIdx);
-    // Show brief confirmation
+    // Visual confirmation — bright green flash + checkmark
     const entry = document.querySelector(`.gift-entry[data-gift-index="${giftIdx}"]`);
     if (entry) {
         entry.style.borderColor = '#10b981';
-        setTimeout(() => entry.style.borderColor = '', 2000);
+        entry.style.borderWidth = '2px';
+        setTimeout(() => {
+            entry.style.borderColor = '';
+            entry.style.borderWidth = '';
+        }, 2500);
     }
 }
 
@@ -1299,8 +1349,9 @@ function addGift() {
         </div>
         <div class="mt-4 pt-3 border-t border-gray-100">
             <button type="button" onclick="saveAndCollapseGift(${idx})"
-                    class="w-full px-4 py-2 text-sm font-medium bg-green-50 text-green-700 rounded-lg hover:bg-green-100 border border-green-200 transition-colors">
-                ✓ Done with Gift ${idx + 1}
+                    class="w-full px-5 py-3 text-base font-semibold bg-green-600 text-white rounded-lg hover:bg-green-700 shadow-sm transition-colors flex items-center justify-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+                SAVE Gift ${idx + 1}
             </button>
         </div>
     </div><!-- /gift-body -->
