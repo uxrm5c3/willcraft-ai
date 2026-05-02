@@ -3323,9 +3323,11 @@ def api_chat_message(client_id):
     db.session.commit()  # persist user_msg before any deductions / planner
 
     # 5. Directed flow: try to assign the next pending IC if user replied
-    #    with a relationship keyword OR confirmation, then refresh the
-    #    pending list so the planner can ask about the NEXT one.
+    #    with a relationship keyword OR confirmation. If not, see if they
+    #    asked to delete the focused doc. Then refresh the pending list so
+    #    the planner asks about the NEXT one.
     just_assigned = _try_assign_pending_identity(client_id, user_text)
+    just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)
     from services.identity_walker import get_pending_ic_documents
     pending_ics = get_pending_ic_documents(client_id)
     recent_text = _gather_recent_chat_text(client_id)
@@ -3339,7 +3341,7 @@ def api_chat_message(client_id):
     will_snapshot = _will_data_snapshot(active_will)
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
-                     just_assigned=just_assigned)
+                     just_assigned=just_assigned, just_deleted=just_deleted)
 
     if file_errors:
         plan['reply'] = (plan.get('reply') or '') + (
@@ -3619,6 +3621,32 @@ def _gather_recent_chat_text(client_id: str, max_chars: int = 8000) -> str:
 
 _CONFIRM_TOKENS = ('yes', 'confirm', 'correct', 'ok ', 'okay', 'yep', 'yeah', 'true', 'right')
 _SKIP_TOKENS = ('skip', 'later', 'pass')
+_DELETE_TOKENS = ('delete', 'remove', 'wrong', 'discard', 'trash', 'irrelevant', 'unrelated')
+
+
+def _try_delete_pending_identity(client_id: str, user_text: str):
+    """If user replies with a delete keyword, mark the focused IC's
+    Document as removed so the walk-through skips it.
+    Returns {'name', 'action': 'deleted'} or None."""
+    if not user_text:
+        return None
+    from services.identity_walker import get_pending_ic_documents
+    text_lower = user_text.lower().strip()
+    words = set(re.findall(r'\b[a-z]+\b', text_lower))
+    if not any(t in words for t in _DELETE_TOKENS):
+        return None
+    pending = get_pending_ic_documents(client_id)
+    if not pending:
+        return None
+    target = pending[0]
+    ex = target['extracted'] or {}
+    name = (ex.get('full_name') or '').strip() or target.get('original_filename', 'this document')
+    doc = db.session.get(Document, target['document_id'])
+    if doc:
+        doc.category = 'deleted'
+        doc.description = '(removed by user from chat walk-through)'
+        db.session.commit()
+    return {'name': name, 'action': 'deleted'}
 
 
 def _try_assign_pending_identity(client_id: str, user_text: str):

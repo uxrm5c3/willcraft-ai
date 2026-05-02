@@ -39,6 +39,7 @@ def plan_turn(
     pending_ics: Optional[List[Dict[str, Any]]] = None,
     recent_text: str = '',
     just_assigned: Optional[Dict[str, str]] = None,
+    just_deleted: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Returns {reply, clarifying_questions, proposed_patch, advice}.
 
@@ -56,10 +57,14 @@ def plan_turn(
     advice: List[Dict[str, str]] = []
     patch: Dict[str, Any] = {}
 
-    # ── Acknowledge an assignment from the previous turn ────────────────
+    # ── Acknowledge an assignment / deletion from the previous turn ─────
     if just_assigned:
         reply_parts.append(
             f"✅ Saved **{just_assigned.get('name','')}** as **{just_assigned.get('role','')}**."
+        )
+    if just_deleted:
+        reply_parts.append(
+            f"🗑 Removed **{just_deleted.get('name','')}** from this client's records."
         )
 
     # ── 1. INTAKE — fresh attachments this turn ─────────────────────────
@@ -192,15 +197,15 @@ def _identity_question(pending_ics: List[Dict[str, Any]], recent_text: str) -> s
             f"(evidence: _\"{deduction['evidence']}\"_)."
         )
         parts.append(
-            "**Reply `yes` to confirm**, or correct it (e.g. `no, daughter`). "
-            "Or `skip` to come back to this one later."
+            "Reply: **`yes`** to confirm · a different role to correct · "
+            "**`skip`** to defer · **`delete`** if this IC was uploaded by mistake."
         )
     else:
         parts.append(
             "What's their relationship to the testator?\n"
-            "Reply with one of: **Spouse, Son, Daughter, Father, Mother, "
-            "Brother, Sister, Executor, Guardian, Witness, Beneficiary, Trustee, Other**.\n"
-            "Or `skip` to come back later."
+            "Reply with: **Spouse · Son · Daughter · Father · Mother · "
+            "Brother · Sister · Executor · Guardian · Witness · Beneficiary · Trustee**\n"
+            "Or **`skip`** to defer · **`delete`** if uploaded by mistake."
         )
     return '\n\n'.join(parts)
 
