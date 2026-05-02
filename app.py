@@ -3509,7 +3509,9 @@ def api_chat_replan(client_id, message_id):
     from services.identity_walker import get_pending_ic_documents
     pending_ics = get_pending_ic_documents(client.id)
     recent_text = _gather_recent_chat_text(client.id)
-    plan = plan_turn(user_msg.content or '', artifacts, _will_data_snapshot(active_will),
+    # On replan we want the planner to skip the "intake" stage — pass
+    # empty artifacts so it goes straight to walk-through / next step.
+    plan = plan_turn(user_msg.content or '', [], _will_data_snapshot(active_will),
                      pending_ics=pending_ics, recent_text=recent_text)
 
     asst_msg = ChatMessage(
