@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import traceback
 import uuid
 from datetime import datetime
@@ -3564,21 +3565,21 @@ def api_inbound_email():
 def _api_inbound_email_impl():
     """Postmark inbound webhook — turns a forwarded email into a chat message.
 
+    Two-phase: this handler does the FAST parts synchronously (auth, parse,
+    save user message + raw attachments to disk) and returns 200 to Postmark
+    inside ~1 second. The slow per-attachment AI work (vision classify, IC
+    extract, voice transcribe, planner reply) runs in a background thread so
+    Postmark's 10s webhook timeout doesn't kill emails with many photos.
+
     Auth: HTTP Basic, credentials in env vars POSTMARK_INBOUND_USER /
     POSTMARK_INBOUND_PASS. If either is unset, the endpoint refuses
     everything (so a half-configured deploy can't be abused).
 
     Sender allowlist: opt-in via env var INBOUND_ALLOWED_DOMAINS (comma-
-    separated). Default = empty = accept any sender (clients email their
-    own client-<id>@inbox address directly). Set the env var to lock the
-    inbox down to specific domains. Off-allowlist mail is silently dropped
-    with HTTP 200 so Postmark doesn't keep retrying.
+    separated). Default = empty = accept any sender.
     """
     from services.inbound_address import find_client_by_address
     from uploads import MAX_FILE_SIZE
-    from ai.file_classifier import classify_file
-    from ai.ocr import extract_nric_data
-    from ai.chat_planner import plan_turn
 
     expected_user = os.environ.get('POSTMARK_INBOUND_USER', '')
     expected_pass = os.environ.get('POSTMARK_INBOUND_PASS', '')
@@ -3602,14 +3603,8 @@ def _api_inbound_email_impl():
     from_email = (
         ((payload.get('FromFull') or {}).get('Email')) or payload.get('From') or ''
     ).strip().lower()
-    # If From has "Name <addr>" wrap, strip it
     if '<' in from_email and '>' in from_email:
         from_email = from_email[from_email.index('<') + 1: from_email.index('>')]
-    # Sender allowlist is OPT-IN. If INBOUND_ALLOWED_DOMAINS is unset, empty,
-    # or '*', accept mail from anyone — clients are expected to email their
-    # inbox directly from their own gmail/yahoo/etc. Set the env var to a
-    # comma-separated domain list (e.g. 'alantanjb.com,gmail.com') only if
-    # you want to restrict.
     allowed_raw = os.environ.get('INBOUND_ALLOWED_DOMAINS', '').strip()
     if allowed_raw and allowed_raw != '*':
         allowed = [d.strip().lower() for d in allowed_raw.split(',') if d.strip()]
@@ -3639,13 +3634,12 @@ def _api_inbound_email_impl():
     db.session.add(user_msg)
     db.session.flush()
 
+    # SYNC: write each attachment to disk + create Document row.
+    # Skip vision classify / IC extract / Whisper here — the background
+    # thread does those. Postmark sees a 200 within ~1s.
     folder_name = client.folder_name
     attachment_ids = []
-    artifacts = []
     file_errors = []
-    voice_transcripts = []
-
-    from ai.voice_transcription import is_audio, transcribe
 
     for att in attachments:
         name = att.get('Name', 'attachment')
@@ -3666,8 +3660,9 @@ def _api_inbound_email_impl():
             continue
 
         ctype = (att.get('ContentType') or '').lower()
-        is_voice = is_audio(ctype) or is_audio(name)
-        cat = 'voice' if is_voice else 'chat_inbox'
+        # Provisional category — the async worker will retag based on classify
+        # (or transcribe for audio). Save under chat_inbox/ for now.
+        cat = 'chat_inbox'
         safe_basename = uuid.uuid4().hex[:12] + '.' + ext
         folder = os.path.join(UPLOAD_DIR, folder_name, 'documents', cat)
         os.makedirs(folder, exist_ok=True)
@@ -3686,85 +3681,157 @@ def _api_inbound_email_impl():
         db.session.flush()
         attachment_ids.append(doc.id)
 
-        if is_voice:
-            transcript = transcribe(abs_path)
-            if transcript:
-                voice_transcripts.append(transcript)
-                doc.description = transcript[:500]
-                try:
-                    doc.extracted_data = json.dumps({'transcript': transcript})
-                except (TypeError, ValueError):
-                    pass
-            else:
-                doc.description = '(transcription failed or unavailable)'
-            artifacts.append({
-                'document_id': doc.id, 'kind': 'voice',
-                'confidence': 'high' if transcript else 'low',
-                'extracted': {'transcript': transcript} if transcript else None,
-                'original_filename': name,
-            })
-            continue
-
-        classification = classify_file(abs_path)
-        kind = classification.get('kind', 'other')
-        extracted = None
-        if kind == 'nric':
-            try:
-                extracted = extract_nric_data(abs_path)
-            except Exception as e:
-                extracted = {'error': str(e)}
-        doc.category = kind if kind != 'other' else 'chat_inbox'
-        doc.description = (classification.get('reason') or '')[:500] or None
-        if extracted is not None:
-            try:
-                doc.extracted_data = json.dumps(extracted)
-            except (TypeError, ValueError):
-                doc.extracted_data = None
-
-        artifacts.append({
-            'document_id': doc.id, 'kind': kind,
-            'confidence': classification.get('confidence', 'low'),
-            'extracted': extracted, 'original_filename': name,
-        })
-
     user_msg.attachments_json = json.dumps(attachment_ids)
 
-    # Merge voice transcripts into the planner-visible body so spoken
-    # instructions get the same treatment as typed text.
-    if voice_transcripts:
-        joined = '\n\n'.join(voice_transcripts)
-        text_body = (text_body + '\n\n' if text_body else '') + f"_(voice)_ {joined}"
-        user_msg.content = (user_msg.content or '') + f"\n\n_(voice transcript)_\n{joined}"
-
-    active_will = (Will.query.filter_by(client_id=client.id, status='draft')
-                   .filter(Will.deleted_at.is_(None))
-                   .order_by(Will.updated_at.desc()).first())
-    will_snapshot = _will_data_snapshot(active_will)
-    plan = plan_turn(text_body, artifacts, will_snapshot)
-
+    # If the email had any rejected attachments, surface that as an immediate
+    # assistant note (no AI work needed) so the user sees something right away.
     if file_errors:
-        plan['reply'] = (plan.get('reply') or '') + (
-            "\n\n**Some attachments were rejected:**\n- " + "\n- ".join(file_errors)
+        early_note = ChatMessage(
+            session_id=cs.id, role='assistant',
+            content=("📎 Some attachments couldn't be saved:\n- " + "\n- ".join(file_errors)),
         )
+        db.session.add(early_note)
 
-    asst_msg = ChatMessage(
-        session_id=cs.id, role='assistant',
-        content=plan.get('reply', ''),
-        clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
-        proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
-        advice_json=json.dumps(plan.get('advice', [])),
-        target_will_id=active_will.id if active_will else None,
-    )
-    db.session.add(asst_msg)
     db.session.commit()
+
+    # Spawn the slow processing in the background. The webhook returns NOW.
+    threading.Thread(
+        target=_process_inbound_message_async,
+        args=(app._get_current_object(), user_msg.id),
+        daemon=True,
+    ).start()
 
     return jsonify({
         'ok': True,
         'client_id': client.id,
         'message_id': user_msg.id,
-        'reply_id': asst_msg.id,
         'attachments': len(attachment_ids),
+        'queued_for_processing': True,
     })
+
+
+def _process_inbound_message_async(app_obj, user_msg_id):
+    """Background processing — runs after the webhook has returned 200.
+
+    For each Document attached to the user_msg:
+      - audio → Whisper transcribe
+      - else  → vision classify (nric/property_title/...) + extract if IC
+    Then call the planner over (text + voice transcripts + extracted artifacts)
+    and save the assistant ChatMessage.
+    """
+    with app_obj.app_context():
+        from ai.file_classifier import classify_file
+        from ai.ocr import extract_nric_data
+        from ai.chat_planner import plan_turn
+        from ai.voice_transcription import transcribe, is_audio
+
+        try:
+            user_msg = db.session.get(ChatMessage, user_msg_id)
+            if not user_msg:
+                return
+            cs = db.session.get(ChatSession, user_msg.session_id)
+            client = db.session.get(Client, cs.client_id) if cs else None
+            if not client:
+                return
+
+            doc_ids = []
+            try:
+                doc_ids = json.loads(user_msg.attachments_json or '[]')
+            except (json.JSONDecodeError, TypeError):
+                doc_ids = []
+
+            artifacts = []
+            voice_transcripts = []
+            docs = (Document.query.filter(Document.id.in_(doc_ids)).all()
+                    if doc_ids else [])
+
+            for doc in docs:
+                abs_path = os.path.join(UPLOAD_DIR, doc.file_path)
+                if not os.path.isfile(abs_path):
+                    continue
+                ctype = (doc.file_type or '').lower()
+                is_voice = is_audio(ctype) or is_audio(doc.original_filename or '')
+
+                if is_voice:
+                    # Move to voice/ folder for tidiness
+                    if doc.category != 'voice':
+                        doc.category = 'voice'
+                    transcript = transcribe(abs_path)
+                    if transcript:
+                        voice_transcripts.append(transcript)
+                        doc.description = transcript[:500]
+                        try:
+                            doc.extracted_data = json.dumps({'transcript': transcript})
+                        except (TypeError, ValueError):
+                            pass
+                    else:
+                        doc.description = '(transcription failed or unavailable)'
+                    artifacts.append({
+                        'document_id': doc.id, 'kind': 'voice',
+                        'confidence': 'high' if transcript else 'low',
+                        'extracted': {'transcript': transcript} if transcript else None,
+                        'original_filename': doc.original_filename,
+                    })
+                    db.session.commit()
+                    continue
+
+                classification = classify_file(abs_path)
+                kind = classification.get('kind', 'other')
+                extracted = None
+                if kind == 'nric':
+                    try:
+                        extracted = extract_nric_data(abs_path)
+                    except Exception as e:
+                        extracted = {'error': str(e)}
+                doc.category = kind if kind != 'other' else 'chat_inbox'
+                doc.description = (classification.get('reason') or '')[:500] or None
+                if extracted is not None:
+                    try:
+                        doc.extracted_data = json.dumps(extracted)
+                    except (TypeError, ValueError):
+                        doc.extracted_data = None
+                artifacts.append({
+                    'document_id': doc.id, 'kind': kind,
+                    'confidence': classification.get('confidence', 'low'),
+                    'extracted': extracted,
+                    'original_filename': doc.original_filename,
+                })
+                # Commit per-document so partial progress is visible to chat
+                # polling — useful when there are many attachments.
+                db.session.commit()
+
+            # Reload user_msg in case its content changed (it didn't, but safe)
+            user_msg = db.session.get(ChatMessage, user_msg_id)
+
+            # Merge voice transcripts into the message body for the planner
+            text = user_msg.content or ''
+            if voice_transcripts:
+                joined = '\n\n'.join(voice_transcripts)
+                user_msg.content = text + f"\n\n_(voice transcript)_\n{joined}"
+                text = user_msg.content
+                db.session.commit()
+
+            active_will = (Will.query.filter_by(client_id=client.id, status='draft')
+                           .filter(Will.deleted_at.is_(None))
+                           .order_by(Will.updated_at.desc()).first())
+            plan = plan_turn(text, artifacts, _will_data_snapshot(active_will))
+
+            asst_msg = ChatMessage(
+                session_id=cs.id, role='assistant',
+                content=plan.get('reply', ''),
+                clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
+                proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
+                advice_json=json.dumps(plan.get('advice', [])),
+                target_will_id=active_will.id if active_will else None,
+            )
+            db.session.add(asst_msg)
+            db.session.commit()
+        except Exception:
+            traceback.print_exc()
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
 
 
 # -- Step 1: Identity Management ---------------------------------------------
