@@ -110,12 +110,39 @@ def plan_turn(
         focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
         return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
 
-    # ── 5. STEP 5: Beneficiaries ───────────────────────────────────────
-    if n_beneficiaries == 0:
+    # ── 4.5 STEP 5: Confirm beneficiaries (Wizard Step 5 / DB step4) ────
+    s4 = current_will_data.get('step4')
+    n_benef = len(s4) if isinstance(s4, list) else 0
+    if n_benef == 0:
+        reply_parts.append(_step5_beneficiaries_question(current_will_data))
+        return _wrap(reply_parts, questions, patch, advice)
+
+    # ── 5. STEP 6: Specific Gifts (properties, then banks generic) ──────
+    pending_gifts = current_will_data.get('pending_gifts') or {}
+    pending_props = pending_gifts.get('property') or []
+    pending_banks = pending_gifts.get('bank') or []
+
+    if pending_props:
+        q = _step6_property_question(pending_props, recent_text, current_will_data)
+        reply_parts.append(q['text'])
+        focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
+        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
+
+    if pending_banks and not (current_will_data.get('step5') or []):
+        # No bank gift saved yet — ask the generic-clause question.
+        # If user wants per-account, they can name specific accounts in reply.
+        q = _step6_bank_question(pending_banks, current_will_data)
+        reply_parts.append(q['text'])
+        return _wrap(reply_parts, questions, patch, advice)
+
+    # ── 6. STEP 7: Residuary ───────────────────────────────────────────
+    s6 = current_will_data.get('step6') or {}
+    if not s6 or not (s6.get('beneficiaries') or s6.get('residuary_beneficiary_name')):
         reply_parts.append(
-            "✅ **Step 3 complete.** Moving to **Step 5: Beneficiaries**.\n\n"
-            "Who should inherit the estate? List each beneficiary and their share "
-            "(e.g. \"Wife 100%\" or \"Joshua 50%, Esther 50%\")."
+            "✅ Specific gifts done. Moving to **Step 7: Residuary Estate**.\n\n"
+            "After the specific gifts above, who should inherit **the rest of your estate** "
+            "(everything not specifically given away)?\n\n"
+            "Reply with name + optional share, e.g. `Wife 100%` or `Joshua 50%, Esther 50%`."
         )
         return _wrap(reply_parts, questions, patch, advice)
 
@@ -399,6 +426,103 @@ def _step3_executor_question(will_data: Dict[str, Any], recent_text: str = '') -
         )
 
     return {'text': '\n\n'.join(parts), 'focus_doc_id': candidate.get('document_id') if candidate else None}
+
+
+def _step5_beneficiaries_question(will_data):
+    """Confirm the universe of beneficiaries (people who'll inherit anything).
+    Filters identities: drops testator + witnesses; auto-suggests spouse +
+    children + anyone explicitly tagged Beneficiary."""
+    identities = will_data.get('identities') or []
+    likely = []
+    BENEFICIARY_RELS = {
+        'spouse', 'wife', 'husband', 'son', 'daughter', 'father', 'mother',
+        'brother', 'sister', 'grandson', 'granddaughter', 'beneficiary',
+        'stepson', 'stepdaughter', 'adopted son', 'adopted daughter',
+    }
+    EXCLUDE_RELS = {'testator', 'witness'}
+    for i in identities:
+        rel = (i.get('relationship') or '').lower()
+        if rel in EXCLUDE_RELS:
+            continue
+        if rel in BENEFICIARY_RELS or not rel:
+            likely.append(i)
+        # Sister-in-law etc. — only include if they're also marked executor/etc.
+        elif 'in-law' in rel:
+            likely.append(i)
+
+    parts = [
+        "### 👨‍👩‍👧 Step 5: Confirm Beneficiaries",
+        "These are the people who could inherit something. Confirm or adjust:",
+    ]
+    if likely:
+        for i in likely:
+            parts.append(f"- **{i['full_name']}** ({i.get('relationship') or 'unknown'})")
+        parts.append(
+            "Reply **`yes`** to confirm all of these as the beneficiary list, "
+            "or correct it (e.g. `remove sister-in-law, add Joshua and Esther only`)."
+        )
+    else:
+        parts.append("⚠️ No likely beneficiaries detected. Add identities first or list names manually.")
+    return '\n\n'.join(parts)
+
+
+def _step6_property_question(pending_props, recent_text, will_data):
+    """Walk one property at a time: show the title + ask who inherits + share."""
+    p = pending_props[0]
+    ex = p.get('extracted') or {}
+    addr = ex.get('property_address') or ex.get('description') or '(address unreadable)'
+    title_type = ex.get('title_type') or ''
+    title_no = ex.get('title_number') or ''
+    title_ref = f"{title_type} No. {title_no}".strip() if (title_type or title_no) else '(title unreadable)'
+
+    # Try deduction by Claude — find shares mentioned near property keywords
+    deduced = ''
+    if recent_text:
+        try:
+            from ai.role_deducer import deduce_roles  # not perfect — rough fallback
+            # Just look for share patterns near a name in the email — quick regex
+            import re as _re
+            ident_names = [i['full_name'] for i in (will_data.get('identities') or [])]
+            for name in ident_names:
+                pat = _re.compile(r'(\d+\s*(?:%|percent)|\d/\d)[^.]{0,50}' + _re.escape(name)
+                                  + r'|' + _re.escape(name) + r'[^.]{0,50}(\d+\s*(?:%|percent)|\d/\d)',
+                                  _re.IGNORECASE)
+                m = pat.search(recent_text)
+                if m:
+                    deduced += f"\n  - **{name}** mentioned with share `{m.group(0)[:80]}`"
+        except Exception:
+            pass
+
+    n_left = len(pending_props)
+    parts = [
+        f"### 🏠 Step 6: Specific Gifts — Property ({n_left} remaining)",
+        f"**{addr}**",
+        f"_{title_ref}_",
+    ]
+    if deduced:
+        parts.append("📌 From the email, possible beneficiaries:" + deduced)
+
+    parts.append(
+        "Reply with **beneficiary name + share**, e.g. `Joshua 100%` or `Joshua 50%, Esther 50%`. "
+        "If this property is jointly owned, add `joint with <name>` and your share — e.g. "
+        "`Joshua 100% — joint with wife, my 1/2 share`. Or `skip` / `delete`."
+    )
+    return {'text': '\n\n'.join(parts), 'focus_doc_id': p.get('document_id')}
+
+
+def _step6_bank_question(pending_banks, will_data):
+    """One generic question for ALL bank accounts unless user specifies."""
+    n = len(pending_banks)
+    parts = [
+        f"### 🏦 Step 6: Bank Accounts ({n} statement{'s' if n!=1 else ''} on file)",
+        "Per the standard clause, **all bank accounts** can go to one beneficiary "
+        "(any account specifically given away above is excluded automatically).",
+        "Who should inherit your bank accounts? Reply with a name, e.g. `Wife` or "
+        "the beneficiary's full name.",
+        "If you want to assign each account separately, reply `walk one by one` and "
+        "I'll go through each.",
+    ]
+    return {'text': '\n\n'.join(parts), 'focus_doc_id': None}
 
 
 def _is_already_executor(identity, executors):

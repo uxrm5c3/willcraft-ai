@@ -3353,14 +3353,19 @@ def api_chat_message(client_id):
     #    the planner asks about the NEXT one.
     just_assigned = _try_assign_pending_identity(client_id, user_text)
     just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)
-    # If we're past Step 1, attempt executor save (main / substitute)
+    # If past Step 1, attempt executor save then beneficiaries save
     just_executor = None
+    just_benef = None
     if not just_assigned and not just_deleted:
         from services.identity_walker import get_pending_ic_documents as _gpid
         if not _gpid(client_id):  # Step 1 done
             just_executor = _try_save_executor(client_id, user_text)
+            if not just_executor:
+                just_benef = _try_save_beneficiaries(client_id, user_text)
     from services.identity_walker import get_pending_ic_documents
+    from services.gift_walker import get_pending_gift_documents
     pending_ics = get_pending_ic_documents(client_id)
+    pending_gifts = get_pending_gift_documents(client_id)
     recent_text = _gather_recent_chat_text(client_id)
 
     # 6. Plan the assistant turn against the current Will state
@@ -3370,8 +3375,9 @@ def api_chat_message(client_id):
                    .order_by(Will.updated_at.desc())
                    .first())
     will_snapshot = _will_data_snapshot(active_will)
-    # Treat executor save as a "just_assigned" so the planner acknowledges
-    just = just_assigned or just_executor
+    # Treat executor / beneficiaries save as "just_assigned" so the planner acknowledges
+    just = just_assigned or just_executor or just_benef
+    will_snapshot['pending_gifts'] = pending_gifts
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
                      just_assigned=just, just_deleted=just_deleted)
@@ -3739,6 +3745,64 @@ def _try_delete_pending_identity(client_id: str, user_text: str):
     db.session.commit()
     label = name or target.get('original_filename', 'this document')
     return {'name': label, 'action': 'deleted', 'count': count}
+
+
+def _try_save_beneficiaries(client_id: str, user_text: str):
+    """If chat is at Step 5 (Beneficiaries) and user replied 'yes',
+    save the planner's auto-suggested likely-beneficiaries into step4_data.
+    Returns {'name', 'role', 'kind'} or None."""
+    if not user_text:
+        return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        s4 = json.loads(will.step4_data) if will.step4_data else []
+    except (json.JSONDecodeError, TypeError):
+        s4 = []
+    if not isinstance(s4, list):
+        s4 = []
+    if len(s4) > 0:
+        return None  # already set
+    # Need executor done first
+    try:
+        s2 = json.loads(will.step2_data) if will.step2_data else {}
+    except (json.JSONDecodeError, TypeError):
+        s2 = {}
+    if len(s2.get('executors') or []) == 0:
+        return None
+
+    text_lower = user_text.lower().strip()
+    words = set(re.findall(r'\b[a-z]+\b', text_lower))
+    if not any(t in words for t in _CONFIRM_TOKENS):
+        return None  # only on explicit confirm for now
+
+    # Replicate planner's "likely beneficiary" filter
+    persons = Person.query.filter_by(client_id=client_id).all()
+    BENEFICIARY_RELS = {
+        'spouse', 'wife', 'husband', 'son', 'daughter', 'father', 'mother',
+        'brother', 'sister', 'grandson', 'granddaughter', 'beneficiary',
+        'stepson', 'stepdaughter', 'adopted son', 'adopted daughter',
+    }
+    likely = []
+    for p in persons:
+        rel = (p.relationship or '').lower()
+        if rel in ('testator', 'witness'):
+            continue
+        if rel in BENEFICIARY_RELS or not rel or 'in-law' in rel:
+            likely.append({
+                'full_name': p.full_name, 'nric_passport': p.nric_passport or '',
+                'address': p.address or '', 'relationship': p.relationship or '',
+                'person_id': p.id,
+            })
+    if not likely:
+        return None
+    will.step4_data = json.dumps(likely)
+    db.session.commit()
+    names = ', '.join(b['full_name'] for b in likely)
+    return {'name': names, 'role': f'{len(likely)} beneficiaries', 'kind': 'beneficiaries'}
 
 
 def _try_save_executor(client_id: str, user_text: str):
