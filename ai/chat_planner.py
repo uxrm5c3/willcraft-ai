@@ -58,6 +58,7 @@ def plan_turn(
     patch: Dict[str, Any] = {}
 
     # ── Acknowledge an assignment / deletion from the previous turn ─────
+    just_kind = (just_assigned or {}).get('kind', 'identity')
     if just_assigned:
         reply_parts.append(
             f"✅ Saved **{just_assigned.get('name','')}** as **{just_assigned.get('role','')}**."
@@ -86,8 +87,10 @@ def plan_turn(
     n_executors = len((s2.get('executors') or []))
     n_beneficiaries = len(current_will_data.get('step4') or [])
 
-    # Announce Step 1 completion if we just finished it
-    if just_assigned and not pending_ics:
+    # Announce Step 1 completion only if we just finished an IDENTITY
+    # assignment AND there are no more pending ICs (avoid firing on
+    # executor / other-stage saves).
+    if just_assigned and not pending_ics and just_kind == 'identity':
         reply_parts.append(
             "🎉 **Step 1: Identities — COMPLETE.** All ICs assigned. "
             "Now moving to **Step 2: Testator Info**."
@@ -229,11 +232,43 @@ def _step2_question(s1: Dict[str, Any]) -> str:
     )
 
 
+def _eligible_executor_candidates(identities):
+    """Filter identities down to those legally eligible to be executor under
+    the Wills Act 1959 (Malaysia):
+      - Cannot be the testator (s.4: testator appoints OTHERS)
+      - Must be 18+ on appointment (Probate & Administration Act 1959 s.3)
+      - Must not be of unsound mind (no automated check; user judgment)
+    """
+    from datetime import date
+    today = date.today()
+    eligible = []
+    for i in identities:
+        rel = (i.get('relationship') or '').lower()
+        if rel == 'testator':
+            continue
+        # Compute age if DOB known; if minor → exclude
+        dob = i.get('date_of_birth') or ''
+        try:
+            if dob and len(dob) == 10:
+                y, m, d = int(dob[:4]), int(dob[5:7]), int(dob[8:10])
+                age = today.year - y - ((today.month, today.day) < (m, d))
+                if age < 18:
+                    continue
+        except (ValueError, IndexError):
+            pass  # unknown DOB → keep, user judges
+        eligible.append(i)
+    return eligible
+
+
 def find_executor_candidate(identities, executors, role, recent_text=''):
     """Pick the best candidate for main / substitute executor.
     Returns {'person_id', 'name', 'evidence', 'document_id'} or None.
     Used by both _step3_executor_question (to suggest in prompt) and the
-    chat-message route (to apply when user replies 'yes')."""
+    chat-message route (to apply when user replies 'yes').
+
+    Filters out testator + minors per Wills Act 1959 / Probate Act 1959.
+    """
+    identities = _eligible_executor_candidates(identities)
     # 1) Already marked Executor in identities
     already = next((i for i in identities
                     if 'executor' in (i.get('relationship') or '').lower()), None)

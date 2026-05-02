@@ -3818,7 +3818,7 @@ def _try_save_executor(client_id: str, user_text: str):
     s2['trustee_data'] = s2.get('trustee_data') or {'same_as_executor': True, 'trustees': [{}]}
     will.step2_data = json.dumps(s2)
     db.session.commit()
-    return {'name': chosen.full_name, 'role': f'{role} executor'}
+    return {'name': chosen.full_name, 'role': f'{role} executor', 'kind': 'executor'}
 
 
 def _try_assign_pending_identity(client_id: str, user_text: str):
@@ -3867,7 +3867,7 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
         document_id=target['document_id'],
     )
     db.session.commit()
-    return {'name': name, 'role': chosen_role}
+    return {'name': name, 'role': chosen_role, 'kind': 'identity'}
 
 
 # -- Inbound email → chat (Postmark webhook) --------------------------------
