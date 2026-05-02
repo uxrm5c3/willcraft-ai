@@ -990,7 +990,7 @@ def admin_settings():
 
 
 @app.route('/admin/will-format-preview')
-@role_required('admin')
+@role_required('admin', 'approver')
 def admin_will_format_preview():
     """
     Render the verbatim Alan & Tan PHEK YI TING sample through the current
