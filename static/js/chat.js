@@ -395,14 +395,40 @@
     return `<div class="border-b border-gray-100 pb-2 last:border-b-0">${header}${body}</div>`;
   }
 
-  // ── Initial load ─────────────────────────────────────────────────────
+  // ── Load + render history ────────────────────────────────────────────
+  // Tracks last known signature to skip re-render when nothing changed
+  // (avoids visual flicker on every poll). Signature combines count +
+  // last-message id + last applied/rejected timestamps so a Apply/Reject
+  // arriving via another tab also re-renders.
+  let lastSignature = null;
+
+  function historySignature(messages) {
+    if (!messages.length) return '0';
+    return messages.map(m =>
+      `${m.id}:${m.applied_at || ''}:${m.rejected_at || ''}`
+    ).join('|');
+  }
+
   window.loadChatHistory = async function (opts = {}) {
     try {
       const resp = await fetch(`/api/chat/${CLIENT_ID}/history`);
       const data = await resp.json();
       if (!data.ok) return;
 
-      // Reset thread
+      const sig = historySignature(data.messages);
+      if (!opts.force && sig === lastSignature) {
+        // Nothing changed — still refresh the will snapshot in case it
+        // was edited via the wizard in another tab, but skip the thread.
+        renderWillSnapshot(data.will);
+        return;
+      }
+      lastSignature = sig;
+
+      // Preserve scroll behaviour: if the user was at the bottom, stay at
+      // the bottom after re-render. If they were scrolled up reading, leave
+      // them where they were.
+      const wasAtBottom = (thread.scrollHeight - thread.scrollTop - thread.clientHeight) < 80;
+
       thread.innerHTML = '';
       if (data.messages.length === 0) {
         thread.appendChild(empty);
@@ -412,10 +438,38 @@
         for (const m of data.messages) appendMessage(m);
       }
       renderWillSnapshot(data.will);
+
+      if (wasAtBottom) thread.scrollTop = thread.scrollHeight;
     } catch (e) {
-      console.error('Failed to load chat history', e);
+      // Network blip — silent, next poll will retry.
     }
   };
 
+  // ── Auto-poll for new messages (e.g. inbound emails) ─────────────────
+  // Polls every 5s while the tab is visible; pauses when hidden or backgrounded
+  // so we don't burn the API.
+  const POLL_MS = 5000;
+  let pollTimer = null;
+  function startPolling() {
+    stopPolling();
+    pollTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadChatHistory();
+      }
+    }, POLL_MS);
+  }
+  function stopPolling() {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      loadChatHistory();   // catch up immediately on refocus
+      startPolling();
+    } else {
+      stopPolling();
+    }
+  });
+
   loadChatHistory();
+  startPolling();
 })();
