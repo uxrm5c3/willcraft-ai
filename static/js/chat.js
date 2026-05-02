@@ -350,6 +350,27 @@
     }
 
     if (m.role === 'assistant') {
+      // Walk-through quick action buttons (Yes / Skip / Delete) — only render
+      // on the LATEST assistant bubble so old questions don't show stale buttons.
+      const isWalkthrough = (m.content || '').includes('Step 1: Identity walk-through');
+      const isLatest = (m.id === window.__latestAssistantId);
+      if (isWalkthrough && isLatest) {
+        html += `
+          <div class="mt-3 flex flex-wrap gap-2">
+            <button onclick="window.__quickReply('yes')" class="px-3 py-1.5 bg-green-600 text-white text-sm font-semibold rounded-lg hover:bg-green-700 flex items-center gap-1">
+              ✓ Yes, confirm
+            </button>
+            <button onclick="window.__quickReply('skip')" class="px-3 py-1.5 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 flex items-center gap-1 border border-gray-300">
+              ⏭ Skip
+            </button>
+            <button onclick="window.__quickReply('delete')" class="px-3 py-1.5 bg-red-50 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-100 border border-red-200 flex items-center gap-1">
+              🗑 Delete (uploaded by mistake)
+            </button>
+          </div>
+          <div class="mt-2 text-xs text-gray-500">…or type a different role: spouse, son, daughter, executor, etc.</div>
+        `;
+      }
+
       // Clarifying questions
       if (m.clarifying_questions && m.clarifying_questions.length) {
         html += '<div class="mt-2 space-y-1">';
@@ -470,6 +491,12 @@
     await loadChatHistory({ force: true });
   };
 
+  // ── Quick reply (walk-through buttons send a one-word message) ──────
+  window.__quickReply = function (word) {
+    textInput.value = word;
+    sendChatMessage();
+  };
+
   // ── Apply / reject ───────────────────────────────────────────────────
   window.__applyPatch = async function (msgId) {
     const resp = await fetch(`/api/chat/${CLIENT_ID}/apply/${msgId}`, { method: 'POST' });
@@ -579,12 +606,15 @@
 
       const sig = historySignature(data.messages);
       if (!opts.force && sig === lastSignature) {
-        // Nothing changed — still refresh the will snapshot in case it
-        // was edited via the wizard in another tab, but skip the thread.
         renderWillSnapshot(data.will);
         return;
       }
       lastSignature = sig;
+
+      // Remember the latest assistant id so quick-action buttons only render
+      // on the most recent walk-through question, not stale older ones.
+      const latestAsst = [...data.messages].reverse().find(m => m.role === 'assistant');
+      window.__latestAssistantId = latestAsst ? latestAsst.id : null;
 
       // Preserve scroll behaviour: if the user was at the bottom, stay at
       // the bottom after re-render. If they were scrolled up reading, leave
