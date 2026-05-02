@@ -3164,6 +3164,7 @@ def api_chat_message(client_id):
     from ai.file_classifier import classify_file
     from ai.ocr import extract_nric_data
     from ai.chat_planner import plan_turn
+    from ai.voice_transcription import is_audio, transcribe
 
     client = db.session.get(Client, client_id)
     if not client:
@@ -3190,13 +3191,19 @@ def api_chat_message(client_id):
     attachment_ids = []
     artifacts = []
     file_errors = []
+    voice_transcripts = []  # collected to merge into user_text
 
     for f in files:
         if not f or not f.filename:
             continue
+        # Audio files go to documents/voice/, get transcribed, and bypass the
+        # vision classifier (Whisper handles them, file_classifier would just
+        # error trying to send them as images).
+        is_voice = is_audio(f.content_type or '') or is_audio(f.filename)
+        category_initial = 'voice' if is_voice else 'chat_inbox'
         try:
             saved_name, rel_path, file_size = save_uploaded_file(
-                f, client_id, category='chat_inbox', folder_name=folder_name)
+                f, client_id, category=category_initial, folder_name=folder_name)
         except ValueError as e:
             file_errors.append(f"{f.filename}: {e}")
             continue
@@ -3206,7 +3213,7 @@ def api_chat_message(client_id):
             chat_message_id=user_msg.id,
             filename=saved_name, original_filename=f.filename,
             file_path=rel_path, file_type=f.content_type,
-            file_size=file_size, category='chat_inbox',
+            file_size=file_size, category=category_initial,
         )
         db.session.add(doc)
         db.session.flush()
@@ -3214,7 +3221,26 @@ def api_chat_message(client_id):
 
         abs_path = os.path.join(UPLOAD_DIR, rel_path)
 
-        # 2. Classify
+        if is_voice:
+            transcript = transcribe(abs_path)
+            if transcript:
+                voice_transcripts.append(transcript)
+                doc.description = (transcript[:500] or None)
+                try:
+                    doc.extracted_data = json.dumps({'transcript': transcript})
+                except (TypeError, ValueError):
+                    pass
+            else:
+                doc.description = '(transcription failed or unavailable)'
+            artifacts.append({
+                'document_id': doc.id, 'kind': 'voice',
+                'confidence': 'high' if transcript else 'low',
+                'extracted': {'transcript': transcript} if transcript else None,
+                'original_filename': f.filename,
+            })
+            continue  # don't run vision classifier on audio
+
+        # 2. Classify (vision)
         classification = classify_file(abs_path)
         kind = classification.get('kind', 'other')
 
@@ -3242,6 +3268,16 @@ def api_chat_message(client_id):
             'extracted': extracted,
             'original_filename': f.filename,
         })
+
+    # Merge voice transcripts into the user-visible message text so the planner
+    # treats spoken instructions the same as typed ones.
+    if voice_transcripts:
+        joined = '\n\n'.join(voice_transcripts)
+        if user_text:
+            user_text = f"{user_text}\n\n_(voice)_ {joined}"
+        else:
+            user_text = f"_(voice)_ {joined}"
+        user_msg.content = user_text
 
     user_msg.attachments_json = json.dumps(attachment_ids)
 
@@ -3392,7 +3428,9 @@ _REPLY_QUOTE_RE = re.compile(
     r'(?:^On .{0,80}wrote:.*\Z)|(?:^>+.*$)|(?:^-{2,}\s*Original Message\s*-{2,}.*\Z)',
     re.MULTILINE | re.DOTALL,
 )
-_INBOUND_FILE_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp', 'pdf'}
+_INBOUND_FILE_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'heic', 'heif', 'webp', 'bmp', 'pdf',
+                       # Audio (voice notes forwarded from WhatsApp etc.)
+                       'mp3', 'mp4', 'm4a', 'wav', 'webm', 'ogg', 'oga', 'mpga'}
 
 
 def _strip_reply_quotes(text: str) -> str:
@@ -3496,6 +3534,9 @@ def api_inbound_email():
     attachment_ids = []
     artifacts = []
     file_errors = []
+    voice_transcripts = []
+
+    from ai.voice_transcription import is_audio, transcribe
 
     for att in attachments:
         name = att.get('Name', 'attachment')
@@ -3515,23 +3556,45 @@ def api_inbound_email():
             file_errors.append(f"{name}: larger than 20MB")
             continue
 
+        ctype = (att.get('ContentType') or '').lower()
+        is_voice = is_audio(ctype) or is_audio(name)
+        cat = 'voice' if is_voice else 'chat_inbox'
         safe_basename = uuid.uuid4().hex[:12] + '.' + ext
-        folder = os.path.join(UPLOAD_DIR, folder_name, 'documents', 'chat_inbox')
+        folder = os.path.join(UPLOAD_DIR, folder_name, 'documents', cat)
         os.makedirs(folder, exist_ok=True)
         abs_path = os.path.join(folder, safe_basename)
         with open(abs_path, 'wb') as f:
             f.write(data)
-        rel_path = os.path.join(folder_name, 'documents', 'chat_inbox', safe_basename)
+        rel_path = os.path.join(folder_name, 'documents', cat, safe_basename)
 
         doc = Document(
             client_id=client.id, chat_message_id=user_msg.id,
             filename=safe_basename, original_filename=name,
-            file_path=rel_path, file_type=att.get('ContentType') or '',
-            file_size=len(data), category='chat_inbox',
+            file_path=rel_path, file_type=ctype,
+            file_size=len(data), category=cat,
         )
         db.session.add(doc)
         db.session.flush()
         attachment_ids.append(doc.id)
+
+        if is_voice:
+            transcript = transcribe(abs_path)
+            if transcript:
+                voice_transcripts.append(transcript)
+                doc.description = transcript[:500]
+                try:
+                    doc.extracted_data = json.dumps({'transcript': transcript})
+                except (TypeError, ValueError):
+                    pass
+            else:
+                doc.description = '(transcription failed or unavailable)'
+            artifacts.append({
+                'document_id': doc.id, 'kind': 'voice',
+                'confidence': 'high' if transcript else 'low',
+                'extracted': {'transcript': transcript} if transcript else None,
+                'original_filename': name,
+            })
+            continue
 
         classification = classify_file(abs_path)
         kind = classification.get('kind', 'other')
@@ -3556,6 +3619,13 @@ def api_inbound_email():
         })
 
     user_msg.attachments_json = json.dumps(attachment_ids)
+
+    # Merge voice transcripts into the planner-visible body so spoken
+    # instructions get the same treatment as typed text.
+    if voice_transcripts:
+        joined = '\n\n'.join(voice_transcripts)
+        text_body = (text_body + '\n\n' if text_body else '') + f"_(voice)_ {joined}"
+        user_msg.content = (user_msg.content or '') + f"\n\n_(voice transcript)_\n{joined}"
 
     active_will = (Will.query.filter_by(client_id=client.id, status='draft')
                    .filter(Will.deleted_at.is_(None))

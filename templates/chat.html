@@ -68,8 +68,14 @@
                     <label class="cursor-pointer p-2 text-gray-500 hover:text-primary-600 rounded-lg hover:bg-gray-100 flex-shrink-0" title="Attach files">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
                         <input type="file" id="chat-files" multiple class="hidden"
-                               accept=".jpg,.jpeg,.png,.gif,.heic,.heif,.webp,.bmp,.pdf">
+                               accept=".jpg,.jpeg,.png,.gif,.heic,.heif,.webp,.bmp,.pdf,.mp3,.mp4,.m4a,.wav,.webm,.ogg">
                     </label>
+                    <button type="button" id="chat-mic" onclick="toggleVoiceRecord()" title="Hold or tap to record voice"
+                            class="p-2 text-gray-500 hover:text-primary-600 rounded-lg hover:bg-gray-100 flex-shrink-0 relative">
+                        <svg id="mic-icon-idle" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-14 0m7 7v3m-3 0h6m-9-13a3 3 0 016 0v6a3 3 0 11-6 0V8z"/></svg>
+                        <svg id="mic-icon-recording" class="w-5 h-5 hidden text-red-600" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                        <span id="mic-timer" class="hidden absolute -top-1 -right-1 bg-red-600 text-white text-[9px] font-bold rounded-full px-1.5 py-0.5">0:00</span>
+                    </button>
                     <textarea id="chat-text" rows="1"
                               placeholder="Describe what to add, or drop an IC / property title above…"
                               class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm resize-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
@@ -128,5 +134,5 @@ function copyInboxAddress() {
     });
 }
 </script>
-<script src="{{ url_for('static', filename='js/chat.js') }}?v=20260503c"></script>
+<script src="{{ url_for('static', filename='js/chat.js') }}?v=20260503d"></script>
 {% endblock %}

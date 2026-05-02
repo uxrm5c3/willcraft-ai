@@ -115,6 +115,115 @@
     dragOverlay.classList.add('hidden');
   });
 
+  // ── Voice recording (MediaRecorder → blob → pendingFiles) ────────────
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let recordTimer = null;
+  let recordSecs = 0;
+  const RECORD_MAX_SECS = 180; // 3 min hard cap (Whisper accepts up to 25MB)
+
+  function pickAudioMime() {
+    // Prefer webm/opus (Chrome/Edge/Firefox/Android), fallback to mp4 (Safari iOS)
+    if (typeof MediaRecorder === 'undefined') return null;
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/mpeg'];
+    for (const c of candidates) {
+      if (MediaRecorder.isTypeSupported(c)) return c;
+    }
+    return ''; // empty = let browser pick default
+  }
+
+  function updateMicUI(isRecording) {
+    const idle = document.getElementById('mic-icon-idle');
+    const rec = document.getElementById('mic-icon-recording');
+    const timer = document.getElementById('mic-timer');
+    if (!idle || !rec || !timer) return;
+    if (isRecording) {
+      idle.classList.add('hidden');
+      rec.classList.remove('hidden');
+      timer.classList.remove('hidden');
+    } else {
+      idle.classList.remove('hidden');
+      rec.classList.add('hidden');
+      timer.classList.add('hidden');
+    }
+  }
+
+  function fmtTimer(s) {
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${r < 10 ? '0' : ''}${r}`;
+  }
+
+  window.toggleVoiceRecord = async function () {
+    // Stop in-progress recording
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+      return;
+    }
+    // Browser support check
+    if (!navigator.mediaDevices || typeof MediaRecorder === 'undefined') {
+      alert('Voice recording is not supported in this browser. Try Chrome or Safari.');
+      return;
+    }
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      alert('Microphone access denied. Allow microphone for this site and try again.');
+      return;
+    }
+
+    const mime = pickAudioMime();
+    try {
+      mediaRecorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    } catch (e) {
+      alert('Could not start recording: ' + e.message);
+      stream.getTracks().forEach(t => t.stop());
+      return;
+    }
+
+    recordedChunks = [];
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      clearInterval(recordTimer);
+      recordTimer = null;
+      updateMicUI(false);
+
+      const usedMime = mediaRecorder.mimeType || mime || 'audio/webm';
+      const ext = usedMime.includes('mp4') ? 'm4a'
+                : usedMime.includes('mpeg') ? 'mp3'
+                : 'webm';
+      const blob = new Blob(recordedChunks, { type: usedMime });
+      const ts = new Date();
+      const stamp = ts.getFullYear()
+                  + String(ts.getMonth() + 1).padStart(2, '0')
+                  + String(ts.getDate()).padStart(2, '0') + '_'
+                  + String(ts.getHours()).padStart(2, '0')
+                  + String(ts.getMinutes()).padStart(2, '0')
+                  + String(ts.getSeconds()).padStart(2, '0');
+      const file = new File([blob], `Voice_${stamp}.${ext}`, { type: usedMime });
+      pendingFiles.push(file);
+      renderFilePills();
+    };
+
+    mediaRecorder.start();
+    recordSecs = 0;
+    updateMicUI(true);
+    const timerEl = document.getElementById('mic-timer');
+    timerEl.textContent = '0:00';
+    recordTimer = setInterval(() => {
+      recordSecs++;
+      timerEl.textContent = fmtTimer(recordSecs);
+      if (recordSecs >= RECORD_MAX_SECS && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+      }
+    }, 1000);
+  };
+
   // ── Auto-resize textarea + Enter to send ─────────────────────────────
   textInput.addEventListener('input', () => {
     textInput.style.height = 'auto';

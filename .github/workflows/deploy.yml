@@ -8,10 +8,11 @@ name: Deploy to production
 #   DEPLOY_USER    = ubuntu
 #   DEPLOY_SSH_KEY = (paste private key — see deploy-setup.sh in repo root)
 #
-# Optional secrets (used by the email-to-chat feature; absent = feature disabled):
+# Optional secrets (used by chat features; absent = that feature disabled):
 #   POSTMARK_INBOUND_USER     = the username half of the webhook Basic Auth
 #   POSTMARK_INBOUND_PASS     = the password half of the webhook Basic Auth
 #   INBOUND_ALLOWED_DOMAINS   = comma-separated sender allowlist (default 'alantanjb.com')
+#   OPENAI_API_KEY            = OpenAI API key for Whisper voice transcription
 #
 # Then every `git push origin main` triggers this workflow → live in ~90s.
 
@@ -40,12 +41,14 @@ jobs:
           PM_USER: ${{ secrets.POSTMARK_INBOUND_USER }}
           PM_PASS: ${{ secrets.POSTMARK_INBOUND_PASS }}
           ALLOWED: ${{ secrets.INBOUND_ALLOWED_DOMAINS }}
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -e
           : > /tmp/inbound.env
           [ -n "$PM_USER" ] && printf 'POSTMARK_INBOUND_USER=%s\n' "$PM_USER" >> /tmp/inbound.env
           [ -n "$PM_PASS" ] && printf 'POSTMARK_INBOUND_PASS=%s\n' "$PM_PASS" >> /tmp/inbound.env
           [ -n "$ALLOWED" ] && printf 'INBOUND_ALLOWED_DOMAINS=%s\n' "$ALLOWED" >> /tmp/inbound.env
+          [ -n "$OPENAI_KEY" ] && printf 'OPENAI_API_KEY=%s\n' "$OPENAI_KEY" >> /tmp/inbound.env
           echo "Fragment to sync ($(wc -l < /tmp/inbound.env) lines):"
           cut -d= -f1 /tmp/inbound.env | sed 's/^/  - /'
           if [ ! -s /tmp/inbound.env ]; then
