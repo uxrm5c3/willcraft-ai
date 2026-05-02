@@ -3299,13 +3299,25 @@ def api_chat_message(client_id):
         classification = classify_file(abs_path)
         kind = classification.get('kind', 'other')
 
-        # 3. Extract (kind-specific) — slice 1: IC only, others queued for later slices
+        # 3. Extract per kind
         extracted = None
-        if kind == 'nric':
-            try:
+        try:
+            if kind == 'nric':
                 extracted = extract_nric_data(abs_path)
-            except Exception as e:
-                extracted = {'error': str(e)}
+            elif kind in ('property_title', 'property_tax'):
+                from ai.property_extractor import extract_property_data
+                extracted = extract_property_data(abs_path, doc_type='general')
+            elif kind == 'bank_statement':
+                from ai.ocr import extract_asset_document
+                extracted = extract_asset_document(abs_path, asset_type='bank')
+            elif kind == 'vehicle':
+                from ai.ocr import extract_asset_document
+                extracted = extract_asset_document(abs_path, asset_type='vehicle')
+            elif kind in ('insurance', 'epf_kwsp'):
+                from ai.ocr import extract_asset_document
+                extracted = extract_asset_document(abs_path, asset_type='other')
+        except Exception as e:
+            extracted = {'error': str(e)}
 
         # 4. Update Document with classification result
         doc.category = kind if kind != 'other' else 'chat_inbox'
@@ -4301,11 +4313,23 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                 classification = classify_file(abs_path)
                 kind = classification.get('kind', 'other')
                 extracted = None
-                if kind == 'nric':
-                    try:
+                try:
+                    if kind == 'nric':
                         extracted = extract_nric_data(abs_path)
-                    except Exception as e:
-                        extracted = {'error': str(e)}
+                    elif kind in ('property_title', 'property_tax'):
+                        from ai.property_extractor import extract_property_data
+                        extracted = extract_property_data(abs_path, doc_type='general')
+                    elif kind == 'bank_statement':
+                        from ai.ocr import extract_asset_document
+                        extracted = extract_asset_document(abs_path, asset_type='bank')
+                    elif kind == 'vehicle':
+                        from ai.ocr import extract_asset_document
+                        extracted = extract_asset_document(abs_path, asset_type='vehicle')
+                    elif kind in ('insurance', 'epf_kwsp'):
+                        from ai.ocr import extract_asset_document
+                        extracted = extract_asset_document(abs_path, asset_type='other')
+                except Exception as e:
+                    extracted = {'error': str(e)}
                 doc.category = kind if kind != 'other' else 'chat_inbox'
                 doc.description = (classification.get('reason') or '')[:500] or None
                 if extracted is not None:
