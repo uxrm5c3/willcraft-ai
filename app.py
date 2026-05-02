@@ -1003,8 +1003,12 @@ def admin_will_format_preview():
       ?download=1   → force download even for PDF
     """
     from documents.sample_will_phek_yi_ting import SAMPLE_WILL_TEXT_PHEK_YI_TING
+    from documents.empty_template_will import EMPTY_TEMPLATE_WILL_TEXT
 
     fmt = (request.args.get('format') or 'pdf').lower()
+    use_empty = request.args.get('empty') == '1'
+    will_text = EMPTY_TEMPLATE_WILL_TEXT if use_empty else SAMPLE_WILL_TEXT_PHEK_YI_TING
+    file_label = 'Empty_Template' if use_empty else 'PHEK_YI_TING_Format_Preview'
 
     logo = _get_logo_path()
     tenant = get_tenant()
@@ -1020,7 +1024,12 @@ def admin_will_format_preview():
     if fmt == 'docx':
         from documents.will_docx import build_will_docx
         try:
-            filepath = build_will_docx(SAMPLE_WILL_TEXT_PHEK_YI_TING, firm_info=firm_info)
+            filepath = build_will_docx(
+                will_text,
+                firm_info=firm_info,
+                logo_path=logo,
+                is_draft=True,
+            )
             with open(filepath, 'rb') as f:
                 data = f.read()
         except Exception as e:
@@ -1030,7 +1039,7 @@ def admin_will_format_preview():
             data,
             mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             headers={
-                'Content-Disposition': 'attachment; filename="PHEK_YI_TING_Format_Preview.docx"',
+                'Content-Disposition': f'attachment; filename="{file_label}.docx"',
             },
         )
 
@@ -1038,8 +1047,8 @@ def admin_will_format_preview():
     from documents.pdf_generator import generate_pdf
     try:
         filepath = generate_pdf(
-            SAMPLE_WILL_TEXT_PHEK_YI_TING,
-            'PHEK_YI_TING_Format_Preview',
+            will_text,
+            file_label,
             logo_path=logo,
             firm_info=firm_info,
         )
@@ -1055,9 +1064,8 @@ def admin_will_format_preview():
         mimetype='application/pdf',
         headers={
             'Content-Disposition': (
-                'attachment; filename="PHEK_YI_TING_Format_Preview.pdf"'
-                if download
-                else 'inline; filename="PHEK_YI_TING_Format_Preview.pdf"'
+                f'attachment; filename="{file_label}.pdf"' if download
+                else f'inline; filename="{file_label}.pdf"'
             ),
         },
     )
@@ -3983,7 +3991,10 @@ def download(fmt):
     safe_name = safe_name.replace(' ', '_') or 'Will'
 
     if fmt == 'docx':
-        from documents.docx_generator import generate_docx
+        # Locked format: Alan & Tan / WillCraft standard. Single source of truth
+        # for ALL will docx generation. Format approved 2026-05-02 — see
+        # documents/will_docx.py + documents/sample_will_phek_yi_ting.py.
+        from documents.will_docx import build_will_docx
         tenant = get_tenant()
         firm_info = None
         logo = None
@@ -3998,7 +4009,18 @@ def download(fmt):
             wr = db.session.get(Will, will_id)
             if wr and wr.include_logo:
                 logo = _get_logo_path()
-        filepath = generate_docx(will_text, safe_name, firm_info=firm_info, logo_path=logo)
+        # Determine draft status from the will record (default True for safety)
+        is_draft = True
+        if will_id:
+            wr_status = (db.session.get(Will, will_id) or None)
+            if wr_status and getattr(wr_status, 'status', '') in ('approved', 'final'):
+                is_draft = False
+        filepath = build_will_docx(
+            will_text,
+            firm_info=firm_info,
+            logo_path=logo,
+            is_draft=is_draft,
+        )
     elif fmt == 'pdf':
         from documents.pdf_generator import generate_pdf
         # Check will's include_logo flag

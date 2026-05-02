@@ -1,19 +1,14 @@
-"""Verbatim Alan & Tan sample will text — PHEK YI TING DRAFT.
+"""Empty template will — same Alan & Tan format but with placeholder tokens
+in lieu of real data. Used by admin to visually verify the format spec
+without populating actual testator info.
 
-Used by the admin Will Format Preview to show what the firm's standard format
-looks like when rendered through the current PDF generator. Compared
-side-by-side against the original sample PDF to identify and fix any format
-drift before AI uses the same templates for real wills.
-
-Source: /Users/gan/Downloads/PHEK YI TING DRAFT The Last Will and Testament 2 (1).pdf
+Open via /admin/will-format-preview?empty=1
 """
 
-# Each clause is rendered as the AI would output it. The PDF generator handles
-# header/footer/cover/signing-page styling around this body text.
-SAMPLE_WILL_TEXT_PHEK_YI_TING = """LAST WILL AND TESTAMENT OF
-PHEK YI TING
+EMPTY_TEMPLATE_WILL_TEXT = """LAST WILL AND TESTAMENT OF
+{{TESTATOR_FULL_NAME}}
 
-This Will is made by me PHEK YI TING (MALAYSIA NRIC No. 841212-01-6001) of NO. 68, JALAN SONGKIT 3, TAMAN SENTOSA, 80150 JOHOR BAHRU, JOHOR, MALAYSIA.
+This Will is made by me {{TESTATOR_FULL_NAME}} (MALAYSIA NRIC No. {{TESTATOR_NRIC}}) of {{TESTATOR_ADDRESS}}.
 
 Revocation
 
@@ -21,17 +16,17 @@ Revocation
 
 Appointment of Executor(s)
 
-2.  I hereby appoint my sister PHEK YI JING (MALAYSIA NRIC NO. 910503-01-5670) of BLOCK B, 27-03A, THE ERA @ DUTA NORTH, JALAN SEGAMBUT, KAWASAN PERUSAHAAN SEGAMBUT, 51200 KUALA LUMPUR, MALAYSIA as the Executor of this Will. In the event that she is unable or unwilling to act for whatsoever reason, then I appoint my sister PHEK YI XIANG (MALAYSIA NRIC No. 960910-01-7070) of NO. 68, JALAN SONGKIT 3, TAMAN SENTOSA, 80150 JOHOR BAHRU,  JOHOR to be the Executor of this Will.
+2.  I hereby appoint my {{EXEC_RELATIONSHIP}} {{EXEC_FULL_NAME}} (MALAYSIA NRIC No. {{EXEC_NRIC}}) of {{EXEC_ADDRESS}} as the Executor of this Will. In the event that {{EXEC_PRONOUN}} is unable or unwilling to act for whatsoever reason, then I appoint my {{SUB_EXEC_RELATIONSHIP}} {{SUB_EXEC_FULL_NAME}} (MALAYSIA NRIC No. {{SUB_EXEC_NRIC}}) of {{SUB_EXEC_ADDRESS}} to be the Executor of this Will.
 
 3.  In this Will unless it is specifically stated to the contrary, my Executor(s) shall also act as my Trustee(s).
 
 Non-Residuary Gift(s)
 
-4.  I hereby devise and bequeath the monies in my United Overseas Bank Saving Account No. 9613005435 together with all interests/dividends already accrued due or accruing thereon unto my sister PHEK YI JING (MALAYSIA NRIC NO. 910503-01-5670) and my sister PHEK YI XIANG (MALAYSIA NRIC No. 960910-01-7070) in equal shares.
+4.  I hereby devise and bequeath {{GIFT_1_DESCRIPTION}} unto my {{GIFT_1_BENEFICIARY_RELATIONSHIP}} {{GIFT_1_BENEFICIARY_NAME}} (MALAYSIA NRIC No. {{GIFT_1_BENEFICIARY_NRIC}}){{GIFT_1_ADDITIONAL_BENEFICIARIES}} {{GIFT_1_DISTRIBUTION_NOTE}}.
 
-5.  I hereby devise and bequeath all monies held in any of my Public Mutual funds together with all interests/dividends already accrued due or accruing thereon unto my sister PHEK YI JING (MALAYSIA NRIC NO. 910503-01-5670) and my sister PHEK YI XIANG (MALAYSIA NRIC No. 960910-01-7070) in equal shares.
+5.  I hereby devise and bequeath {{GIFT_2_DESCRIPTION}} unto my {{GIFT_2_BENEFICIARY_RELATIONSHIP}} {{GIFT_2_BENEFICIARY_NAME}} (MALAYSIA NRIC No. {{GIFT_2_BENEFICIARY_NRIC}}){{GIFT_2_ADDITIONAL_BENEFICIARIES}} {{GIFT_2_DISTRIBUTION_NOTE}}.
 
-6.  I hereby devise and bequeath all my ¼ undivided shares in the property known as NO. 68, JALAN SONGKIT 3, TAMAN SENTOSA, 80150 JOHOR BAHRU, JOHOR held under Geran No. 433036, Lot No. 12058, Mukim Plentong, District of Johor Bahru, State of Johor unto my sister PHEK YI JING (MALAYSIA NRIC NO. 910503-01-5670) and my sister PHEK YI XIANG (MALAYSIA NRIC No. 960910-01-7070) in equal shares.
+6.  I hereby devise and bequeath {{REAL_PROPERTY_SHARE}} undivided shares in the property known as {{PROPERTY_ADDRESS}} held under {{TITLE_TYPE}} No. {{TITLE_NUMBER}}, Lot No. {{LOT_NUMBER}}, Mukim {{MUKIM}}, District of {{DISTRICT}}, State of {{STATE}} unto my {{GIFT_3_BENEFICIARY_RELATIONSHIP}} {{GIFT_3_BENEFICIARY_NAME}} (MALAYSIA NRIC No. {{GIFT_3_BENEFICIARY_NRIC}}){{GIFT_3_ADDITIONAL_BENEFICIARIES}} {{GIFT_3_DISTRIBUTION_NOTE}}.
 
 Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.
 
@@ -41,7 +36,7 @@ Residuary Estate
 
 (a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any private caveat or lien on any of my immovable properties, funeral and executorship expenses;
 
-(b) To give the residue ('my residuary estate') to my sister PHEK YI JING (MALAYSIA NRIC NO. 910503-01-5670) and my sister PHEK YI XIANG (MALAYSIA NRIC No. 960910-01-7070) in equal shares.
+(b) To give the residue ('my residuary estate') to {{RESIDUARY_BENEFICIARIES_LIST}} {{RESIDUARY_DISTRIBUTION_NOTE}}.
 
 Declaration
 

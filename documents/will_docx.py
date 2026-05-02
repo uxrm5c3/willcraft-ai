@@ -28,16 +28,21 @@ from docx.oxml.ns import qn, nsmap
 from docx.oxml import OxmlElement
 
 
-# ── Format constants (mirror Alan & Tan PHEK YI TING sample) ──────────
+# ── Format constants — matched to PDF extraction (pdfplumber) of the target ──
+# Target PDF font sizes per pdfplumber:
+#   Body: 11pt | Section heading: 12pt | Page header: 9pt | Footer: 8pt
+#   Cover title/of/name: 16pt | Cover NRIC: 14pt | Cover firm addr: 10pt
+#   Prepared By heading: 14pt | "ADVOCATES & SOLICITORS": 12pt | Address: 11pt
 FONT_FAMILY = 'Times New Roman'
 FONT_SIZE_BODY = Pt(11)
-FONT_SIZE_HEADING = Pt(11)
-FONT_SIZE_PAGE_HEADER = Pt(10)
-FONT_SIZE_PAGE_NUMBER = Pt(9)
+FONT_SIZE_HEADING = Pt(12)
+FONT_SIZE_PAGE_HEADER = Pt(9)
+FONT_SIZE_PAGE_NUMBER = Pt(8)
 FONT_SIZE_SIG_LABEL = Pt(8)
 FONT_SIZE_COVER_TITLE = Pt(16)
-FONT_SIZE_COVER_OF = Pt(14)
+FONT_SIZE_COVER_OF = Pt(16)
 FONT_SIZE_COVER_NAME = Pt(16)
+FONT_SIZE_COVER_NRIC = Pt(14)
 FONT_SIZE_COVER_FIRM_ADDR = Pt(10)
 
 
@@ -113,78 +118,163 @@ def _set_section_margins(section, *, top_in=1.0, bottom_in=1.25,
     section.footer_distance = Inches(footer_in)
 
 
-def _build_body_header(section, testator_name: str):
-    """Build the running header used on every body page:
-    'LAST WILL AND TESTAMENT OF / {TESTATOR_NAME}' bold + horizontal rule.
+def _add_draft_watermark(section):
+    """Add a diagonal "DRAFT" watermark to every page in `section`.
+    Uses Word VML inside the section's header XML — visible on every page,
+    diagonal, light gray, large. Mirrors the original Alan & Tan sample."""
+    header = section.header
+    # Inject VML watermark as raw OXML inside a header paragraph
+    p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+    r = p.add_run()
+    vml = (
+        '<w:pict xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:v="urn:schemas-microsoft-com:vml" '
+        'xmlns:o="urn:schemas-microsoft-com:office:office">'
+        '<v:shapetype id="_x0000_t136" coordsize="21600,21600" o:spt="136" '
+        'adj="10800" path="m@7,l@8,m@5,21600l@6,21600e">'
+        '<v:formulas><v:f eqn="sum #0 0 10800"/><v:f eqn="prod #0 2 1"/>'
+        '<v:f eqn="sum 21600 0 @1"/><v:f eqn="sum 0 0 @2"/>'
+        '<v:f eqn="sum 21600 0 @3"/><v:f eqn="if @0 @3 0"/>'
+        '<v:f eqn="if @0 21600 @1"/><v:f eqn="if @0 0 @2"/>'
+        '<v:f eqn="if @0 @4 21600"/><v:f eqn="mid @5 @6"/>'
+        '<v:f eqn="mid @8 @5"/><v:f eqn="mid @7 @8"/>'
+        '<v:f eqn="mid @6 @7"/><v:f eqn="sum @6 0 @5"/></v:formulas>'
+        '<v:path o:extrusionok="f" gradientshapeok="t" o:connecttype="custom"/>'
+        '<o:lock v:ext="edit" text="t" shapetype="t"/></v:shapetype>'
+        '<v:shape id="WaterMark" o:spid="_x0000_s2049" type="#_x0000_t136" '
+        'style="position:absolute;margin-left:0;margin-top:0;width:600pt;height:200pt;'
+        'rotation:-30;z-index:-251654144;mso-position-horizontal:center;'
+        'mso-position-horizontal-relative:margin;mso-position-vertical:center;'
+        'mso-position-vertical-relative:margin" '
+        'fillcolor="#dddddd" stroked="f">'
+        '<v:fill opacity=".4"/>'
+        '<v:textpath style="font-family:&quot;Times New Roman&quot;;font-size:1pt" '
+        'string="DRAFT"/>'
+        '</v:shape></w:pict>'
+    )
+    from docx.oxml import parse_xml
+    pict_xml = (
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        + vml + '</w:r>'
+    )
+    elem = parse_xml(pict_xml)
+    p._p.append(elem[0])
+
+
+def _build_body_header(section, testator_name: str, logo_path: Optional[str] = None):
+    """Build the running header for body/signing pages:
+    [logo (small, centered)] / 'LAST WILL AND TESTAMENT OF' / '{TESTATOR_NAME}'
+    + horizontal rule. Logo appears on EVERY page per Alan & Tan format.
     """
     header = section.header
-    # Clear any default paragraph
-    p1 = header.paragraphs[0]
-    p1.text = ''
+    # Logo — first paragraph (if provided)
+    p_logo = header.paragraphs[0]
+    p_logo.text = ''
+    if logo_path and os.path.isfile(logo_path):
+        run = p_logo.add_run()
+        try:
+            run.add_picture(logo_path, height=Inches(0.5))
+        except Exception:
+            pass
+    _set_paragraph_format(p_logo, alignment=WD_ALIGN_PARAGRAPH.CENTER, line_spacing=1.0)
+
+    # "LAST WILL AND TESTAMENT OF" — small bold
+    p1 = header.add_paragraph()
     r1 = p1.add_run('LAST WILL AND TESTAMENT OF')
     _set_font(r1, size=FONT_SIZE_PAGE_HEADER, bold=True)
     _set_paragraph_format(p1, alignment=WD_ALIGN_PARAGRAPH.CENTER, line_spacing=1.0)
 
+    # Testator name in running header — same 9pt bold as the line above
+    # (matches target PDF — both lines are 9pt per pdfplumber extraction)
     p2 = header.add_paragraph()
     r2 = p2.add_run(testator_name.upper())
     _set_font(r2, size=FONT_SIZE_PAGE_HEADER, bold=True)
     _set_paragraph_format(p2, alignment=WD_ALIGN_PARAGRAPH.CENTER, line_spacing=1.0)
 
-    # Horizontal rule under second header line
     _add_horizontal_line(p2)
 
 
 def _build_body_footer(section):
-    """Build the running footer: 'Page X' on the left + 3 signature lines
-    (Testator / Witness 1 / Witness 2) using a 4-column table.
+    """Build the running footer: a full-width horizontal rule across the page,
+    then 'Page X' on the left + 3 signature BOXES (Testator / Witness 1 /
+    Witness 2) — labels sit INSIDE each box at the bottom.
     """
     footer = section.footer
-    # Clear default paragraph
     p0 = footer.paragraphs[0]
     p0.text = ''
 
-    # 4-column table: [Page X] [Testator line] [Witness 1 line] [Witness 2 line]
-    table = footer.add_table(rows=2, cols=4, width=Inches(6.5))
-    table.autofit = True
-    # Distribute columns: page-num narrower, signatures equal
-    widths = [Inches(0.8), Inches(1.9), Inches(1.9), Inches(1.9)]
-    for row in table.rows:
-        for i, cell in enumerate(row.cells):
-            cell.width = widths[i]
+    # Full-page horizontal line ABOVE the signing boxes (per target PDF)
+    _set_paragraph_format(p0, alignment=WD_ALIGN_PARAGRAPH.LEFT,
+                          line_spacing=1.0, space_before_pt=0, space_after_pt=4)
+    pPr = p0._element.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    bottom_rule = OxmlElement('w:bottom')
+    bottom_rule.set(qn('w:val'), 'single')
+    bottom_rule.set(qn('w:sz'), '6')
+    bottom_rule.set(qn('w:space'), '4')
+    bottom_rule.set(qn('w:color'), '000000')
+    pBdr.append(bottom_rule)
+    pPr.append(pBdr)
 
-    # Row 1: top borders only (signature lines)
-    row_lines = table.rows[0]
-    # Page X cell — text only, no border
-    p_page = row_lines.cells[0].paragraphs[0]
+    # Single-row 4-column table: [Page X] [Testator box] [Witness 1 box] [Witness 2 box]
+    table = footer.add_table(rows=1, cols=4, width=Inches(6.5))
+    table.autofit = False
+    widths = [Inches(0.8), Inches(1.9), Inches(1.9), Inches(1.9)]
+    for i, cell in enumerate(table.rows[0].cells):
+        cell.width = widths[i]
+
+    # Box row height
+    from docx.oxml import OxmlElement as _Ox
+    trPr = table.rows[0]._tr.get_or_add_trPr()
+    trH = _Ox('w:trHeight')
+    trH.set(qn('w:val'), '720')   # ~36pt
+    trH.set(qn('w:hRule'), 'atLeast')
+    trPr.append(trH)
+
+    # Cell 0 — "Page X" plain text (no border)
+    cell_pg = table.rows[0].cells[0]
+    cell_pg.paragraphs[0].text = ''
+    p_page = cell_pg.paragraphs[0]
     r_page = p_page.add_run('Page ')
     _set_font(r_page, size=FONT_SIZE_PAGE_NUMBER)
     _add_page_number_field(p_page)
     _set_paragraph_format(p_page, alignment=WD_ALIGN_PARAGRAPH.LEFT, line_spacing=1.0)
+    # Anchor "Page X" to the bottom of its cell so it lines up with the labels
+    tcPr_pg = cell_pg._element.get_or_add_tcPr()
+    vAlign_pg = _Ox('w:vAlign')
+    vAlign_pg.set(qn('w:val'), 'bottom')
+    tcPr_pg.append(vAlign_pg)
 
-    # Signature line cells: top border to draw the signature line
-    for i in range(1, 4):
-        cell = row_lines.cells[i]
-        cell.paragraphs[0].text = ''
-        tcPr = cell._element.get_or_add_tcPr()
-        tcBorders = OxmlElement('w:tcBorders')
-        top = OxmlElement('w:top')
-        top.set(qn('w:val'), 'single')
-        top.set(qn('w:sz'), '6')
-        top.set(qn('w:color'), '000000')
-        tcBorders.append(top)
-        tcPr.append(tcBorders)
-
-    # Row 2: labels under each signature line
-    row_labels = table.rows[1]
-    row_labels.cells[0].text = ''
+    # Cells 1-3 — Testator / Witness 1 / Witness 2 boxes with label INSIDE
+    # at the bottom (no separate label row outside)
     labels = ['Testator', 'Witness 1', 'Witness 2']
     for i, label in enumerate(labels):
-        cell = row_labels.cells[i + 1]
-        p = cell.paragraphs[0]
-        p.text = ''
-        r = p.add_run(label)
-        _set_font(r, size=FONT_SIZE_SIG_LABEL)
-        _set_paragraph_format(p, alignment=WD_ALIGN_PARAGRAPH.CENTER, line_spacing=1.0)
+        cell = table.rows[0].cells[i + 1]
+        cell.paragraphs[0].text = ''
+
+        # Full borders on every edge
+        tcPr = cell._element.get_or_add_tcPr()
+        tcBorders = _Ox('w:tcBorders')
+        for edge in ('top', 'left', 'bottom', 'right'):
+            b = _Ox(f'w:{edge}')
+            b.set(qn('w:val'), 'single')
+            b.set(qn('w:sz'), '6')
+            b.set(qn('w:color'), '000000')
+            tcBorders.append(b)
+        tcPr.append(tcBorders)
+
+        # Vertically anchor cell content to the bottom — label sits at the
+        # bottom of the box; signature space is above it
+        vAlign = _Ox('w:vAlign')
+        vAlign.set(qn('w:val'), 'bottom')
+        tcPr.append(vAlign)
+
+        # Label paragraph — centered, at the bottom of the cell
+        p_lbl = cell.paragraphs[0]
+        r_lbl = p_lbl.add_run(label)
+        _set_font(r_lbl, size=FONT_SIZE_SIG_LABEL)
+        _set_paragraph_format(p_lbl, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                              line_spacing=1.0, space_before_pt=0, space_after_pt=2)
 
 
 def _add_run_with_emphasis(paragraph, text: str):
@@ -247,8 +337,17 @@ def _extract_testator_name(will_text: str) -> str:
 
 
 def build_will_docx(will_text: str, output_path: Optional[str] = None,
-                     firm_info: Optional[dict] = None) -> str:
-    """Render the will text as .docx and return the path."""
+                     firm_info: Optional[dict] = None,
+                     logo_path: Optional[str] = None,
+                     is_draft: bool = True) -> str:
+    """Render the will text as .docx and return the path.
+
+    Args:
+        will_text: Full will body + signature text
+        firm_info: dict with firm_name, firm_address, firm_phone, firm_email
+        logo_path: optional path to PNG/JPG logo embedded on cover page
+        is_draft: when True, applies a DRAFT watermark to every page
+    """
     doc = Document()
 
     # ── Default style ──
@@ -260,28 +359,48 @@ def build_will_docx(will_text: str, output_path: Optional[str] = None,
     testator_name = _extract_testator_name(will_text)
     main_text, signing_text = _split_signing(will_text)
 
-    # ── COVER PAGE — section 1: no header, no footer ──
+    # ── COVER PAGE — section 0: no header text/footer, optional watermark ──
     cover_section = doc.sections[0]
     _set_section_margins(cover_section, top_in=1.2, bottom_in=1.2)
     cover_section.different_first_page_header_footer = False
-    # Empty header/footer for the cover
     cover_section.header.paragraphs[0].text = ''
     cover_section.footer.paragraphs[0].text = ''
+    if is_draft:
+        _add_draft_watermark(cover_section)
 
-    # Firm address at top center (small)
+    # Cover layout per Alan & Tan reference — logo + address VERTICALLY
+    # CENTERED on the page; title block sits in the lower half.
+
+    # Top spacer to push logo+address to vertical mid-page
+    for _ in range(8):
+        p = doc.add_paragraph()
+        _set_paragraph_format(p, line_spacing=1.0)
+
+    # (1) Logo — centered, mid-page
+    if logo_path and os.path.isfile(logo_path):
+        p = doc.add_paragraph()
+        _set_paragraph_format(p, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                              line_spacing=1.0, space_before_pt=4, space_after_pt=4)
+        run = p.add_run()
+        try:
+            run.add_picture(logo_path, height=Inches(1.4))
+        except Exception:
+            pass
+
+    # (2) Firm address below logo
     if firm_info and firm_info.get('firm_address'):
         p = doc.add_paragraph()
         r = p.add_run(firm_info['firm_address'])
         _set_font(r, size=FONT_SIZE_COVER_FIRM_ADDR)
         _set_paragraph_format(p, alignment=WD_ALIGN_PARAGRAPH.CENTER,
-                              line_spacing=1.0, space_before_pt=0, space_after_pt=12)
+                              line_spacing=1.0, space_before_pt=4, space_after_pt=12)
 
-    # Push title block down with blank paragraphs
-    for _ in range(10):
+    # (3) Space between address and title block
+    for _ in range(3):
         p = doc.add_paragraph()
         _set_paragraph_format(p, line_spacing=1.0)
 
-    # Title block — centered, bold
+    # (4) Title block
     for line, fs in [
         ('The Last Will & Testament', FONT_SIZE_COVER_TITLE),
         ('of', FONT_SIZE_COVER_OF),
@@ -293,12 +412,12 @@ def build_will_docx(will_text: str, output_path: Optional[str] = None,
         _set_paragraph_format(p, alignment=WD_ALIGN_PARAGRAPH.CENTER,
                               line_spacing=1.4, space_before_pt=4, space_after_pt=4)
 
-    # NRIC line — extract from will text
+    # NRIC line — extract from will text (14pt per target PDF)
     nric_match = re.search(r'NRIC\s*No\.?\s*[:\s]*(\d{6}-\d{2}-\d{4})', will_text)
     if nric_match:
         p = doc.add_paragraph()
         r = p.add_run(f'(NRIC No. {nric_match.group(1)})')
-        _set_font(r, size=FONT_SIZE_COVER_OF, bold=True)
+        _set_font(r, size=FONT_SIZE_COVER_NRIC, bold=True)
         _set_paragraph_format(p, alignment=WD_ALIGN_PARAGRAPH.CENTER,
                               line_spacing=1.4, space_before_pt=4)
 
@@ -310,8 +429,10 @@ def build_will_docx(will_text: str, output_path: Optional[str] = None,
     body_section.header.is_linked_to_previous = False
     body_section.footer.is_linked_to_previous = False
 
-    _build_body_header(body_section, testator_name)
+    _build_body_header(body_section, testator_name, logo_path=logo_path)
     _build_body_footer(body_section)
+    if is_draft:
+        _add_draft_watermark(body_section)
 
     # ── Body content ──
     # Skip the first occurrence of "LAST WILL AND TESTAMENT OF" + testator
@@ -331,6 +452,26 @@ def build_will_docx(will_text: str, output_path: Optional[str] = None,
             break
 
     body_lines = lines[skip_count:]
+
+    # Per target PDF: testator name on page 2 — 14pt bold centered, with
+    # ~2-3 lines of empty space ABOVE (between running header and the name)
+    # and ~2-3 lines BELOW (between name and "This Will is made by me…").
+
+    # 2-3 blank lines ABOVE the testator name
+    for _ in range(3):
+        p_blank = doc.add_paragraph()
+        _set_paragraph_format(p_blank, line_spacing=1.0, space_before_pt=0, space_after_pt=0)
+
+    p_name = doc.add_paragraph()
+    r_name = p_name.add_run(testator_name.upper())
+    _set_font(r_name, size=Pt(14), bold=True)
+    _set_paragraph_format(p_name, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                          space_before_pt=0, space_after_pt=0, line_spacing=1.2)
+
+    # 2-3 blank lines BELOW the testator name
+    for _ in range(3):
+        p_blank = doc.add_paragraph()
+        _set_paragraph_format(p_blank, line_spacing=1.0, space_before_pt=0, space_after_pt=0)
 
     i = 0
     blank_streak = 0
@@ -452,27 +593,196 @@ def build_will_docx(will_text: str, output_path: Optional[str] = None,
                               space_before_pt=0, space_after_pt=12, line_spacing=1.5)
         _add_run_with_emphasis(p, body_text)
 
-    # ── SIGNATURE PAGE — same section, just continue but force a page break ──
+    # ── SIGNATURE PAGE (page 5) — boxed signatures, separate section so we
+    # can suppress the body-page footer (no Testator/Witness 1/Witness 2 sig
+    # lines at the bottom of the signing page) per Alan & Tan format.
     if signing_text.strip():
-        # Force a page break before signing block
-        last = doc.add_paragraph()
-        run = last.add_run()
-        run.add_break()
         from docx.enum.text import WD_BREAK
-        # Insert proper page break
+        from docx.oxml.ns import qn as _qn
+
+        # New section for signing page → independent footer (just "Page X")
+        sign_section = doc.add_section(WD_SECTION.NEW_PAGE)
+        _set_section_margins(sign_section)
+        sign_section.header.is_linked_to_previous = False
+        sign_section.footer.is_linked_to_previous = False
+
+        # Logo + LAST WILL AND TESTAMENT OF header same as body
+        _build_body_header(sign_section, testator_name, logo_path=logo_path)
+
+        # Footer = just "Page X" (no sig boxes)
+        sf = sign_section.footer
+        for p in list(sf.paragraphs):
+            p.text = ''
+        for tbl in list(sf.tables):
+            tbl._element.getparent().remove(tbl._element)
+        p_pg = sf.paragraphs[0]
+        r_pg = p_pg.add_run('Page ')
+        _set_font(r_pg, size=FONT_SIZE_PAGE_NUMBER)
+        _add_page_number_field(p_pg)
+        _set_paragraph_format(p_pg, alignment=WD_ALIGN_PARAGRAPH.LEFT, line_spacing=1.0)
+
+        if is_draft:
+            _add_draft_watermark(sign_section)
+
+        # 2-3 blank lines between running header and "Signature of the Testator:"
+        for _ in range(3):
+            p_blank = doc.add_paragraph()
+            _set_paragraph_format(p_blank, line_spacing=1.0,
+                                  space_before_pt=0, space_after_pt=0)
+
+        # Page 5 signing layout — 2-column table so ALL fillable lines start
+        # at the SAME x position regardless of label length (matches target).
+        # Label column ~2.4", line column ~4.0" → lines all aligned.
+
+        def _build_signing_table():
+            t = doc.add_table(rows=0, cols=2)
+            t.autofit = False
+            for col, w in zip(t.columns, [Inches(2.4), Inches(4.1)]):
+                for cell in col.cells:
+                    cell.width = w
+            return t
+
+        def _add_aligned_row(table, label, hint=''):
+            row = table.add_row()
+            cell_l, cell_r = row.cells[0], row.cells[1]
+            # Label
+            p_l = cell_l.paragraphs[0]
+            p_l.text = ''
+            r_l = p_l.add_run(label)
+            _set_font(r_l, size=Pt(11))
+            _set_paragraph_format(p_l, alignment=WD_ALIGN_PARAGRAPH.LEFT,
+                                  line_spacing=1.5, space_before_pt=2, space_after_pt=2)
+            # Line cell — fixed-width underscores so lines align across rows
+            p_r = cell_r.paragraphs[0]
+            p_r.text = ''
+            r_line = p_r.add_run('_' * 40)
+            _set_font(r_line, size=Pt(11))
+            if hint:
+                r_h = p_r.add_run('  ' + hint)
+                _set_font(r_h, size=Pt(9))
+            _set_paragraph_format(p_r, alignment=WD_ALIGN_PARAGRAPH.LEFT,
+                                  line_spacing=1.5, space_before_pt=2, space_after_pt=2)
+
+        # Testator + Date table
+        sig_t = _build_signing_table()
+        _add_aligned_row(sig_t, 'Signature of the Testator:')
+        _add_aligned_row(sig_t, 'Date of this Will:', '(dd/mm/yyyy)')
+
+        # Spacer + attestation
+        sp = doc.add_paragraph()
+        _set_paragraph_format(sp, line_spacing=1.0, space_after_pt=6)
+        p_att = doc.add_paragraph()
+        r_att = p_att.add_run(
+            'This Last Will and Testament was signed by the Testator in the '
+            'presence of us both and attested by us in the presence of both '
+            'Testator and of each other:'
+        )
+        _set_font(r_att, size=Pt(11))
+        _set_paragraph_format(p_att, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY,
+                              space_before_pt=8, space_after_pt=12, line_spacing=1.5)
+
+        # Two witness blocks — each a fresh aligned table
+        for prefix in ['First', 'Second']:
+            wt = _build_signing_table()
+            _add_aligned_row(wt, f'Signature of {prefix} Witness:')
+            _add_aligned_row(wt, 'Full Name:')
+            _add_aligned_row(wt, 'NRIC / Passport No.:')
+            _add_aligned_row(wt, 'Address:')
+            _add_aligned_row(wt, '')  # 2nd address line — empty label, line still aligned
+            _add_aligned_row(wt, '')  # 3rd address line
+            _add_aligned_row(wt, 'Contact No.:')
+            sp2 = doc.add_paragraph()
+            _set_paragraph_format(sp2, line_spacing=1.0, space_after_pt=6)
+
+        # End of Document marker — normal weight, no italic (per user spec).
+        # Bold per user feedback would be too heavy; user said "bold, normal,
+        # not italic" so render as bold + normal style + no italic.
+        p_end = doc.add_paragraph()
+        r_end = p_end.add_run('- End of Document -')
+        _set_font(r_end, size=Pt(10), bold=True, italic=False)
+        _set_paragraph_format(p_end, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                              space_before_pt=12, space_after_pt=0, line_spacing=1.2)
+
+    # ── PREPARED BY — final page with law firm details (short centered lines) ──
+    if firm_info and (firm_info.get('firm_name') or firm_info.get('firm_address')):
+        from docx.enum.text import WD_BREAK
+        from docx.oxml.ns import qn as _qn
         p_break = doc.add_paragraph()
         rb = p_break.add_run()
         rb.add_break(WD_BREAK.PAGE)
 
-        for raw in signing_text.split('\n'):
-            line = raw.rstrip()
-            stripped = line.strip()
+        # Vertical spacer to push firm block to mid-page
+        for _ in range(6):
             p = doc.add_paragraph()
-            if stripped:
-                r = p.add_run(line)
-                _set_font(r, size=Pt(11))
-            _set_paragraph_format(p, alignment=WD_ALIGN_PARAGRAPH.LEFT,
-                                  space_before_pt=2, space_after_pt=4, line_spacing=1.4)
+            _set_paragraph_format(p, line_spacing=1.0)
+
+        def _hr_para(space_before=0, space_after=14):
+            """Short horizontal line (~40% page width) centered — uses a
+            single-cell table with a top border, narrower than full page."""
+            t = doc.add_table(rows=1, cols=1)
+            t.autofit = False
+            # Set width via XML (Word ignores Inches().width on table directly)
+            t.alignment = 1  # center
+            cell = t.rows[0].cells[0]
+            cell.width = Inches(2.6)
+            tcPr = cell._element.get_or_add_tcPr()
+            tcBorders = OxmlElement('w:tcBorders')
+            top = OxmlElement('w:top')
+            top.set(_qn('w:val'), 'single')
+            top.set(_qn('w:sz'), '6')
+            top.set(_qn('w:color'), '000000')
+            tcBorders.append(top)
+            tcPr.append(tcBorders)
+            # Center the table itself
+            tblPr = t._element.find(_qn('w:tblPr'))
+            if tblPr is not None:
+                jc = OxmlElement('w:jc')
+                jc.set(_qn('w:val'), 'center')
+                tblPr.append(jc)
+                tblW = OxmlElement('w:tblW')
+                tblW.set(_qn('w:w'), '3744')   # ~2.6 inches in dxa (1 inch = 1440)
+                tblW.set(_qn('w:type'), 'dxa')
+                tblPr.append(tblW)
+            # Empty paragraph in the cell (just to draw the line)
+            cell.paragraphs[0].text = ''
+            # Outer paragraph spacing
+            _set_paragraph_format(cell.paragraphs[0], line_spacing=1.0)
+
+        _hr_para()
+        p_h = doc.add_paragraph()
+        r_h = p_h.add_run('PREPARED BY:')
+        _set_font(r_h, size=Pt(14), bold=True, underline=True)
+        _set_paragraph_format(p_h, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                              space_before_pt=0, space_after_pt=14, line_spacing=1.4)
+        _hr_para()
+
+        if firm_info.get('firm_name'):
+            p = doc.add_paragraph()
+            r = p.add_run(firm_info['firm_name'].upper())
+            _set_font(r, size=Pt(14), bold=True)
+            _set_paragraph_format(p, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                                  space_before_pt=0, space_after_pt=4, line_spacing=1.3)
+
+        p_sub = doc.add_paragraph()
+        r_sub = p_sub.add_run('ADVOCATES & SOLICITORS')
+        _set_font(r_sub, size=Pt(12), bold=True)
+        _set_paragraph_format(p_sub, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                              space_before_pt=0, space_after_pt=18, line_spacing=1.3)
+
+        for line in [
+            firm_info.get('firm_address', ''),
+            f"TEL NO: {firm_info['firm_phone']}" if firm_info.get('firm_phone') else '',
+            f"EMAIL: {firm_info['firm_email']}" if firm_info.get('firm_email') else '',
+        ]:
+            if not line:
+                continue
+            p = doc.add_paragraph()
+            r = p.add_run(line)
+            _set_font(r, size=Pt(11))
+            _set_paragraph_format(p, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                                  space_before_pt=0, space_after_pt=4, line_spacing=1.5)
+
+        _hr_para(space_before=14, space_after=0)
 
     # ── Save ──
     if output_path is None:

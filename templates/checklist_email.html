@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+{% block title %}Will Preparation Checklist{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto py-8 px-4">
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold text-gray-900">Will Preparation Checklist</h1>
+        <div class="flex gap-2">
+            <button onclick="window.print()" class="inline-flex items-center px-4 py-2 bg-gray-600 text-white text-sm font-medium rounded-lg hover:bg-gray-700 transition-colors">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"/></svg>
+                Print
+            </button>
+            <button onclick="showEmailModal()" class="inline-flex items-center px-4 py-2 bg-purple-600 text-white text-sm font-medium rounded-lg hover:bg-purple-700 transition-colors">
+                <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                Email to Client
+            </button>
+        </div>
+    </div>
+
+    <!-- Editable Email Content -->
+    <div id="checklist-content" class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="p-6 sm:p-8 space-y-6" contenteditable="false" id="email-body">
+
+            <!-- Header -->
+            <div class="text-center border-b border-gray-200 pb-6">
+                {% if logo_path %}
+                <img src="{{ logo_data_uri }}" alt="Firm Logo" style="max-height:80px; margin:0 auto 12px auto; display:block;">
+                {% endif %}
+                <h2 class="text-xl font-bold text-gray-900">{{ firm_name or 'Will Preparation' }}</h2>
+                {% if firm_address %}
+                <p class="text-sm text-gray-500 mt-1">{{ firm_address }}</p>
+                {% endif %}
+            </div>
+
+            <!-- Greeting -->
+            <div>
+                <p class="text-gray-800">Dear <span class="font-semibold" id="client-name-span">{{ client_name or '[Client Name]' }}</span>,</p>
+                <p class="text-gray-700 mt-3">Thank you for choosing us to assist with the preparation of your Last Will and Testament. To ensure a smooth and efficient process, please prepare the following documents and information before our meeting.</p>
+            </div>
+
+            <!-- Checklist -->
+            <div>
+                <h3 class="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                    Key Documents Checklist
+                </h3>
+
+                <div class="space-y-4">
+                    <!-- 1. Personal Information -->
+                    <div class="flex gap-3">
+                        <div class="flex-shrink-0 w-6 h-6 rounded border-2 border-gray-300 mt-0.5"></div>
+                        <div>
+                            <p class="font-semibold text-gray-800">1. Personal Information</p>
+                            <p class="text-sm text-gray-600">Your NRIC (MyKad) or Passport — clear photocopy of front and back.</p>
+                        </div>
+                    </div>
+
+                    <!-- 2. Executor -->
+                    <div class="flex gap-3">
+                        <div class="flex-shrink-0 w-6 h-6 rounded border-2 border-gray-300 mt-0.5"></div>
+                        <div>
+                            <p class="font-semibold text-gray-800">2. Executor's Details</p>
+                            <p class="text-sm text-gray-600">The person you wish to appoint to manage your estate. Please provide:</p>
+                            <ul class="text-sm text-gray-600 mt-1 ml-4 list-disc space-y-0.5">
+                                <li>Full name (as per NRIC)</li>
+                                <li>NRIC number</li>
+                                <li>Current address</li>
+                                <li>Relationship to you</li>
+                            </ul>
+                            <p class="text-xs text-gray-500 mt-1 italic">You may appoint up to 2 joint executors and 1 substitute executor.</p>
+                        </div>
+                    </div>
+
+                    <!-- 3. Beneficiaries -->
+                    <div class="flex gap-3">
+                        <div class="flex-shrink-0 w-6 h-6 rounded border-2 border-gray-300 mt-0.5"></div>
+                        <div>
+                            <p class="font-semibold text-gray-800">3. Beneficiary Information</p>
+                            <p class="text-sm text-gray-600">Full names and NRIC/Passport numbers of all persons or organisations you wish to receive your assets. This includes:</p>
+                            <ul class="text-sm text-gray-600 mt-1 ml-4 list-disc space-y-0.5">
+                                <li>Spouse, children, parents, siblings</li>
+                                <li>Friends or other individuals</li>
+                                <li>Charitable organisations (if any)</li>
+                                <li>Substitute beneficiaries (who inherits if a beneficiary predeceases you)</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- 4. Assets -->
+                    <div class="flex gap-3">
+                        <div class="flex-shrink-0 w-6 h-6 rounded border-2 border-gray-300 mt-0.5"></div>
+                        <div>
+                            <p class="font-semibold text-gray-800">4. Asset Details</p>
+                            <p class="text-sm text-gray-600 mb-2">Please prepare documents for the following assets:</p>
+
+                            <div class="space-y-2 ml-2">
+                                <div class="bg-blue-50 rounded-lg p-3 border border-blue-100">
+                                    <p class="text-sm font-medium text-blue-800">Real Estate / Property</p>
+                                    <p class="text-xs text-blue-600">Land titles (Geran/Hakmilik/HSD), Sale & Purchase Agreements (SPA), or Cukai Harta statements. Include title number, lot number, and full address.</p>
+                                </div>
+                                <div class="bg-green-50 rounded-lg p-3 border border-green-100">
+                                    <p class="text-sm font-medium text-green-800">Financial Accounts</p>
+                                    <p class="text-xs text-green-600">Bank passbooks, fixed deposit certificates, savings/current account statements. Note which accounts are sole or joint.</p>
+                                </div>
+                                <div class="bg-purple-50 rounded-lg p-3 border border-purple-100">
+                                    <p class="text-sm font-medium text-purple-800">Investments</p>
+                                    <p class="text-xs text-purple-600">CDS (Central Depository Shares) statements, unit trust certificates (e.g., Public Mutual, ASNB), EPF statements.</p>
+                                </div>
+                                <div class="bg-amber-50 rounded-lg p-3 border border-amber-100">
+                                    <p class="text-sm font-medium text-amber-800">Vehicles</p>
+                                    <p class="text-xs text-amber-600">Vehicle registration cards (Grant/Geran Kenderaan) with registration plate numbers.</p>
+                                </div>
+                                <div class="bg-red-50 rounded-lg p-3 border border-red-100">
+                                    <p class="text-sm font-medium text-red-800">Insurance / Takaful</p>
+                                    <p class="text-xs text-red-600">Policy documents with policy numbers. Note: these often go by nomination, but listing them aids clarity.</p>
+                                </div>
+                                <div class="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                    <p class="text-sm font-medium text-gray-800">Business Interests</p>
+                                    <p class="text-xs text-gray-600">Company registration certificates (SSM), partnership agreements, share certificates.</p>
+                                </div>
+                                <div class="bg-teal-50 rounded-lg p-3 border border-teal-100">
+                                    <p class="text-sm font-medium text-teal-800">Personal Effects</p>
+                                    <p class="text-xs text-teal-600">A list of valuable personal items you wish to specifically bequeath (jewellery, art, collectibles, etc.).</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 5. Additional Documents -->
+                    <div class="flex gap-3">
+                        <div class="flex-shrink-0 w-6 h-6 rounded border-2 border-gray-300 mt-0.5"></div>
+                        <div>
+                            <p class="font-semibold text-gray-800">5. Additional Documents</p>
+                            <ul class="text-sm text-gray-600 mt-1 ml-4 list-disc space-y-0.5">
+                                <li>Marriage certificate (to verify spouse)</li>
+                                <li>Birth certificates of children</li>
+                                <li>Guardian details (if you have minor children — name, NRIC, address)</li>
+                                <li>Any existing will or codicil (to be revoked)</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- 6. Special Considerations -->
+                    <div class="flex gap-3">
+                        <div class="flex-shrink-0 w-6 h-6 rounded border-2 border-gray-300 mt-0.5"></div>
+                        <div>
+                            <p class="font-semibold text-gray-800">6. Special Considerations</p>
+                            <ul class="text-sm text-gray-600 mt-1 ml-4 list-disc space-y-0.5">
+                                <li>Any debts or liabilities on properties (mortgage/loan details)</li>
+                                <li>Whether any property is jointly owned (and your share)</li>
+                                <li>Special instructions (e.g., testamentary trust for minors, conditions on gifts)</li>
+                                <li>Funeral or burial wishes</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Important Notes -->
+            <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <h4 class="font-semibold text-amber-800 mb-2">Important Notes</h4>
+                <ul class="text-sm text-amber-700 space-y-1 list-disc ml-4">
+                    <li>All names must match exactly as they appear on the NRIC/Passport.</li>
+                    <li>You may bring photocopies — original documents are not required for drafting.</li>
+                    <li>The will-signing appointment requires <strong>two independent witnesses</strong> (not beneficiaries) who are present at the same time.</li>
+                    <li>If you do not understand English, please inform us so we can arrange a translator.</li>
+                </ul>
+            </div>
+
+            <!-- Closing -->
+            <div>
+                <p class="text-gray-700">Should you have any questions or require further clarification, please do not hesitate to contact us.</p>
+                <p class="text-gray-700 mt-4">We look forward to assisting you.</p>
+                <div class="mt-6">
+                    <p class="text-gray-800 font-medium">Best regards,</p>
+                    <p class="text-gray-800 font-semibold mt-1">{{ user_name or '[Your Name]' }}</p>
+                    {% if firm_name %}<p class="text-sm text-gray-600">{{ firm_name }}</p>{% endif %}
+                    {% if firm_phone %}<p class="text-sm text-gray-600">Tel: {{ firm_phone }}</p>{% endif %}
+                    {% if firm_email %}<p class="text-sm text-gray-600">Email: {{ firm_email }}</p>{% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Email Modal -->
+    <div id="email-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-lg">
+            <div class="p-6">
+                <h3 class="text-lg font-bold text-gray-900 mb-4">Email Checklist to Client</h3>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Client Name</label>
+                        <input type="text" id="email-client-name" value="{{ client_name or '' }}" placeholder="Client name"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500"
+                               oninput="document.getElementById('client-name-span').textContent = this.value || '[Client Name]'">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">To Email <span class="text-red-500">*</span></label>
+                        <input type="email" id="email-to" placeholder="client@example.com"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Subject</label>
+                        <input type="text" id="email-subject" value="Will Preparation — Documents Checklist"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500">
+                    </div>
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button onclick="sendChecklistEmail()" id="send-checklist-btn"
+                            class="flex-1 px-4 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 transition-colors">
+                        Send Email
+                    </button>
+                    <button onclick="document.getElementById('email-modal').classList.add('hidden')"
+                            class="px-4 py-2 bg-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-300 transition-colors">
+                        Cancel
+                    </button>
+                </div>
+                <p id="email-status" class="text-xs mt-2 hidden"></p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Print Styles -->
+<style>
+@media print {
+    nav, .flex.gap-2, #email-modal, button { display: none !important; }
+    .shadow-sm, .shadow-2xl { box-shadow: none !important; }
+    .rounded-xl { border-radius: 0 !important; }
+    .border { border: none !important; }
+    body { font-size: 11pt; }
+    .max-w-3xl { max-width: 100%; }
+    .bg-blue-50, .bg-green-50, .bg-purple-50, .bg-amber-50, .bg-red-50, .bg-gray-50, .bg-teal-50 {
+        background: #f9f9f9 !important; border: 1px solid #ddd !important;
+    }
+}
+</style>
+
+<script>
+function showEmailModal() {
+    document.getElementById('email-modal').classList.remove('hidden');
+}
+
+async function sendChecklistEmail() {
+    const toEmail = document.getElementById('email-to').value.trim();
+    if (!toEmail) { alert('Please enter client email'); return; }
+
+    const btn = document.getElementById('send-checklist-btn');
+    const status = document.getElementById('email-status');
+    btn.disabled = true; btn.textContent = 'Sending...';
+
+    const clientName = document.getElementById('email-client-name').value.trim();
+    const subject = document.getElementById('email-subject').value.trim();
+    const body = document.getElementById('email-body').innerHTML;
+
+    try {
+        const resp = await fetch('/api/send-checklist-email', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({to_email: toEmail, client_name: clientName, subject: subject, body_html: body})
+        });
+        const data = await resp.json();
+        if (data.ok) {
+            status.textContent = '✓ Email sent successfully!';
+            status.className = 'text-xs mt-2 text-green-600 font-medium';
+            status.classList.remove('hidden');
+            setTimeout(() => document.getElementById('email-modal').classList.add('hidden'), 2000);
+        } else {
+            status.textContent = 'Error: ' + (data.error || 'Failed to send');
+            status.className = 'text-xs mt-2 text-red-600';
+            status.classList.remove('hidden');
+        }
+    } catch (e) {
+        status.textContent = 'Network error';
+        status.className = 'text-xs mt-2 text-red-600';
+        status.classList.remove('hidden');
+    }
+    btn.disabled = false; btn.textContent = 'Send Email';
+}
+</script>
+{% endblock %}
