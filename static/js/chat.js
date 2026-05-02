@@ -563,17 +563,48 @@
       ] : null
     ));
 
-    // Other steps — placeholders for now (slice 2+)
-    const placeholderSteps = [
-      ['2', 'Executors', will.step2 && will.step2.executors && will.step2.executors.length ? `${will.step2.executors.length} appointed` : null, '/wizard/step/3'],
-      ['3', 'Guardians', will.step3 && will.step3.guardians && will.step3.guardians.length ? `${will.step3.guardians.length} appointed` : null, '/wizard/step/4'],
-      ['4', 'Beneficiaries', Array.isArray(will.step4) && will.step4.length ? `${will.step4.length} listed` : null, '/wizard/step/5'],
-      ['5', 'Specific Gifts', Array.isArray(will.step5) && will.step5.length ? `${will.step5.length} listed` : null, '/wizard/step/6'],
+    // Step 2: Executors — show names with main/substitute role
+    const execs = (will.step2 && will.step2.executors) || [];
+    sections.push(snapshotSection('2', 'Executors', execs.length ? '/wizard/step/3' : null,
+      execs.length
+        ? execs.map(e => [
+            e.is_substitute ? 'Substitute' : 'Main',
+            e.full_name + (e.relationship ? ` (${e.relationship})` : '')
+          ])
+        : null
+    ));
+
+    // Step 3: Guardians
+    const guardians = (will.step3 && will.step3.guardians) || [];
+    sections.push(snapshotSection('3', 'Guardians', guardians.length ? '/wizard/step/4' : null,
+      guardians.length
+        ? guardians.map(g => [null, g.full_name || g.name || '?'])
+        : null
+    ));
+
+    // Step 4: Beneficiaries
+    const benefs = Array.isArray(will.step4) ? will.step4 : [];
+    sections.push(snapshotSection('4', 'Beneficiaries', benefs.length ? '/wizard/step/5' : null,
+      benefs.length
+        ? benefs.map(b => [null, (b.full_name || b.name || '?') + (b.share ? ` — ${b.share}` : '')])
+        : null
+    ));
+
+    // Step 5: Specific Gifts
+    const gifts = Array.isArray(will.step5) ? will.step5 : [];
+    sections.push(snapshotSection('5', 'Specific Gifts', gifts.length ? '/wizard/step/6' : null,
+      gifts.length
+        ? gifts.map(g => [null, (g.description || g.gift_type || 'Gift').slice(0, 60)])
+        : null
+    ));
+
+    // Steps 6-8: just configured/empty
+    const otherSteps = [
       ['6', 'Residuary Estate', will.step6 && Object.keys(will.step6).length ? 'Configured' : null, '/wizard/step/7'],
       ['7', 'Trust', will.step7 && Object.keys(will.step7).length ? 'Configured' : null, '/wizard/step/8'],
       ['8', 'Other Matters', will.step8 && Object.keys(will.step8).length ? 'Configured' : null, '/wizard/step/9'],
     ];
-    for (const [n, name, summary, link] of placeholderSteps) {
+    for (const [n, name, summary, link] of otherSteps) {
       sections.push(snapshotSection(n, name, summary ? link : null, summary ? [[null, summary]] : null));
     }
 
