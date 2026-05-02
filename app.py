@@ -3320,15 +3320,26 @@ def api_chat_message(client_id):
         user_msg.content = user_text
 
     user_msg.attachments_json = json.dumps(attachment_ids)
+    db.session.commit()  # persist user_msg before any deductions / planner
 
-    # 5. Plan the assistant turn against the current Will state
+    # 5. Directed flow: try to assign the next pending IC if user replied
+    #    with a relationship keyword OR confirmation, then refresh the
+    #    pending list so the planner can ask about the NEXT one.
+    just_assigned = _try_assign_pending_identity(client_id, user_text)
+    from services.identity_walker import get_pending_ic_documents
+    pending_ics = get_pending_ic_documents(client_id)
+    recent_text = _gather_recent_chat_text(client_id)
+
+    # 6. Plan the assistant turn against the current Will state
     active_will = (Will.query
                    .filter_by(client_id=client_id, status='draft')
                    .filter(Will.deleted_at.is_(None))
                    .order_by(Will.updated_at.desc())
                    .first())
     will_snapshot = _will_data_snapshot(active_will)
-    plan = plan_turn(user_text, artifacts, will_snapshot)
+    plan = plan_turn(user_text, artifacts, will_snapshot,
+                     pending_ics=pending_ics, recent_text=recent_text,
+                     just_assigned=just_assigned)
 
     if file_errors:
         plan['reply'] = (plan.get('reply') or '') + (
@@ -3495,7 +3506,11 @@ def api_chat_replan(client_id, message_id):
     active_will = (Will.query.filter_by(client_id=client.id, status='draft')
                    .filter(Will.deleted_at.is_(None))
                    .order_by(Will.updated_at.desc()).first())
-    plan = plan_turn(user_msg.content or '', artifacts, _will_data_snapshot(active_will))
+    from services.identity_walker import get_pending_ic_documents
+    pending_ics = get_pending_ic_documents(client.id)
+    recent_text = _gather_recent_chat_text(client.id)
+    plan = plan_turn(user_msg.content or '', artifacts, _will_data_snapshot(active_will),
+                     pending_ics=pending_ics, recent_text=recent_text)
 
     asst_msg = ChatMessage(
         session_id=cs.id, role='assistant',
@@ -3574,6 +3589,81 @@ def api_chat_reject(client_id, message_id):
     m.rejected_at = datetime.utcnow()
     db.session.commit()
     return jsonify({'ok': True, 'message': _serialise_chat_message(m)})
+
+
+# -- Directed chat helpers --------------------------------------------------
+
+def _gather_recent_chat_text(client_id: str, max_chars: int = 8000) -> str:
+    """Concat user-message content for this client's chat (oldest → newest).
+    Used as context for role deduction (forwarded email bodies live here)."""
+    cs = (ChatSession.query.filter_by(client_id=client_id)
+          .order_by(ChatSession.created_at.desc()).first())
+    if not cs:
+        return ''
+    msgs = (ChatMessage.query.filter_by(session_id=cs.id, role='user')
+            .order_by(ChatMessage.created_at.asc()).all())
+    out = []
+    total = 0
+    for m in msgs:
+        c = m.content or ''
+        if total + len(c) > max_chars:
+            break
+        out.append(c)
+        total += len(c)
+    return '\n\n'.join(out)
+
+
+_CONFIRM_TOKENS = ('yes', 'confirm', 'correct', 'ok ', 'okay', 'yep', 'yeah', 'true', 'right')
+_SKIP_TOKENS = ('skip', 'later', 'pass')
+
+
+def _try_assign_pending_identity(client_id: str, user_text: str):
+    """If user_text plausibly assigns the next pending IC's role, create
+    the Person and return {'name', 'role'}. Else return None."""
+    if not user_text:
+        return None
+    from services.identity_walker import get_pending_ic_documents, parse_relationship
+    from services.person_registry import ensure_person
+    from ai.role_deducer import deduce_roles
+
+    pending = get_pending_ic_documents(client_id)
+    if not pending:
+        return None
+    target = pending[0]
+    ex = target['extracted'] or {}
+    name = (ex.get('full_name') or '').strip()
+    if not name:
+        return None
+
+    text_lower = ' ' + user_text.lower().strip() + ' '
+    if any((' ' + s + ' ') in text_lower for s in _SKIP_TOKENS):
+        return None  # user said skip — leave for next turn
+
+    rel = parse_relationship(user_text)
+    chosen_role = None
+    if rel:
+        chosen_role = rel
+    elif any((' ' + c + ' ') in text_lower for c in _CONFIRM_TOKENS):
+        # User said yes/confirm — apply the deduced role
+        recent = _gather_recent_chat_text(client_id)
+        ded = deduce_roles(recent, [name])
+        if ded.get(name):
+            chosen_role = ded[name]['role']
+
+    if not chosen_role:
+        return None
+
+    ensure_person(
+        client_id, name,
+        nric=(ex.get('nric_number') or ''),
+        address=(ex.get('address') or ''),
+        relationship=chosen_role,
+        dob=(ex.get('date_of_birth') or ''),
+        nationality=ex.get('nationality') or 'Malaysian',
+        document_id=target['document_id'],
+    )
+    db.session.commit()
+    return {'name': name, 'role': chosen_role}
 
 
 # -- Inbound email → chat (Postmark webhook) --------------------------------
@@ -3876,7 +3966,11 @@ def _process_inbound_message_async(app_obj, user_msg_id):
             active_will = (Will.query.filter_by(client_id=client.id, status='draft')
                            .filter(Will.deleted_at.is_(None))
                            .order_by(Will.updated_at.desc()).first())
-            plan = plan_turn(text, artifacts, _will_data_snapshot(active_will))
+            from services.identity_walker import get_pending_ic_documents
+            pending_ics = get_pending_ic_documents(client.id)
+            recent_text = _gather_recent_chat_text(client.id)
+            plan = plan_turn(text, artifacts, _will_data_snapshot(active_will),
+                             pending_ics=pending_ics, recent_text=recent_text)
 
             asst_msg = ChatMessage(
                 session_id=cs.id, role='assistant',
