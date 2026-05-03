@@ -5059,6 +5059,44 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
 
         inbox_card = _iec(artifacts, _best_ctx)
         _focus_ids = [a['document_id'] for a in artifacts]
+
+        # Spawn background thread to generate the AI summary and post it as
+        # a follow-up assistant message — avoids blocking the reset request
+        # and prevents gunicorn worker timeout from two sequential AI calls.
+        if _best_ctx:
+            def _post_ai_summary(app_obj, cid, raw_ctx, session_id, focus_ids):
+                with app_obj.app_context():
+                    try:
+                        from ai.chat_planner import _summarise_message, _clean_email_body
+                        cleaned = _clean_email_body(raw_ctx)
+                        summary = _summarise_message(cleaned) if cleaned else ''
+                        if not summary:
+                            return
+                        reply = (
+                            "### 📨 AI Summary of your message\n\n"
+                            + summary
+                        )
+                        cs = (ChatSession.query
+                              .filter_by(id=session_id).first())
+                        if not cs:
+                            return
+                        msg = ChatMessage(
+                            session_id=cs.id, role='assistant',
+                            content=reply,
+                            attachments_json=json.dumps(focus_ids),
+                        )
+                        db.session.add(msg)
+                        db.session.commit()
+                    except Exception:
+                        pass
+
+            cs_for_thread = _get_or_create_chat_session(client_id, user_id=None)
+            threading.Thread(
+                target=_post_ai_summary,
+                args=(app, client_id, _best_ctx, cs_for_thread.id, _focus_ids),
+                daemon=True,
+            ).start()
+
         return {
             'name': f'inbox reset ({len(artifacts)} docs)',
             'role': 'inbox_restarted',

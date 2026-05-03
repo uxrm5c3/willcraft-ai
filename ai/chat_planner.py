@@ -420,17 +420,66 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
         "then tap **▶️ Start matching** to begin._"
     )
 
-    # ── 2. Clean + AI-summarise the email/WhatsApp body ─────────────────────
+    # ── 2. Clean email body + fast regex key-point extraction ────────────────
+    # NOTE: no AI call here — this runs synchronously in the reset request.
+    # A background thread posts the AI summary as a follow-up message after
+    # the reset card is shown (see _try_handle_restart_inbox in app.py).
     cleaned_body = _clean_email_body(user_text or '')
     if cleaned_body:
-        ai_summary = _summarise_message(cleaned_body)
+        key_points = []
+
+        _lot_mentions = re.findall(
+            r'(?:lot|ptd|hsd|hsm|geran|hakmilik|title)[^\w]?\s*(\w[\w\-/]*)',
+            cleaned_body, re.I)
+        if _lot_mentions:
+            key_points.append(
+                f"🏠 **Property:** {', '.join(dict.fromkeys(_lot_mentions[:4]))}"
+            )
+
+        _kw_re2 = re.compile(
+            r'(?:give\s+to|kepada|beneficiary[:\s]+|to\s+be\s+given\s+to|'
+            r'pass\s+to|left\s+to|bequeath\s+to)\s+', re.I)
+        _kw_m2 = _kw_re2.search(cleaned_body)
+        if _kw_m2:
+            _after = cleaned_body[_kw_m2.end():]
+            _name_parts2 = []
+            _rel2 = {'my','his','her','our','their','the','son','daughter','wife',
+                     'husband','spouse','child','children','eldest','youngest'}
+            _stop2 = {'my','the','all','each','whom','any','her','him','them',
+                      'children','child','beneficiaries','heirs','estate','me','us'}
+            _in_n = False
+            for _w in re.split(r'\s+', _after.strip())[:7]:
+                _c = re.sub(r"[^a-zA-Z'/-]", '', _w)
+                if not _c: break
+                if _c.lower() in ('bin','binte','binti','bte','bt','a/l','a/p'):
+                    if _name_parts2: _name_parts2.append(_c)
+                    continue
+                if _c.lower() in _rel2:
+                    if _in_n: break
+                    continue
+                if _c[0].isupper() and _c.lower() not in _stop2:
+                    _name_parts2.append(_c); _in_n = True
+                elif _in_n: break
+            if _name_parts2:
+                key_points.append(f"🎁 **Beneficiary:** {' '.join(_name_parts2)}")
+
+        if re.search(r'\b(sole\s*owner|sendiri|myself\s*only|hak\s*penuh)\b', cleaned_body, re.I):
+            key_points.append("👤 **Ownership:** Sole owner")
+        elif re.search(r'\b(joint|bersama|co[-\s]?owner|berkongsi)\b', cleaned_body, re.I):
+            _sh = re.search(r'(\d+/\d+|\d+\s*%|half)', cleaned_body, re.I)
+            key_points.append(f"🤝 **Ownership:** Joint{f' ({_sh.group(1)})' if _sh else ''}")
+
+        if re.search(r'\b(loan|mortgage|charge|lien|caveat|pinjaman|bebanan)\b',
+                     cleaned_body, re.I):
+            key_points.append("🏦 **Encumbrance:** Loan / caveat mentioned")
+
         lines_s = ["### 📨 Message from sender"]
-        if ai_summary:
-            lines_s.append(ai_summary)
-        else:
-            # Fallback: show cleaned text as blockquote if AI call failed
-            _preview = cleaned_body[:600] + ('…' if len(cleaned_body) > 600 else '')
-            lines_s.append('> ' + _preview.replace('\n', '\n> ').strip('> ').strip())
+        if key_points:
+            lines_s.extend(f"• {p}" for p in key_points)
+            lines_s.append("")
+        _preview = cleaned_body[:600] + ('…' if len(cleaned_body) > 600 else '')
+        lines_s.append('> ' + _preview.replace('\n', '\n> ').rstrip('> ').strip())
+        lines_s.append("\n_✨ Generating AI summary..._")
         summary_section = '\n'.join(lines_s)
     else:
         summary_section = "### 📨 Message from sender\n_No message text — only attachments were received._"
