@@ -549,6 +549,27 @@ def _step6_property_question(pending_props, recent_text, will_data):
     ex = p.get('extracted') or {}
     formatted = _format_property_description(ex)
 
+    # Build an "evidence" footnote that lists what each uploaded image for
+    # THIS property actually proves. Users dump multiple images per
+    # property (front + back of geran, SPA, cukai tanah); without this,
+    # they can't tell which image the bot is talking about.
+    evidence_lines = []
+    primary_purpose = (p.get('purpose') or '').strip()
+    if primary_purpose:
+        evidence_lines.append(f"  • 📜 _{primary_purpose}_")
+    for s in (p.get('support_docs') or []):
+        kind = s.get('category', '')
+        kind_label = {
+            'property_spa': '📝 SPA',
+            'property_tax': '🧾 Cukai Tanah',
+            'property_title': '📜 Geran (extra page)',
+            'utility_bill': '⚡ Utility bill',
+            'bank_letter': '🏦 Bank letter',
+        }.get(kind, '📄 Doc')
+        sp = (s.get('purpose') or s.get('original_filename') or 'supporting doc').strip()
+        evidence_lines.append(f"  • {kind_label} — _{sp[:120]}_")
+    evidence_block = ('\n'.join(evidence_lines)) if evidence_lines else ''
+
     ident_names = [i.get('full_name','').strip()
                    for i in (will_data.get('identities') or [])
                    if i.get('full_name')]
@@ -614,8 +635,10 @@ def _step6_property_question(pending_props, recent_text, will_data):
     parts = [
         f"### 🏠 Step 6 — Property ({len(pending_props)} left)",
         formatted,
-        "**Who inherits this property?**",
     ]
+    if evidence_block:
+        parts.append(f"**📎 Based on these uploads:**\n{evidence_block}")
+    parts.append("**Who inherits this property?**")
 
     if deduced:
         # Primary suggestion = combine all deduced shares into one string

@@ -3304,9 +3304,17 @@ def api_chat_message(client_id):
         try:
             if kind == 'nric':
                 extracted = extract_nric_data(abs_path)
-            elif kind in ('property_title', 'property_tax'):
+            elif kind in ('property_title', 'property_spa', 'property_tax'):
+                # Same OCR for all three — they share the same field shape
+                # (title_number / lot / mukim / address). The KIND tells the
+                # downstream walker whether this counts as ownership evidence.
                 from ai.property_extractor import extract_property_data
                 extracted = extract_property_data(abs_path, doc_type='general')
+            elif kind in ('utility_bill', 'bank_letter'):
+                # Light-touch: no per-field extraction yet — the classifier
+                # has already given us `purpose` + `property_hint` which is
+                # enough to cluster under a property and show in chat.
+                extracted = {}
             elif kind == 'bank_statement':
                 from ai.ocr import extract_asset_document
                 extracted = extract_asset_document(abs_path, asset_type='bank')
@@ -3322,7 +3330,18 @@ def api_chat_message(client_id):
         # 4. Update Document with classification result
         doc.category = kind if kind != 'other' else 'chat_inbox'
         doc.description = classification.get('reason', '')[:500] if classification.get('reason') else None
-        if extracted is not None:
+        # Persist per-image `purpose` (what THIS image proves) and
+        # `property_hint` (lot/address used to cluster multiple uploads
+        # under one property) so the chat planner can surface and group.
+        purpose = (classification.get('purpose') or '').strip()
+        prop_hint = (classification.get('property_hint') or '').strip()
+        if extracted is None:
+            extracted = {}
+        if purpose:
+            extracted['purpose'] = purpose[:300]
+        if prop_hint:
+            extracted['property_hint'] = prop_hint[:300]
+        if extracted:
             try:
                 doc.extracted_data = json.dumps(extracted)
             except (TypeError, ValueError):
@@ -3401,9 +3420,13 @@ def api_chat_message(client_id):
 
     just_assigned = _try_assign_pending_identity(client_id, user_text)
     just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)
-    # If past Step 1, attempt executor save then beneficiaries save then gift save
+    # If past Step 1, attempt executor save then beneficiaries save then
+    # gift-delete then gift-save. Delete BEFORE save so a "delete" reply
+    # at a Step-6 property card removes the doc instead of trying to parse
+    # it as beneficiary names (which always fails).
     just_executor = None
     just_benef = None
+    just_gift_deleted = None
     just_gift = None
     if not just_assigned and not just_deleted:
         from services.identity_walker import get_pending_ic_documents as _gpid
@@ -3412,7 +3435,9 @@ def api_chat_message(client_id):
             if not just_executor:
                 just_benef = _try_save_beneficiaries(client_id, user_text)
                 if not just_benef:
-                    just_gift = _try_save_property_gift(client_id, user_text)
+                    just_gift_deleted = _try_delete_pending_gift(client_id, user_text)
+                    if not just_gift_deleted:
+                        just_gift = _try_save_property_gift(client_id, user_text)
     from services.identity_walker import get_pending_ic_documents
     from services.gift_walker import get_pending_gift_documents
     pending_ics = get_pending_ic_documents(client_id)
@@ -3427,7 +3452,8 @@ def api_chat_message(client_id):
                    .first())
     will_snapshot = _will_data_snapshot(active_will)
     # Treat any save as "just_assigned" so the planner acknowledges + advances
-    just = just_assigned or just_executor or just_benef or just_gift
+    just = (just_assigned or just_executor or just_benef
+            or just_gift_deleted or just_gift)
     will_snapshot['pending_gifts'] = pending_gifts
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
@@ -4101,6 +4127,65 @@ def _try_save_beneficiaries(client_id: str, user_text: str):
     return {'name': names, 'role': f'{len(final)} beneficiaries', 'kind': 'beneficiaries'}
 
 
+def _try_delete_pending_gift(client_id: str, user_text: str):
+    """If user types 'delete' / 'remove' / 'wrong' at a Step-6 gift question
+    (property/bank/vehicle), soft-delete the focused Document so it stops
+    re-appearing in the walk-through. Returns {'name','action','count'} or
+    None.
+
+    This was missing — the chat planner was offering a "Delete" button on
+    each property card but no handler picked it up, so taps did nothing
+    and the same property kept being asked over and over.
+    """
+    if not user_text:
+        return None
+    text_lower = user_text.lower().strip()
+    words = set(re.findall(r'\b[a-z]+\b', text_lower))
+    if not any(t in words for t in _DELETE_TOKENS):
+        return None
+    from services.gift_walker import get_pending_gift_documents
+    pend = get_pending_gift_documents(client_id)
+    # Pick the first pending of any kind, in the same priority the planner
+    # would ask about (property → bank → vehicle).
+    target = None
+    target_kind = None
+    for kind in ('property', 'bank', 'vehicle'):
+        items = pend.get(kind) or []
+        if items:
+            target = items[0]
+            target_kind = kind
+            break
+    if not target:
+        return None
+    doc = db.session.get(Document, target['document_id'])
+    if not doc:
+        return None
+    doc.category = 'deleted'
+    doc.description = '(removed by user from chat walk-through)'
+    # Also soft-delete any support docs that were grouped with this title
+    # (e.g. SPA + cukai tanah images for the same lot). Otherwise they
+    # could orphan and clutter the doc library.
+    if target_kind == 'property':
+        for s in (target.get('support_docs') or []):
+            sdoc = db.session.get(Document, s.get('document_id'))
+            if sdoc:
+                sdoc.category = 'deleted'
+                sdoc.description = '(removed with parent property)'
+    db.session.commit()
+    # Friendly label so the planner can acknowledge the delete cleanly
+    ex = target.get('extracted', {}) or {}
+    if target_kind == 'property':
+        label = ex.get('property_address') or ex.get('title_number') or 'this property'
+    elif target_kind == 'bank':
+        label = (f"{ex.get('bank_name', '')} {ex.get('account_number', '')}"
+                 .strip() or 'this bank account')
+    else:
+        label = (ex.get('registration_number') or ex.get('vehicle_make')
+                 or 'this vehicle')
+    return {'name': label[:100], 'action': 'deleted', 'count': 1,
+            'kind': f'gift_{target_kind}_delete'}
+
+
 def _try_save_property_gift(client_id: str, user_text: str):
     """Step 6 (Property gift) handler. Persists a parsed gift to the active
     Will's step5_data, marked with the source document_id so gift_walker
@@ -4608,9 +4693,11 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                 try:
                     if kind == 'nric':
                         extracted = extract_nric_data(abs_path)
-                    elif kind in ('property_title', 'property_tax'):
+                    elif kind in ('property_title', 'property_spa', 'property_tax'):
                         from ai.property_extractor import extract_property_data
                         extracted = extract_property_data(abs_path, doc_type='general')
+                    elif kind in ('utility_bill', 'bank_letter'):
+                        extracted = {}
                     elif kind == 'bank_statement':
                         from ai.ocr import extract_asset_document
                         extracted = extract_asset_document(abs_path, asset_type='bank')
@@ -4624,7 +4711,15 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                     extracted = {'error': str(e)}
                 doc.category = kind if kind != 'other' else 'chat_inbox'
                 doc.description = (classification.get('reason') or '')[:500] or None
-                if extracted is not None:
+                purpose = (classification.get('purpose') or '').strip()
+                prop_hint = (classification.get('property_hint') or '').strip()
+                if extracted is None:
+                    extracted = {}
+                if purpose:
+                    extracted['purpose'] = purpose[:300]
+                if prop_hint:
+                    extracted['property_hint'] = prop_hint[:300]
+                if extracted:
                     try:
                         doc.extracted_data = json.dumps(extracted)
                     except (TypeError, ValueError):
