@@ -628,32 +628,52 @@
           (b.full_name || b.name || '?') + (b.share ? ` — ${b.share}` : '')]) : null },
       { n: '6', name: 'Specific Gifts', link: '/wizard/step/6', optional: true,
         fields: gifts.length ? gifts.filter(g => !g.skipped).map(g => {
-          // Build a meaningful label with type prefix + asset identifier
+          // Gifts arrive in two formats:
+          //   Chat format:   {kind, property_address, title_number, beneficiaries:[{name,share}]}
+          //   Wizard format: {gift_type, description, property_details:{property_address,title_number,...},
+          //                   financial_details:{institution,account_number,...}, allocations:[{beneficiary_name}]}
+          // Normalise both into a single view.
+          const kind    = g.kind       || g.gift_type || '';
+          const pd      = g.property_details   || {};
+          const fd      = g.financial_details  || {};
+          const propAddr  = g.property_address  || pd.property_address  || '';
+          const titleNo   = g.title_number      || pd.title_number      || '';
+          const lotNo     = g.lot_number        || pd.lot_number        || '';
+          const bankName  = g.bank_name         || fd.institution       || '';
+          const acctRaw   = g.account_number    || fd.account_number    || '';
+          const regNum    = g.reg_number        || '';
+          // Beneficiaries from either list
+          const benList = (g.beneficiaries || []).map(b => b.name || b)
+            .concat((g.allocations || []).map(a => a.beneficiary_name || a.name || ''))
+            .filter(Boolean);
+
           let prefix = '', ident = '';
-          if (g.kind === 'property' || g.property_address || g.title_number) {
+          if (kind === 'property' || propAddr || titleNo || lotNo) {
             prefix = '🏠 Property';
-            // Use address (first comma-delimited segment = street/building) or title number
-            const addr = g.property_address || '';
-            ident = addr ? addr.split(',')[0].trim() : (g.title_number || '');
-          } else if (g.kind === 'bank' || g.bank_name || g.account_number) {
+            // Prefer address (street segment) → title no → lot no → mukim
+            if (propAddr) ident = propAddr.split(',')[0].trim();
+            else if (titleNo) ident = titleNo;
+            else if (lotNo) ident = `Lot ${lotNo}`;
+            else ident = (pd.mukim || pd.negeri || '').trim();
+          } else if (kind === 'bank' || kind === 'financial' || bankName || acctRaw) {
             prefix = '🏦';
-            const acct = g.account_number ? `…${String(g.account_number).slice(-4)}` : '';
-            ident = [g.bank_name, g.account_type, acct].filter(Boolean).join(' ') || 'Bank account';
-          } else if (g.kind === 'vehicle' || g.reg_number) {
+            const acct = acctRaw ? `…${String(acctRaw).slice(-4)}` : '';
+            ident = [bankName, g.account_type || fd.asset_type, acct].filter(Boolean).join(' ') || 'Bank account';
+          } else if (kind === 'vehicle' || regNum) {
             prefix = '🚗';
-            ident = g.reg_number || g.vehicle_description || g.description || 'Vehicle';
-          } else if (g.kind === 'insurance' || g.insurer_name) {
+            ident = regNum || g.vehicle_description || g.description || 'Vehicle';
+          } else if (kind === 'insurance' || g.insurer_name) {
             prefix = '🛡';
             ident = g.insurer_name || g.policy_number || 'Insurance';
-          } else if (g.kind === 'epf_kwsp') {
+          } else if (kind === 'epf_kwsp') {
             prefix = '💼 EPF/KWSP';
           } else {
-            prefix = g.description || g.gift_type || 'Gift';
+            // Other/disclaimer — use description if any, else a readable gift type
+            const typeLabel = { other: 'Other Gift', financial: 'Financial Asset', property: '🏠 Property' }[kind] || '';
+            prefix = g.description || typeLabel || 'Gift';
           }
           let label = ident ? `${prefix} — ${ident}` : prefix;
-          // Append beneficiary names
-          const bens = (g.beneficiaries || []).map(b => b.name || b).filter(Boolean);
-          if (bens.length) label += ' → ' + bens.slice(0, 2).join(', ') + (bens.length > 2 ? '…' : '');
+          if (benList.length) label += ' → ' + benList.slice(0, 2).join(', ') + (benList.length > 2 ? '…' : '');
           return [null, label.slice(0, 80)];
         }) : null },
       { n: '7', name: 'Residuary Estate', link: '/wizard/step/7', optional: false,

@@ -31,6 +31,32 @@ def _norm_addr(s: str) -> str:
     return ' '.join(out.split())
 
 
+def _looks_like_garbage(value: str) -> bool:
+    """Return True for values that are clearly OCR hallucinations or
+    placeholder text rather than real Malaysian lot/title identifiers.
+
+    Real lot numbers are digits (possibly with a slash for strata), real
+    title numbers are digits or alphanumeric with standard prefixes.
+    Rejects things like 'Blabla', 'Unknown', 'N/A', pure-letter strings
+    longer than 4 chars (no Malaysian lot is all letters), etc.
+    """
+    if not value:
+        return True
+    v = value.strip().upper()
+    # Common placeholder strings
+    _JUNK = {'N/A', 'NA', 'UNKNOWN', 'NONE', 'NIL', 'TBD', '-', '?', 'BLABLA',
+              'PLACEHOLDER', 'XXXX', 'XXXXX'}
+    if v in _JUNK:
+        return True
+    # If it's longer than 4 chars and contains ONLY letters (no digits,
+    # no '/', no '-'), it's almost certainly garbled OCR output.
+    # Real lot numbers have at least one digit. Title numbers too.
+    stripped = re.sub(r'[\s/\-()]', '', v)
+    if len(stripped) > 4 and stripped.isalpha():
+        return True
+    return False
+
+
 def _property_group_key(ex: Dict[str, Any]) -> str:
     """A loose identifier for grouping multiple uploaded images that all
     refer to the SAME property (front/back of geran, SPA, cukai tanah,
@@ -43,16 +69,17 @@ def _property_group_key(ex: Dict[str, Any]) -> str:
          and bank letters that don't have title fields but DO mention
          the address)
 
-    Empty string means the doc couldn't be grouped (treat as own item).
+    Garbage OCR values (all-letter strings like 'Blabla') are treated as
+    empty so they don't pollute grouping.  Empty string → own bucket.
     """
     if not isinstance(ex, dict):
         return ''
     tn = (ex.get('title_number') or '').strip().upper()
-    if tn:
+    if tn and not _looks_like_garbage(tn):
         return f'TN:{tn}'
     lot = (ex.get('lot_number') or '').strip().upper()
     mukim = (ex.get('mukim') or '').strip().upper()
-    if lot:
+    if lot and not _looks_like_garbage(lot):
         return f'LOT:{lot}|{mukim}'
     addr = _norm_addr(ex.get('description') or ex.get('property_address') or '')
     if addr:
@@ -235,6 +262,64 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                         known_ids.add(ds['document_id'])
                 del prop_groups[gk]
                 break
+
+    # ── Same-email named-group merge ──────────────────────────────────────
+    # When 5 images of the SAME property are in one email but OCR gives
+    # different (or garbage) lot/title numbers, we end up with multiple
+    # named groups (LOT:X, LOT:Y, DOC:Z…) for the same email batch.
+    # Merge them all into the group with the best extraction quality.
+    #
+    # Strategy: for each chat_message_id that appears across multiple
+    # different named groups, keep the BEST group (most filled fields)
+    # and fold all others into it as support docs.
+    mid_to_named_gks: Dict[str, List[str]] = {}
+    for gk, grp in list(prop_groups.items()):
+        if gk.startswith('DOC:'):
+            continue  # already handled above
+        # Collect all message IDs referenced by docs in this group
+        all_docs_iter = (([grp['title_doc']] if grp['title_doc'] else [])
+                         + grp['support_docs'])
+        for ds in all_docs_iter:
+            if not ds:
+                continue
+            mid = str(ds.get('chat_message_id') or '')
+            if mid:
+                mid_to_named_gks.setdefault(mid, [])
+                if gk not in mid_to_named_gks[mid]:
+                    mid_to_named_gks[mid].append(gk)
+
+    for mid, gk_list in mid_to_named_gks.items():
+        if len(gk_list) < 2:
+            continue  # only one group for this email → nothing to merge
+        # Keep the group that exists in prop_groups and has a title_doc with
+        # the most filled NLC fields. Break ties by group-key rank (TN > LOT > ADDR > HINT).
+        def _group_quality(gk: str) -> int:
+            if gk not in prop_groups:
+                return -1
+            td = prop_groups[gk].get('title_doc') or {}
+            ex_ = td.get('extracted') or {}
+            filled = sum(1 for k in ('title_number', 'lot_number', 'mukim', 'daerah', 'negeri')
+                         if (ex_.get(k) or '').strip())
+            rank = next((v for k, v in _GK_RANK.items() if gk.startswith(k)), 0)
+            return filled * 10 + rank
+
+        gk_list_alive = [gk for gk in gk_list if gk in prop_groups]
+        if len(gk_list_alive) < 2:
+            continue
+        best_gk = max(gk_list_alive, key=_group_quality)
+        target = prop_groups[best_gk]
+        known_ids = set(target['all_doc_ids'])
+        for gk in gk_list_alive:
+            if gk == best_gk:
+                continue
+            grp = prop_groups[gk]
+            for ds in (([grp['title_doc']] if grp['title_doc'] else [])
+                       + grp['support_docs']):
+                if ds and ds['document_id'] not in known_ids:
+                    target['support_docs'].append(ds)
+                    target['all_doc_ids'].append(ds['document_id'])
+                    known_ids.add(ds['document_id'])
+            del prop_groups[gk]
 
     # ── Emit one card per group ────────────────────────────────────────────
     # Only emit if a property_title is present (ownership evidence required).
