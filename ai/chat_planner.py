@@ -342,22 +342,28 @@ def _clean_email_body(raw: str) -> str:
 
 
 def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
-    """Rich inbox-review card shown when new attachments arrive (email or upload).
+    """Email brief card — shown when new attachments arrive or on reset.
 
-    Shows:
-    - Cleaned email body text (human-written content, no headers/forwarding noise)
-    - Numbered list of every image: category label + filename + remove button
-    - Prompt for user to add context
-    - Quick-replies: remove buttons per image + "▶️ Start review"
+    Presents a formal structured brief:
+    1. Header with attachment count
+    2. Summary — coherent key-point bullets extracted from the message
+    3. Full cleaned message text (blockquote)
+    4. Exhibits — numbered list (Exhibit 1, 2 …) with category + wrong-upload flags
+    5. Footer inviting user to comment before proceeding to identity/asset matching
     """
     n = len(artifacts)
-    header = f"**📬 {n} attachment{'s' if n != 1 else ''} received — please review before analysis**"
 
-    # ── Clean email body + structured key-point extraction ───────────────
-    body_section = ''
+    # ── 1. Header ────────────────────────────────────────────────────────────
+    header = (
+        f"## 📋 Email Brief — {n} exhibit{'s' if n != 1 else ''} received\n"
+        "_Please review the summary below, remove any incorrect attachments, "
+        "then tap **▶️ Start matching** to begin identity & asset analysis._"
+    )
+
+    # ── 2. Clean email body + structured key-point extraction ────────────────
     cleaned_body = _clean_email_body(user_text or '')
+    summary_section = ''
     if cleaned_body:
-        # ── Extract key signals from the cleaned text ──────────────────
         key_points = []
 
         # Properties / lot numbers mentioned
@@ -365,7 +371,10 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
             r'(?:lot|ptd|hsd|hsm|geran|hakmilik|title)[^\w]?\s*(\w[\w\-/]*)',
             cleaned_body, re.I)
         if _lot_mentions:
-            key_points.append(f"🏠 Property reference: **{', '.join(dict.fromkeys(_lot_mentions[:3]))}**")
+            key_points.append(
+                f"🏠 **Property reference{'s' if len(_lot_mentions) > 1 else ''}:** "
+                f"{', '.join(dict.fromkeys(_lot_mentions[:4]))}"
+            )
 
         # Beneficiary names
         _kw_re2 = re.compile(
@@ -393,68 +402,82 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
                     _name_parts2.append(_c); _in_n = True
                 elif _in_n: break
             if _name_parts2:
-                key_points.append(f"🎁 Beneficiary mentioned: **{' '.join(_name_parts2)}**")
+                key_points.append(f"🎁 **Beneficiary mentioned:** {' '.join(_name_parts2)}")
 
         # Ownership type
         if re.search(r'\b(sole\s*owner|sendiri|myself\s*only|hak\s*penuh)\b', cleaned_body, re.I):
-            key_points.append("👤 Ownership: **Sole owner**")
+            key_points.append("👤 **Ownership:** Sole owner")
         elif re.search(r'\b(joint|bersama|co[-\s]?owner|berkongsi)\b', cleaned_body, re.I):
             _sh = re.search(r'(\d+/\d+|\d+\s*%|half)', cleaned_body, re.I)
             share_str = f" ({_sh.group(1)})" if _sh else ''
-            key_points.append(f"🤝 Ownership: **Joint{share_str}**")
+            key_points.append(f"🤝 **Ownership:** Joint{share_str}")
 
         # Encumbrance
         if re.search(r'\b(loan|mortgage|charge|lien|caveat|pinjaman|bebanan)\b',
                      cleaned_body, re.I):
-            key_points.append("🏦 Possible encumbrance mentioned (loan/caveat)")
+            key_points.append("🏦 **Encumbrance:** Possible loan/caveat mentioned")
 
-        # ── Format body section ────────────────────────────────────────
-        lines_b = ["**📨 Message from sender:**"]
+        # ── Format summary section ─────────────────────────────────────
+        lines_s = ["### 📨 Message Summary"]
         if key_points:
-            lines_b.append("**Key points extracted:**")
-            lines_b.extend(f"  • {p}" for p in key_points)
-            lines_b.append("")  # blank line
-        # Show cleaned text, indented as blockquote
-        _preview = cleaned_body[:500]
-        if len(cleaned_body) > 500:
-            _preview += '…'
-        _quoted = '> ' + _preview.replace('\n', '\n> ').strip('> ')
-        lines_b.append(_quoted)
-        body_section = '\n'.join(lines_b)
-    else:
-        body_section = "_No message text — only attachments were received._"
+            lines_s.extend(f"• {p}" for p in key_points)
+            lines_s.append("")
 
-    # ── Attachment list ───────────────────────────────────────────────────
-    lines = [f"**📎 Attached images** _(tap 🗑 to remove any that were sent by mistake)_:"]
+        # Full cleaned message as blockquote (up to 600 chars)
+        _preview = cleaned_body[:600]
+        if len(cleaned_body) > 600:
+            _preview += '…'
+        _quoted = '> ' + _preview.replace('\n', '\n> ').rstrip('> ').strip()
+        lines_s.append("**Full message:**")
+        lines_s.append(_quoted)
+        summary_section = '\n'.join(lines_s)
+    else:
+        summary_section = "### 📨 Message Summary\n_No message text — only attachments were received._"
+
+    # ── 3. Exhibits list ─────────────────────────────────────────────────────
+    exhibit_lines = ["### 📎 Exhibits"]
     quick = []
+    has_wrong = False
     for i, a in enumerate(artifacts, 1):
-        kind  = a.get('kind', 'other')
-        label = _KIND_LABELS.get(kind, '📄 Document')
-        fname = (a.get('original_filename') or '').strip()
-        ex    = a.get('extracted') or {}
+        kind        = a.get('kind', 'other')
+        label       = _KIND_LABELS.get(kind, '📄 Document')
+        fname       = (a.get('original_filename') or '').strip()
+        ex          = a.get('extracted') or {}
         custom_type = (ex.get('custom_type') or '').strip()
         purpose     = (ex.get('purpose') or '').strip()
-        detail = custom_type or purpose or fname
-        wrong_flag = '⚠️ ' if ex.get('_wrong_upload_suspected') else ''
-        lines.append(f"  {i}. {wrong_flag}{label} — _{detail[:100]}_")
+        detail      = custom_type or purpose or fname or kind
+        wrong       = ex.get('_wrong_upload_suspected', False)
+        wrong_reason = (ex.get('_wrong_reason') or '').strip()
+        if wrong:
+            has_wrong = True
+
+        exhibit_lines.append(f"**Exhibit {i}** — {label}")
+        if detail:
+            exhibit_lines.append(f"  _{detail[:120]}_")
+        if wrong:
+            short_reason = wrong_reason[:100] if wrong_reason else 'may not belong to this case'
+            exhibit_lines.append(f"  ⚠️ _Possible mismatch: {short_reason}_")
         doc_id = a.get('document_id', '')
         if doc_id:
-            quick.append({'label': f'🗑 Remove #{i}', 'value': f'inbox remove {doc_id}'})
+            quick.append({'label': f'🗑 Remove Exhibit {i}', 'value': f'inbox remove {doc_id}'})
 
-    quick.append({'label': '▶️ Start analysis', 'value': 'inbox start'})
+    quick.append({'label': '▶️ Start matching', 'value': 'inbox start'})
+    exhibit_section = '\n'.join(exhibit_lines)
 
-    attachment_section = '\n'.join(lines)
-    qr_marker = f'<!--quickreplies:{json.dumps(quick)}-->'
-
-    parts = [header, body_section, attachment_section]
-    if any(a.get('extracted', {}).get('_wrong_upload_suspected') for a in artifacts):
-        parts.append(
-            "**⚠️ One or more attachments may have been uploaded by mistake** "
-            "(see ⚠️ flags above). Please remove them before starting the analysis."
+    # ── 4. Footer ────────────────────────────────────────────────────────────
+    footer_lines = []
+    if has_wrong:
+        footer_lines.append(
+            "⚠️ **One or more exhibits may be mismatched** — please remove them before proceeding."
         )
-    parts.append(
-        "_Type any notes or context about these documents, then tap **▶️ Start analysis**._"
+    footer_lines.append(
+        "_Add any corrections or additional context in the chat, "
+        "then tap **▶️ Start matching** to begin identity & asset analysis._"
     )
+    footer = '\n'.join(footer_lines)
+
+    qr_marker = f'<!--quickreplies:{json.dumps(quick)}-->'
+    parts = [header, summary_section, exhibit_section, footer]
     return '\n\n'.join(parts) + qr_marker
 
 

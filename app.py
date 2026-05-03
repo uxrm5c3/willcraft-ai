@@ -4846,7 +4846,7 @@ def _try_handle_inbox_action(client_id: str, user_text: str):
     t = user_text.strip().lower()
 
     if t == 'inbox start':
-        # User clicked "▶️ Start analysis" — nothing to save, just let
+        # User clicked "▶️ Start matching" — nothing to save, just let
         # plan_turn proceed to the normal walkthrough.
         return {
             'name': 'inbox confirmed',
@@ -4884,7 +4884,7 @@ def _try_handle_inbox_action(client_id: str, user_text: str):
             'reply_override': (
                 f"🗑 **{fname}** removed.\n\n"
                 "The remaining attachments are still shown above. "
-                "Tap **▶️ Start analysis** when you're ready, or remove more images."
+                "Tap **▶️ Start matching** when you're ready, or remove more exhibits."
             ),
         }
 
@@ -4994,10 +4994,7 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
             'name': f'inbox reset ({len(artifacts)} docs)',
             'role': 'inbox_restarted',
             'kind': 'inbox_restart',
-            'reply_override': (
-                f"♻️ **Reset complete** — {len(artifacts)} document(s) ready for review.\n\n"
-                + inbox_card
-            ),
+            'reply_override': inbox_card,
         }
     except Exception as _rst_err:
         import traceback as _tb
