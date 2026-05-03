@@ -276,19 +276,42 @@ Before classifying, scan the image for these signals (in priority order):
 Standard categories (use one):
 • **nric** — MyKad (photo + IC no. ######-##-####) or Malaysian passport
 • **property_title** — Land title: "HAKMILIK", "GERAN", "STRATA TITLE", "INDIVIDUAL TITLE". PTD seal. Has lot no. + "TUAN PUNYA BERDAFTAR"
-• **property_spa** — Sale & Purchase Agreement / Perjanjian Jual Beli. Buyer+seller+price+date
-• **property_tax** — Cukai Tanah / Cukai Harta / Cukai Pintu / quit rent. Local council (MBJB, DBKL, MBPJ)
+• **property_spa** — Sale & Purchase Agreement / Perjanjian Jual Beli.
+  Covers ALL pages of an SPA — not just the cover page. Classify as property_spa if you see ANY of:
+  - Heading: "PERJANJIAN JUAL BELI", "SALE AND PURCHASE AGREEMENT", "S&P", "SPA"
+  - Schedule pages: tables listing property details, purchase price, conditions, payment schedule within an SPA
+  - Signing/execution pages: signature blocks for Vendor + Purchaser + witnesses, stamp duty section, solicitor stamp — IF the surrounding context (other pages, text) indicates it is an SPA
+  - References to "Penjual" / "Pembeli" (Vendor / Purchaser) with a property address or lot number
+• **property_tax** — Cukai Tanah / Cukai Harta / Cukai Pintu / quit rent. Local council (MBJB, DBKL, MBPJ, MPJBT, MPS, MPK, MPPG, etc.)
 • **property_transfer** — BORANG 14A / 16A. "MEMORANDUM PINDAHMILIK". Transferor + Transferee sections
 • **utility_bill** — TNB / Air Selangor / SAJ / PBA / Indah Water / unifi / Maxis. Service address shown
-• **loan_agreement** — Loan/charge/mortgage document. Bank name (RHB, Maybank, CIMB, Public Bank, HLB, AmBank, Alliance, BSN, Bank Islam, Bank Rakyat, UOB, OCBC) + "LOAN AGREEMENT" / "PERJANJIAN PINJAMAN" / "DEED OF ASSIGNMENT" / "CHARGE" / "BEBANAN" / signing page with borrower + bank stamp
-• **bank_letter** — Brief bank correspondence (welcome letter, account confirmation). NOT a statement or loan
+• **loan_agreement** — Loan/charge/mortgage document. Covers ALL pages — not just the cover page. Classify as loan_agreement if you see ANY of:
+  - Heading: "LOAN AGREEMENT", "PERJANJIAN PINJAMAN", "DEED OF ASSIGNMENT", "CHARGE", "BEBANAN", "FACILITY AGREEMENT", "LETTER OF OFFER"
+  - Bank name (RHB, Maybank, CIMB, Public Bank, HLB, AmBank, Alliance, BSN, Bank Islam, Bank Rakyat, UOB, OCBC, Affin, HSBC, Standard Chartered) present on any page with legal language
+  - Signing/execution pages: signature block labelled "BORROWER" / "PEMINJAM" / "CHARGOR" / "ASSIGNOR" + bank representative + witness — these are loan agreement pages even without the main heading
+  - References to "facility", "principal sum", "interest rate", "charge", "security" in a banking context
+  - Schedules listing repayment amounts, interest rates, property charged as security
+• **bank_letter** — Brief bank correspondence (welcome letter, account confirmation, redemption statement). NOT a statement or loan agreement
 • **bank_statement** — Transaction list with dates + amounts + running balance. Passbook, FD cert, e-statement
 • **insurance** — Policy schedule / takaful cert. Prudential, AIA, Great Eastern, Etiqa, Takaful Malaysia
 • **epf_kwsp** — EPF/KWSP logo. Member no. + contribution history. i-Akaun screenshot
 • **vehicle** — JPJ registration card (Kad Pendaftaran Kenderaan). Plate no. + chassis + engine cc
-• **will** — The document IS a will: titled "WASIAT TERAKHIR", "LAST WILL AND TESTAMENT", or "MY LAST WILL". Contains BOTH testator declaration AND executor appointment AND witness attestation clause. A DRAFT will also counts. Do NOT classify as will: letters about wills, probate orders, grant of probate, letters of administration, legal opinions about wills, redemption letters, discharge documents.
-• **death_certificate** — Official government death registration. Look for ANY of: "SIJIL KEMATIAN", "CERTIFICATE OF DEATH", "DEATH CERTIFICATE", "TARIKH KEMATIAN", "SEBAB KEMATIAN", "CAUSE OF DEATH", "DATE OF DEATH", JPN (Jabatan Pendaftaran Negara) logo with a deceased person's details, or a document with a date-of-death field filled in. Set will_relevant=false, person_name=deceased full name.
+• **will** — The document IS a will: titled "WASIAT TERAKHIR", "LAST WILL AND TESTAMENT", or "MY LAST WILL". Contains BOTH testator declaration AND executor appointment AND witness attestation clause. A DRAFT will also counts. Do NOT classify as will: letters about wills, probate orders, grant of probate, letters of administration, legal opinions about wills, redemption letters, discharge documents, loan signing pages.
+• **death_certificate** — Official government death registration. Look for ANY of:
+  - Headings: "SIJIL KEMATIAN", "CERTIFICATE OF DEATH", "DEATH CERTIFICATE"
+  - Fields: "TARIKH KEMATIAN" / "DATE OF DEATH", "SEBAB KEMATIAN" / "CAUSE OF DEATH", "TEMPAT KEMATIAN" / "PLACE OF DEATH"
+  - JPN (Jabatan Pendaftaran Negara) logo or stamp on a document listing a deceased person's name + death date
+  - Any form where a "date of death" field is filled in with a specific date
+  Set will_relevant=false, person_name=deceased full name.
 • **unrelated** — Clearly not an asset: birth cert, marriage cert, medical record, receipt, photo of people/objects, court order unrelated to property
+
+⚡ INTERIOR PAGE RULE (very important):
+Many documents span multiple pages. The heading "LOAN AGREEMENT" or "PERJANJIAN JUAL BELI" only appears on page 1. Interior pages — schedules, conditions, signing/execution pages — may have NO heading at all, only signatures, tables, or legal text. If you see:
+- Signature blocks with "Borrower / Bank representative / Witness" → loan_agreement
+- Signature blocks with "Vendor / Purchaser / Witness / Solicitor" + property address → property_spa
+- Tabular schedules referencing "facility amount", "interest", "security" → loan_agreement
+- Tabular schedules referencing "purchase price", "property", "conditions" → property_spa
+Use the batch group context if provided — it tells you what type the cover page was classified as.
 
 ⚡ BEST-EFFORT RULE: If the document does NOT match any standard category, still provide:
   - `kind`: the CLOSEST standard category (never default to "other" unless truly unreadable)
@@ -298,9 +321,11 @@ Standard categories (use one):
 
 ━━━ RULES ━━━
 - Document heading is the STRONGEST signal — trust what you read
-- Bank name visible on a contract/agreement → loan_agreement
-- "SIJIL KEMATIAN" / "TARIKH KEMATIAN" / "SEBAB KEMATIAN" / JPN death form → death_certificate (will_relevant=false)
-- Truly unreadable (black/blank/photo of scenery) → other, confidence=low, custom_type="Unreadable image"
+- Interior/signing pages with no heading: use visual cues (signature labels, table headers) — see INTERIOR PAGE RULE above
+- Bank name + legal language on ANY page → loan_agreement (even signing/schedule pages)
+- "Vendor/Purchaser" + property reference on ANY page → property_spa
+- "SIJIL KEMATIAN" / "TARIKH KEMATIAN" / "SEBAB KEMATIAN" / date of death field filled in → death_certificate (will_relevant=false)
+- Truly unreadable (black/blank/photo of scenery/selfie) → other, confidence=low, custom_type="Unreadable image"
 - property_hint: copy verbatim the property lot number, title number, or address (NOT owner's home address)
 - person_name: the PRIMARY person named in the document (owner, borrower, deceased, IC holder). Full name as printed. Empty if no clear name visible.
 - For death_certificate: set will_relevant=false, person_name=deceased full name
