@@ -1039,9 +1039,14 @@ def _deduce_intent_from_messages(p: Dict[str, Any], recent_text: str) -> str:
     """Pull any messages from the client that mention this specific
     property by lot/title number/address. The will writer needs to see
     'what did the client actually say about this one?' next to the
-    auto-grouped doc evidence."""
-    if not recent_text:
-        return ''
+    auto-grouped doc evidence.
+
+    Strategy:
+    1. Needle-search `recent_text` (all chat history) for lot/title mentions.
+    2. If no needles (property has no identifiers yet) but `_message_context`
+       is set, show that directly — it IS the text sent with the image.
+    """
+    import re as _re
     ex = p.get('extracted') or {}
     needles = []
     for k in ('title_number', 'lot_number', 'property_address',
@@ -1049,29 +1054,43 @@ def _deduce_intent_from_messages(p: Dict[str, Any], recent_text: str) -> str:
         v = (ex.get(k) or '').strip()
         if v and len(v) >= 3:
             needles.append(v)
-    if not needles:
-        return ''
-    # Find any sentence in recent_text that mentions one of the needles.
-    import re as _re
-    text_l = recent_text.lower()
-    matches = []
-    for needle in needles:
-        n = needle.lower()
-        idx = text_l.find(n)
-        if idx == -1:
-            continue
-        # Grab a window of ±120 chars around the mention
-        lo = max(0, idx - 120)
-        hi = min(len(recent_text), idx + len(needle) + 120)
-        snippet = recent_text[lo:hi].strip()
-        # Trim to sentence bounds if possible
-        snippet = _re.sub(r'\s+', ' ', snippet)
-        if len(snippet) > 200:
-            snippet = '…' + snippet[-200:]
-        matches.append(snippet)
-        if len(matches) >= 2:
-            break
-    return '\n'.join(f"  > _{m}_" for m in matches)
+
+    # Also check `_message_context` if it has been set — this is the
+    # WhatsApp text immediately before this image, stored per-image.
+    msg_ctx = (ex.get('_message_context') or '').strip()
+
+    if needles and recent_text:
+        text_l = recent_text.lower()
+        matches = []
+        for needle in needles:
+            n = needle.lower()
+            idx = text_l.find(n)
+            if idx == -1:
+                continue
+            lo = max(0, idx - 120)
+            hi = min(len(recent_text), idx + len(needle) + 120)
+            snippet = recent_text[lo:hi].strip()
+            snippet = _re.sub(r'\s+', ' ', snippet)
+            if len(snippet) > 200:
+                snippet = '…' + snippet[-200:]
+            matches.append(snippet)
+            if len(matches) >= 2:
+                break
+        if matches:
+            return '\n'.join(f"  > _{m}_" for m in matches)
+
+    # Fallback: show the raw message_context (WhatsApp text sent WITH image)
+    if msg_ctx:
+        # Strip leading WhatsApp timestamp lines to keep it concise
+        lines = [l.strip() for l in msg_ctx.splitlines() if l.strip()]
+        # Drop pure timestamp/attachment reference lines
+        clean = [l for l in lines
+                 if '<attached:' not in l.lower()
+                 and 'file attached' not in l.lower()]
+        if clean:
+            snippet = ' '.join(clean)[:300]
+            return f"  > _{snippet}_"
+    return ''
 
 
 _TITLE_TYPE_KEYWORDS = (
@@ -1352,8 +1371,11 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
                 'property_transfer': '📋 Memorandum of Transfer (Borang 14A/16A)',
                 'utility_bill': '⚡ Utility bill',
                 'bank_letter': '🏦 Bank letter',
+                'chat_inbox': '📷 Unclassified page',
+                'other': '📷 Unclassified page',
             }.get(kind, '📄')
-            purpose = (s.get('purpose') or s.get('original_filename') or '').strip()
+            purpose = (s.get('purpose') or s.get('extracted', {}).get('purpose') or
+                       s.get('original_filename') or '').strip()
             sup_lines.append(f"  {i}. {kind_label} — _{purpose[:140]}_")
         parts.append('\n'.join(sup_lines))
 
@@ -1639,8 +1661,11 @@ def _step6_property_question(pending_props, recent_text, will_data):
             'property_transfer': '📋 Memorandum of Transfer (Borang 14A/16A)',
             'utility_bill': '⚡ Utility bill',
             'bank_letter': '🏦 Bank letter',
+            'chat_inbox': '📷 Unclassified page',
+            'other': '📷 Unclassified page',
         }.get(kind, '📄 Doc')
-        sp = (s.get('purpose') or s.get('original_filename') or 'supporting doc').strip()
+        sp = (s.get('purpose') or s.get('extracted', {}).get('purpose') or
+              s.get('original_filename') or 'supporting doc').strip()
         evidence_lines.append(f"  • {kind_label} — _{sp[:120]}_")
     evidence_block = ('\n'.join(evidence_lines)) if evidence_lines else ''
 

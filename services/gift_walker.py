@@ -97,16 +97,30 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             if gk:
                 referenced_group_keys.add(gk)
 
-    # Pull title docs AND supporting docs in one pass so we can attach.
-    all_kinds = _GIFT_KINDS + _PROPERTY_SUPPORT_KINDS
+    # Pull title docs + supporting docs + unclassified (chat_inbox/other) in
+    # one pass. Unclassified docs are needed so we can attach them to the
+    # matching property group when they arrived in the same email (same
+    # chat_message_id) as a geran — typical for multi-page WhatsApp forwards
+    # where back-pages get classified as 'other' because OCR sees no title.
+    _SIBLING_KINDS = ('chat_inbox', 'other')
+    all_kinds = _GIFT_KINDS + _PROPERTY_SUPPORT_KINDS + _SIBLING_KINDS
     docs = (Document.query.filter(
         Document.client_id == client_id,
         Document.category.in_(all_kinds),
     ).order_by(Document.created_at.asc()).all())
 
-    # First pass: index property-related docs (title + support) by group key
+    # First pass: index property-related docs (title + support) by group key.
+    # Also track chat_message_id → best group key so we can later absorb
+    # sibling docs (same email batch, unclassified pages) into the group.
     prop_groups: Dict[str, Dict[str, Any]] = {}
-    seen_keys = set()  # for bank/vehicle dedupe
+    seen_keys = set()        # for bank/vehicle dedupe
+    # msg_id → best group key rank: TN=4 > LOT=3 > ADDR=2 > HINT=1 > DOC=0
+    _GK_RANK = {'TN:': 4, 'LOT:': 3, 'ADDR:': 2, 'HINT:': 1}
+    msg_id_to_gk: Dict[str, str] = {}  # chat_message_id str → group key
+
+    # Sibling pool: unclassified docs keyed by chat_message_id
+    sibling_pool: Dict[str, List[Dict]] = {}
+
     for d in docs:
         if d.id in referenced_doc_ids:
             continue
@@ -115,38 +129,55 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         except (json.JSONDecodeError, TypeError):
             ex = {}
 
+        doc_summary = {
+            'document_id': d.id,
+            'category': d.category,
+            'extracted': ex,
+            'purpose': (ex.get('purpose') or '').strip(),
+            'original_filename': d.original_filename,
+            'created_at': d.created_at.isoformat() if d.created_at else '',
+            'chat_message_id': d.chat_message_id,
+        }
+
+        # ── Unclassified siblings ──────────────────────────────────────────
+        if d.category in _SIBLING_KINDS:
+            mid = str(d.chat_message_id or '')
+            if mid:
+                sibling_pool.setdefault(mid, []).append(doc_summary)
+            continue
+
+        # ── Property docs ──────────────────────────────────────────────────
         if d.category in ('property_title',) + _PROPERTY_SUPPORT_KINDS:
-            gk = _property_group_key(ex) or f'DOC:{d.id}'  # un-groupable → own bucket
+            gk = _property_group_key(ex) or f'DOC:{d.id}'
             if gk in referenced_group_keys:
-                continue  # already gifted under another doc
+                continue
             grp = prop_groups.setdefault(gk, {
                 'group_key': gk,
-                'title_doc': None,        # the primary property_title (if any)
-                'support_docs': [],       # SPA + cukai tanah for the same property
+                'title_doc': None,
+                'support_docs': [],
                 'all_doc_ids': [],
             })
-            doc_summary = {
-                'document_id': d.id,
-                'category': d.category,
-                'extracted': ex,
-                'purpose': (ex.get('purpose') or '').strip(),
-                'original_filename': d.original_filename,
-                'created_at': d.created_at.isoformat() if d.created_at else '',
-            }
             grp['all_doc_ids'].append(d.id)
             if d.category == 'property_title':
-                # Keep the FIRST title doc for this group; later titles for
-                # the same lot are duplicates (e.g. front & back uploaded
-                # both classified as title) → fold into support.
                 if grp['title_doc'] is None:
                     grp['title_doc'] = doc_summary
                 else:
                     grp['support_docs'].append(doc_summary)
             else:
                 grp['support_docs'].append(doc_summary)
+
+            # Track the best group key seen for this chat message so later
+            # unclassified docs from the same email can join this group.
+            mid = str(d.chat_message_id or '')
+            if mid:
+                cur_rank = next((v for k, v in _GK_RANK.items() if gk.startswith(k)), 0)
+                ex_gk = msg_id_to_gk.get(mid, '')
+                ex_rank = next((v for k, v in _GK_RANK.items() if ex_gk.startswith(k)), 0)
+                if cur_rank >= ex_rank:
+                    msg_id_to_gk[mid] = gk
             continue
 
-        # Bank / vehicle — same dedupe as before
+        # ── Bank / vehicle ─────────────────────────────────────────────────
         if d.category == 'bank_statement':
             key = ('bank', (ex.get('account_number') or '').strip())
         else:
@@ -154,33 +185,64 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         if key[1] and key in seen_keys:
             continue
         seen_keys.add(key)
-        item = {
-            'document_id': d.id,
-            'category': d.category,
-            'extracted': ex,
-            'purpose': (ex.get('purpose') or '').strip(),
-            'original_filename': d.original_filename,
-            'created_at': d.created_at.isoformat() if d.created_at else '',
-        }
         if d.category == 'bank_statement':
-            out['bank'].append(item)
+            out['bank'].append(doc_summary)
         else:
-            out['vehicle'].append(item)
+            out['vehicle'].append(doc_summary)
 
-    # Second pass: emit one property item per group, ONLY if a title is
-    # present (we need ownership evidence to put it in the will). Groups
-    # with only SPA/cukai tanah → user uploaded supporting docs but no
-    # title; surface as 'property_orphan' so chat can prompt "got the
-    # geran for this?" without offering it as a giftable asset.
+    # ── Sibling merge ──────────────────────────────────────────────────────
+    # Attach unclassified docs from the same email to the matching property
+    # group. This fixes the "8 images but only 1 shown" problem: back-pages
+    # of a geran that OCR couldn't read land as 'other'; we absorb them as
+    # supporting docs under the geran that WAS identified.
+    for mid, siblings in sibling_pool.items():
+        gk = msg_id_to_gk.get(mid)
+        if not gk or gk not in prop_groups:
+            continue
+        grp = prop_groups[gk]
+        known_ids = set(grp['all_doc_ids'])
+        for s in siblings:
+            if s['document_id'] not in known_ids:
+                grp['support_docs'].append(s)
+                grp['all_doc_ids'].append(s['document_id'])
+                known_ids.add(s['document_id'])
+
+    # ── DOC:{id} merge ─────────────────────────────────────────────────────
+    # Property docs that had no extractable lot/title (DOC:{id} bucket) can
+    # still be merged into a named group if they share the same email batch.
+    ungrouped_keys = [gk for gk in list(prop_groups.keys()) if gk.startswith('DOC:')]
+    for gk in ungrouped_keys:
+        grp = prop_groups[gk]
+        # Find the chat_message_id for any doc in this group
+        all_mids = set()
+        for did in grp['all_doc_ids']:
+            # Lookup from doc_summary in title_doc or support_docs
+            for ds in ([grp['title_doc']] if grp['title_doc'] else []) + grp['support_docs']:
+                if ds and ds.get('document_id') == did:
+                    mid = str(ds.get('chat_message_id') or '')
+                    if mid:
+                        all_mids.add(mid)
+        for mid in all_mids:
+            target_gk = msg_id_to_gk.get(mid)
+            if target_gk and target_gk != gk and target_gk in prop_groups:
+                # Merge this DOC:{id} group into the named group
+                target = prop_groups[target_gk]
+                known_ids = set(target['all_doc_ids'])
+                for ds in ([grp['title_doc']] if grp['title_doc'] else []) + grp['support_docs']:
+                    if ds and ds['document_id'] not in known_ids:
+                        target['support_docs'].append(ds)
+                        target['all_doc_ids'].append(ds['document_id'])
+                        known_ids.add(ds['document_id'])
+                del prop_groups[gk]
+                break
+
+    # ── Emit one card per group ────────────────────────────────────────────
+    # Only emit if a property_title is present (ownership evidence required).
+    # Groups with only SPA/cukai tanah are orphaned — skip for now.
     for gk, grp in prop_groups.items():
         primary = grp['title_doc']
         if primary:
-            # Deduplicate support docs:
-            #   • Drop any with the SAME original_filename as the primary
-            #     (same image uploaded multiple times, e.g. photo of Borang 16A
-            #     sent 3 times; only the first copy matters).
-            #   • Also drop consecutive support docs with the same filename as
-            #     each other (pages of the same multi-page doc can appear once).
+            # Deduplicate support docs by original_filename
             seen_fnames: set = set()
             primary_fname = (primary.get('original_filename') or '').strip()
             if primary_fname:
@@ -189,14 +251,12 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             for s in grp['support_docs']:
                 fname = (s.get('original_filename') or '').strip()
                 if fname and fname in seen_fnames:
-                    continue  # exact duplicate — skip silently
-                seen_fnames.add(fname or s.get('document_id', ''))
+                    continue
+                seen_fnames.add(fname or str(s.get('document_id', '')))
                 deduped.append(s)
             primary['support_docs'] = deduped
             primary['group_key'] = gk
             out['property'].append(primary)
-        # Else: orphaned support docs — leave them out of the gift walk.
-        # They still exist on disk for the user's records.
     return out
 
 

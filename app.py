@@ -3413,26 +3413,32 @@ def api_chat_message(client_id):
         # 127082, give to Joshua" in the same WhatsApp/email message as
         # they attached the geran. We use it later to back-fill missing
         # OCR fields and to surface intent on the property card.
-        # Also look at the previous chat message (sent ≤120 s before this
-        # one) since WhatsApp often sends text then image in back-to-back
-        # separate messages.
-        msg_context_parts = []
-        if user_text:
-            msg_context_parts.append(user_text)
+        # For direct chat uploads we also look at the previous user message
+        # (back-to-back: text THEN image is common in WhatsApp-style flows).
         try:
-            prev_msgs = (ChatMessage.query
-                         .filter_by(session_id=cs.id, role='user')
-                         .filter(ChatMessage.id != user_msg.id)
-                         .order_by(ChatMessage.created_at.desc())
-                         .limit(3).all())
-            for pm in prev_msgs:
-                txt = (pm.content or '').strip()
-                if txt:
-                    msg_context_parts.append(txt)
+            wa_ctx = _extract_whatsapp_context_for_file(
+                user_text or '', doc.original_filename or ''
+            )
+            if wa_ctx:
+                extracted['_message_context'] = wa_ctx[:800]
+                extracted['_context_source'] = 'whatsapp_preceding'
+            else:
+                msg_context_parts = []
+                if user_text:
+                    msg_context_parts.append(user_text)
+                prev_msgs = (ChatMessage.query
+                             .filter_by(session_id=cs.id, role='user')
+                             .filter(ChatMessage.id != user_msg.id)
+                             .order_by(ChatMessage.created_at.desc())
+                             .limit(3).all())
+                for pm in prev_msgs:
+                    txt = (pm.content or '').strip()
+                    if txt:
+                        msg_context_parts.append(txt)
+                if msg_context_parts:
+                    extracted['_message_context'] = '\n'.join(msg_context_parts)[:800]
         except Exception:
             pass
-        if msg_context_parts:
-            extracted['_message_context'] = '\n'.join(msg_context_parts)[:800]
         # For low-confidence 'other' docs: cross-check recent chat messages
         # to see if the client mentioned this image (by filename keyword or
         # asset reference). If no mention found, flag as likely irrelevant.
@@ -4100,6 +4106,45 @@ def _gather_recent_chat_text(client_id: str, max_chars: int = 8000) -> str:
         out.append(c)
         total += len(c)
     return '\n\n'.join(out)
+
+
+def _extract_whatsapp_context_for_file(body: str, filename: str) -> str:
+    """Return the WhatsApp text messages immediately preceding this filename's
+    attachment reference in an exported WhatsApp chat log.
+
+    WhatsApp exports (iOS / Android) embed attachment lines like:
+      [02/05/26, 13:52] Ahmad: ‎<attached: PHOTO-2026-05-02-13-52-35.jpg>
+      [02/05/26, 13:52] Ahmad: IMG-20260502-WA0001.jpg (file attached)
+
+    The text messages typed just before the images are the richest context
+    (e.g. "Ini property saya lot 127082, bagi anak saya Sarah").
+
+    Returns up to 4 lines of preceding non-attachment text, or '' if the
+    filename isn't found in the body (caller should fall back to full body).
+    """
+    if not filename or not body:
+        return ''
+    fn_lower = filename.lower()
+    idx = body.lower().find(fn_lower)
+    if idx == -1:
+        return ''
+    preceding = body[:idx]
+    lines = preceding.split('\n')
+    context_lines = []
+    for line in reversed(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        sl = stripped.lower()
+        # Skip attachment reference lines
+        if '<attached:' in sl or 'file attached' in sl:
+            continue
+        # Stop if we go back past a different message block (a blank sequence
+        # means a natural break in the conversation — don't reach too far back)
+        context_lines.insert(0, stripped)
+        if len(context_lines) >= 4:
+            break
+    return '\n'.join(context_lines)
 
 
 _CONFIRM_TOKENS = ('yes', 'confirm', 'correct', 'ok ', 'okay', 'yep', 'yeah', 'true', 'right')
@@ -5690,27 +5735,26 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                     extracted['purpose'] = purpose[:300]
                 if prop_hint:
                     extracted['property_hint'] = prop_hint[:300]
-                # Store the email/WhatsApp text that came WITH this image.
-                # For email: body text describes ALL attachments → most useful context.
-                # For WhatsApp: client typed a description immediately before/after.
-                # We also grab the 2 previous user messages (back-to-back sequential
-                # WhatsApp messages where text precedes the image).
+                # Store the text context that came WITH this image.
+                # For WhatsApp-forwarded emails the body is a chat log:
+                #   [time] Client: please add this property, lot 127082 to sarah
+                #   [time] Client: <attached: PHOTO-2026-05-02-13-52-35.jpg>
+                # We extract the lines immediately before THIS image's attachment
+                # reference — that's the most specific context for this image.
+                # Fall back to the full email body if no WhatsApp format found.
                 try:
-                    msg_context_parts = []
                     msg_body = (user_msg.content or '').strip()
-                    if msg_body:
-                        msg_context_parts.append(msg_body)
-                    prev_msgs = (ChatMessage.query
-                                 .filter_by(session_id=user_msg.session_id, role='user')
-                                 .filter(ChatMessage.id != user_msg.id)
-                                 .order_by(ChatMessage.created_at.desc())
-                                 .limit(3).all())
-                    for pm in prev_msgs:
-                        ptxt = (pm.content or '').strip()
-                        if ptxt:
-                            msg_context_parts.append(ptxt)
-                    if msg_context_parts:
-                        extracted['_message_context'] = '\n'.join(msg_context_parts)[:800]
+                    wa_ctx = _extract_whatsapp_context_for_file(
+                        msg_body, doc.original_filename or ''
+                    )
+                    if wa_ctx:
+                        # WhatsApp-specific context found for this image
+                        extracted['_message_context'] = wa_ctx[:800]
+                        extracted['_context_source'] = 'whatsapp_preceding'
+                    elif msg_body:
+                        # No WhatsApp format — store the whole email body
+                        extracted['_message_context'] = msg_body[:800]
+                        extracted['_context_source'] = 'email_body'
                 except Exception:
                     pass
                 if kind == 'other' and not will_relevant:
