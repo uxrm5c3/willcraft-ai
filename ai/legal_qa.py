@@ -120,6 +120,18 @@ def answer_question(user_text: str, current_stage_summary: str = '',
                 db.session.commit()
             except Exception:
                 pass
+        # Different prompt depending on whether we have library matches.
+        # Library hits → require Citation. Otherwise → SKIP Citation entirely
+        # so the user never sees the noisy "General knowledge — not in
+        # library" line. Keep it client-friendly.
+        if matched_titles:
+            cite_instruction = (
+                '**Citation:** <Act name + section, e.g. "Wills Act 1959 s.5(2)". '
+                'Use the excerpts above. ONE line only.>\n\n'
+            )
+        else:
+            cite_instruction = ''  # omit the Citation section entirely
+
         msg = client.messages.create(
             model=CLAUDE_MODEL_FAST,
             max_tokens=500,
@@ -129,27 +141,24 @@ def answer_question(user_text: str, current_stage_summary: str = '',
 
 USER QUESTION: {user_text}
 
-Reply in this EXACT format (no preface, no filler, no disclaimer):
+Reply in this EXACT format (no preface, no filler, no disclaimer, no apologies):
 
-**Answer:** <one or two short plain-English sentences — maximum 40 words. Direct, no hedging.>
+**Answer:** <one or two short plain-English sentences — maximum 40 words. Direct, no hedging. Use everyday Malaysian terms (Geran, Strata Title, etc.) when relevant.>
 
-**Citation:** <Act name + section, e.g. "Wills Act 1959 s.5(2)". If the excerpts above cover it, cite from there. If not, write "General knowledge — not in library".>
+{cite_instruction}**Example:** <one short concrete example — maximum 25 words — illustrating the answer in a typical Malaysian situation. Skip this line ENTIRELY if no useful example fits.>
 
-**Example:** <one short concrete example — maximum 25 words — illustrating the answer in a typical Malaysian situation. Skip this line ENTIRELY if no useful example fits.>
-
-That's it. No "I hope this helps", no extra paragraphs."""
+That's it. No "I hope this helps", no "feel free to ask", no extra paragraphs."""
             }]
         )
         body = (msg.content[0].text or '').strip() if msg.content else ''
 
-        # Tiny one-line citation footer below the body — minimal, italic, gray.
-        # The body itself already contains "Answer:" + "Citation:" sections.
+        # Tiny citation footer ONLY when we actually cited from the library.
+        # If nothing matched, stay quiet — don't pester the user with
+        # "not in library" warnings, that's tech-team noise.
         if matched_titles:
             footer = f"\n\n<sub>📚 _Cited from library: {', '.join(matched_titles)}_</sub>"
-        elif library_titles:
-            footer = f"\n\n<sub>⚠️ _Not in library — answered from general knowledge ({len(library_titles)} Acts loaded)_</sub>"
         else:
-            footer = "\n\n<sub>⚠️ _Library empty — general knowledge only_</sub>"
+            footer = ''
 
         out = body + footer
         if resume_quick:
