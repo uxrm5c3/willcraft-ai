@@ -92,6 +92,8 @@ def plan_turn(
             pass  # card for the NEXT asset IS the headline — no prefix needed
         elif just_kind.startswith('inventory_skipped_'):
             pass  # same — card follows immediately
+        elif just_kind in ('inbox_start', 'inbox_removed'):
+            pass  # inbox review action — no extra prefix; card or override handles it
         elif just_kind == 'inventory_unlink_pending':
             reply_parts.append(
                 f"✂️  Reviewing supporting docs for **{just_assigned.get('name','')}**…"
@@ -118,7 +120,14 @@ def plan_turn(
 
     # ── 1. INTAKE — fresh attachments this turn ─────────────────────────
     if artifacts:
-        reply_parts.append(_intake_summary(artifacts))
+        # Use the rich Email Inbox Review card (shows cleaned message text,
+        # numbered image list, per-image remove buttons, start-analysis CTA).
+        # The plain _intake_summary is only used as fallback inside the card.
+        _intake_card = _intake_email_card(artifacts, user_text or '')
+        reply_parts.append(_intake_card)
+        # Show ALL fresh attachment thumbnails in the carousel
+        focus_ids = [a['document_id'] for a in artifacts if a.get('document_id')]
+        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus_ids)
 
     # ── 2. IDENTITY WALK-THROUGH — pending IC? ──────────────────────────
     if pending_ics:
@@ -278,6 +287,119 @@ def _wrap(parts, questions, patch, advice, focus_attachments=None):
         'advice': advice,
         'focus_attachments': focus_attachments or [],
     }
+
+
+_EMAIL_DIVIDER_RE = re.compile(
+    r'-{4,}\s*(Forwarded message|Original Message|Begin forwarded message)\s*-{4,}',
+    re.IGNORECASE,
+)
+_EMAIL_HEADER_LINE_RE = re.compile(
+    r'^[ \t]*(From|To|Cc|Bcc|Date|Subject|Sent|Mailed-By|Signed-By|Reply-To)\s*:[ \t]*[^\n]*$',
+    re.MULTILINE | re.IGNORECASE,
+)
+_EMAIL_FOOTER_RE = re.compile(
+    r'(Sent from (my )?(iPhone|iPad|Android|Samsung|Gmail|Outlook|Huawei|Xiaomi'
+    r'|Galaxy|MacBook|Desktop|Mobile|iOS|Google Mail)[^\n]*'
+    r'|Get Outlook for (iOS|Android)[^\n]*)',
+    re.IGNORECASE,
+)
+_QUOTE_LINE_RE  = re.compile(r'^>.*$', re.MULTILINE)
+_BLANK_LINES_RE = re.compile(r'\n{3,}')
+_OUR_PREAMBLE_RE = re.compile(
+    r'^_\(forwarded via email from [^\)]+\)_\s*\n+'
+    r'(\*\*Subject:\*\*[^\n]*\n+)?'
+    r'(\*\*Email date:\*\*[^\n]*\n+)?',
+    re.MULTILINE,
+)
+
+
+def _clean_email_body(raw: str) -> str:
+    """Strip email forwarding headers, quoted lines, and device footers.
+
+    Strategy: keep ALL body text from every layer of the forward chain,
+    strip only the structural noise (From/To/Date headers, divider lines,
+    "Sent from my iPhone" footers, quoted "> " lines).
+
+    Returns the human-written content — what the lawyer/testator actually
+    typed — without forwarding metadata.
+    """
+    if not raw:
+        return ''
+    # 1. Strip the preamble we added ourselves
+    cleaned = _OUR_PREAMBLE_RE.sub('', raw)
+    # 2. Replace forwarding dividers with a simple blank line (keep body below)
+    cleaned = _EMAIL_DIVIDER_RE.sub('\n', cleaned)
+    # 3. Strip individual header lines (From:, Date:, Subject:, To: etc.)
+    cleaned = _EMAIL_HEADER_LINE_RE.sub('', cleaned)
+    # 4. Strip "Sent from my iPhone" / "Get Outlook for iOS" footers
+    cleaned = _EMAIL_FOOTER_RE.sub('', cleaned)
+    # 5. Strip "> quoted" reply lines
+    cleaned = _QUOTE_LINE_RE.sub('', cleaned)
+    # 6. Collapse excessive blank lines
+    cleaned = _BLANK_LINES_RE.sub('\n\n', cleaned).strip()
+    return cleaned
+
+
+def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
+    """Rich inbox-review card shown when new attachments arrive (email or upload).
+
+    Shows:
+    - Cleaned email body text (human-written content, no headers/forwarding noise)
+    - Numbered list of every image: category label + filename + remove button
+    - Prompt for user to add context
+    - Quick-replies: remove buttons per image + "▶️ Start review"
+    """
+    n = len(artifacts)
+    header = f"**📬 {n} attachment{'s' if n != 1 else ''} received — please review before analysis**"
+
+    # ── Clean email body ──────────────────────────────────────────────────
+    body_section = ''
+    cleaned_body = _clean_email_body(user_text or '')
+    if cleaned_body:
+        preview = cleaned_body[:600]
+        if len(cleaned_body) > 600:
+            preview += '…'
+        body_section = (
+            "**📨 Message text:**\n"
+            f"> {preview.replace(chr(10), chr(10) + '> ')}\n\n"
+            "_If this message refers to specific properties or mentions who should "
+            "receive them, reply with your notes and I'll factor them in before analysing._"
+        )
+    else:
+        body_section = "_No message text — only attachments were received._"
+
+    # ── Attachment list ───────────────────────────────────────────────────
+    lines = [f"**📎 Attached images** _(tap 🗑 to remove any that were sent by mistake)_:"]
+    quick = []
+    for i, a in enumerate(artifacts, 1):
+        kind  = a.get('kind', 'other')
+        label = _KIND_LABELS.get(kind, '📄 Document')
+        fname = (a.get('original_filename') or '').strip()
+        ex    = a.get('extracted') or {}
+        custom_type = (ex.get('custom_type') or '').strip()
+        purpose     = (ex.get('purpose') or '').strip()
+        detail = custom_type or purpose or fname
+        wrong_flag = '⚠️ ' if ex.get('_wrong_upload_suspected') else ''
+        lines.append(f"  {i}. {wrong_flag}{label} — _{detail[:100]}_")
+        doc_id = a.get('document_id', '')
+        if doc_id:
+            quick.append({'label': f'🗑 Remove #{i}', 'value': f'inbox remove {doc_id}'})
+
+    quick.append({'label': '▶️ Start analysis', 'value': 'inbox start'})
+
+    attachment_section = '\n'.join(lines)
+    qr_marker = f'<!--quickreplies:{json.dumps(quick)}-->'
+
+    parts = [header, body_section, attachment_section]
+    if any(a.get('extracted', {}).get('_wrong_upload_suspected') for a in artifacts):
+        parts.append(
+            "**⚠️ One or more attachments may have been uploaded by mistake** "
+            "(see ⚠️ flags above). Please remove them before starting the analysis."
+        )
+    parts.append(
+        "_Type any notes or context about these documents, then tap **▶️ Start analysis**._"
+    )
+    return '\n\n'.join(parts) + qr_marker
 
 
 def _intake_summary(artifacts: List[Dict[str, Any]]) -> str:

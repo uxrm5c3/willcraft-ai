@@ -3695,7 +3695,8 @@ def api_chat_message(client_id):
         # one specific asset card, so 'inventory confirm' / 'inventory
         # skip' / 'inventory unlink' must hit the per-asset handler
         # before the gate fallback.
-        just_inventory = (_try_handle_restart_gifts(client_id, user_text)
+        just_inventory = (_try_handle_inbox_action(client_id, user_text)
+                          or _try_handle_restart_gifts(client_id, user_text)
                           or _try_handle_unlink_action(client_id, user_text)
                           or _try_handle_inventory_action(client_id, user_text)
                           or _try_handle_property_fill(client_id, user_text)
@@ -4829,6 +4830,64 @@ def _try_handle_encumbrance(client_id: str, user_text: str):
 
     label = 'Clean (no charge/caveat)' if not enc_confirmed else f'Encumbered — {enc_type or "details TBC"}'
     return {'name': label, 'role': 'encumbrance_confirmed', 'kind': 'property_fill'}
+
+
+def _try_handle_inbox_action(client_id: str, user_text: str):
+    """Handle inbox-review actions before the property walkthrough starts.
+
+      • 'inbox remove <doc_id>' → soft-delete that specific document
+        (wrong upload, noise from email forward, etc.)
+      • 'inbox start' → no-op that triggers the planner to proceed
+        to the property walkthrough (user has confirmed the inbox)
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+
+    if t == 'inbox start':
+        # User clicked "▶️ Start analysis" — nothing to save, just let
+        # plan_turn proceed to the normal walkthrough.
+        return {
+            'name': 'inbox confirmed',
+            'role': 'inbox_start',
+            'kind': 'inbox_start',
+            'reply_override': None,  # no override — let plan_turn show the walkthrough
+        }
+
+    if t.startswith('inbox remove '):
+        doc_id_raw = user_text.strip()[len('inbox remove '):].strip()
+        if not doc_id_raw:
+            return None
+        doc = db.session.get(Document, doc_id_raw)
+        if not doc or doc.client_id != client_id:
+            return None
+        fname = (doc.original_filename or doc.filename or 'image')[:60]
+        try:
+            ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            ex = {}
+        ex['_inventoried'] = True
+        ex['_deleted_by_user'] = True
+        doc.extracted_data = json.dumps(ex)
+        doc.category = 'deleted'
+        doc.description = '(removed at inbox review step)'
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'name': fname,
+            'role': 'removed from inbox',
+            'kind': 'inbox_removed',
+            'reply_override': (
+                f"🗑 **{fname}** removed.\n\n"
+                "The remaining attachments are still shown above. "
+                "Tap **▶️ Start analysis** when you're ready, or remove more images."
+            ),
+        }
+
+    return None
 
 
 def _try_handle_restart_gifts(client_id: str, user_text: str):
