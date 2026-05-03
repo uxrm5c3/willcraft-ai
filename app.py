@@ -4938,11 +4938,11 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
             db.session.rollback()
 
         # 2. Clear _inventoried/_skipped from all active docs
+        # Document uses category='deleted' as soft-delete (no deleted_at column)
         _SKIP_CATS = ('nric', 'duplicate', 'deleted', 'voice')
         docs = Document.query.filter(
             Document.client_id == client_id,
             ~Document.category.in_(_SKIP_CATS),
-            Document.deleted_at.is_(None),
         ).all()
         for d in docs:
             try:
@@ -5073,7 +5073,6 @@ def _try_handle_restart_gifts(client_id: str, user_text: str):
     docs = Document.query.filter(
         Document.client_id == client_id,
         ~Document.category.in_(_SKIP_CATS),
-        Document.deleted_at.is_(None),
     ).all()
     changed = 0
     for d in docs:
