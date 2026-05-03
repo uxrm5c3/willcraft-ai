@@ -360,33 +360,30 @@ def _summarise_message(raw_text: str) -> str:
         prompt = (
             "You are a will-writing assistant at a Malaysian law firm. "
             "A client or planner has forwarded this WhatsApp/email message along with document attachments.\n\n"
-            "Produce TWO sections:\n\n"
+            "Produce TWO sections. IMPORTANT: complete ALL assets/items — do not truncate mid-list.\n\n"
             "**Section 1 — What was communicated:**\n"
             "Write 2–4 sentences in plain English that faithfully summarise what the sender actually said. "
             "No interpretation — just what they wrote, clearly and naturally. "
             "Skip email headers, forwarding noise, and greetings.\n\n"
             "**Section 2 — What we deduce:**\n"
-            "List 3–6 bullet points of will-writing implications. Be specific. Include:\n"
-            "- Each property/asset mentioned (lot number, address, title number if given)\n"
-            "- Intended beneficiary for each asset (full name if mentioned)\n"
-            "- Ownership type (sole / joint; share if given)\n"
-            "- Any loan, mortgage, or caveat mentioned\n"
-            "- Any special wishes or instructions\n"
-            "If a detail was not mentioned, omit that bullet. "
-            "If something is ambiguous, flag it: e.g. '❓ Beneficiary not specified for this property'\n\n"
-            "Format exactly like this (use these exact bold headings):\n"
+            "One bullet per asset/account. For EACH property, bank account, insurance policy mentioned:\n"
+            "• **Property / Asset:** address or description\n"
+            "• **Ownership:** sole / joint (with whom, what share)\n"
+            "• **Beneficiary:** full name(s) and share\n"
+            "• ❓ Flag anything ambiguous (ownership unclear, beneficiary not named, etc.)\n"
+            "Group bank accounts and insurance together at the end if no specific property link.\n\n"
+            "Format exactly:\n"
             "**What was communicated:**\n"
-            "<2-4 sentence prose summary>\n\n"
+            "<prose>\n\n"
             "**What we deduce:**\n"
-            "• **Property:** ...\n"
-            "• **Beneficiary:** ...\n"
-            "• etc.\n\n"
-            f"Message:\n{raw_text[:2500]}"
+            "• <item>\n"
+            "• <item>\n\n"
+            f"Message:\n{raw_text[:3000]}"
         )
         msg = client.messages.create(
             model=CLAUDE_MODEL_CHEAP,
-            max_tokens=500,
-            timeout=15.0,   # hard cap — never block the reset for more than 15s
+            max_tokens=900,
+            timeout=20.0,   # raised — complex messages with 5+ assets need more time
             messages=[{"role": "user", "content": prompt}]
         )
         try:

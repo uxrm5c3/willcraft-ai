@@ -5090,9 +5090,14 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
                         summary = _summarise_message(cleaned) if cleaned else ''
                         if not summary:
                             return
+                        import json as _json
+                        _quick = _json.dumps([
+                            {'label': '▶️ Start matching', 'value': 'inbox start'}
+                        ])
                         reply = (
                             "### 📨 AI Summary of your message\n\n"
                             + summary
+                            + f"\n\n<!--quickreplies:{_quick}-->"
                         )
                         cs = (ChatSession.query
                               .filter_by(id=session_id).first())
