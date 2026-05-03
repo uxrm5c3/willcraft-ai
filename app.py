@@ -3651,6 +3651,31 @@ def api_legal_library_list():
     return jsonify({'ok': True, 'acts': list_available_acts()})
 
 
+@app.route('/library')
+@login_required
+def legal_library_page():
+    """Admin UI to upload + view loaded Acts. Login required (any role)."""
+    from services.legal_library import list_available_acts
+    return render_template('legal_library.html', acts=list_available_acts())
+
+
+@app.route('/api/legal-library/delete/<slug>', methods=['POST'])
+@login_required
+def api_legal_library_delete(slug):
+    """Delete a single Act PDF from the library."""
+    safe_slug = re.sub(r'[^a-z0-9_]+', '', slug.lower())
+    if not safe_slug:
+        return jsonify({'ok': False, 'error': 'Invalid slug'}), 400
+    path = os.path.join(DATA_DIR, 'legal_acts', f"{safe_slug}.pdf")
+    if not os.path.isfile(path):
+        return jsonify({'ok': False, 'error': 'Not found'}), 404
+    try:
+        os.remove(path)
+        return jsonify({'ok': True})
+    except OSError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 @app.route('/api/chat/<client_id>/backfill-extractions', methods=['POST'])
 @login_required
 def api_chat_backfill_extractions(client_id):

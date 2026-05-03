@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Legal Library — {{ tenant.brand }}{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">📚 Legal Library</h1>
+      <p class="text-sm text-gray-600 mt-1">
+        Malaysian Acts the chat-Q&amp;A engine cites from. Drop a PDF → it becomes
+        searchable as soon as upload completes.
+      </p>
+    </div>
+    <a href="javascript:history.back()" class="text-sm text-gray-500 hover:text-gray-700">← Back</a>
+  </div>
+
+  <!-- Upload form -->
+  <div class="bg-white border border-gray-200 rounded-xl p-5 mb-6">
+    <h2 class="font-semibold text-gray-900 mb-3">Upload an Act</h2>
+    <form id="uploadForm" enctype="multipart/form-data" class="space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-gray-700 mb-1">PDF file (max 100MB)</label>
+        <input type="file" name="file" accept=".pdf" required
+               class="block w-full text-sm border border-gray-300 rounded-lg p-2 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-sm file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100"/>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-700 mb-1">
+          Slug (lowercase, underscores) — becomes the filename. Leave blank to auto-derive.
+        </label>
+        <input type="text" name="slug" placeholder="e.g. national_land_code_1965"
+               class="block w-full text-sm border border-gray-300 rounded-lg p-2"
+               pattern="[a-z0-9_]+"/>
+        <p class="text-[11px] text-gray-500 mt-1">Used for citations like "<em>Wills Act 1959 s.5</em>".</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <button type="submit" id="uploadBtn"
+                class="px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700 disabled:opacity-50">
+          Upload
+        </button>
+        <span id="uploadStatus" class="text-sm text-gray-600"></span>
+      </div>
+    </form>
+  </div>
+
+  <!-- Loaded acts -->
+  <div class="bg-white border border-gray-200 rounded-xl">
+    <div class="px-5 py-3 border-b border-gray-200 flex items-center justify-between">
+      <h2 class="font-semibold text-gray-900">
+        Loaded Acts <span class="text-gray-500 font-normal">({{ acts|length }})</span>
+      </h2>
+    </div>
+    {% if acts %}
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+        <tr>
+          <th class="px-5 py-2 text-left">Title</th>
+          <th class="px-5 py-2 text-left">Slug</th>
+          <th class="px-5 py-2 text-right">Size</th>
+          <th class="px-5 py-2 text-right">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in acts %}
+        <tr class="border-t border-gray-100 hover:bg-gray-50">
+          <td class="px-5 py-2.5 font-medium text-gray-900">{{ a.title }}</td>
+          <td class="px-5 py-2.5 text-gray-500 font-mono text-xs">{{ a.slug }}</td>
+          <td class="px-5 py-2.5 text-right text-gray-600">{{ a.size_kb }} KB</td>
+          <td class="px-5 py-2.5 text-right">
+            <button onclick="deleteAct('{{ a.slug }}', '{{ a.title }}')"
+                    class="text-xs text-red-600 hover:text-red-800 font-medium">Delete</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="px-5 py-8 text-center text-gray-500 text-sm">
+      No acts loaded yet. Upload your first Act above.
+    </div>
+    {% endif %}
+  </div>
+
+  <p class="text-xs text-gray-500 mt-4">
+    💡 Common Malaysian Acts to load:
+    Wills Act 1959, Probate &amp; Administration Act 1959, Distribution Act 1958,
+    Inheritance (Family Provision) Act 1971, National Land Code 1965, Strata Titles
+    Act 1985, Strata Management Act 2013, RPGT Act 1976, Stamp Act 1949.
+  </p>
+</div>
+
+<script>
+const form = document.getElementById('uploadForm');
+const statusEl = document.getElementById('uploadStatus');
+const btn = document.getElementById('uploadBtn');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(form);
+  const f = fd.get('file');
+  if (!f || !f.name) { statusEl.textContent = '⚠️ Pick a file first.'; return; }
+  const sizeMb = (f.size / 1024 / 1024).toFixed(1);
+  if (f.size > 100 * 1024 * 1024) {
+    statusEl.textContent = `❌ ${sizeMb}MB exceeds 100MB cap.`; return;
+  }
+  btn.disabled = true;
+  statusEl.textContent = `⏫ Uploading ${f.name} (${sizeMb}MB)…`;
+  try {
+    const r = await fetch('/api/legal-library/upload', { method: 'POST', body: fd });
+    const data = await r.json();
+    if (data.ok) {
+      statusEl.innerHTML = `✅ Uploaded as <code>${data.slug}</code> (${data.size_kb} KB). Reloading…`;
+      setTimeout(() => location.reload(), 700);
+    } else {
+      statusEl.textContent = `❌ ${data.error || 'Upload failed'}`;
+      btn.disabled = false;
+    }
+  } catch (err) {
+    statusEl.textContent = `❌ Network error: ${err.message || err}`;
+    btn.disabled = false;
+  }
+});
+
+async function deleteAct(slug, title) {
+  if (!confirm(`Delete "${title}" (${slug})? This removes it from the library and the chat will no longer cite it.`)) return;
+  const r = await fetch(`/api/legal-library/delete/${slug}`, { method: 'POST' });
+  const data = await r.json();
+  if (data.ok) location.reload();
+  else alert(data.error || 'Delete failed');
+}
+</script>
+{% endblock %}
