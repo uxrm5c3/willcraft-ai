@@ -92,6 +92,27 @@ jobs:
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
               'bash ~/deploy-alantanjb.sh'
 
+      - name: Bump HOST nginx upload cap (apt-installed reverse proxy)
+        # The 413 from "nginx/1.24.0 (Ubuntu)" is the apt-nginx in front of
+        # docker, not our compose nginx. Set client_max_body_size = 100M in
+        # /etc/nginx/conf.d/upload-cap.conf and reload. Idempotent.
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+              'set -e; \
+               if ! command -v nginx >/dev/null 2>&1; then \
+                 echo "Host nginx not installed — skipping (docker nginx only)."; exit 0; \
+               fi; \
+               echo "Host nginx version: $(nginx -v 2>&1)"; \
+               SNIPPET=/etc/nginx/conf.d/upload-cap.conf; \
+               echo "client_max_body_size 100M;" | sudo tee "$SNIPPET" >/dev/null; \
+               echo "Wrote $SNIPPET:"; sudo cat "$SNIPPET"; \
+               echo "Testing nginx config…"; \
+               sudo nginx -t; \
+               echo "Reloading nginx…"; \
+               sudo systemctl reload nginx; \
+               echo "Done. Host nginx upload cap is now 100M."'
+
       - name: Reload nginx (picks up nginx/default.conf changes)
         run: |
           ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
