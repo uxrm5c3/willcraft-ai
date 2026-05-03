@@ -22,12 +22,18 @@ KINDS = [
     'property_transfer', # Memorandum of Transfer (Borang 14A / Borang 16A) — NLC transfer form
     'utility_bill',      # TNB electric / Air Selangor / SAJ / Indah Water / unifi — ties to a property address
     'bank_letter',       # Letter from bank confirming account / loan statement (NOT a statement itself)
+    'loan_agreement',    # Loan / mortgage / charge document — Perjanjian Pinjaman / Charge / Deed of Assignment
+                         # Issued by bank (RHB, Maybank, CIMB, Public Bank, HLB, etc.) — proves property is encumbered
     # Financial assets
     'bank_statement',  # bank statement / passbook
     'insurance',       # insurance policy
     'epf_kwsp',        # EPF / KWSP statement
     'vehicle',         # JPJ vehicle grant / road tax
     'will',            # an existing Last Will and Testament
+    # Clearly unrelated — wrong uploads, docs about other people, etc.
+    'death_certificate',  # Sijil Kematian / Certificate of Death — for someone else; NOT a will asset
+    'unrelated',          # Anything that clearly does not relate to this testator's assets
+                          # (birth certs, marriage certs, court orders, IDs of deceased persons, etc.)
     'other',
 ]
 
@@ -247,38 +253,63 @@ def classify_file(file_path: str, group_context: dict = None) -> dict:
         )
 
     try:
+        from config import CLAUDE_MODEL_FAST
         msg = client_api.messages.create(
-            model=CLAUDE_MODEL_CHEAP,
-            max_tokens=200,
+            model=CLAUDE_MODEL_FAST,   # Use sonnet — haiku misses document headings
+            max_tokens=300,
             messages=[{
                 "role": "user",
                 "content": [
                     content_block,
-                    {"type": "text", "text": f"""Classify this document into ONE category. Think about what the image actually IS and what it PROVES — not what's near it.{group_section}
+                    {"type": "text", "text": f"""You are a Malaysian legal document expert. Look carefully at this image — read ALL visible headings, logos, bank names, form numbers, and text to classify it precisely.{group_section}
 
-- nric: MyKad IC card (front or back) or Malaysian passport
-- property_title: LAND TITLE document — Geran, Hakmilik, HSD, HSM, Pajakan Negeri, Strata Title. PROVES registered ownership. Issued by Pejabat Tanah dan Daerah (PTD) with official seal. Header reads "HAKI MILIK", "GERAN", "HAKMILIK", or "INDIVIDUAL TITLE". Has lot number, land area, category of land use, and registered owner section ("TUAN PUNYA BERDAFTAR"). NOT a Memorandum of Transfer (which has transferor+transferee sections instead).
-- property_spa: Sale & Purchase Agreement (SPA / Perjanjian Jual Beli). A CONTRACT to buy — does NOT prove current ownership; transfer may still be pending. Usually has buyer/seller signatures, purchase price, completion date.
-- property_tax: Cukai Tanah / Cukai Harta / Cukai Pintu / quit rent receipt / property assessment notice. Tax document — does NOT prove ownership. Issued by local council or PTD as a payment demand/receipt.
-- property_transfer: Memorandum of Transfer / Memorandum Pindahmilik — BORANG 14A (Peninsular Malaysia, National Land Code 1965) or BORANG 16A (Sabah, Sarawak). CRITICAL visual cues: the heading prominently says "MEMORANDUM PINDAHMILIK" or "MEMORANDUM OF TRANSFER". The form number "BORANG 14A", "FORM 14A", "BORANG 16A", or "FORM 16A" appears on the document. It has two separate party sections: PINDAHMILIK / TRANSFEROR (the person transferring away) and PENERIMA PINDAHMILIK / TRANSFEREE (the person receiving). Also shows BALASAN / CONSIDERATION (purchase price). Signed in front of a Solicitor or Commissioner for Oaths.
-- utility_bill: TNB electricity, Air Selangor / SAJ / PBA water, Indah Water sewerage, unifi/Maxis/Celcom internet. Bill tied to a service address.
-- bank_letter: a LETTER from a bank (welcome letter, loan offer, account confirmation). NOT a periodic statement.
-- bank_statement: periodic bank statement listing transactions / balance, passbook, FD certificate, e-statement screenshot
-- insurance: insurance policy, certificate, or schedule (life, takaful, etc.)
-- epf_kwsp: KWSP / EPF statement, contribution slip, i-Akaun screenshot
-- vehicle: JPJ vehicle registration card, road tax (cukai jalan), grant
-- will: a signed Last Will and Testament (Wasiat Terakhir)
-- other: anything that doesn't fit above
+**STEP 1 — What do you see?** Read every heading, logo, form number, and key phrase visible.
+**STEP 2 — Match to category below.**
 
-Be precise: the `purpose` field should describe what THIS specific image proves. If the image is too blurry/dark to read clearly, say so in `purpose`.
+CATEGORIES (pick the SINGLE best match):
 
-If the document mentions a property address, lot number, or title number, copy it verbatim into `property_hint`.
+**nric** — Malaysian MyKad IC (front: photo + IC number like 700101-01-1234, back: thumbprint grid) OR Malaysian passport. IC number format: ######-##-####.
 
-Set `will_relevant` to true if this document relates to a Malaysian asset the testator may own.
+**property_title** — Official LAND TITLE issued by Pejabat Tanah. Header says "HAKMILIK", "GERAN", "INDIVIDUAL TITLE", "STRATA TITLE". Has PTD official seal, lot number, land area, "TUAN PUNYA BERDAFTAR" (registered owner) section. Proves current ownership.
+
+**property_spa** — Sale & Purchase Agreement / Perjanjian Jual Beli. CONTRACT to buy property — has buyer+seller names, purchase price, completion date. Lawyer-drafted, signed by both parties.
+
+**property_tax** — Cukai Tanah, Cukai Harta, Cukai Pintu, Bil Cukai Taksiran. Tax bill/receipt from local council (MBJB, DBKL, MBPJ, MPKj, etc.) or PTD. Does NOT prove ownership.
+
+**property_transfer** — Memorandum of Transfer / Memorandum Pindahmilik. Form number "BORANG 14A" or "BORANG 16A" visible. Has TRANSFEROR + TRANSFEREE sections.
+
+**utility_bill** — Bills from: TNB (Tenaga Nasional), Air Selangor, SAJ (Syarikat Air Johor), PBA, Indah Water (IWK), unifi, Maxis, Celcom, TIME, Astro. Shows service address.
+
+**loan_agreement** — Loan / mortgage / charge document signed with a bank. Look for: bank name (RHB, Maybank, CIMB, Public Bank, Hong Leong, AmBank, Alliance, BSN, Bank Islam, Bank Rakyat, UOB, OCBC, Standard Chartered) + words like "LOAN AGREEMENT", "PERJANJIAN PINJAMAN", "DEED OF ASSIGNMENT", "CHARGE", "BEBANAN", "FACILITIES AGREEMENT", signing pages with borrower signature + bank stamp. This proves the property has a bank loan/mortgage (encumbrance).
+
+**bank_letter** — Short letter FROM a bank (not a loan agreement) — account confirmation letter, offer letter, correspondence. Bank letterhead + brief content.
+
+**bank_statement** — Periodic transaction listing with dates, amounts, running balance. OR passbook, FD certificate, e-statement screenshot, i-Invest statement.
+
+**insurance** — Insurance policy schedule, takaful certificate, cover note. Issuer: Prudential, AIA, Great Eastern, Etiqa, Takaful Malaysia, etc.
+
+**epf_kwsp** — KWSP / EPF statement or i-Akaun screenshot. Has EPF logo, member number, contribution history.
+
+**vehicle** — JPJ vehicle registration card (Kad Pendaftaran Kenderaan), road tax (Cukai Jalan) renewal, grant. Has plate number, engine cc, chassis number.
+
+**will** — Signed Last Will and Testament (Wasiat Terakhir / Last Will). Has testator name, executor appointment, witness signatures.
+
+**death_certificate** — Sijil Kematian / Certificate of Death issued by JPN (Jabatan Pendaftaran Negara) or hospital. Has deceased's name, IC, date/place of death. This is about someone who has DIED — not an asset of the testator.
+
+**unrelated** — Document clearly unrelated to the testator's assets: birth certificate, marriage certificate, court order, photos, medical records, receipts, or any document about a DIFFERENT person that is not an asset.
+
+**other** — Everything else that doesn't clearly fit the above.
+
+RULES:
+- Read the HEADING / TITLE of the document first — it's the strongest signal
+- Bank name (RHB, Maybank, CIMB, etc.) visible on a signing page with loan terms → loan_agreement
+- "SIJIL KEMATIAN" or "CERTIFICATE OF DEATH" → death_certificate, will_relevant=false
+- Blurry/dark image where nothing is readable → other, confidence=low
+- For property_hint: copy the PROPERTY lot number, title number, or address verbatim if visible (NOT the owner's home address)
 
 Return ONLY this JSON (no other text):
 ```json
-{{"kind": "<one above>", "confidence": "high|medium|low", "reason": "<one short sentence>", "purpose": "<what this image proves, max 25 words>", "property_hint": "<address or lot/title no, or empty>", "will_relevant": true}}
+{{"kind": "<category>", "confidence": "high|medium|low", "reason": "<one sentence: what you saw that determined the category>", "purpose": "<what this document proves, max 20 words>", "property_hint": "<lot/title/address if visible, else empty>", "will_relevant": true}}
 ```"""}
                 ]
             }]

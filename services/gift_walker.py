@@ -18,8 +18,11 @@ from database import ChatMessage, Document, Will
 _GIFT_KINDS = ('property_title', 'bank_statement', 'vehicle')
 # Anything tied to a property address but NOT a title — clusters under
 # the matching title in the chat for context, never as its own gift.
+# loan_agreement = bank charge document (proves encumbrance, groups with the property).
 _PROPERTY_SUPPORT_KINDS = ('property_spa', 'property_tax', 'property_transfer',
-                           'utility_bill', 'bank_letter')
+                           'utility_bill', 'bank_letter', 'loan_agreement')
+# Clearly unrelated uploads that should be flagged and never grouped.
+_UNRELATED_KINDS = ('death_certificate', 'unrelated')
 
 
 def _norm_addr(s: str) -> str:

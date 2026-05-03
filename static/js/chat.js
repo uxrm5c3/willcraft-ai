@@ -46,11 +46,23 @@
 
   function categoryLabel(cat) {
     const map = {
-      nric: 'IC / Passport', property_title: 'Property Title',
-      property_tax: 'Property Tax', bank_statement: 'Bank Statement',
-      insurance: 'Insurance', epf_kwsp: 'EPF / KWSP',
-      vehicle: 'Vehicle', will: 'Existing Will',
-      chat_inbox: 'Pending', other: 'Unclassified',
+      nric: 'IC / Passport',
+      property_title: 'Property Title',
+      property_spa: 'SPA',
+      property_tax: 'Property Tax',
+      property_transfer: 'MOT (Borang 14A)',
+      utility_bill: 'Utility Bill',
+      bank_letter: 'Bank Letter',
+      loan_agreement: 'Loan Agreement',
+      bank_statement: 'Bank Statement',
+      insurance: 'Insurance',
+      epf_kwsp: 'EPF / KWSP',
+      vehicle: 'Vehicle',
+      will: 'Existing Will',
+      death_certificate: '⚠️ Death Cert',
+      unrelated: '⚠️ Unrelated',
+      chat_inbox: 'Pending',
+      other: 'Unclassified',
     };
     return map[cat] || cat || 'File';
   }
@@ -363,12 +375,20 @@
           // Images open the carousel at the clicked index; escape quotes for inline handler
           const escapedUrls = JSON.stringify(imgCarouselUrls).replace(/'/g, "\\'").replace(/"/g, '&quot;');
           const thisIdx = carouselIdx;
+          const thumbNum = carouselIdx + 1; // 1-based position shown as overlay
           carouselIdx++;
+          // Warn badge for unrelated / death_certificate uploads
+          const isUnrelated = (a.category === 'death_certificate' || a.category === 'unrelated');
+          const warnBadge = isUnrelated
+            ? `<div class="absolute top-0.5 right-0.5 bg-red-500 text-white text-[8px] font-bold px-1 rounded leading-tight">⚠️ wrong?</div>`
+            : '';
           html += `<button type="button"
                       onclick="window.__openCarousel(${JSON.stringify(imgCarouselUrls).replace(/"/g, '&quot;')}, ${thisIdx})"
-                      title="${escapeHtml(a.filename)} (${catLabel}) — click to browse all images"
-                      class="block bg-white border border-gray-200 rounded-md overflow-hidden hover:border-primary-400 hover:shadow transition-all text-left w-full">
+                      title="${escapeHtml(a.filename)} — image ${thumbNum} (${catLabel}) — click to browse"
+                      class="relative block bg-white border border-gray-200 rounded-md overflow-hidden hover:border-primary-400 hover:shadow transition-all text-left w-full ${isUnrelated ? 'ring-2 ring-red-400' : ''}">
             ${inner}
+            <div class="absolute top-0.5 left-0.5 bg-black/50 text-white text-[9px] font-bold px-1 rounded leading-tight">${thumbNum}</div>
+            ${warnBadge}
             <div class="px-1 py-0.5 text-[9px] truncate ${catColor} font-medium">${catLabel}</div>
           </button>`;
         } else {

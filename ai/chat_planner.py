@@ -1367,26 +1367,45 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
             bullets.append(f"  • ✏️ manually entered: {', '.join(manually_edited[:5])}")
         parts.append("**🔗 Auto-filled from:**\n" + '\n'.join(bullets))
 
-    # Supporting docs grouped under this property
+    # Supporting docs grouped under this property.
+    # Index i here matches thumbnail position i+1 in the image carousel
+    # (thumbnail 1 = title doc, thumbnails 2..N = support docs in order).
     support = p.get('support_docs') or []
+    _unrelated_warnings = []
     if support:
         sup_lines = [f"**📎 {len(support)} supporting doc{'s' if len(support) != 1 else ''} grouped under this property:**"]
         for i, s in enumerate(support, 1):
             kind = s.get('category', '')
             kind_label = {
-                'property_spa': '📝 SPA',
-                'property_tax': '🧾 Cukai Tanah',
-                'property_title': '📜 Geran (extra page)',
+                'property_spa':      '📝 SPA',
+                'property_tax':      '🧾 Cukai Tanah / Property Tax',
+                'property_title':    '📜 Geran (extra page)',
                 'property_transfer': '📋 Memorandum of Transfer (Borang 14A/16A)',
-                'utility_bill': '⚡ Utility bill',
-                'bank_letter': '🏦 Bank letter',
-                'chat_inbox': '📷 Unclassified page',
-                'other': '📷 Unclassified page',
-            }.get(kind, '📄')
+                'utility_bill':      '⚡ Utility bill',
+                'bank_letter':       '🏦 Bank letter',
+                'loan_agreement':    '🏦 Loan / Charge document _(encumbrance)_',
+                'death_certificate': '🚫 Death certificate _(possibly wrong upload)_',
+                'unrelated':         '🚫 Unrelated document _(possibly wrong upload)_',
+                'chat_inbox':        '📷 Unclassified',
+                'other':             '📷 Unclassified',
+            }.get(kind, '📄 Document')
             purpose = (s.get('purpose') or s.get('extracted', {}).get('purpose') or
                        s.get('original_filename') or '').strip()
-            sup_lines.append(f"  {i}. {kind_label} — _{purpose[:140]}_")
+            # Thumbnail position: title doc is #1, support docs are #2, #3, ...
+            thumb_num = i + 1
+            sup_lines.append(f"  {i}. {kind_label} — _{purpose[:140]}_ _(image {thumb_num})_")
+            if kind in ('death_certificate', 'unrelated'):
+                _unrelated_warnings.append((i, thumb_num, kind, purpose[:80]))
         parts.append('\n'.join(sup_lines))
+    if _unrelated_warnings:
+        warn_lines = []
+        for idx, thumb, kind, desc in _unrelated_warnings:
+            label = 'Death certificate' if kind == 'death_certificate' else 'Unrelated document'
+            warn_lines.append(
+                f"  • Doc {idx} (image {thumb}): **{label}** — _{desc}_\n"
+                f"    This does not appear to belong to this property. Please verify and tap 🗑 Remove if it was uploaded by mistake."
+            )
+        parts.append("**⚠️ Possibly wrong upload(s):**\n" + '\n'.join(warn_lines))
 
     # Beneficiary hint from batch group analysis — client said "give to Sarah"
     # in their WhatsApp text; surface it prominently so the writer can
