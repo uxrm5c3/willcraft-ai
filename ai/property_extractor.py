@@ -90,6 +90,8 @@ Return ONLY a JSON object with these fields (use empty string if not found):
     "owner_names": ["Each owner name as separate item — from TUAN PUNYA section"],
     "owner_addresses": ["Each owner's residential address as separate item — from TUAN PUNYA section"],
     "ownership_shares": "Share fraction if visible (e.g., '1/2 bahagian', '1/3 share'), empty if sole owner",
+    "encumbrance": "Any charge/mortgage or caveat visible in BEBANAN / ENDORSAN LAIN section (e.g., 'Charge to Maybank', 'Private caveat by ...'), empty if none",
+    "encumbrance_type": "charge (bank mortgage/loan), caveat (private caveat/caveatan), or empty if none",
     "title_type_confidence": "high if title type is clearly visible, low if uncertain"
 }}
 

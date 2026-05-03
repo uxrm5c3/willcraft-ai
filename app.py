@@ -3660,7 +3660,9 @@ def api_chat_message(client_id):
         # before the gate fallback.
         just_inventory = (_try_handle_unlink_action(client_id, user_text)
                           or _try_handle_inventory_action(client_id, user_text)
-                          or _try_handle_property_fill(client_id, user_text))
+                          or _try_handle_property_fill(client_id, user_text)
+                          or _try_handle_ownership(client_id, user_text)
+                          or _try_handle_encumbrance(client_id, user_text))
         if not just_inventory:
             just_assets_gate = _try_handle_assets_gate(client_id, user_text)
     # If past Step 1, attempt executor save then beneficiaries save then
@@ -4639,6 +4641,142 @@ def _try_handle_property_fill(client_id: str, user_text: str):
         'role': f'manual edit{"" if not old_val else f" (was: {old_val[:40]})"}',
         'kind': 'property_fill',
     }
+
+
+def _try_handle_ownership(client_id: str, user_text: str):
+    """Handle 'ownership: sole' / 'ownership: joint 1/2' commands.
+
+    These are typed or tapped from the property card to confirm whether
+    the testator owns the property solely or jointly, and if jointly
+    what their undivided share is.
+
+    Accepted formats (case-insensitive):
+      ownership: sole
+      ownership: joint 1/2
+      ownership: joint 50%
+      ownership: 1/2         ← bare share implies joint
+      ownership: 1/3
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    m = re.match(r'^ownership\s*:\s*(.+)$', t, re.IGNORECASE)
+    if not m:
+        return None
+    val = m.group(1).strip().lower()
+
+    # Determine type and share from the value
+    if val == 'sole' or 'sole' in val:
+        new_type  = 'sole'
+        new_share = ''
+    else:
+        new_type = 'joint'
+        # Extract the fraction/percentage: "joint 1/2", "1/2", "50%", "joint 50%"
+        sh_m = re.search(r'(\d+/\d+|\d+\s*%)', val)
+        new_share = sh_m.group(1).strip() if sh_m else ''
+
+    # Find the current pending property
+    from services.gift_walker import get_pending_gift_documents
+    pend = get_pending_gift_documents(client_id)
+    props = pend.get('property') or []
+    target = next((p for p in props if not (p.get('extracted') or {}).get('_inventoried')), None)
+    if not target:
+        return None
+
+    doc = db.session.get(Document, target['document_id'])
+    if not doc:
+        return None
+    try:
+        ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+    except (json.JSONDecodeError, TypeError):
+        ex = {}
+
+    ex['ownership_type']  = new_type
+    ex['ownership_share'] = new_share
+    ex.setdefault('_manually_edited', [])
+    if isinstance(ex['_manually_edited'], list):
+        ex['_manually_edited'].append(f'ownership={new_type}{"/" + new_share if new_share else ""}')
+
+    try:
+        doc.extracted_data = json.dumps(ex)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+
+    label = 'Sole owner' if new_type == 'sole' else f'Joint owner — {new_share or "(share TBC)"}'
+    return {'name': label, 'role': 'ownership_confirmed', 'kind': 'property_fill'}
+
+
+def _try_handle_encumbrance(client_id: str, user_text: str):
+    """Handle 'encumbered: yes / no / charge / caveat' commands.
+
+    The Malaysian will template needs to know whether a property is clean
+    or encumbered so the correct clause can be drafted:
+      - Clean: straightforward gift clause
+      - Charge: add direction to Executor to discharge bank charge
+      - Caveat: add direction to apply to withdraw private caveat
+
+    Accepted formats (case-insensitive):
+      encumbered: yes          ← generic 'yes' — writer still types details
+      encumbered: no
+      encumbered: clean
+      encumbered: charge       ← bank loan / mortgage
+      encumbered: caveat       ← private caveat
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    m = re.match(r'^encumbered\s*:\s*(.+)$', t, re.IGNORECASE)
+    if not m:
+        return None
+    val = m.group(1).strip().lower()
+
+    if val in ('no', 'clean', 'false', 'none'):
+        enc_confirmed    = False
+        enc_type         = ''
+    elif val == 'charge' or 'charge' in val or 'mortgage' in val or 'loan' in val:
+        enc_confirmed    = True
+        enc_type         = 'charge'
+    elif val == 'caveat' or 'caveat' in val or 'caveatan' in val:
+        enc_confirmed    = True
+        enc_type         = 'caveat'
+    else:
+        # Generic 'yes' — mark confirmed but leave type for writer to fill
+        enc_confirmed    = True
+        enc_type         = 'other'
+
+    from services.gift_walker import get_pending_gift_documents
+    pend = get_pending_gift_documents(client_id)
+    props = pend.get('property') or []
+    target = next((p for p in props if not (p.get('extracted') or {}).get('_inventoried')), None)
+    if not target:
+        return None
+
+    doc = db.session.get(Document, target['document_id'])
+    if not doc:
+        return None
+    try:
+        ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+    except (json.JSONDecodeError, TypeError):
+        ex = {}
+
+    ex['encumbrance_confirmed'] = enc_confirmed
+    if enc_type:
+        ex['encumbrance_type'] = enc_type
+    ex.setdefault('_manually_edited', [])
+    if isinstance(ex['_manually_edited'], list):
+        ex['_manually_edited'].append(f'encumbrance={"clean" if not enc_confirmed else enc_type or "yes"}')
+
+    try:
+        doc.extracted_data = json.dumps(ex)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+
+    label = 'Clean (no charge/caveat)' if not enc_confirmed else f'Encumbered — {enc_type or "details TBC"}'
+    return {'name': label, 'role': 'encumbrance_confirmed', 'kind': 'property_fill'}
 
 
 def _try_handle_unlink_action(client_id: str, user_text: str):
