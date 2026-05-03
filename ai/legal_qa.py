@@ -200,19 +200,17 @@ def answer_question(user_text: str, current_stage_summary: str = '',
                 db.session.commit()
             except Exception:
                 pass
-        # Prompt — anti-hallucination first, format second.
+        # Prompt — four explicit response modes per client spec.
         #
-        # Rules (per client mandate "NO hallucination"):
-        #   1. If the excerpts above directly answer the question → answer
-        #      with a precise Act + section citation.
-        #   2. If the excerpts are tangentially related but don't actually
-        #      answer it → say "I'm not certain" and point to the Act for
-        #      the user to verify. Do NOT fabricate a section number.
-        #   3. If you have no excerpt and the answer is not basic Malaysian
-        #      legal common knowledge → say "I don't know" upfront. Do NOT
-        #      guess.
-        #   4. If you DO know it as basic common knowledge (e.g. "Geran is
-        #      the land title") → answer plainly with NO citation line.
+        # Mode A — Citation found in excerpts:
+        #   Answer + Example + Citation (specific Act + section).
+        # Mode B — General Malaysian common knowledge, no excerpt match:
+        #   Answer + Example. NO Citation line.
+        # Mode C — Unsure (excerpts tangential / partial knowledge):
+        #   Answer says "I'm not sure". NO Citation, NO Example.
+        # Mode D — Don't know:
+        #   Answer says "I don't know — please consult a lawyer." Stop.
+        # NEVER hallucinate. NEVER list other Acts in the answer/footer.
         msg = client.messages.create(
             model=CLAUDE_MODEL_FAST,
             max_tokens=300,
@@ -222,21 +220,31 @@ def answer_question(user_text: str, current_stage_summary: str = '',
 
 USER QUESTION: {user_text}
 
-ANTI-HALLUCINATION RULES (highest priority):
-- If the excerpts above DIRECTLY answer the question → cite "<Act> s.<n>".
-- If the excerpts are only tangentially related → say "I'm not 100% sure" and point the user to the Act for verification. NEVER invent a section number.
-- If you have NO excerpt AND the answer is not basic terminology common knowledge → reply with **Answer:** "I don't know — please consult a lawyer or check the relevant Act in the [Legal Library](/library)." and stop. No fake example, no guessed citation.
-- Confidence over completeness. A short "I don't know" beats a wrong answer.
+FOUR RESPONSE MODES — pick exactly ONE:
 
-Reply in this EXACT format (no preface, no filler, no apologies):
+MODE A — Citation found (excerpts above DIRECTLY answer the question):
+  **Answer:** <plain-English, ≤40 words>
+  **Example:** <one concrete Malaysian example, ≤25 words>
+  **Citation:** <ONE specific section, e.g. "Wills Act 1959 s.5(2)">
+  → Cite ONLY the single section that answers it. Do NOT list other Acts.
 
-**Answer:** <one or two short plain-English sentences — maximum 40 words. Direct. Use everyday Malaysian terms (Geran, Strata Title) when relevant. If you don't know, say so HERE.>
+MODE B — No citation but it's basic Malaysian common knowledge
+  (e.g. "Geran is the land title", "executor administers the estate"):
+  **Answer:** <plain-English, ≤40 words>
+  **Example:** <one concrete Malaysian example, ≤25 words>
+  → OMIT the Citation line entirely. Do not write "general knowledge".
 
-**Citation:** <ONLY include this line if you cite a SPECIFIC Act + section number from the excerpts above (e.g. "Wills Act 1959 s.5(2)"). Otherwise OMIT this line entirely. NEVER write "General knowledge", "not in library", "N/A", "not specified", "based on common practice", or any cop-out — just leave the line out.>
+MODE C — Unsure (excerpts tangential, or only partial confidence):
+  **Answer:** I'm not 100% sure — please verify with <Act name if known> or your lawyer.
+  → OMIT both Example and Citation lines.
 
-**Example:** <one concrete Malaysian example — max 25 words. Skip this line if you said "I don't know" or no useful example fits.>
+MODE D — Don't know (no excerpt + not basic knowledge):
+  **Answer:** I don't know — please consult a lawyer or check the [Legal Library](/library).
+  → OMIT both Example and Citation lines. Stop.
 
-That's it. No "I hope this helps", no "feel free to ask", no extra paragraphs."""
+Anti-hallucination: if you can't be confident, drop to Mode C or D. NEVER invent a section number. NEVER write "General knowledge", "not in library", "N/A", "not specified", or any cop-out — those words are banned. Confidence over completeness.
+
+No preface, no filler, no apologies, no "I hope this helps"."""
             }]
         )
         body = (msg.content[0].text or '').strip() if msg.content else ''
@@ -283,11 +291,10 @@ That's it. No "I hope this helps", no "feel free to ask", no extra paragraphs.""
         # Collapse 3+ consecutive newlines down to 2 after pruning
         body = _re_post.sub(r'\n{3,}', '\n\n', '\n'.join(kept)).strip()
 
-        # Footer ONLY when we kept a real citation AND we're confident.
-        if real_citation and matched_titles and not is_dont_know:
-            footer = f"\n\n<sub>📚 _Cited from library: {', '.join(matched_titles)}_</sub>"
-        else:
-            footer = ''
+        # NO footer — the inline "Citation: <Act> s.<n>" in the body is the
+        # citation. Listing every Act the library happens to hold is noise
+        # (client: "do not list down all the acts").
+        footer = ''
 
         out = body + footer
         # Cache the body+footer (NOT the per-call resume button) so the next
