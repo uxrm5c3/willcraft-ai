@@ -3606,6 +3606,39 @@ def api_chat_replan(client_id, message_id):
     return jsonify({'ok': True, 'message_id': asst_msg.id, 'replaced_replies': n_deleted})
 
 
+@app.route('/api/legal-library/upload', methods=['POST'])
+@login_required
+def api_legal_library_upload():
+    """Accept a PDF upload (multipart/form-data, field 'file' + optional 'slug')
+    and save under data/legal_acts/<slug>.pdf for the legal_qa retrieval."""
+    if 'file' not in request.files:
+        return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
+    f = request.files['file']
+    if not f or not f.filename:
+        return jsonify({'ok': False, 'error': 'Empty file'}), 400
+    if not f.filename.lower().endswith('.pdf'):
+        return jsonify({'ok': False, 'error': 'Only PDF accepted'}), 400
+    slug = (request.form.get('slug') or f.filename[:-4]).lower()
+    slug = re.sub(r'[^a-z0-9_]+', '_', slug).strip('_')
+    if not slug:
+        return jsonify({'ok': False, 'error': 'Invalid slug'}), 400
+    folder = os.path.join(DATA_DIR, 'legal_acts')
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"{slug}.pdf")
+    f.save(path)
+    size_kb = os.path.getsize(path) // 1024
+    return jsonify({'ok': True, 'slug': slug, 'size_kb': size_kb,
+                    'path': f'data/legal_acts/{slug}.pdf'})
+
+
+@app.route('/api/legal-library/list')
+@login_required
+def api_legal_library_list():
+    """List currently-loaded acts."""
+    from services.legal_library import list_available_acts
+    return jsonify({'ok': True, 'acts': list_available_acts()})
+
+
 @app.route('/api/chat/<client_id>/backfill-extractions', methods=['POST'])
 @login_required
 def api_chat_backfill_extractions(client_id):
