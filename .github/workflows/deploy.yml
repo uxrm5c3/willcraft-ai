@@ -96,8 +96,18 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-              'cd ~/willcraft-ai 2>/dev/null || cd ~/will.alantanjb.com 2>/dev/null || cd ~/will-writing-ai 2>/dev/null; \
-               docker compose restart nginx 2>&1 | tail -3'
+              'set -e; \
+               PROJ=""; \
+               for d in ~/willcraft-ai ~/will.alantanjb.com ~/will-writing-ai ~/willcraft ~/app /opt/willcraft /srv/willcraft; do \
+                 if [ -f "$d/docker-compose.yml" ]; then PROJ="$d"; break; fi; \
+               done; \
+               if [ -z "$PROJ" ]; then \
+                 PROJ=$(find ~ -maxdepth 4 -name docker-compose.yml -not -path "*/node_modules/*" 2>/dev/null | head -1); \
+                 [ -n "$PROJ" ] && PROJ=$(dirname "$PROJ"); \
+               fi; \
+               if [ -z "$PROJ" ]; then echo "ERROR: no compose file found"; exit 1; fi; \
+               echo "Restarting nginx in $PROJ"; \
+               cd "$PROJ" && docker compose restart nginx 2>&1 | tail -5'
 
       - name: Smoke-check
         run: |
