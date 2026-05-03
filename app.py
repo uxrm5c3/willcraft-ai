@@ -3718,9 +3718,12 @@ def api_chat_message(client_id):
     # If a property_fill action produced a reply_override (e.g. the "how to
     # type missing fields" prompt), inject it into the plan instead of running
     # the normal planner — it's a simple instructional message, not a full turn.
+    # Any inventory action that sets reply_override wants to replace the
+    # planner's normal turn (address gate, ownership gate, encumbrance gate,
+    # gifts restart, etc.). The presence of reply_override is the selector —
+    # only gate/fill results set it; normal confirm/skip results do not.
     _fill_override = (isinstance(just_inventory, dict)
-                      and just_inventory.get('kind') in ('property_fill', 'gifts_restart')
-                      and just_inventory.get('reply_override'))
+                      and bool(just_inventory.get('reply_override')))
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
                      just_assigned=just, just_deleted=just_deleted)
@@ -4963,10 +4966,16 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                   or t.startswith('delete ') or t.startswith('remove ')
                   or t.startswith('inventory delete')
                   or t.startswith('inventory remove'))
+    # "inventory ownership …" and "inventory encumbered …" are sub-commands
+    # issued by the guided confirm gate (ownership prompt / encumbrance prompt).
+    _is_ownership_gate   = t.startswith('inventory ownership')
+    _is_encumbrance_gate = t.startswith('inventory encumbered')
     if not (t.startswith('inventory confirm')
             or t.startswith('inventory skip')
             or t.startswith('inventory unlink')
-            or _is_delete):
+            or _is_delete
+            or _is_ownership_gate
+            or _is_encumbrance_gate):
         return None
 
     from services.gift_walker import get_pending_gift_documents
@@ -5076,17 +5085,146 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
             _ex_check = {}
         _addr = (_ex_check.get('property_address') or '').strip()
         if not _addr:
-            # Address missing — ask for it before confirming
+            # Address missing — ask: type it now, or confirm without.
+            # Two quick-reply buttons keep it simple; no upfront card clutter.
+            import json as _json
+            _qr = [
+                {'label': '✏️ Type address now', 'value': 'address: '},
+                {'label': '🏚 No street address — confirm anyway', 'value': 'inventory confirm no address'},
+            ]
+            _qr_marker = f'<!--quickreplies:{_json.dumps(_qr)}-->'
             return {
                 'name': 'address missing',
                 'role': 'address_required',
                 'kind': 'property_fill',
                 'reply_override': (
-                    "**⚠️ Property address is missing.**\n\n"
-                    "Please type the address so it can be recorded in the will:\n"
-                    "  `address: No. 22, Jalan Rimbun, Taman Seri Alam, 81750 Masai, Johor`\n\n"
-                    "Or if this property genuinely has no street address (e.g. agricultural land):\n"
-                    "  Tap **Confirm without address** below, or type `inventory confirm no address`"
+                    "**⚠️ No property address found.**\n\n"
+                    "Address is needed for the will clause so the Executor knows which property to deal with.\n\n"
+                    "  • Type it: `address: No. 22, Jalan Rimbun, Taman Seri Alam, Johor`\n"
+                    "  • Or tap below if this is agricultural / industrial land with no street address."
+                    + _qr_marker
+                ),
+            }
+
+    # ── Guided confirm gates (property only) ────────────────────────────
+    # After address gate passes, we ask two quick questions before saving:
+    #   1. Ownership: sole or joint? (if joint, what share?)
+    #   2. Encumbrance: clean, bank charge, or caveat?
+    # Sub-commands "inventory ownership …" and "inventory encumbered …" are
+    # emitted by the quick-reply buttons on these gate prompts. They save the
+    # answer and then re-enter the gate logic to show the next prompt or finalise.
+    _is_confirm = t.startswith('inventory confirm')
+
+    if target_kind == 'property' and not t.startswith('inventory skip'):
+        try:
+            _gex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            _gex = {}
+
+        # ── Parse and save inline ownership answer (from gate button) ──
+        if _is_ownership_gate:
+            _ow_rest = t[len('inventory ownership'):].strip()
+            if 'sole' in _ow_rest:
+                _gex['ownership_type']  = 'sole'
+                _gex['ownership_share'] = ''
+            else:
+                _sh = re.search(r'(\d+/\d+|\d+\s*%)', _ow_rest)
+                _gex['ownership_type']  = 'joint'
+                _gex['ownership_share'] = _sh.group(1).strip() if _sh else ''
+            _gex.setdefault('_manually_edited', [])
+            _ow_tag = f"ownership={_gex['ownership_type']}"
+            if _gex['ownership_share']:
+                _ow_tag += '/' + _gex['ownership_share']
+            if isinstance(_gex['_manually_edited'], list):
+                _gex['_manually_edited'].append(_ow_tag)
+            try:
+                doc.extracted_data = json.dumps(_gex)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+        # ── Parse and save inline encumbrance answer (from gate button) ──
+        if _is_encumbrance_gate:
+            _enc_rest = t[len('inventory encumbered'):].strip()
+            if _enc_rest in ('clean', 'no', 'none', 'false'):
+                _gex['encumbrance_confirmed'] = False
+                _gex['encumbrance_type']      = ''
+            elif 'charge' in _enc_rest or 'mortgage' in _enc_rest or 'loan' in _enc_rest:
+                _gex['encumbrance_confirmed'] = True
+                _gex['encumbrance_type']      = 'charge'
+            elif 'caveat' in _enc_rest:
+                _gex['encumbrance_confirmed'] = True
+                _gex['encumbrance_type']      = 'caveat'
+            else:
+                _gex['encumbrance_confirmed'] = True
+                _gex['encumbrance_type']      = 'other'
+            try:
+                doc.extracted_data = json.dumps(_gex)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+        # ── Gate 1: ownership not yet confirmed ──────────────────────
+        # Skip gate if user is only clicking Skip, or if already set.
+        _ow_type = (_gex.get('ownership_type') or '').strip().lower()
+        if not _ow_type and (_is_confirm or _is_ownership_gate):
+            # Show ownership selection prompt
+            # Detect from OCR whether joint is likely — pre-highlight
+            _num_own = _gex.get('num_owners') or 1
+            try:
+                _num_own = int(_num_own)
+            except (TypeError, ValueError):
+                _num_own = 1
+            _ocr_shares = (_gex.get('ownership_shares') or '').strip()
+            _ocr_hint   = ''
+            if _num_own > 1 or _ocr_shares:
+                _ocr_hint = f"\n\n_OCR detected {_num_own} registered owners{(': ' + _ocr_shares) if _ocr_shares else ''}. Likely joint — please confirm share._"
+            _qr_ow = [
+                {'label': '👤 Sole owner', 'value': 'inventory ownership sole'},
+                {'label': '🤝 Joint — 1/2 share', 'value': 'inventory ownership joint 1/2'},
+                {'label': '🤝 Joint — 1/3 share', 'value': 'inventory ownership joint 1/3'},
+                {'label': '🤝 Joint — other',      'value': 'inventory ownership joint '},
+            ]
+            _ow_marker = f'<!--quickreplies:{json.dumps(_qr_ow)}-->'
+            return {
+                'name': 'ownership',
+                'role': 'ownership_gate',
+                'kind': 'property_fill',
+                'reply_override': (
+                    "**👥 Step 1 of 2 — Ownership**\n\n"
+                    "Is this property **solely owned** by the testator, or **jointly owned** with someone else?"
+                    + _ocr_hint
+                    + "\n\n_(The will clause will state the exact undivided share if jointly owned.)_"
+                    + _ow_marker
+                ),
+            }
+
+        # ── Gate 2: encumbrance not yet confirmed ────────────────────
+        _enc_confirmed = _gex.get('encumbrance_confirmed')  # None = not yet answered
+        if _enc_confirmed is None and (_is_confirm or _is_ownership_gate or _is_encumbrance_gate):
+            # Show encumbrance selection prompt
+            _enc_ocr      = (_gex.get('encumbrance') or '').strip()
+            _enc_type_ocr = (_gex.get('encumbrance_type') or '').strip().lower()
+            _enc_hint     = ''
+            if _enc_ocr or _enc_type_ocr:
+                _enc_icon  = '🏦' if _enc_type_ocr == 'charge' else '🚩'
+                _enc_hint  = f"\n\n_{_enc_icon} OCR detected: {_enc_ocr[:150]}_"
+            _qr_enc = [
+                {'label': '✅ Clean — no loan or caveat',  'value': 'inventory encumbered clean'},
+                {'label': '🏦 Bank loan / charge',          'value': 'inventory encumbered charge'},
+                {'label': '🚩 Private caveat',              'value': 'inventory encumbered caveat'},
+            ]
+            _enc_marker = f'<!--quickreplies:{json.dumps(_qr_enc)}-->'
+            return {
+                'name': 'encumbrance',
+                'role': 'encumbrance_gate',
+                'kind': 'property_fill',
+                'reply_override': (
+                    "**🏠 Step 2 of 2 — Encumbrance**\n\n"
+                    "Does this property have a **bank loan / charge** or a **private caveat** registered on the title?"
+                    + _enc_hint
+                    + "\n\n_(The Executor will be directed to discharge the loan or withdraw the caveat if encumbered.)_"
+                    + _enc_marker
                 ),
             }
 

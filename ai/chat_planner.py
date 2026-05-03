@@ -1402,9 +1402,7 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
                 f"describes this property, or type `address:`, `lot:`, etc. to fill in manually.)_"
             )
 
-    # ── Ownership section ───────────────────────────────────────────────
-    # Malaysian will law: if jointly owned, the will clause must say
-    # "X undivided Y share" not just "the property".
+    # ── Ownership: one-line summary (guided confirm handles the questions) ──
     num_owners   = ex.get('num_owners') or 1
     try:
         num_owners = int(num_owners)
@@ -1412,77 +1410,36 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
         num_owners = 1
     owner_names      = ex.get('owner_names') or []
     ownership_shares = (ex.get('ownership_shares') or '').strip()
-    ownership_type   = (ex.get('ownership_type') or '').strip().lower()   # 'sole' or 'joint' — may be set manually
-    ownership_share  = (ex.get('ownership_share')  or '').strip()         # manually confirmed share
+    ownership_type   = (ex.get('ownership_type') or '').strip().lower()
+    ownership_share  = (ex.get('ownership_share')  or '').strip()
 
-    # Infer from OCR if not yet manually confirmed
     if not ownership_type:
-        if num_owners > 1 or ownership_shares:
-            ownership_type = 'joint'
-        else:
-            ownership_type = 'sole'
+        ownership_type = 'joint' if (num_owners > 1 or ownership_shares) else 'sole'
 
     if ownership_type == 'joint':
-        share_display = ownership_share or ownership_shares or '(share % not confirmed)'
-        owners_str = ', '.join(owner_names) if owner_names else '(owner names not read)'
-        parts.append(
-            f"**🤝 Joint ownership detected:**\n"
-            f"  • Registered owners: _{owners_str}_\n"
-            f"  • Testator's share: **{share_display}**\n"
-            f"  _(The will clause will say: \"… my **{share_display} undivided share** in the said property…\")_"
-        )
-        if not ownership_share:
-            parts.append(
-                "**⚠️ Please confirm the testator's share** — type e.g.:\n"
-                "  `ownership: 1/2`   or   `ownership: 50%`   or   `ownership: sole` (if sole owner)"
-            )
+        share_display = ownership_share or ownership_shares or 'TBC'
+        parts.append(f"**🤝 Joint ownership** — {share_display} undivided share")
     else:
-        # Show briefly — sole owner is the normal case, no warning needed
-        owner_str = owner_names[0] if owner_names else ''
-        parts.append(
-            f"**👤 Ownership:** Sole owner"
-            + (f" — _{owner_str}_" if owner_str else '')
-            + "\n  _(Type `ownership: joint 1/2` if this is actually jointly owned)_"
-        )
+        parts.append("**👤 Sole ownership**")
 
-    # ── Encumbrance section ─────────────────────────────────────────────
-    # Malaysian will template requires: if encumbered, gift must say
-    # "subject to … and directing my Executor to discharge any outstanding
-    # balance from my estate" (charge) or "to discharge the private caveat"
-    # (caveat). Surface this so the writer can flag it.
+    # ── Encumbrance: one-line summary ──
     encumbrance      = (ex.get('encumbrance') or '').strip()
     encumbrance_type = (ex.get('encumbrance_type') or '').strip().lower()
-    enc_confirmed    = ex.get('encumbrance_confirmed')   # None = not yet asked; True/False = confirmed
+    enc_confirmed    = ex.get('encumbrance_confirmed')
 
-    if encumbrance or encumbrance_type:
-        enc_icon = '🏦' if encumbrance_type == 'charge' else '🚩'
+    if enc_confirmed is False:
+        parts.append("**✅ Clean title** — no loan or caveat")
+    elif enc_confirmed is True or encumbrance or encumbrance_type:
+        enc_icon  = '🏦' if encumbrance_type == 'charge' else '🚩'
         enc_label = ('Bank charge / mortgage' if encumbrance_type == 'charge'
                      else 'Private caveat' if encumbrance_type == 'caveat'
                      else 'Encumbrance')
-        parts.append(
-            f"**{enc_icon} Encumbrance read from title: {enc_label}**\n"
-            f"  _{encumbrance[:200]}_\n"
-            f"  The will clause should direct the Executor to "
-            + ("**discharge the outstanding loan / withdraw the charge** from the estate." if encumbrance_type == 'charge'
-               else "**apply to withdraw the private caveat** on behalf of the beneficiary.")
-        )
-        if enc_confirmed is None:
-            parts.append(
-                "**Confirm encumbrance** — tap a button below or type `encumbered: yes` / `encumbered: no`"
-            )
-    elif enc_confirmed is None:
-        # Not seen on title — ask anyway in case title is unclear
-        parts.append(
-            "**⚠️ Encumbrance not detected from title** — is this property:\n"
-            "  • **Clean** (no bank loan / no caveat), or\n"
-            "  • **Encumbered** (has a bank charge / mortgage / private caveat)?\n"
-            "  _(Type `encumbered: yes` or `encumbered: no`, or confirm below)_"
-        )
+        detail    = f" — _{encumbrance[:120]}_" if encumbrance else ''
+        parts.append(f"**{enc_icon} {enc_label} detected**{detail}")
+    else:
+        parts.append("**✅ No encumbrance detected**")
 
     # ── NLC completeness checklist ──────────────────────────────────────
-    # A Malaysian will property clause requires: title_number, lot_number,
-    # mukim, daerah, negeri. Address is strongly recommended. Show a clear
-    # traffic-light so the writer knows what to chase before finalising.
     _COMPULSORY = [
         ('title_number', 'Title number (Geran/HSD/Hakmilik no.)'),
         ('lot_number',   'Lot / PTD number'),
@@ -1499,53 +1456,18 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
             status_lines.append(f"  {tick} {lbl}")
         addr_tick = '✅' if (ex.get('property_address') or '').strip() else '⚠️'
         status_lines.append(f"  {addr_tick} Property address (recommended)")
-        parts.append("**📝 Will clause fields** _(required for Malaysian property description in will)_:\n"
-                     + '\n'.join(status_lines))
+        parts.append("**📝 Will clause fields:**\n" + '\n'.join(status_lines))
 
-    # NLC validation warnings
     if warnings:
         parts.append("**🚨 Validation:**\n" + '\n'.join(f"  {w}" for w in warnings))
 
-    if missing_fields:
-        example_lines = []
-        for key, lbl in missing_fields[:3]:
-            example_lines.append(f"`{key}: <value>`")
-        parts.append(
-            "**✏️ Missing fields?** Type the values directly, e.g.:\n"
-            + "  " + "   ".join(example_lines)
-            + "\n_Or ask the client for a clearer Geran scan._"
-        )
+    parts.append("_Tap **Accept** to add this property to your will, or **Skip** to come back later._")
 
-    parts.append(
-        "**Does this property look correctly grouped & formatted?**\n"
-        "Confirm to add to the wizard's gift list. "
-        "Beneficiary assignment happens AFTER all assets are reviewed."
-    )
-
-    has_missing = bool(missing_fields)
-    needs_ownership = (ownership_type == 'joint' and not ownership_share)
-    needs_enc = (enc_confirmed is None)
-    has_address = bool((ex.get('property_address') or '').strip())
+    # ── 3 clean action buttons — always the same, no conditionals ──────
     quick = [
-        {'label': '✅ Looks right — add to wizard', 'value': 'inventory confirm'},
-    ]
-    # If address is blank, add an explicit "confirm without address" button
-    # so the writer doesn't get stuck when the property genuinely has none.
-    if not has_address:
-        quick.append({'label': '🏚 Confirm without address (agricultural/no street)', 'value': 'inventory confirm no address'})
-    if needs_ownership:
-        quick.append({'label': '🤝 Joint — confirm share', 'value': 'ownership: '})
-        quick.append({'label': '👤 Actually sole owner', 'value': 'ownership: sole'})
-    if needs_enc:
-        quick.append({'label': '✅ Clean (no charge/caveat)', 'value': 'encumbered: no'})
-        quick.append({'label': '🏦 Has bank charge/mortgage', 'value': 'encumbered: charge'})
-        quick.append({'label': '🚩 Has private caveat', 'value': 'encumbered: caveat'})
-    if has_missing:
-        quick.append({'label': '✏️ Fill in missing fields', 'value': 'property fill'})
-    quick += [
-        {'label': '✂️ Wrong supporting docs', 'value': 'inventory unlink'},
-        {'label': '🗑 Remove this property', 'value': 'delete'},
-        {'label': '⏭ Skip for now', 'value': 'inventory skip'},
+        {'label': '✅ Accept', 'value': 'inventory confirm'},
+        {'label': '🗑 Remove', 'value': 'delete'},
+        {'label': '⏭ Skip',   'value': 'inventory skip'},
     ]
 
     # Focus the title image plus ALL supporting docs so every page appears in
