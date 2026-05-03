@@ -353,19 +353,74 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
     n = len(artifacts)
     header = f"**📬 {n} attachment{'s' if n != 1 else ''} received — please review before analysis**"
 
-    # ── Clean email body ──────────────────────────────────────────────────
+    # ── Clean email body + structured key-point extraction ───────────────
     body_section = ''
     cleaned_body = _clean_email_body(user_text or '')
     if cleaned_body:
-        preview = cleaned_body[:600]
-        if len(cleaned_body) > 600:
-            preview += '…'
-        body_section = (
-            "**📨 Message text:**\n"
-            f"> {preview.replace(chr(10), chr(10) + '> ')}\n\n"
-            "_If this message refers to specific properties or mentions who should "
-            "receive them, reply with your notes and I'll factor them in before analysing._"
-        )
+        # ── Extract key signals from the cleaned text ──────────────────
+        key_points = []
+
+        # Properties / lot numbers mentioned
+        _lot_mentions = re.findall(
+            r'(?:lot|ptd|hsd|hsm|geran|hakmilik|title)[^\w]?\s*(\w[\w\-/]*)',
+            cleaned_body, re.I)
+        if _lot_mentions:
+            key_points.append(f"🏠 Property reference: **{', '.join(dict.fromkeys(_lot_mentions[:3]))}**")
+
+        # Beneficiary names
+        _kw_re2 = re.compile(
+            r'(?:give\s+to|kepada|beneficiary[:\s]+|to\s+be\s+given\s+to|'
+            r'pass\s+to|left\s+to|bequeath\s+to)\s+', re.I)
+        _kw_m2 = _kw_re2.search(cleaned_body)
+        if _kw_m2:
+            _after = cleaned_body[_kw_m2.end():]
+            _name_parts2 = []
+            _rel2 = {'my','his','her','our','their','the','son','daughter','wife',
+                     'husband','spouse','child','children','eldest','youngest'}
+            _stop2 = {'my','the','all','each','whom','any','her','him','them',
+                      'children','child','beneficiaries','heirs','estate','me','us'}
+            _in_n = False
+            for _w in re.split(r'\s+', _after.strip())[:7]:
+                _c = re.sub(r"[^a-zA-Z'/-]", '', _w)
+                if not _c: break
+                if _c.lower() in ('bin','binte','binti','bte','bt','a/l','a/p'):
+                    if _name_parts2: _name_parts2.append(_c)
+                    continue
+                if _c.lower() in _rel2:
+                    if _in_n: break
+                    continue
+                if _c[0].isupper() and _c.lower() not in _stop2:
+                    _name_parts2.append(_c); _in_n = True
+                elif _in_n: break
+            if _name_parts2:
+                key_points.append(f"🎁 Beneficiary mentioned: **{' '.join(_name_parts2)}**")
+
+        # Ownership type
+        if re.search(r'\b(sole\s*owner|sendiri|myself\s*only|hak\s*penuh)\b', cleaned_body, re.I):
+            key_points.append("👤 Ownership: **Sole owner**")
+        elif re.search(r'\b(joint|bersama|co[-\s]?owner|berkongsi)\b', cleaned_body, re.I):
+            _sh = re.search(r'(\d+/\d+|\d+\s*%|half)', cleaned_body, re.I)
+            share_str = f" ({_sh.group(1)})" if _sh else ''
+            key_points.append(f"🤝 Ownership: **Joint{share_str}**")
+
+        # Encumbrance
+        if re.search(r'\b(loan|mortgage|charge|lien|caveat|pinjaman|bebanan)\b',
+                     cleaned_body, re.I):
+            key_points.append("🏦 Possible encumbrance mentioned (loan/caveat)")
+
+        # ── Format body section ────────────────────────────────────────
+        lines_b = ["**📨 Message from sender:**"]
+        if key_points:
+            lines_b.append("**Key points extracted:**")
+            lines_b.extend(f"  • {p}" for p in key_points)
+            lines_b.append("")  # blank line
+        # Show cleaned text, indented as blockquote
+        _preview = cleaned_body[:500]
+        if len(cleaned_body) > 500:
+            _preview += '…'
+        _quoted = '> ' + _preview.replace('\n', '\n> ').strip('> ')
+        lines_b.append(_quoted)
+        body_section = '\n'.join(lines_b)
     else:
         body_section = "_No message text — only attachments were received._"
 

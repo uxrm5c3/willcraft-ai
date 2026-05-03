@@ -4915,90 +4915,106 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
     if t not in _INBOX_TOKENS:
         return None
 
-    will = (Will.query.filter_by(client_id=client_id, status='draft')
-            .filter(Will.deleted_at.is_(None))
-            .order_by(Will.updated_at.desc()).first())
-    if not will:
-        return None
-
-    # 1. Clear gifts + assets_confirmed
-    will.step5_data = '[]'
     try:
-        completed = json.loads(will.completed_steps or '[]')
-        if not isinstance(completed, list):
-            completed = []
-        completed = [c for c in completed if c != 'assets_confirmed']
-        will.completed_steps = json.dumps(completed)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    try:
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-        return None
+        will = (Will.query.filter_by(client_id=client_id, status='draft')
+                .filter(Will.deleted_at.is_(None))
+                .order_by(Will.updated_at.desc()).first())
+        if not will:
+            return None
 
-    # 2. Clear _inventoried/_skipped from all active docs
-    _SKIP_CATS = ('nric', 'duplicate', 'deleted', 'voice')
-    docs = Document.query.filter(
-        Document.client_id == client_id,
-        ~Document.category.in_(_SKIP_CATS),
-        Document.deleted_at.is_(None),
-    ).all()
-    for d in docs:
+        # 1. Clear gifts + assets_confirmed
+        will.step5_data = '[]'
         try:
-            ex = json.loads(d.extracted_data) if d.extracted_data else {}
+            completed = json.loads(will.completed_steps or '[]')
+            if not isinstance(completed, list):
+                completed = []
+            completed = [c for c in completed if c != 'assets_confirmed']
+            will.completed_steps = json.dumps(completed)
         except (json.JSONDecodeError, TypeError):
-            ex = {}
-        changed = False
-        for flag in ('_inventoried', '_skipped'):
-            if flag in ex:
-                ex.pop(flag)
-                changed = True
-        if changed:
-            d.extracted_data = json.dumps(ex)
-    try:
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-
-    # 3. Build inbox card from existing docs
-    from ai.chat_planner import _intake_email_card as _iec, _KIND_LABELS as _KL
-    artifacts = []
-    for d in docs:
+            pass
         try:
-            ex = json.loads(d.extracted_data) if d.extracted_data else {}
-        except (json.JSONDecodeError, TypeError):
-            ex = {}
-        cat = d.category or 'other'
-        artifacts.append({
-            'document_id': d.id,
-            'kind': cat,
-            'confidence': 'high',
-            'extracted': ex,
-            'original_filename': d.original_filename or d.filename or '',
-        })
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
 
-    if not artifacts:
+        # 2. Clear _inventoried/_skipped from all active docs
+        _SKIP_CATS = ('nric', 'duplicate', 'deleted', 'voice')
+        docs = Document.query.filter(
+            Document.client_id == client_id,
+            ~Document.category.in_(_SKIP_CATS),
+            Document.deleted_at.is_(None),
+        ).all()
+        for d in docs:
+            try:
+                ex = json.loads(d.extracted_data) if d.extracted_data else {}
+            except (json.JSONDecodeError, TypeError):
+                ex = {}
+            changed = False
+            for flag in ('_inventoried', '_skipped'):
+                if flag in ex:
+                    ex.pop(flag)
+                    changed = True
+            if changed:
+                d.extracted_data = json.dumps(ex)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+        # 3. Build inbox card from existing docs
+        from ai.chat_planner import _intake_email_card as _iec
+        artifacts = []
+        for d in docs:
+            try:
+                ex = json.loads(d.extracted_data) if d.extracted_data else {}
+            except (json.JSONDecodeError, TypeError):
+                ex = {}
+            cat = d.category or 'other'
+            artifacts.append({
+                'document_id': d.id,
+                'kind': cat,
+                'confidence': 'high',
+                'extracted': ex,
+                'original_filename': d.original_filename or d.filename or '',
+            })
+
+        if not artifacts:
+            return {
+                'name': 'inbox reset',
+                'role': 'inbox_restarted',
+                'kind': 'inbox_restart',
+                'reply_override': (
+                    "♻️ **Reset complete.** No documents found. "
+                    "Upload or forward your documents to begin."
+                ),
+            }
+
+        inbox_card = _iec(artifacts, '')
         return {
-            'name': 'inbox reset',
+            'name': f'inbox reset ({len(artifacts)} docs)',
             'role': 'inbox_restarted',
             'kind': 'inbox_restart',
             'reply_override': (
-                "♻️ **Reset complete.** No documents found. "
-                "Upload or forward your documents to begin."
+                f"♻️ **Reset complete** — {len(artifacts)} document(s) ready for review.\n\n"
+                + inbox_card
             ),
         }
-
-    inbox_card = _iec(artifacts, user_text='')
-    return {
-        'name': f'inbox reset ({len(artifacts)} docs)',
-        'role': 'inbox_restarted',
-        'kind': 'inbox_restart',
-        'reply_override': (
-            f"♻️ **Reset complete** — {len(artifacts)} document(s) ready for review.\n\n"
-            + inbox_card
-        ),
-    }
+    except Exception as _rst_err:
+        import traceback as _tb
+        app.logger.error(f'_try_handle_restart_inbox error: {_tb.format_exc()}')
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return {
+            'name': 'restart error',
+            'role': 'inbox_restart_error',
+            'kind': 'inbox_restart',
+            'reply_override': (
+                f"⚠️ Reset failed: `{str(_rst_err)[:200]}`\n\n"
+                "Please try again or contact support."
+            ),
+        }
 
 
 def _try_handle_restart_gifts(client_id: str, user_text: str):
