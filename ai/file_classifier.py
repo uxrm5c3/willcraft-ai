@@ -6,7 +6,7 @@ plus a few extras the chat pipeline needs.
 """
 import json
 import anthropic
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
+from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_CHEAP
 from ai.ocr import _make_content_block, _extract_json
 
 
@@ -32,7 +32,12 @@ KINDS = [
 
 
 def classify_file(file_path: str) -> dict:
-    """Return {kind, confidence, reason}. Falls back to 'other' on any error."""
+    """Return {kind, confidence, reason}. Falls back to 'other' on any error.
+
+    Cost telemetry: if the caller wraps this in `cost_tracker.track_context(...)`,
+    each Anthropic call is logged to ApiCallLog with client_id/will_id/user_id
+    auto-attached. No-op outside a tracked context.
+    """
     fallback = {"kind": "other", "confidence": "low", "reason": "Could not classify"}
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
@@ -42,7 +47,7 @@ def classify_file(file_path: str) -> dict:
 
     try:
         msg = client.messages.create(
-            model=CLAUDE_MODEL_FAST,
+            model=CLAUDE_MODEL_CHEAP,
             max_tokens=200,
             messages=[{
                 "role": "user",
@@ -76,6 +81,12 @@ Return ONLY this JSON (no other text):
         )
     except Exception as e:
         return {**fallback, "reason": f"API error: {e}"}
+
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(msg, call_site='ai.file_classifier.classify_file')
+    except Exception:
+        pass
 
     text = (msg.content[0].text or "").strip() if msg.content else ""
     js = _extract_json(text)

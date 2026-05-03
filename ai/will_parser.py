@@ -64,6 +64,11 @@ Return ONLY the JSON, no explanation."""
         }]
     )
 
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.will_parser._parse_will_text')
+    except Exception:
+        pass
     return _parse_response(message.content[0].text)
 
 
@@ -102,6 +107,11 @@ Return ONLY the JSON, no explanation."""
         }]
     )
 
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.will_parser._parse_will_pdf')
+    except Exception:
+        pass
     return _parse_response(message.content[0].text)
 
 

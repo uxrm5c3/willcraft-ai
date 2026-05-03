@@ -362,3 +362,29 @@ class ProbateGeneratedForm(db.Model):
     form_name = db.Column(db.String(200), nullable=True)
     file_path = db.Column(db.String(500), nullable=False)
     generated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ApiCallLog(db.Model):
+    """One row per Anthropic API call. Lets us answer:
+      - "How much did it cost to draft this will end-to-end?"
+      - "Which call site burns the most tokens this week?"
+      - "Did switching CLAUDE_MODEL_FAST -> Haiku actually save money?"
+
+    Fields are deliberately denormalised (model name + per-call cost
+    captured at write time) so a future pricing change does not silently
+    rewrite history.
+    """
+    __tablename__ = "api_call_log"
+    id = db.Column(db.Integer, primary_key=True)
+    client_id = db.Column(db.String(36), db.ForeignKey("clients.id"), nullable=True, index=True)
+    will_id = db.Column(db.String(36), db.ForeignKey("wills.id"), nullable=True, index=True)
+    user_id = db.Column(db.String(36), db.ForeignKey("users.id"), nullable=True)
+    call_site = db.Column(db.String(80), nullable=False, index=True)  # e.g. "ai.ocr.extract_nric"
+    model = db.Column(db.String(80), nullable=False)
+    input_tokens = db.Column(db.Integer, default=0)
+    output_tokens = db.Column(db.Integer, default=0)
+    cache_read_tokens = db.Column(db.Integer, default=0)        # cheaper-priced cached input
+    cache_creation_tokens = db.Column(db.Integer, default=0)    # premium-priced cache write
+    cost_usd = db.Column(db.Numeric(12, 6), default=0)          # captured at write-time pricing
+    duration_ms = db.Column(db.Integer, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)

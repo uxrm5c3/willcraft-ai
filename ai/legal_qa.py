@@ -5,7 +5,7 @@ they were on.
 import re
 import time
 import anthropic
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
+from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_CHEAP
 
 # ── Two-tier Q&A cache ──────────────────────────────────────────────────
 # L1: in-process RAM dict — sub-millisecond, but per-worker and wiped on
@@ -122,6 +122,35 @@ def cache_clear_all() -> int:
         return 0
 
 
+def _parse_suggested_quickreplies(body: str) -> list:
+    """Mode E parser: pull the 2-3 reformulated questions out of a
+    ``**Suggested:**`` bullet list and turn them into chat quickreply
+    buttons. Returns ``[]`` if the body isn't in Mode E.
+
+    Used both on fresh answers AND on cache hits so the buttons survive
+    caching."""
+    if not body or 'suggested' not in body.lower():
+        return []
+    # Match "Suggested:", "Suggested questions:", "Suggested reformulations:"
+    # — anything that starts with "Suggested" and ends in ":".
+    sugg_re = re.compile(
+        r'\*?\*?suggested[^\n:]*\*?\*?\s*:\s*\n+((?:\s*[-*]\s+.+\n?)+)',
+        re.IGNORECASE)
+    m = sugg_re.search(body + '\n')
+    if not m:
+        return []
+    bullets = re.findall(r'^\s*[-*]\s+(.+?)\s*$', m.group(1), re.MULTILINE)
+    out = []
+    for q in bullets[:3]:
+        q = q.strip().strip('"').strip("'")
+        if q:
+            label = q if len(q) <= 80 else q[:77] + '…'
+            out.append({'label': label, 'value': q})
+    if out:
+        out.append({'label': 'Skip — none of these', 'value': 'continue'})
+    return out
+
+
 _QUESTION_STARTERS = (
     'what', 'why', 'how', 'when', 'where', 'who', 'which',
     'is', 'are', 'am', 'was', 'were',
@@ -184,9 +213,16 @@ def answer_question(user_text: str, current_stage_summary: str = '',
             {'label': 'Stay here, I have more questions', 'value': 'not yet'},
         ]
 
-    def _attach_resume(body: str) -> str:
-        if resume_quick:
-            return body + f"\n\n<!--quickreplies:{_json.dumps(resume_quick)}-->"
+    def _attach_resume(body: str, extra_quick: list = None) -> str:
+        # Merge any extra quickreplies (e.g. Mode E suggested questions)
+        # in front of the resume buttons so they're the obvious next tap.
+        # If extra_quick wasn't provided, auto-extract from the body so
+        # cache hits keep their suggestion buttons.
+        if extra_quick is None:
+            extra_quick = _parse_suggested_quickreplies(body)
+        combined = list(extra_quick or []) + list(resume_quick or [])
+        if combined:
+            return body + f"\n\n<!--quickreplies:{_json.dumps(combined)}-->"
         return body
 
     # ── Cache hit? Return instantly, no Anthropic call. ────────────────
@@ -275,120 +311,187 @@ def answer_question(user_text: str, current_stage_summary: str = '',
                 db.session.commit()
             except Exception:
                 pass
-        # Prompt — four explicit response modes per client spec.
+        # Prompt — five response modes. EVERY answer (except Mode E) must end
+        # with a **Source:** line so the user knows where the answer came
+        # from — Act + section, well-known Malaysian practice, or a web URL.
         #
-        # Mode A — Citation found in excerpts:
-        #   Answer + Example + Citation (specific Act + section).
-        # Mode B — General Malaysian common knowledge, no excerpt match:
-        #   Answer + Example. NO Citation line.
-        # Mode C — Unsure (excerpts tangential / partial knowledge):
-        #   Answer says "I'm not sure". NO Citation, NO Example.
-        # Mode D — Don't know:
-        #   Answer says "I don't know — please consult a lawyer." Stop.
-        # NEVER hallucinate. NEVER list other Acts in the answer/footer.
-        msg = client.messages.create(
-            model=CLAUDE_MODEL_FAST,
-            max_tokens=300,
-            messages=[{
-                'role': 'user',
-                'content': f"""You help a Malaysian advisor draft a non-Muslim will.{excerpts_block}
+        # Mode A — Library Act excerpt directly answers the question.
+        # Mode B — Well-established Malaysian legal/property practice.
+        # Mode C — Partial / unsure.
+        # Mode D — Answered via web_search server tool (cite URL).
+        # Mode E — Truly cannot answer → 2-3 alternative questions as
+        #          quick-reply buttons. NO "consult a lawyer / Legal Library"
+        #          dead-end — give the user concrete next-tap options.
+        prompt_text = f"""You help a Malaysian advisor draft a non-Muslim will.{excerpts_block}
 
 USER QUESTION: {user_text}
 
-FOUR RESPONSE MODES — pick exactly ONE:
+EVERY answer (except Mode E) MUST end with a single **Source:** line so the user trusts where it came from. NO bare assertions.
 
-MODE A — Citation found (excerpts above DIRECTLY answer the question):
-  **Answer:** <plain-English, ≤40 words>
+FIVE RESPONSE MODES — pick exactly ONE:
+
+MODE A — Library Act excerpt above DIRECTLY answers the question:
+  **Answer:** <plain-English, ≤50 words>
   **Example:** <one concrete Malaysian example, ≤25 words>
-  **Citation:** <ONE specific section, e.g. "Wills Act 1959 s.5(2)">
-  → Cite ONLY the single section that answers it. Do NOT list other Acts.
+  **Source:** <ONE specific section, e.g. "Wills Act 1959 s.5(2)">
 
-MODE B — No citation but it's basic Malaysian common knowledge
-  (e.g. "Geran is the land title", "executor administers the estate"):
-  **Answer:** <plain-English, ≤40 words>
+MODE B — Well-established Malaysian legal / property / probate / banking
+  practice (the kind of thing a practising Malaysian lawyer or licensed
+  estate planner states without checking — e.g. "Geran is the land
+  title", "executor administers the estate", "land titles can be
+  subdivided by applying to the Pejabat Tanah under the National Land
+  Code", "EPF nomination overrides the will for EPF moneys"):
+  **Answer:** <plain-English, ≤70 words>
   **Example:** <one concrete Malaysian example, ≤25 words>
-  → OMIT the Citation line entirely. Do not write "general knowledge".
+  **Source:** Established Malaysian estate-planning practice<optional: " (broadly under <Act name>)">
+  → BE GENEROUS with this mode. If it's standard practice knowledge,
+    answer it. Do NOT punt just because the library excerpt didn't fire.
 
-MODE C — Unsure (excerpts tangential, or only partial confidence):
-  **Answer:** I'm not 100% sure — please verify with <Act name if known> or your lawyer.
-  → OMIT both Example and Citation lines.
+MODE C — Partial confidence (you know the gist but not the exact rule):
+  **Answer:** Probably <answer> — but please verify with <Act name if known> or a lawyer.
+  **Source:** Partial knowledge — needs verification
 
-MODE D — Don't know (no excerpt + not basic knowledge):
-  **Answer:** I don't know — please consult a lawyer or check the [Legal Library](/library).
-  → OMIT both Example and Citation lines. Stop.
+MODE D — Web search (you used the web_search tool to find a current,
+  authoritative source on a Malaysian site like agc.gov.my / lawnet /
+  iproperty / star / nst / a known law-firm blog):
+  **Answer:** <plain-English, ≤70 words, based on what the search returned>
+  **Example:** <one concrete Malaysian example, ≤25 words> (optional)
+  **Source:** <Page title> — <URL>
+  → Only ONE source URL. Pick the most authoritative.
 
-Anti-hallucination: if you can't be confident, drop to Mode C or D. NEVER invent a section number. NEVER write "General knowledge", "not in library", "N/A", "not specified", or any cop-out — those words are banned. Confidence over completeness.
+MODE E — Truly outside scope, OR question is ambiguous and you'd be
+  guessing what they meant:
+  **Answer:** I'm not certain what you're asking. Did you mean one of these?
+  **Suggested:**
+  - <complete reformulated question 1>
+  - <complete reformulated question 2>
+  - <complete reformulated question 3, optional>
+  → DO NOT say "consult a lawyer" or "check the legal library".
+  → DO NOT include a Source line.
+  → Suggestions must be complete questions the user can re-ask verbatim.
 
-No preface, no filler, no apologies, no "I hope this helps"."""
-            }]
-        )
-        body = (msg.content[0].text or '').strip() if msg.content else ''
+Decision order: try A → B → (call web_search if helpful) D → C → E.
+Use web_search proactively for procedural / fee / form questions where
+you don't have firm knowledge — better to fetch a real source than to
+write Mode E.
 
-        # ── Post-process: strip cop-out Citation lines ─────────────────────
-        # Even with explicit instructions, Claude sometimes still writes
-        # "Citation: General knowledge — not in library" or similar. Detect
-        # and remove. Also detect whether a real citation survived so we
-        # know whether to emit the footer.
+Anti-hallucination: NEVER invent a section number or URL. NEVER write
+"General knowledge", "not in library", "N/A", "not specified" — banned.
+
+No preface ("I'll search…", "Let me check…"), no filler, no apologies, no "I hope this helps", no mode label ("MODE B"). Output ONLY the **Answer:** / **Example:** / **Source:** lines (or **Suggested:** for Mode E)."""
+
+        # Try with the web_search server tool enabled. Falls back to a
+        # tool-less retry if the account / model doesn't have web_search
+        # access.
+        def _call(use_web: bool):
+            kwargs = dict(
+                model=CLAUDE_MODEL_CHEAP,
+                max_tokens=900,
+                messages=[{'role': 'user', 'content': prompt_text}],
+            )
+            if use_web:
+                kwargs['tools'] = [{
+                    'type': 'web_search_20250305',
+                    'name': 'web_search',
+                    'max_uses': 2,
+                }]
+            return client.messages.create(**kwargs)
+
+        try:
+            msg = _call(use_web=True)
+        except Exception as web_err:
+            try:
+                import logging
+                logging.getLogger(__name__).info(
+                    "web_search disabled / unsupported, retrying without: %s", web_err)
+            except Exception:
+                pass
+            msg = _call(use_web=False)
+
+        # Log cost (best-effort — never raises into caller).
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='ai.legal_qa.answer_question')
+        except Exception:
+            pass
+
+        # Concatenate all text blocks (skip server tool_use / tool_result).
+        body_parts = []
+        for block in (msg.content or []):
+            if getattr(block, 'type', None) == 'text':
+                t = getattr(block, 'text', '') or ''
+                if t.strip():
+                    body_parts.append(t)
+        body = '\n'.join(body_parts).strip()
+
+        # ── Post-process: strip cop-out Source/Citation lines ─────────────
         import re as _re_post
         _COPOUT_PATTERNS = (
-            r'general knowledge', r'not in (the )?library', r'not (specified|applicable|available)',
-            r'^n/?a$', r'no (specific )?citation', r'none', r'not provided',
+            r'^general knowledge\.?$', r'not in (the )?library',
+            r'^not (specified|applicable|available)\.?$',
+            r'^n/?a\.?$', r'^no (specific )?citation\.?$',
+            r'^none\.?$', r'^not provided\.?$',
         )
-        lines = body.split('\n')
-        kept = []
-        real_citation = False
-        # Detect "I don't know" up-front so we strip Citation+Example and
-        # don't pretend we have evidence we don't.
+
+        # Detect Mode E (suggested-questions fallback) so we don't strip
+        # an Example line from a real answer just because the words "I'm
+        # not certain" appear.
         body_lower = body.lower()
-        is_dont_know = any(p in body_lower for p in (
-            "i don't know", 'i do not know', "i'm not certain",
-            "i am not certain", "not 100% sure", 'not entirely sure',
-            'cannot answer with certainty', 'unable to answer',
-        ))
-        cited_act_value = None  # captured for cache telemetry
-        for ln in lines:
+        is_suggest = ('**suggested:**' in body_lower
+                      or '\nsuggested:' in body_lower)
+
+        cited_act_value = None
+        real_source = False
+        kept = []
+        # Strip leading preamble lines like "I'll search the web for..." or
+        # bare "MODE B" / "**MODE D**" labels that sometimes leak through.
+        _PREAMBLE_RE = _re_post.compile(
+            r"^\s*(?:i['’]ll|i will|let me|searching|i need to)\b",
+            _re_post.IGNORECASE)
+        _MODE_LABEL_RE = _re_post.compile(
+            r"^\s*\*?\*?mode\s+[a-e]\*?\*?\s*[:.\-—]?\s*$",
+            _re_post.IGNORECASE)
+        for ln in body.split('\n'):
             stripped_ln = ln.strip()
-            # Detect a citation line (with or without ** **)
-            cite_match = _re_post.match(r'^\*?\*?citation\*?\*?\s*:\s*(.*)$',
-                                        stripped_ln, _re_post.IGNORECASE)
-            if cite_match:
-                cite_value = cite_match.group(1).strip().rstrip('.').lower()
-                # Empty value, cop-out, OR don't-know answer → drop line
-                if (not cite_value
-                    or is_dont_know
-                    or any(_re_post.search(p, cite_value) for p in _COPOUT_PATTERNS)):
+            if _MODE_LABEL_RE.match(stripped_ln):
+                continue
+            # Drop preamble ONLY if no answer line yet (preserves narrative
+            # bodies that legitimately start with "I" later on).
+            if not kept and _PREAMBLE_RE.match(stripped_ln):
+                continue
+            # Source/Citation line detection (accept either keyword)
+            src_match = _re_post.match(
+                r'^\*?\*?(source|citation)\*?\*?\s*:\s*(.*)$',
+                stripped_ln, _re_post.IGNORECASE)
+            if src_match:
+                src_value = src_match.group(2).strip().rstrip('.')
+                src_lower = src_value.lower()
+                if (not src_value
+                    or any(_re_post.search(p, src_lower) for p in _COPOUT_PATTERNS)):
                     continue
-                real_citation = True
-                cited_act_value = cite_match.group(1).strip().rstrip('.')[:200]
-            # Strip Example line too if don't-know
-            if is_dont_know and _re_post.match(
-                    r'^\*?\*?example\*?\*?\s*:', stripped_ln, _re_post.IGNORECASE):
+                real_source = True
+                cited_act_value = src_value[:200]
+                # Normalise label to "Source:"
+                kept.append(f"**Source:** {src_value}")
                 continue
             kept.append(ln)
-        # Collapse 3+ consecutive newlines down to 2 after pruning
         body = _re_post.sub(r'\n{3,}', '\n\n', '\n'.join(kept)).strip()
 
-        # NO footer — the inline "Citation: <Act> s.<n>" in the body is the
-        # citation. Listing every Act the library happens to hold is noise
-        # (client: "do not list down all the acts").
-        footer = ''
-        # Decide which mode label to store in the cache (telemetry).
-        if is_dont_know:
-            cache_mode = 'dontknow'
-        elif real_citation:
-            cache_mode = 'library'
+        # Telemetry mode label
+        if is_suggest:
+            cache_mode = 'suggest'
+        elif real_source:
+            cache_mode = 'sourced'
         elif matched_titles:
             cache_mode = 'unsure'
         else:
             cache_mode = 'general'
 
-        out = body + footer
-        # Persistent cache (RAM + DB). The next testator/user/worker who
-        # asks the same question gets it for free — zero Anthropic tokens.
-        # We exclude the per-call resume-step button from the cached value
-        # so it's recomputed for whoever's chat is actually active.
+        out = body
         _cache_set(ck, out, question_text=user_text,
                    cited_act=cited_act_value, mode=cache_mode)
+        # _attach_resume re-parses Mode E bullets so cache hits also get
+        # the suggestion buttons — no need to thread them through here.
         return _attach_resume(out)
     except Exception as e:
         # NEVER return empty silently. Surface a friendly fallback (with the
@@ -401,8 +504,7 @@ No preface, no filler, no apologies, no "I hope this helps"."""
             pass
         fallback = (
             "**Answer:** I couldn't reach the legal-Q&A engine just now — "
-            "please retry in a moment, or check the [Legal Library](/library) "
-            "for the relevant Act.\n\n"
+            "please retry in a moment.\n\n"
             "_(engine error: " + str(e)[:120] + ")_"
         )
         return _attach_resume(fallback)

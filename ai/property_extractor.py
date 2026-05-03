@@ -106,6 +106,11 @@ Return ONLY the JSON, no explanation."""
         }]
     )
 
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.property_extractor.extract_property_data')
+    except Exception:
+        pass
     response_text = message.content[0].text.strip()
     if response_text.startswith('```'):
         response_text = response_text.split('\n', 1)[1].rsplit('```', 1)[0].strip()
@@ -156,6 +161,13 @@ Return ONLY the JSON, no explanation."""
         if result.get('bandar_pekan') and not result.get('mukim'):
             result['mukim'] = result['bandar_pekan']
         result.pop('bandar_pekan', None)
+        # Selective re-OCR: if title_number or lot_number looks blank or
+        # garbled, run a tight digit-by-digit re-read on the same image.
+        try:
+            from ai.ocr import reocr_if_suspicious
+            result = reocr_if_suspicious(file_path, result)
+        except Exception:
+            pass
         return result
     except json.JSONDecodeError:
         return {"error": "Could not parse extraction results", "raw": response_text}

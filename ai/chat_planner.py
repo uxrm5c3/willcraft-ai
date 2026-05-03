@@ -12,6 +12,8 @@ Each stage knows how to advance to the next; the planner emits a
 """
 from typing import List, Dict, Any, Optional
 import json as _json
+import json
+import re
 
 
 def _qr_marker(quick: List[Dict[str, str]]) -> str:
@@ -190,6 +192,26 @@ def plan_turn(
         focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
         return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
 
+    # ── 4a. STEP 4: Guardians (mandatory if minor children present) ─────
+    # Skip automatically when no minors. User can also tap ⏭ Skip to
+    # bypass even if minors were detected (e.g. all children are adults).
+    if 'guardians_confirmed' not in completed:
+        identities = current_will_data.get('identities') or []
+        minors = _detect_minor_children(identities)
+        if minors:
+            # Must appoint a guardian — offer primary + substitute prompts
+            s3 = current_will_data.get('step3') or {}
+            guardians = s3.get('guardians') or []
+            q = _step4_guardian_question(s3, minors, recent_text)
+            reply_parts.append(q['text'])
+            return _wrap(reply_parts, questions, patch, advice)
+        else:
+            # No minors — mark confirmed silently via completed marker.
+            # (The app handler stamps 'guardians_confirmed' when it gets
+            # 'guardian skip' or 'guardian none'; we generate it lazily
+            # here so the planner doesn't keep asking.)
+            pass  # fall through — handler marks it
+
     # ── 4.5 STEP 5: Confirm beneficiaries (Wizard Step 5 / DB step4) ────
     s4 = current_will_data.get('step4')
     n_benef = len(s4) if isinstance(s4, list) else 0
@@ -218,20 +240,35 @@ def plan_turn(
     # ── 6. STEP 7: Residuary ───────────────────────────────────────────
     s6 = current_will_data.get('step6') or {}
     if not s6 or not (s6.get('beneficiaries') or s6.get('residuary_beneficiary_name')):
-        reply_parts.append(
-            "✅ Specific gifts done. Moving to **Step 7: Residuary Estate**.\n\n"
-            "After the specific gifts above, who should inherit **the rest of your estate** "
-            "(everything not specifically given away)?\n\n"
-            "Reply with name + optional share, e.g. `Wife 100%` or `Joshua 50%, Esther 50%`."
-        )
+        s4_list = current_will_data.get('step4') or []
+        reply_parts.append(_step7_residuary_question(s4_list))
         return _wrap(reply_parts, questions, patch, advice)
 
-    # ── 6. Beyond — defer to wizard for now ─────────────────────────────
+    # ── 7. STEP 8: Testamentary Trust (optional) ──────────────────────
+    if 'trust_confirmed' not in completed:
+        identities = current_will_data.get('identities') or []
+        minors = _detect_minor_children(identities)
+        s7 = current_will_data.get('step7') or {}
+        q = _step8_trust_question(s7, minors, completed)
+        if q:
+            reply_parts.append(q)
+            return _wrap(reply_parts, questions, patch, advice)
+
+    # ── 8. STEP 9: Other Matters (optional) ───────────────────────────
+    if 'others_confirmed' not in completed:
+        s8 = current_will_data.get('step8') or {}
+        reply_parts.append(_step9_others_question(s8))
+        return _wrap(reply_parts, questions, patch, advice)
+
+    # ── 9. STEP 10: Review & Generate ─────────────────────────────────
     reply_parts.append(
-        "✅ Identities, Testator, Executor, Beneficiaries all set.\n\n"
-        "Specific Gifts (Step 6), Residuary (Step 7), and Trust (Step 8) "
-        "auto-fill from the email is coming next slice. For now, open the wizard "
-        "(top-right of this page) to fill those in."
+        "🎉 **All steps complete!** The will is ready to review.\n\n"
+        "Head to **[Step 10: Review & Generate](/wizard/step/10)** to preview "
+        "the full draft, make any final adjustments, and generate the PDF."
+        + _qr_marker([
+            {'label': '📄 Go to Review & Generate', 'value': 'open wizard step 10'},
+            {'label': 'I need to change something', 'value': 'change something'},
+        ])
     )
     return _wrap(reply_parts, questions, patch, advice)
 
@@ -611,6 +648,142 @@ def _is_inventoried(item: Dict[str, Any]) -> bool:
     return bool(ex.get('_inventoried'))
 
 
+# Property fields that count as a "signal" — if every one of these is
+# blank AND there are no support docs, the card is just noise. Showing
+# it would force the writer to dismiss an empty husk over and over.
+_PROPERTY_SIGNAL_KEYS = (
+    'property_address', 'address', 'title_number', 'lot_number',
+    'mukim', 'daerah', 'negeri', 'property_hint', 'description',
+    'area', 'title_type',
+)
+
+
+def _is_truly_empty_property(p: Dict[str, Any]) -> bool:
+    """True iff a property card has NOTHING worth asking about — no
+    address, no title, no lot, no mukim/daerah/negeri, no property_hint,
+    AND no support docs auto-grouped under it.
+
+    Per the will writer: 'if there is nothing at all and isolated piece,
+    can completely ignore. no point asking because there is nothing in
+    there.'
+
+    Cards passing this test are silently soft-skipped in the walk so the
+    writer never sees the '(address & title both unreadable)' dead-end
+    review."""
+    ex = p.get('extracted') or {}
+    has_signal = any((ex.get(k) or '').strip() for k in _PROPERTY_SIGNAL_KEYS)
+    has_support = bool(p.get('support_docs'))
+    return not (has_signal or has_support)
+
+
+def _autoskip_empty_properties(props: List[Dict[str, Any]], client_id: str = None):
+    """Soft-mark every truly-empty property as `_inventoried` AND
+    `_auto_skipped` so the walk skips them and they don't reappear next
+    turn. Persists to DB so the next request sees the same state.
+
+    Returns the list of properties that survived (i.e. have at least one
+    identifying signal — worth showing the writer)."""
+    survivors = []
+    for p in props:
+        if _is_truly_empty_property(p):
+            try:
+                from database import db, Document
+                doc = db.session.get(Document, p.get('document_id'))
+                if doc:
+                    try:
+                        ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+                    except (json.JSONDecodeError, TypeError):
+                        ex = {}
+                    ex['_inventoried'] = True
+                    ex['_auto_skipped'] = 'no identifying info — nothing to ask'
+                    doc.extracted_data = json.dumps(ex)
+                    doc.description = (doc.description or '') + ' (auto-skipped: blank)'
+                    db.session.commit()
+            except Exception:
+                try:
+                    from database import db as _db
+                    _db.session.rollback()
+                except Exception:
+                    pass
+        else:
+            survivors.append(p)
+    return survivors
+
+
+def _enrich_property_from_siblings(p: Dict[str, Any]) -> Dict[str, Any]:
+    """When a property card has SOME signal but missing fields (e.g. only
+    a PTD number, no mukim/daerah), search every OTHER property/support
+    doc for the same client for overlap on title/lot/PTD/HSD/HSM/address
+    and back-fill the blanks.
+
+    Returns a NEW extracted dict — does not mutate the original or write
+    to DB. The walk-through card uses the enriched copy so the writer
+    sees the full picture instead of the original sparse extraction."""
+    ex = dict(p.get('extracted') or {})
+    # Build needles from whatever this property DOES have
+    needles = set()
+    for k in ('title_number', 'lot_number', 'property_hint',
+              'property_address', 'address'):
+        v = (ex.get(k) or '').strip()
+        if len(v) >= 3:
+            needles.add(v.lower())
+    # Also any 5+ digit number sequence in the title/lot — captures bare
+    # PTD/HSD numbers that the OCR may have stuffed into property_hint
+    # without classification.
+    for k in ('title_number', 'lot_number', 'property_hint'):
+        v = (ex.get(k) or '')
+        for m in re.findall(r'\d{4,}', v):
+            needles.add(m.lower())
+    if not needles:
+        return ex
+    try:
+        from database import db, Document
+        client_id = None
+        own_doc = db.session.get(Document, p.get('document_id'))
+        if own_doc is not None:
+            client_id = own_doc.client_id
+        if not client_id:
+            return ex
+        # Pull every property-ish doc for this client
+        sibs = (Document.query.filter(
+                    Document.client_id == client_id,
+                    Document.id != (p.get('document_id') or ''),
+                    Document.category.in_([
+                        'property_title', 'property_spa', 'property_tax',
+                        'utility_bill', 'bank_letter', 'other',
+                    ]),
+                ).all())
+        for sib in sibs:
+            try:
+                sex = json.loads(sib.extracted_data) if sib.extracted_data else {}
+            except (json.JSONDecodeError, TypeError):
+                sex = {}
+            haystack_parts = []
+            for k in ('title_number', 'lot_number', 'property_hint',
+                      'property_address', 'address', 'description',
+                      'mukim', 'daerah', 'negeri'):
+                v = (sex.get(k) or '').strip()
+                if v:
+                    haystack_parts.append(v.lower())
+            haystack = ' | '.join(haystack_parts)
+            if not haystack:
+                continue
+            # Match if ANY needle appears in the sibling's haystack
+            if not any(n in haystack for n in needles):
+                continue
+            # Back-fill blank fields from the matching sibling
+            for k in ('property_address', 'address', 'title_number',
+                      'lot_number', 'mukim', 'daerah', 'negeri',
+                      'title_type', 'area'):
+                if not (ex.get(k) or '').strip() and (sex.get(k) or '').strip():
+                    ex[k] = sex[k]
+                    ex.setdefault('_enriched_from', []).append(
+                        f"{sib.original_filename or sib.id[:8]}.{k}")
+    except Exception:
+        pass
+    return ex
+
+
 def _deduce_intent_from_messages(p: Dict[str, Any], recent_text: str) -> str:
     """Pull any messages from the client that mention this specific
     property by lot/title number/address. The will writer needs to see
@@ -682,11 +855,44 @@ def _validate_property_format(ex: Dict[str, Any]) -> List[str]:
     negeri = (ex.get('negeri') or '').strip()
     addr = (ex.get('property_address') or ex.get('description') or '').strip()
 
-    if not addr and not title_no:
-        warnings.append(
-            "⚠️  Address AND title number both blank — re-OCR or ask client "
-            "for a clearer scan."
-        )
+    # ── PROBATE-CRITICAL FIELD CHECK ─────────────────────────────────
+    # The lawyer needs these to file Borang 14A / Deed of Transmission /
+    # Pindahmilik at the Land Office. An address alone isn't enough — the
+    # estate cannot be transferred to the beneficiary without the Geran
+    # / PTD / HSD / HSM / Hakmilik title number AND the lot number. Flag
+    # missing fields in one sharp ALERT so the writer goes back to the
+    # client for a clearer Geran scan instead of pushing a half-formed
+    # gift through.
+    missing_critical = []
+    if not title_no:
+        missing_critical.append('**title number** (Geran / PTD / HSD / HSM / Hakmilik)')
+    if not lot_no:
+        missing_critical.append('**lot number** (Lot / PT)')
+    if not mukim:
+        missing_critical.append('**Mukim**')
+    if not daerah:
+        missing_critical.append('**Daerah**')
+    if not negeri:
+        missing_critical.append('**Negeri**')
+    if missing_critical:
+        if addr:
+            # We have something to identify the property, but probate
+            # cannot proceed. Prompt the writer to chase the client for
+            # the Geran scan.
+            warnings.append(
+                "🚨  **Cannot probate without these — ask the client to "
+                "provide a clearer Geran/Hakmilik scan:**\n     "
+                + ', '.join(missing_critical)
+                + "\n     _Reason: the lawyer needs these fields on Borang 14A "
+                "/ Deed of Transmission to transfer this property to the "
+                "beneficiary at the Pejabat Tanah._"
+            )
+        else:
+            # No address either → re-OCR or get a different doc.
+            warnings.append(
+                "⚠️  Address AND title number both blank — re-OCR or ask "
+                "client for a clearer scan."
+            )
 
     # If we have a title NUMBER, check that EITHER title_type OR the
     # number itself indicates a recognised NLC instrument. Pure digits
@@ -715,16 +921,24 @@ def _validate_property_format(ex: Dict[str, Any]) -> List[str]:
                 "characters — verify OCR."
             )
 
-    if not lot_no:
-        warnings.append(
-            "⚠️  Lot number missing — National Land Code requires it for "
-            "the gift clause."
-        )
-    if not mukim and not daerah:
-        warnings.append(
-            "⚠️  Mukim AND daerah both blank — needed to draft the property "
-            "description."
-        )
+    # (Lot / Mukim / Daerah individual warnings are folded into the
+    # consolidated probate-critical block above so we don't double-warn.)
+
+    # ── Web cross-check on the locale ─────────────────────────────────
+    # OCR sometimes flips one daerah for a similarly-spelled neighbour
+    # (e.g. "Petaling" vs "Klang"). Run a one-shot web search to confirm
+    # the address actually sits in the claimed mukim/daerah. Cached, so
+    # the same property never costs us twice. Best-effort — silent on
+    # any failure.
+    try:
+        from services.property_locale_verifier import verify_locale
+        web_warn = verify_locale(address=addr, mukim=mukim,
+                                 daerah=daerah, negeri=negeri)
+        if web_warn:
+            warnings.append(web_warn)
+    except Exception:
+        pass
+
     # Quick sanity for Mukim/Daerah/Negeri — digits in these fields are
     # almost always OCR errors.
     for label, val in (('Mukim', mukim), ('Daerah', daerah), ('Negeri', negeri)):
@@ -756,6 +970,11 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
     banks = [b for b in (pending_gifts.get('bank') or []) if not _is_inventoried(b)]
     vehicles = [v for v in (pending_gifts.get('vehicle') or []) if not _is_inventoried(v)]
 
+    # Silently drop properties with NOTHING worth asking about (no
+    # address, no title, no lot, no support docs). Soft-marks them
+    # `_inventoried` in the DB so they don't reappear next turn.
+    props = _autoskip_empty_properties(props)
+
     if props:
         target = props[0]
         # If the writer just pressed "Wrong supporting docs" on this
@@ -763,6 +982,13 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         # support-doc picker instead of the normal card.
         if (target.get('extracted') or {}).get('_unlink_pending'):
             return _walkthrough_unlink_picker(target)
+        # Cross-reference siblings to back-fill blanks: if all we have is
+        # a PTD number, scan every other property/SPA/cukai/utility doc
+        # for the same client and pull mukim/daerah/address from the
+        # match. The writer sees the enriched view, not the sparse one.
+        enriched = _enrich_property_from_siblings(target)
+        target = dict(target)
+        target['extracted'] = enriched
         return _walkthrough_property_card(target, len(props), recent_text,
                                            total_remaining=len(props) + len(banks) + len(vehicles))
     if banks:
@@ -799,6 +1025,21 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
             fields.append(f"  • **{label}:** {v}")
     if fields:
         parts.append("**📋 Identifiers (read from geran):**\n" + '\n'.join(fields))
+
+    # Show enrichment provenance so the writer trusts the back-filled
+    # fields: "Mukim & Daerah back-filled from cukai_tanah_2024.pdf".
+    enriched_from = ex.get('_enriched_from') or []
+    if enriched_from:
+        # Group by source filename
+        srcs = {}
+        for ent in enriched_from:
+            try:
+                fname, _, key = ent.rpartition('.')
+            except Exception:
+                fname, key = ent, ''
+            srcs.setdefault(fname or 'sibling', []).append(key)
+        bullets = [f"  • {', '.join(keys)} ← _{src}_" for src, keys in srcs.items()]
+        parts.append("**🔗 Cross-referenced from sibling docs:**\n" + '\n'.join(bullets))
 
     # Supporting docs grouped under this property
     support = p.get('support_docs') or []
@@ -1189,3 +1430,221 @@ def _is_confirmed(will_data: Dict[str, Any], section: str) -> bool:
     if section == 'testator':
         return bool(s1.get('full_name') and s1.get('person_id'))
     return False
+
+
+# ── Guardian / Step-8 / Step-9 helpers ──────────────────────────────────
+
+_MINOR_RELATIONSHIPS = frozenset({
+    'son', 'daughter', 'grandson', 'granddaughter',
+    'stepson', 'stepdaughter', 'adopted son', 'adopted daughter',
+})
+
+def _detect_minor_children(identities: list) -> list:
+    """Return the subset of identities that appear to be minor children
+    (relationship is a child-type AND DOB suggests under 18, OR we can't
+    tell age but relationship is clearly a child-type).
+
+    Intentionally errs on the side of INCLUSION: if in doubt, treat as
+    minor so the guardian prompt always fires and the writer confirms.
+    """
+    from datetime import date, datetime
+    today = date.today()
+    minors = []
+    for p in identities:
+        rel = (p.get('relationship') or '').lower().strip()
+        if rel not in _MINOR_RELATIONSHIPS:
+            continue
+        # Try age check via date_of_birth
+        dob_str = (p.get('date_of_birth') or '').strip()
+        if dob_str:
+            try:
+                for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%Y'):
+                    try:
+                        dob = datetime.strptime(dob_str[:10], fmt).date()
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    dob = None
+                if dob is not None:
+                    age = (today - dob).days // 365
+                    if age >= 18:
+                        continue  # adult — skip
+            except Exception:
+                pass  # can't parse DOB → treat as potentially minor
+        minors.append(p)
+    return minors
+
+
+def _step4_guardian_question(s3: dict, minors: list, recent_text: str = '') -> dict:
+    """Return a chat card for the guardian step.
+
+    Flow:
+      • If no primary guardian yet → ask for primary.
+      • If primary set but no substitute → offer substitute (or skip).
+      Both are recorded in step3_data.guardians as a list.
+    """
+    guardians = s3.get('guardians') or []
+    minor_names = [m.get('full_name', '').strip() or m.get('relationship', '') for m in minors]
+    minor_label = ', '.join(n for n in minor_names if n) or 'minor children'
+
+    # Determine which prompt to show
+    has_primary = len([g for g in guardians if not g.get('is_substitute')]) > 0
+    has_sub = len([g for g in guardians if g.get('is_substitute')]) > 0
+
+    if not has_primary:
+        parts = [
+            "### 👶 Step 4: Guardian",
+            f"There are minor children in this will: **{minor_label}**.",
+            "The Wills Act 1959 (s.27) requires a testamentary guardian to be "
+            "appointed to care for them. Who should be the **primary guardian**?",
+            "_Reply with the guardian's full name (as per IC), e.g. `CHAN MEI LIN`._",
+        ]
+        quick = [
+            {'label': '⏭ Skip — no minor children / will set later', 'value': 'guardian skip'},
+        ]
+    elif not has_sub:
+        primary_name = next((g.get('full_name','') for g in guardians if not g.get('is_substitute')), 'primary guardian')
+        parts = [
+            "### 👶 Step 4: Guardian — Substitute",
+            f"Primary guardian set: **{primary_name}**.",
+            "Do you also want to appoint a **substitute guardian** (steps in if primary "
+            "cannot act)?",
+            "_Reply with name, e.g. `LIM AH KENG`, or tap Skip._",
+        ]
+        quick = [
+            {'label': '⏭ No substitute needed', 'value': 'guardian skip substitute'},
+        ]
+    else:
+        # Both set — this path shouldn't render (guardians_confirmed would be set)
+        return {'text': ''}
+
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick)}
+
+
+def _step7_residuary_question(beneficiaries: list) -> str:
+    """Ask who inherits the residuary estate. Pre-fills a quick-reply
+    default (equal shares among all beneficiaries) so the writer can
+    one-tap it for simple wills."""
+    # Build default: all beneficiaries equally
+    names = [b.get('full_name', '') for b in beneficiaries if isinstance(b, dict) and b.get('full_name')]
+    if names:
+        if len(names) == 1:
+            default_val = f"{names[0]} 100%"
+        else:
+            default_val = ', '.join(f"{n} equal" for n in names)
+        default_label = f"Equal — {', '.join(names[:3])}" + (f" + {len(names)-3} more" if len(names) > 3 else '')
+        quick_default = [{'label': f'✅ {default_label}', 'value': default_val}]
+    else:
+        quick_default = []
+
+    quick = quick_default + [
+        {'label': '⏭ Skip residuary clause', 'value': 'residuary skip'},
+    ]
+    text = (
+        "✅ Specific gifts done. Moving to **Step 7: Residuary Estate**.\n\n"
+        "After the specific gifts above, who should inherit **everything else** "
+        "(property or money not specifically given away)?\n\n"
+        "Reply with name + share, e.g. `Wife 100%` or `Joshua 50%, Esther 50%`."
+    )
+    return text + _qr_marker(quick)
+
+
+_TRUST_DEFAULTS = {
+    'distribution_age': 25,
+    'note': 'Trust assets held until each beneficiary reaches the distribution age.',
+}
+
+def _step8_trust_question(s7: dict, minors: list, completed: list) -> Optional[str]:
+    """Return a chat prompt for testamentary trust OR None if already handled.
+
+    Flow:
+      1. If trust hasn't been asked → ask yes/no (plus Skip).
+      2. If user said yes but trustee not set → ask for trustee name.
+      3. If user said yes, trustee set, but age not set → ask distribution age.
+      4. All set OR user skipped → return None (mark trust_confirmed elsewhere).
+    """
+    # If step7 has trust_skipped → planner is past this step
+    if s7.get('trust_skipped') or s7.get('trustee_name') and s7.get('distribution_age'):
+        return None  # handled by app handler marking trust_confirmed
+
+    # Has minors? Present more urgently.
+    has_minors = bool(minors)
+    minor_label = ', '.join(m.get('full_name','') or 'minor child' for m in minors) if has_minors else ''
+
+    if not s7:
+        # Haven't asked yet
+        if has_minors:
+            intro = (
+                f"**Step 8: Testamentary Trust** _(optional)_\n\n"
+                f"You have minor children (**{minor_label}**). A testamentary trust "
+                "holds their inheritance until they reach a set age, rather than "
+                "paying out immediately at probate. Do you want to set one up?"
+            )
+        else:
+            intro = (
+                "**Step 8: Testamentary Trust** _(optional)_\n\n"
+                "A testamentary trust can hold assets for beneficiaries until a set age. "
+                "Would you like to set one up?"
+            )
+        quick = [
+            {'label': '✅ Yes — set up a trust', 'value': 'trust yes'},
+            {'label': '⏭ No trust needed — skip', 'value': 'trust skip'},
+        ]
+        return intro + _qr_marker(quick)
+
+    if s7.get('wants_trust') and not s7.get('trustee_name'):
+        quick = [{'label': '⏭ Use executor as trustee', 'value': 'trust trustee same as executor'}]
+        return (
+            "**Step 8: Trust — Trustee**\n\n"
+            "Who should be the **trustee** (manages the trust assets)?\n\n"
+            "_Reply with the trustee's full name, or tap below to use the executor._"
+        ) + _qr_marker(quick)
+
+    if s7.get('wants_trust') and s7.get('trustee_name') and not s7.get('distribution_age'):
+        quick = [
+            {'label': '25 years old', 'value': 'trust age 25'},
+            {'label': '21 years old', 'value': 'trust age 21'},
+            {'label': '18 years old', 'value': 'trust age 18'},
+            {'label': '⏭ No age limit', 'value': 'trust age none'},
+        ]
+        return (
+            "**Step 8: Trust — Distribution Age**\n\n"
+            "At what age should beneficiaries receive their trust share?"
+        ) + _qr_marker(quick)
+
+    return None  # All trust fields filled — fall through to trust_confirmed mark
+
+
+_DEFAULT_OTHER_CLAUSES = [
+    ('Funeral arrangements', 'No specific instructions — at executor\'s discretion.'),
+    ('Organ donation', 'No specific instructions.'),
+    ('Pets', 'No specific instructions.'),
+    ('Digital assets', 'Executor to deal with as deemed appropriate.'),
+    ('Debts', 'All debts and expenses to be paid from estate before distribution.'),
+    ('Governing law', 'This will is governed by the laws of Malaysia.'),
+]
+
+def _step9_others_question(s8: dict) -> str:
+    """Show the default 'other matters' clauses. User can confirm defaults
+    or ask to change any one. Tapping 'Confirm defaults' marks
+    others_confirmed in completed_steps."""
+    if s8 and s8.get('confirmed'):
+        return ''  # already done
+
+    lines = ["**Step 9: Other Matters** _(optional)_\n"]
+    lines.append("Here are the standard clauses included in every will. You can confirm "
+                 "them or ask to change any of them:\n")
+    for clause, default in _DEFAULT_OTHER_CLAUSES:
+        override = (s8.get(clause.lower().replace(' ', '_')) or '').strip()
+        val = override if override else f'_(default)_ {default}'
+        lines.append(f"  • **{clause}:** {val}")
+    text = '\n'.join(lines)
+    quick = [
+        {'label': '✅ Confirm defaults — proceed to review', 'value': 'others confirm'},
+        {'label': 'Change funeral instructions', 'value': 'change funeral'},
+        {'label': 'Change organ donation preference', 'value': 'change organ donation'},
+        {'label': 'Change digital assets instructions', 'value': 'change digital assets'},
+        {'label': '⏭ Skip — use all defaults', 'value': 'others skip'},
+    ]
+    return text + _qr_marker(quick)

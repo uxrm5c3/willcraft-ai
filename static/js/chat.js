@@ -661,6 +661,48 @@
     }
 
     willPane.innerHTML = sections.join('');
+
+    // Cost badge — async, best-effort, never blocks the snapshot render.
+    if (will.will_id) {
+      fetchAndRenderCostBadge(will.will_id);
+    }
+  }
+
+  async function fetchAndRenderCostBadge(willId) {
+    try {
+      const resp = await fetch(`/api/will/${willId}/cost`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!data.ok) return;
+      const pct = data.budget_pct || 0;
+      const barW = Math.min(100, pct).toFixed(1);
+      const barColor = pct < 10 ? 'bg-green-400' : pct < 40 ? 'bg-amber-400' : 'bg-red-500';
+      // Build per-site tooltip text
+      const rows = (data.calls || []).map(c =>
+        `${c.call_site.replace('ai.', '')}: ${c.calls}× · $${parseFloat(c.cost_usd).toFixed(4)}`
+      ).join('\n');
+      const badge = document.createElement('div');
+      badge.id = 'cost-badge';
+      badge.className = 'border-t border-gray-100 pt-2 mt-2 px-1';
+      badge.title = rows || 'No API calls logged yet';
+      badge.innerHTML = `
+        <div class="flex items-center justify-between text-[11px] text-gray-500 mb-0.5">
+          <span>💰 API cost this will</span>
+          <span class="font-mono font-semibold text-gray-700">${data.total_usd_fmt}</span>
+        </div>
+        <div class="w-full bg-gray-100 rounded-full h-1.5">
+          <div class="${barColor} h-1.5 rounded-full" style="width:${barW}%"></div>
+        </div>
+        <div class="text-[10px] text-gray-400 mt-0.5">
+          ${pct.toFixed(2)}% of $300/yr budget
+        </div>`;
+      // Replace existing badge or append
+      const existing = willPane.querySelector('#cost-badge');
+      if (existing) existing.replaceWith(badge);
+      else willPane.appendChild(badge);
+    } catch (e) {
+      // silent — cost badge is informational only
+    }
   }
 
   function snapshotSection(step, isCurrent) {

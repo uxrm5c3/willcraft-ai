@@ -1313,6 +1313,41 @@ def will_reject(will_id):
     return redirect(url_for('approval_list'))
 
 
+@app.route('/api/will/<will_id>/cost', methods=['GET'])
+@login_required
+def api_will_cost(will_id):
+    """Return total token cost for a will + per-call-site breakdown.
+
+    Response:
+      { ok: true,
+        will_id: "...",
+        total_usd: 0.001234,
+        total_usd_fmt: "$0.001234",
+        saas_budget_usd: 300,            # annual plan price
+        budget_pct: 0.04,                # % of annual budget consumed
+        calls: [{ call_site, calls, input_tokens, output_tokens, cost_usd }] }
+    """
+    will_record = db.session.get(Will, will_id)
+    if not will_record:
+        return jsonify({'ok': False, 'error': 'Will not found'}), 404
+
+    from ai.cost_tracker import total_for_will, breakdown_for_will
+    total = float(total_for_will(will_id))
+    calls = breakdown_for_will(will_id)
+    saas_budget = 300.0            # $300/yr annual plan
+    budget_pct = (total / saas_budget * 100) if saas_budget else 0
+
+    return jsonify({
+        'ok': True,
+        'will_id': will_id,
+        'total_usd': round(total, 6),
+        'total_usd_fmt': f'${total:.4f}',
+        'saas_budget_usd': saas_budget,
+        'budget_pct': round(budget_pct, 4),
+        'calls': calls,
+    })
+
+
 @app.route('/api/will/<will_id>/edit-text', methods=['POST'])
 @login_required
 def api_will_edit_text(will_id):
@@ -3243,6 +3278,25 @@ def api_chat_message(client_id):
     user_id = session.get('user_id')
     cs = _get_or_create_chat_session(client_id, user_id)
 
+    # Establish cost-tracking context for every Anthropic call made in this
+    # request: will_id, client_id, user_id auto-attach to ApiCallLog rows.
+    _will_for_ctx = (Will.query
+                     .filter_by(client_id=client_id, status='draft')
+                     .filter(Will.deleted_at.is_(None))
+                     .order_by(Will.updated_at.desc())
+                     .first())
+    _cost_ctx_ids = {
+        'client_id': client_id,
+        'will_id': _will_for_ctx.id if _will_for_ctx else None,
+        'user_id': user_id,
+    }
+    try:
+        from ai.cost_tracker import track_context as _track_ctx
+        _cost_tracker_cm = _track_ctx(**_cost_ctx_ids)
+        _cost_tracker_cm.__enter__()
+    except Exception:
+        _cost_tracker_cm = None
+
     # 1. Persist the user message first so attachments can FK to it
     user_msg = ChatMessage(
         session_id=cs.id, role='user', content=user_text,
@@ -3392,40 +3446,85 @@ def api_chat_message(client_id):
     #    asked to delete the focused doc. Then refresh the pending list so
     #    the planner asks about the NEXT one.
     # Q&A digression: if user asked a side-quest question, answer it as a
-    # SEPARATE assistant message. The planner still runs after so the
-    # current step's question is also re-asked. Works whether or not files
-    # were attached this turn.
+    # SEPARATE assistant message. By default we SHORT-CIRCUIT and return
+    # only the Q&A — the answer already includes a "↩ Resume <step>" quick
+    # reply so the writer can come back. The planner only also runs if the
+    # turn ALSO carried files OR the text starts with an action token (yes
+    # / skip / confirm / a beneficiary share like "Joshua 50%") — in those
+    # cases the user mixed a question with an action and both need handling.
     qa_msg = None
     if user_text:
-        from ai.legal_qa import is_question, answer_question
-        if is_question(user_text):
+        try:
+            from ai.legal_qa import is_question, answer_question
+            looks_like_question = is_question(user_text)
+        except Exception as e:
+            try:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "is_question failed: %s", e, exc_info=True)
+            except Exception:
+                pass
+            looks_like_question = False
+        if looks_like_question:
             current_will = (Will.query.filter_by(client_id=client_id, status='draft')
                             .filter(Will.deleted_at.is_(None))
                             .order_by(Will.updated_at.desc()).first())
-            stage = _current_stage_label(client_id, current_will)
-            ans = answer_question(user_text, stage, client_id=client_id,
-                                  user_id=session.get('user_id'))
-            if ans:
-                qa_msg = ChatMessage(session_id=cs.id, role='assistant', content=ans,
-                                     attachments_json='[]')
-                db.session.add(qa_msg)
-                db.session.commit()
-                # If pure-question with NO files and NO directed-flow keywords,
-                # short-circuit (don't re-ask). Otherwise fall through so the
-                # planner also acknowledges the upload / current step.
-                _kw = user_text.strip().lower()
-                short_circuit = (not files and not artifacts and
-                                 _kw not in ('yes','skip','delete','no') and
-                                 not any(k in _kw for k in
-                                         ('spouse','wife','husband','son','daughter',
-                                          'father','mother','brother','sister','executor',
-                                          'witness','beneficiary','100%','50%','%')))
-                if short_circuit:
-                    return jsonify({
-                        'ok': True,
-                        'user_message': _serialise_chat_message(user_msg),
-                        'assistant_message': _serialise_chat_message(qa_msg),
-                    })
+            try:
+                stage = _current_stage_label(client_id, current_will)
+            except Exception:
+                stage = ''
+            try:
+                ans = answer_question(user_text, stage, client_id=client_id,
+                                      user_id=session.get('user_id'))
+            except Exception as e:
+                try:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "answer_question crashed: %s", e, exc_info=True)
+                except Exception:
+                    pass
+                # Never let the Q&A path fail silently — emit a fallback so
+                # the user always sees SOMETHING acknowledging their question.
+                ans = (f"**Answer:** I couldn't reach the legal-Q&A engine just "
+                       f"now — please retry in a moment.\n\n_(error: {str(e)[:100]})_")
+            if not ans:
+                ans = ("**Answer:** I couldn't generate an answer for that — "
+                       "try rephrasing, or check the [Legal Library](/library).")
+            qa_msg = ChatMessage(session_id=cs.id, role='assistant', content=ans,
+                                 attachments_json='[]')
+            db.session.add(qa_msg)
+            db.session.commit()
+
+            # Decide: should the planner ALSO run after the Q&A?
+            #
+            # Default: NO — short-circuit. The Q&A answer already includes a
+            # "↩ Resume" quick-reply, and re-asking the current step on top
+            # of the Q&A buries the answer in noise (this is the bug the
+            # writer reported: "no response" — actually the Q&A was there
+            # but a giant asset card was rendered after it).
+            #
+            # Run the planner ONLY when the turn also looks like an action:
+            #   - files attached this turn
+            #   - text starts with a confirmation/skip/delete token
+            #   - text contains an explicit share assignment ("Joshua 50%")
+            _kw = user_text.strip().lower()
+            _action_starts = ('yes', 'skip', 'delete', 'no', 'confirm',
+                              'remove', 'inventory ', 'unlink ',
+                              'guardian ', 'trust ', 'trust yes', 'trust skip',
+                              'others ', 'residuary skip',
+                              'change ', 'confirm defaults')
+            has_share = bool(re.search(r'\b\d{1,3}\s*%|\bequal\b|\b\d+/\d+\b', _kw))
+            also_action = (
+                bool(files) or bool(artifacts)
+                or any(_kw == t.strip() or _kw.startswith(t) for t in _action_starts)
+                or has_share
+            )
+            if not also_action:
+                return jsonify({
+                    'ok': True,
+                    'user_message': _serialise_chat_message(user_msg),
+                    'assistant_message': _serialise_chat_message(qa_msg),
+                })
 
     just_assigned = _try_assign_pending_identity(client_id, user_text)
     just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)
@@ -3451,16 +3550,28 @@ def api_chat_message(client_id):
     just_benef = None
     just_gift_deleted = None
     just_gift = None
+    just_guardian = None
+    just_trust = None
+    just_others = None
+    just_residuary_skip = None
     if not just_assigned and not just_deleted:
         from services.identity_walker import get_pending_ic_documents as _gpid
         if not _gpid(client_id):  # Step 1 done
             just_executor = _try_save_executor(client_id, user_text)
             if not just_executor:
-                just_benef = _try_save_beneficiaries(client_id, user_text)
-                if not just_benef:
-                    just_gift_deleted = _try_delete_pending_gift(client_id, user_text)
-                    if not just_gift_deleted:
-                        just_gift = _try_save_property_gift(client_id, user_text)
+                just_guardian = _try_handle_guardian_action(client_id, user_text)
+                if not just_guardian:
+                    just_trust = _try_handle_trust_action(client_id, user_text)
+                    if not just_trust:
+                        just_others = _try_handle_others_action(client_id, user_text)
+                        if not just_others:
+                            just_residuary_skip = _try_handle_residuary_skip(client_id, user_text)
+                            if not just_residuary_skip:
+                                just_benef = _try_save_beneficiaries(client_id, user_text)
+                                if not just_benef:
+                                    just_gift_deleted = _try_delete_pending_gift(client_id, user_text)
+                                    if not just_gift_deleted:
+                                        just_gift = _try_save_property_gift(client_id, user_text)
     from services.identity_walker import get_pending_ic_documents
     from services.gift_walker import get_pending_gift_documents
     pending_ics = get_pending_ic_documents(client_id)
@@ -3477,7 +3588,8 @@ def api_chat_message(client_id):
     # Treat any save as "just_assigned" so the planner acknowledges + advances
     just = (just_assigned or just_executor or just_benef
             or just_gift_deleted or just_gift or just_assets_gate
-            or just_inventory)
+            or just_inventory or just_guardian or just_trust
+            or just_others or just_residuary_skip)
     will_snapshot['pending_gifts'] = pending_gifts
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
@@ -3507,6 +3619,11 @@ def api_chat_message(client_id):
     extra = {}
     if qa_msg is not None:
         extra['qa_message'] = _serialise_chat_message(qa_msg)
+    try:
+        if _cost_tracker_cm is not None:
+            _cost_tracker_cm.__exit__(None, None, None)
+    except Exception:
+        pass
     return jsonify({
         'ok': True,
         'user_message': _serialise_chat_message(user_msg),
@@ -4109,6 +4226,8 @@ def _try_save_beneficiaries(client_id: str, user_text: str):
         return None
     try:
         s2 = json.loads(will.step2_data) if will.step2_data else {}
+        if not isinstance(s2, dict):
+            s2 = {}
     except (json.JSONDecodeError, TypeError):
         s2 = {}
     if len(s2.get('executors') or []) == 0:
@@ -4287,9 +4406,19 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
     if not user_text:
         return None
     t = user_text.strip().lower()
+    # Accept the four explicit prefixes AND the bare "delete"/"remove"
+    # tokens that the 🗑 quick-reply on the property/bank/vehicle review
+    # cards emits. Without the bare-token branch the delete button was a
+    # no-op (it fell through to the IC-only delete handler, which returned
+    # None because the user is past Step 1).
+    _is_delete = (t == 'delete' or t == 'remove'
+                  or t.startswith('delete ') or t.startswith('remove ')
+                  or t.startswith('inventory delete')
+                  or t.startswith('inventory remove'))
     if not (t.startswith('inventory confirm')
             or t.startswith('inventory skip')
-            or t.startswith('inventory unlink')):
+            or t.startswith('inventory unlink')
+            or _is_delete):
         return None
 
     from services.gift_walker import get_pending_gift_documents
@@ -4313,6 +4442,54 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
     doc = db.session.get(Document, target['document_id'])
     if not doc:
         return None
+
+    if _is_delete:
+        # 🗑 Remove this property/bank/vehicle. Soft-delete the focused
+        # Document AND any auto-grouped support docs so the writer doesn't
+        # have to delete each piece individually. Also stamp _inventoried
+        # so the walk-through skips past this slot on the next render.
+        try:
+            ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            ex = {}
+        ex['_inventoried'] = True
+        ex['_deleted_by_user'] = True
+        try:
+            doc.extracted_data = json.dumps(ex)
+            doc.category = 'deleted'
+            doc.description = (doc.description or '') + ' (removed via chat walk-through)'
+            removed_count = 1
+            # Cascade-delete any support docs the planner had grouped under
+            # this asset (SPA / cukai / utility / extra geran pages — all
+            # tied by property_hint or filename neighbourhood).
+            for s in (target.get('support_docs') or []):
+                sd = db.session.get(Document, s.get('document_id'))
+                if not sd:
+                    continue
+                try:
+                    sex = json.loads(sd.extracted_data) if sd.extracted_data else {}
+                except (json.JSONDecodeError, TypeError):
+                    sex = {}
+                sex['_inventoried'] = True
+                sex['_deleted_by_user'] = True
+                sd.extracted_data = json.dumps(sex)
+                sd.category = 'deleted'
+                sd.description = (sd.description or '') + ' (cascade-removed with parent property)'
+                removed_count += 1
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        if target_kind == 'property':
+            label = (ex.get('property_address') or ex.get('title_number')
+                     or ex.get('property_hint') or 'property')
+        elif target_kind == 'bank':
+            label = (ex.get('bank_name') or 'bank account')
+        else:
+            label = (ex.get('description') or ex.get('vehicle_make') or 'vehicle')
+        return {'name': label[:80],
+                'role': f'removed ({removed_count} doc{"s" if removed_count != 1 else ""})',
+                'kind': f'inventory_deleted_{target_kind}'}
 
     if t.startswith('inventory unlink'):
         # Stamp a transient marker so the planner shows the support-doc
@@ -4447,6 +4624,262 @@ def _try_handle_assets_gate(client_id: str, user_text: str):
         return {'name': 'asset inventory', 'role': 'confirmed complete',
                 'kind': 'assets_confirmed'}
     return None
+
+
+def _mark_completed(will, key: str) -> bool:
+    """Add `key` to will.completed_steps. Returns True if added, False if
+    already present or will is None."""
+    if not will:
+        return False
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+        if not isinstance(completed, list):
+            completed = []
+        if key in completed:
+            return False
+        completed.append(key)
+        will.completed_steps = json.dumps(completed)
+        db.session.commit()
+        return True
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return False
+
+
+def _get_or_create_will(client_id: str):
+    """Return the active draft Will for client, creating one if missing."""
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        will = Will(client_id=client_id, status='draft',
+                    title='Draft Will', completed_steps='[]')
+        db.session.add(will)
+        db.session.commit()
+    return will
+
+
+def _try_handle_guardian_action(client_id: str, user_text: str):
+    """Handle guardian step quick-replies and free-text names.
+
+    Recognised inputs:
+      'guardian skip'              → mark guardians_confirmed, no guardian set
+      'guardian skip substitute'   → mark guardians_confirmed (primary already set)
+      'guardian <name>'            → save primary guardian
+      '<name>' at guardian step    → handled separately in plan context; not here
+
+    Returns {name, role, kind} or None.
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+
+    if t == 'guardian skip' or t == 'guardian none':
+        will = _get_or_create_will(client_id)
+        _mark_completed(will, 'guardians_confirmed')
+        return {'name': 'guardians', 'role': 'skipped (no minor children / will set via wizard)',
+                'kind': 'guardian_skipped'}
+
+    if t == 'guardian skip substitute':
+        will = _get_or_create_will(client_id)
+        _mark_completed(will, 'guardians_confirmed')
+        return {'name': 'guardians', 'role': 'primary set; no substitute',
+                'kind': 'guardian_confirmed'}
+
+    if not t.startswith('guardian '):
+        return None
+    # 'guardian <name>'
+    name = user_text.strip()[9:].strip()  # strip 'guardian ' prefix (case-preserved)
+    if not name or len(name) < 2:
+        return None
+    will = _get_or_create_will(client_id)
+    try:
+        s3 = json.loads(will.step3_data or '{}') if will.step3_data else {}
+        if not isinstance(s3, dict):
+            s3 = {}
+    except (json.JSONDecodeError, TypeError):
+        s3 = {}
+    guardians = s3.get('guardians') or []
+    has_primary = any(not g.get('is_substitute') for g in guardians)
+    new_guardian = {'full_name': name.upper(), 'is_substitute': has_primary}
+    guardians.append(new_guardian)
+    s3['guardians'] = guardians
+    try:
+        will.step3_data = json.dumps(s3)
+        if has_primary:
+            # Substitute added → mark confirmed
+            _mark_completed(will, 'guardians_confirmed')
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+    role = 'substitute guardian' if has_primary else 'primary guardian'
+    return {'name': name.upper(), 'role': role, 'kind': 'guardian_saved'}
+
+
+def _try_handle_trust_action(client_id: str, user_text: str):
+    """Handle testamentary trust step quick-replies.
+
+    Recognised:
+      'trust yes'                   → set wants_trust=True, ask for trustee
+      'trust skip'                  → mark trust_confirmed, trust_skipped=True
+      'trust trustee same as executor' → copy executor name as trustee
+      'trust trustee <name>'        → save trustee name
+      'trust age <n>'               → save distribution age
+      'trust age none'              → no age limit
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    if not (t.startswith('trust ') or t == 'trust yes' or t == 'trust skip'):
+        return None
+    will = _get_or_create_will(client_id)
+    try:
+        s7 = json.loads(will.step7_data or '{}') if will.step7_data else {}
+        if not isinstance(s7, dict):
+            s7 = {}
+    except (json.JSONDecodeError, TypeError):
+        s7 = {}
+
+    if t == 'trust skip':
+        s7['trust_skipped'] = True
+        will.step7_data = json.dumps(s7)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        _mark_completed(will, 'trust_confirmed')
+        return {'name': 'trust', 'role': 'skipped', 'kind': 'trust_skipped'}
+
+    if t == 'trust yes':
+        s7['wants_trust'] = True
+        will.step7_data = json.dumps(s7)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return {'name': 'trust', 'role': 'setting up trust — enter trustee name',
+                'kind': 'trust_wants'}
+
+    if t == 'trust trustee same as executor':
+        s2 = json.loads(will.step2_data or '{}') if will.step2_data else {}
+        executors = (s2.get('executors') or []) if isinstance(s2, dict) else []
+        exec_name = (executors[0].get('full_name') or '') if executors else ''
+        s7['trustee_name'] = exec_name or 'Executor'
+        will.step7_data = json.dumps(s7)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return {'name': exec_name or 'Executor', 'role': 'trustee (same as executor)',
+                'kind': 'trust_trustee_set'}
+
+    if t.startswith('trust trustee '):
+        name = user_text.strip()[14:].strip().upper()
+        s7['trustee_name'] = name
+        will.step7_data = json.dumps(s7)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return {'name': name, 'role': 'trustee saved', 'kind': 'trust_trustee_set'}
+
+    if t.startswith('trust age '):
+        age_val = user_text.strip()[10:].strip().lower()
+        if age_val in ('none', 'no limit', ''):
+            s7['distribution_age'] = None
+            role = 'no age limit'
+        else:
+            try:
+                s7['distribution_age'] = int(re.sub(r'[^\d]', '', age_val) or '25')
+                role = f'distribute at age {s7["distribution_age"]}'
+            except ValueError:
+                return None
+        will.step7_data = json.dumps(s7)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        # If trustee + age both set, mark confirmed
+        if s7.get('trustee_name') and 'distribution_age' in s7:
+            _mark_completed(will, 'trust_confirmed')
+        return {'name': 'trust', 'role': role, 'kind': 'trust_age_set'}
+
+    return None
+
+
+def _try_handle_others_action(client_id: str, user_text: str):
+    """Handle 'other matters' step.
+
+    Recognised:
+      'others confirm'   → mark others_confirmed with default values
+      'others skip'      → same as confirm with defaults
+      'change <clause>'  → prompt is handled by chat_planner; here we just
+                           look for 'change <clause>: <new text>' pattern
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    will = _get_or_create_will(client_id)
+    try:
+        s8 = json.loads(will.step8_data or '{}') if will.step8_data else {}
+        if not isinstance(s8, dict):
+            s8 = {}
+    except (json.JSONDecodeError, TypeError):
+        s8 = {}
+
+    if t in ('others confirm', 'others skip', 'confirm defaults — proceed to review',
+             'confirm defaults', 'skip — use all defaults'):
+        s8['confirmed'] = True
+        will.step8_data = json.dumps(s8)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        _mark_completed(will, 'others_confirmed')
+        return {'name': 'other matters', 'role': 'confirmed with defaults', 'kind': 'others_confirmed'}
+
+    # Pattern: 'change <clause>: <new value>'  e.g. "change funeral: Cremation preferred"
+    m = re.match(r'^change\s+(.+?):\s*(.+)$', user_text.strip(), re.IGNORECASE)
+    if m:
+        clause_key = re.sub(r'\s+', '_', m.group(1).strip().lower())
+        new_val = m.group(2).strip()
+        s8[clause_key] = new_val
+        will.step8_data = json.dumps(s8)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return {'name': clause_key, 'role': f'updated: {new_val[:60]}', 'kind': 'others_updated'}
+
+    return None
+
+
+def _try_handle_residuary_skip(client_id: str, user_text: str):
+    """If user taps 'residuary skip', mark residuary_confirmed with no
+    beneficiaries so the planner advances past step 7."""
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    if t != 'residuary skip':
+        return None
+    will = _get_or_create_will(client_id)
+    # Write an empty step6 so the planner sees it as 'done'
+    try:
+        s6 = json.loads(will.step6_data or '{}') if will.step6_data else {}
+        if not isinstance(s6, dict):
+            s6 = {}
+        s6['skipped'] = True
+        s6['beneficiaries'] = []
+        will.step6_data = json.dumps(s6)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+    return {'name': 'residuary', 'role': 'skipped', 'kind': 'residuary_skipped'}
 
 
 def _try_delete_pending_gift(client_id: str, user_text: str):
@@ -4615,8 +5048,39 @@ def _try_save_property_gift(client_id: str, user_text: str):
     db.session.commit()
 
     desc = ', '.join(f"{b['name']} {b['share']}" for b in parsed)
-    addr = (target.get('extracted', {}) or {}).get('property_address', 'property')
-    return {'name': desc, 'role': f'gift of {addr[:50]}', 'kind': 'gift'}
+    ex_t = (target.get('extracted', {}) or {})
+    addr = ex_t.get('property_address', 'property')
+
+    # ── Probate-critical alert ──────────────────────────────────────
+    # Even though the gift is now saved, the lawyer still needs Geran +
+    # lot + mukim/daerah/negeri to file Borang 14A / Deed of Transmission
+    # at the Land Office. If any are blank, raise the alert NOW (during
+    # gift completion) so the writer chases the client before the will
+    # is finalised — not after.
+    alert_parts = []
+    if not (ex_t.get('title_number') or '').strip():
+        alert_parts.append('title number (Geran/PTD/HSD/HSM/Hakmilik)')
+    if not (ex_t.get('lot_number') or '').strip():
+        alert_parts.append('lot number')
+    if not (ex_t.get('mukim') or '').strip():
+        alert_parts.append('Mukim')
+    if not (ex_t.get('daerah') or '').strip():
+        alert_parts.append('Daerah')
+    if not (ex_t.get('negeri') or '').strip():
+        alert_parts.append('Negeri')
+    alert = ''
+    if alert_parts:
+        alert = (
+            "🚨 **Probate alert:** this gift is missing **"
+            + ', '.join(alert_parts)
+            + "** — the lawyer cannot file _Borang 14A / Deed of "
+            "Transmission_ at the Pejabat Tanah without these. Please "
+            "ask the client for a clearer Geran/Hakmilik scan before "
+            "finalising the will."
+        )
+
+    return {'name': desc, 'role': f'gift of {addr[:50]}', 'kind': 'gift',
+            'alert': alert}
 
 
 def _try_save_executor(client_id: str, user_text: str):

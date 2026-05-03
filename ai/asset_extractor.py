@@ -81,6 +81,11 @@ Return ONLY the JSON, no explanation."""
         }]
     )
 
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.asset_extractor.extract_asset_data')
+    except Exception:
+        pass
     response_text = message.content[0].text.strip()
     if response_text.startswith('```'):
         response_text = response_text.split('\n', 1)[1].rsplit('```', 1)[0].strip()

@@ -158,6 +158,11 @@ IMPORTANT: The character-by-character reading in Steps 2-3 is CRITICAL for accur
             ]
         }]
     )
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.ocr.extract_nric_data')
+    except Exception:
+        pass
 
     response_text = message.content[0].text.strip()
 
@@ -313,6 +318,12 @@ IMPORTANT: The character-by-character reading in Steps 2-3 is CRITICAL for accur
     result.pop('confidence', None)
     result.pop('_nric_date_invalid', None)
 
+    # 12. Selective re-OCR for nric_number if blank or garbled
+    try:
+        result = reocr_if_suspicious(image_path, result)
+    except Exception:
+        pass  # re-OCR is best-effort; never block the primary result
+
     return result
 
 
@@ -396,6 +407,11 @@ If you cannot read the address at all, return exactly: UNREADABLE"""
             ]
         }]
     )
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.ocr._extract_address_only')
+    except Exception:
+        pass
 
     text = message.content[0].text.strip()
     if not text or text == 'UNREADABLE' or len(text) < 5:
@@ -513,6 +529,11 @@ IMPORTANT: The character-by-character reading is CRITICAL for accuracy. Do NOT s
             ]
         }]
     )
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.ocr.extract_death_cert_data')
+    except Exception:
+        pass
 
     response_text = message.content[0].text.strip()
     json_str = _extract_json(response_text)
@@ -663,6 +684,11 @@ Output ONLY this JSON:
         max_tokens=1024,
         messages=[{"role": "user", "content": [content_block, {"type": "text", "text": prompt_text}]}]
     )
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.ocr.extract_asset_document')
+    except Exception:
+        pass
 
     response_text = message.content[0].text.strip()
     json_str = _extract_json(response_text)
@@ -759,6 +785,11 @@ If the document is already in English, just reproduce the text content."""
             ]
         }]
     )
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.ocr.translate_document')
+    except Exception:
+        pass
     return message.content[0].text
 
 
@@ -856,6 +887,11 @@ IMPORTANT: The character-by-character reading is CRITICAL for accuracy."""
             ]
         }]
     )
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.ocr.extract_will_data')
+    except Exception:
+        pass
 
     response_text = message.content[0].text.strip()
     json_str = _extract_json(response_text)
@@ -895,4 +931,134 @@ IMPORTANT: The character-by-character reading is CRITICAL for accuracy."""
     result.setdefault('assets', [])
     result.setdefault('will_date', '')
 
+    return result
+
+
+# ── Selective re-OCR for critical number fields ──────────────────────────
+
+_REOCR_TARGETS = {
+    # field_name: (prompt label, example format hint)
+    'nric_number': (
+        'IC/NRIC number (12-digit Malaysian NRIC format YYMMDD-SS-NNNN or passport number)',
+        'e.g. 870101-14-5678',
+    ),
+    'title_number': (
+        'land title number (Geran / PTD / HSD / HSM / Hakmilik / Pajakan number)',
+        'e.g. PTD 127082 or HSD 12345/M7/1/1 or Geran 123456',
+    ),
+    'lot_number': (
+        'lot number (Lot / PT / No. Lot)',
+        'e.g. Lot 207922 or PT 12345',
+    ),
+    'account_number': (
+        'bank account number',
+        'e.g. 1234567890123',
+    ),
+}
+
+
+def reocr_critical_field(image_path: str, field_name: str) -> str:
+    """Re-run a tight vision extraction on a SINGLE critical field, reading
+    each character one-by-one to catch OCR misreads.
+
+    Returns the re-read value as a string, or '' on failure.
+
+    Use this when the primary extraction returned blank or a suspicious value
+    for a field that is blocking probate (title_number, lot_number, nric,
+    account_number).
+    """
+    label, hint = _REOCR_TARGETS.get(field_name, (field_name, ''))
+    if not label:
+        return ''
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        content_block = _make_content_block(image_path)
+    except Exception:
+        return ''
+    prompt = f"""Look very carefully at this document image.
+
+Your ONLY job is to read the **{label}**.
+
+STEP 1 — Locate it: scan the document for the {label}. It may be printed,
+stamped, or handwritten. Common label prefixes: No., No. Hakmilik, PTD,
+HSD, HS(D), HSM, IC No, No. KP, No. Akaun, Account No.
+
+STEP 2 — Spell it out CHARACTER BY CHARACTER (including letters, digits,
+spaces, slashes, dashes):
+Character list: [c1] [c2] [c3] ...
+
+STEP 3 — Double-check common confusions: 0 vs O, 1 vs I/l, 8 vs B,
+5 vs S, 6 vs G, 2 vs Z. Re-read any ambiguous character.
+
+STEP 4 — Write the final value in this exact format (format hint: {hint}):
+VALUE: <the number here>
+
+If you truly cannot find or read it:
+VALUE: (unreadable)
+
+Output ONLY the steps above. No other text."""
+
+    try:
+        message = client.messages.create(
+            model=CLAUDE_MODEL_FAST,
+            max_tokens=400,
+            messages=[{
+                'role': 'user',
+                'content': [content_block, {'type': 'text', 'text': prompt}],
+            }],
+        )
+    except Exception:
+        return ''
+
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site=f'ai.ocr.reocr_critical_field.{field_name}')
+    except Exception:
+        pass
+
+    raw = (message.content[0].text or '').strip() if message.content else ''
+    # Parse "VALUE: <text>"
+    m = re.search(r'VALUE\s*:\s*(.+)', raw, re.IGNORECASE)
+    if not m:
+        return ''
+    val = m.group(1).strip()
+    if val.lower() in ('(unreadable)', 'unreadable', 'n/a', 'none', ''):
+        return ''
+    return val
+
+
+def reocr_if_suspicious(image_path: str, extracted: dict) -> dict:
+    """Check extracted dict for blank or garbled critical fields and re-run
+    targeted OCR on each one. Returns a NEW dict with patched values.
+
+    Called by the property extractor and NRIC extractor after the main
+    extraction so suspicious values are caught immediately.
+
+    Fields checked: title_number, lot_number (properties); nric_number (IC).
+    """
+    result = dict(extracted)
+    for field in ('nric_number', 'title_number', 'lot_number'):
+        val = (result.get(field) or '').strip()
+        suspicious = False
+        if not val:
+            suspicious = True
+        elif field == 'nric_number':
+            # 12 contiguous digits (possibly with dashes) expected
+            digits_only = re.sub(r'[-\s]', '', val)
+            if not (digits_only.isdigit() and len(digits_only) == 12):
+                suspicious = True
+        elif field in ('title_number', 'lot_number'):
+            # Alphanumeric + small set of separators OK; anything with
+            # commas / asterisks / unusual chars is a red flag
+            cleaned = re.sub(r'[ /\-.()\[\]A-Za-z0-9]', '', val)
+            if cleaned:  # unexpected chars remain
+                suspicious = True
+        if suspicious:
+            try:
+                new_val = reocr_critical_field(image_path, field)
+                if new_val:
+                    result[field] = new_val
+                    result.setdefault('_reocr_patched', []).append(field)
+            except Exception:
+                pass
     return result

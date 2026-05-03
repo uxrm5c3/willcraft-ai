@@ -8,7 +8,7 @@ appears to be your Spouse — confirm?").
 import json
 import anthropic
 from typing import Dict, List
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
+from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_CHEAP
 
 
 CANONICAL_ROLES = [
@@ -40,7 +40,7 @@ def deduce_roles(text: str, names: List[str]) -> Dict[str, Dict[str, str]]:
         roles_csv = ', '.join(CANONICAL_ROLES)
         names_list = '\n'.join(f"- {n}" for n in names)
         msg = client.messages.create(
-            model=CLAUDE_MODEL_FAST,
+            model=CLAUDE_MODEL_CHEAP,
             max_tokens=800,
             messages=[{
                 "role": "user",
@@ -71,6 +71,11 @@ Return ONLY a JSON object, no commentary:
 """
             }]
         )
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='ai.role_deducer.deduce_roles')
+        except Exception:
+            pass
         raw = (msg.content[0].text or '').strip() if msg.content else ''
         # Strip code fences if any
         if raw.startswith('```'):

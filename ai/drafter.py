@@ -573,6 +573,11 @@ Draft the complete will now, following the professional format and clause orderi
         ]
     )
 
+    try:
+        from ai.cost_tracker import log_usage
+        log_usage(message, call_site='ai.drafter.draft_will')
+    except Exception:
+        pass
     will_text = message.content[0].text
 
     # Post-process: fix double parentheses from AI output
