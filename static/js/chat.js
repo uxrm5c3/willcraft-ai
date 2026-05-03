@@ -307,8 +307,19 @@
         : 'absolute -top-1.5 -right-1.5 w-5 h-5 bg-white text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full text-xs leading-none shadow border border-gray-200';
       html += `<button type="button" onclick="window.__deleteMessage('${m.id}')" class="${btnCls}" title="Delete this message">×</button>`;
     }
-    if (m.content) {
-      html += `<div class="text-sm ${m.role === 'user' ? '' : 'text-gray-800'}">${inlineMd(m.content)}</div>`;
+    // Extract any <!--quickreplies:[...]--> marker from content. The marker
+    // is stripped before rendering text and the buttons are emitted below.
+    let inlineQuickReplies = null;
+    let renderContent = m.content || '';
+    if (renderContent) {
+      const qrMatch = renderContent.match(/<!--quickreplies:(\[[\s\S]*?\])-->/);
+      if (qrMatch) {
+        try { inlineQuickReplies = JSON.parse(qrMatch[1]); } catch (e) {}
+        renderContent = renderContent.replace(qrMatch[0], '').trim();
+      }
+    }
+    if (renderContent) {
+      html += `<div class="text-sm ${m.role === 'user' ? '' : 'text-gray-800'}">${inlineMd(renderContent)}</div>`;
     }
 
     if (m.attachments && m.attachments.length) {
@@ -369,6 +380,26 @@
           </div>
           <div class="mt-2 text-xs text-gray-500">…or type a different role: spouse, son, daughter, executor, etc.</div>
         `;
+      }
+
+      // Inline quick-reply buttons from <!--quickreplies--> marker (only on
+      // the latest assistant bubble so stale buttons disappear).
+      const isLatestForQR = (m.id === window.__latestAssistantId);
+      if (inlineQuickReplies && inlineQuickReplies.length && isLatestForQR) {
+        html += '<div class="mt-3 flex flex-wrap gap-2">';
+        for (const qr of inlineQuickReplies) {
+          const lbl = escapeHtml(qr.label || qr.value || '');
+          const val = (qr.value || qr.label || '').replace(/'/g, "\\'");
+          // Heuristic styling: skip/delete get muted/red, others primary
+          const v = (qr.value || '').toLowerCase();
+          const cls = v === 'skip' || v === 'not yet'
+            ? 'px-3 py-1.5 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 border border-gray-300'
+            : v === 'delete'
+              ? 'px-3 py-1.5 bg-red-50 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-100 border border-red-200'
+              : 'px-3 py-1.5 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700';
+          html += `<button onclick="window.__quickReply('${val}')" class="${cls}">${lbl}</button>`;
+        }
+        html += '</div>';
       }
 
       // Clarifying questions

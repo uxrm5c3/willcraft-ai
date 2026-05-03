@@ -3363,14 +3363,14 @@ def api_chat_message(client_id):
     #    with a relationship keyword OR confirmation. If not, see if they
     #    asked to delete the focused doc. Then refresh the pending list so
     #    the planner asks about the NEXT one.
-    # Q&A digression: if user asked a side-quest question (not files-only),
-    # answer it without advancing the step. They'll come back and answer
-    # the original question on the next turn.
-    if user_text and not files:
+    # Q&A digression: if user asked a side-quest question, answer it as a
+    # SEPARATE assistant message. The planner still runs after so the
+    # current step's question is also re-asked. Works whether or not files
+    # were attached this turn.
+    qa_msg = None
+    if user_text:
         from ai.legal_qa import is_question, answer_question
-        # But don't intercept short keyword-style replies (yes/skip/delete/relationship)
         if is_question(user_text):
-            from services.identity_walker import get_pending_ic_documents as _gpi
             current_will = (Will.query.filter_by(client_id=client_id, status='draft')
                             .filter(Will.deleted_at.is_(None))
                             .order_by(Will.updated_at.desc()).first())
@@ -3382,11 +3382,22 @@ def api_chat_message(client_id):
                                      attachments_json='[]')
                 db.session.add(qa_msg)
                 db.session.commit()
-                return jsonify({
-                    'ok': True,
-                    'user_message': _serialise_chat_message(user_msg),
-                    'assistant_message': _serialise_chat_message(qa_msg),
-                })
+                # If pure-question with NO files and NO directed-flow keywords,
+                # short-circuit (don't re-ask). Otherwise fall through so the
+                # planner also acknowledges the upload / current step.
+                _kw = user_text.strip().lower()
+                short_circuit = (not files and not artifacts and
+                                 _kw not in ('yes','skip','delete','no') and
+                                 not any(k in _kw for k in
+                                         ('spouse','wife','husband','son','daughter',
+                                          'father','mother','brother','sister','executor',
+                                          'witness','beneficiary','100%','50%','%')))
+                if short_circuit:
+                    return jsonify({
+                        'ok': True,
+                        'user_message': _serialise_chat_message(user_msg),
+                        'assistant_message': _serialise_chat_message(qa_msg),
+                    })
 
     just_assigned = _try_assign_pending_identity(client_id, user_text)
     just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)

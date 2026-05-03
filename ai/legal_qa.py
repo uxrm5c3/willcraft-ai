@@ -45,6 +45,18 @@ def answer_question(user_text: str, current_stage_summary: str = '',
     on any failure (caller can fall back to ignoring)."""
     if not user_text:
         return ''
+    # Build a "↩ Resume" quick-reply for the current step so the user can
+    # one-tap back to the workflow after the digression. Stage label is
+    # passed in by the caller (e.g. "Step 6: property gift", "Step 1: Identity").
+    import json as _json
+    resume_quick = []
+    if current_stage_summary:
+        # The literal string 'continue' triggers the planner to re-emit
+        # whatever question was active (it doesn't match any save-keyword).
+        resume_quick = [
+            {'label': f"↩ Resume {current_stage_summary}", 'value': 'continue'},
+            {'label': 'Stay here, I have more questions', 'value': 'not yet'},
+        ]
     matched_titles = []
     # Snapshot of which Acts the library currently holds (for transparency)
     library_titles = []
@@ -135,6 +147,9 @@ Answer the question, then end with the disclaimer. Do NOT preface with
         else:
             header = "⚠️ Library is empty (no Acts uploaded yet) — answering from general knowledge.\n\n"
 
-        return header + body + nudge
+        out = header + body + nudge
+        if resume_quick:
+            out += f"\n\n<!--quickreplies:{_json.dumps(resume_quick)}-->"
+        return out
     except Exception:
         return ''

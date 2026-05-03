@@ -514,43 +514,43 @@ def _format_property_description(ex: Dict[str, Any]) -> str:
 
 
 def _step6_property_question(pending_props, recent_text, will_data):
-    """Walk one property at a time: show the title + ask who inherits + share."""
+    """Walk one property at a time. ONLY asks what goes into the will:
+    who inherits + share. Joint-tenancy detection is auto-flagged as
+    advisory (not a question) since the will template uses 'all my right,
+    title and interest' regardless."""
     p = pending_props[0]
     ex = p.get('extracted') or {}
     formatted = _format_property_description(ex)
 
-    # Try deduction by Claude — find shares mentioned near property keywords
-    deduced = ''
-    if recent_text:
-        try:
-            from ai.role_deducer import deduce_roles  # not perfect — rough fallback
-            # Just look for share patterns near a name in the email — quick regex
-            import re as _re
-            ident_names = [i['full_name'] for i in (will_data.get('identities') or [])]
-            for name in ident_names:
-                pat = _re.compile(r'(\d+\s*(?:%|percent)|\d/\d)[^.]{0,50}' + _re.escape(name)
-                                  + r'|' + _re.escape(name) + r'[^.]{0,50}(\d+\s*(?:%|percent)|\d/\d)',
-                                  _re.IGNORECASE)
-                m = pat.search(recent_text)
-                if m:
-                    deduced += f"\n  - **{name}** mentioned with share `{m.group(0)[:80]}`"
-        except Exception:
-            pass
+    # Build quick-reply buttons from existing identities (single-beneficiary
+    # shortcuts) + a couple of common splits. Fewer clicks = less typing.
+    ident_names = [i.get('full_name','').strip()
+                   for i in (will_data.get('identities') or [])
+                   if i.get('full_name')]
+    # Skip the testator (step1) — they can't inherit from themselves
+    s1_name = ((will_data.get('step1') or {}).get('full_name') or '').strip().upper()
+    candidates = [n for n in ident_names if n.upper() != s1_name]
+    quick = []
+    for n in candidates[:4]:
+        quick.append({'label': f"{n.title()} 100%", 'value': f"{n} 100%"})
+    if len(candidates) >= 2:
+        a, b = candidates[0], candidates[1]
+        quick.append({'label': f"{a.title()} 50% + {b.title()} 50%",
+                      'value': f"{a} 50%, {b} 50%"})
+    quick.append({'label': 'Skip', 'value': 'skip'})
+    quick.append({'label': 'Delete', 'value': 'delete'})
 
     n_left = len(pending_props)
     parts = [
-        f"### 🏠 Step 6: Specific Gifts — Property ({n_left} remaining)",
+        f"### 🏠 Step 6 — Property ({n_left} left)",
         formatted,
+        "**Who inherits this property?** Tap a button or type a name + share.",
     ]
-    if deduced:
-        parts.append("📌 From the email, possible beneficiaries:" + deduced)
-
-    parts.append(
-        "Reply with **beneficiary name + share**, e.g. `Joshua 100%` or `Joshua 50%, Esther 50%`. "
-        "If this property is jointly owned, add `joint with <name>` and your share — e.g. "
-        "`Joshua 100% — joint with wife, my 1/2 share`. Or `skip` / `delete`."
-    )
-    return {'text': '\n\n'.join(parts), 'focus_doc_id': p.get('document_id')}
+    text = '\n\n'.join(parts)
+    # Encode quick replies as a comment marker the chat.js renderer parses.
+    import json as _json
+    text += f"\n\n<!--quickreplies:{_json.dumps(quick)}-->"
+    return {'text': text, 'focus_doc_id': p.get('document_id')}
 
 
 def _step6_bank_question(pending_banks, will_data):
