@@ -539,37 +539,71 @@ def _format_property_description(ex: Dict[str, Any]) -> str:
 
 def _step6_property_question(pending_props, recent_text, will_data):
     """Walk one property at a time. ONLY asks what goes into the will:
-    who inherits + share. Joint-tenancy detection is auto-flagged as
-    advisory (not a question) since the will template uses 'all my right,
-    title and interest' regardless."""
+    who inherits + share.
+
+    UX: deduce the LIKELY answer from email text and present that as the
+    primary highlighted button with a "📧 from email" rationale. Other
+    options follow as smaller secondary buttons.
+    """
     p = pending_props[0]
     ex = p.get('extracted') or {}
     formatted = _format_property_description(ex)
 
-    # Build quick-reply buttons from existing identities (single-beneficiary
-    # shortcuts) + a couple of common splits. Fewer clicks = less typing.
     ident_names = [i.get('full_name','').strip()
                    for i in (will_data.get('identities') or [])
                    if i.get('full_name')]
-    # Skip the testator (step1) — they can't inherit from themselves
     s1_name = ((will_data.get('step1') or {}).get('full_name') or '').strip().upper()
     candidates = [n for n in ident_names if n.upper() != s1_name]
-    quick = []
+
+    # ── Deduce from email text: find share patterns near each name ──────
+    deduced = []  # [{name, share, evidence}]
+    if recent_text and candidates:
+        import re as _re
+        for name in candidates:
+            # Look for "<digits>%" or "<digits>percent" near the name
+            pat = _re.compile(
+                r'(\d+\s*(?:%|percent))[^.]{0,60}' + _re.escape(name)
+                + r'|' + _re.escape(name) + r'[^.]{0,60}(\d+\s*(?:%|percent))',
+                _re.IGNORECASE,
+            )
+            m = pat.search(recent_text)
+            if m:
+                share_raw = (m.group(1) or m.group(2) or '').strip()
+                # Normalise '50percent' → '50%'
+                share = _re.sub(r'\s*percent\s*', '%', share_raw, flags=_re.IGNORECASE)
+                snippet = m.group(0).strip()
+                if len(snippet) > 80:
+                    snippet = snippet[:77] + '…'
+                deduced.append({'name': name, 'share': share, 'evidence': snippet})
+
+    # Build the primary suggestion (first button, large/highlighted)
+    quick: List[Dict[str, str]] = []
+    parts = [
+        f"### 🏠 Step 6 — Property ({len(pending_props)} left)",
+        formatted,
+        "**Who inherits this property?**",
+    ]
+
+    if deduced:
+        # Primary suggestion = combine all deduced shares into one string
+        primary_value = ', '.join(f"{d['name']} {d['share']}" for d in deduced)
+        primary_label = '✓ ' + ', '.join(f"{d['name'].title()} {d['share']}" for d in deduced)
+        evidence_lines = '\n'.join(f"  • _{d['evidence']}_" for d in deduced)
+        parts.append(f"📧 **Suggested from email:**\n{evidence_lines}")
+        quick.append({'label': primary_label, 'value': primary_value})
+
+    # Secondary single-beneficiary options
     for n in candidates[:4]:
+        if deduced and any(d['name'].upper() == n.upper() for d in deduced):
+            continue  # already covered by primary
         quick.append({'label': f"{n.title()} 100%", 'value': f"{n} 100%"})
-    if len(candidates) >= 2:
+    if len(candidates) >= 2 and not deduced:
         a, b = candidates[0], candidates[1]
         quick.append({'label': f"{a.title()} 50% + {b.title()} 50%",
                       'value': f"{a} 50%, {b} 50%"})
     quick.append({'label': 'Skip', 'value': 'skip'})
     quick.append({'label': 'Delete', 'value': 'delete'})
 
-    n_left = len(pending_props)
-    parts = [
-        f"### 🏠 Step 6 — Property ({n_left} left)",
-        formatted,
-        "**Who inherits this property?** Tap a button or type a name + share.",
-    ]
     text = '\n\n'.join(parts) + _qr_marker(quick)
     return {'text': text, 'focus_doc_id': p.get('document_id')}
 

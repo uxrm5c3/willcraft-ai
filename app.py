@@ -3401,15 +3401,18 @@ def api_chat_message(client_id):
 
     just_assigned = _try_assign_pending_identity(client_id, user_text)
     just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)
-    # If past Step 1, attempt executor save then beneficiaries save
+    # If past Step 1, attempt executor save then beneficiaries save then gift save
     just_executor = None
     just_benef = None
+    just_gift = None
     if not just_assigned and not just_deleted:
         from services.identity_walker import get_pending_ic_documents as _gpid
         if not _gpid(client_id):  # Step 1 done
             just_executor = _try_save_executor(client_id, user_text)
             if not just_executor:
                 just_benef = _try_save_beneficiaries(client_id, user_text)
+                if not just_benef:
+                    just_gift = _try_save_property_gift(client_id, user_text)
     from services.identity_walker import get_pending_ic_documents
     from services.gift_walker import get_pending_gift_documents
     pending_ics = get_pending_ic_documents(client_id)
@@ -3423,8 +3426,8 @@ def api_chat_message(client_id):
                    .order_by(Will.updated_at.desc())
                    .first())
     will_snapshot = _will_data_snapshot(active_will)
-    # Treat executor / beneficiaries save as "just_assigned" so the planner acknowledges
-    just = just_assigned or just_executor or just_benef
+    # Treat any save as "just_assigned" so the planner acknowledges + advances
+    just = just_assigned or just_executor or just_benef or just_gift
     will_snapshot['pending_gifts'] = pending_gifts
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
@@ -3448,10 +3451,17 @@ def api_chat_message(client_id):
     db.session.add(asst_msg)
     db.session.commit()
 
+    # If a side-quest Q&A reply was produced earlier in this turn, surface it
+    # alongside the planner's reply so the user sees BOTH (the answer + the
+    # re-asked step) immediately, without waiting on a history refresh.
+    extra = {}
+    if qa_msg is not None:
+        extra['qa_message'] = _serialise_chat_message(qa_msg)
     return jsonify({
         'ok': True,
         'user_message': _serialise_chat_message(user_msg),
         'assistant_message': _serialise_chat_message(asst_msg),
+        **extra,
     })
 
 
@@ -4040,6 +4050,117 @@ def _try_save_beneficiaries(client_id: str, user_text: str):
     db.session.commit()
     names = ', '.join(p.full_name for p in final)
     return {'name': names, 'role': f'{len(final)} beneficiaries', 'kind': 'beneficiaries'}
+
+
+def _try_save_property_gift(client_id: str, user_text: str):
+    """Step 6 (Property gift) handler. Persists a parsed gift to the active
+    Will's step5_data, marked with the source document_id so gift_walker
+    stops re-asking. Returns {'name', 'role', 'kind'} or None.
+
+    Accepts replies like:
+      - "Joshua 100%"
+      - "Esther 50%, Joshua 50%"
+      - "Wife"  (single name → defaults to 100%)
+      - "skip" → mark this property as skipped (writes a sentinel gift entry
+                 with no beneficiaries so it's not re-asked)
+    """
+    if not user_text:
+        return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    # Must have at least one beneficiary saved (Step 5) before gifts make sense
+    try:
+        s4 = json.loads(will.step4_data or '[]')
+    except (json.JSONDecodeError, TypeError):
+        s4 = []
+    if not s4:
+        return None
+
+    from services.gift_walker import get_pending_gift_documents, parse_beneficiary_shares
+    pend = get_pending_gift_documents(client_id)
+    pending_props = pend.get('property') or []
+    if not pending_props:
+        return None
+    target = pending_props[0]
+    doc_id = target['document_id']
+
+    # Load existing gifts list
+    try:
+        gifts = json.loads(will.step5_data or '[]')
+        if not isinstance(gifts, list):
+            gifts = []
+    except (json.JSONDecodeError, TypeError):
+        gifts = []
+
+    txt = user_text.strip().lower()
+    # "skip" → save a sentinel so this property stops being asked
+    if txt in ('skip', 'next', 'pass'):
+        gifts.append({
+            'document_id': doc_id,
+            'kind': 'property',
+            'skipped': True,
+            'beneficiaries': [],
+        })
+        will.step5_data = json.dumps(gifts)
+        db.session.commit()
+        return {'name': target.get('extracted', {}).get('property_address', 'this property'),
+                'role': 'skipped', 'kind': 'gift_skip'}
+
+    # Parse beneficiary names + shares
+    known_names = [p.get('full_name', '') for p in s4 if p.get('full_name')]
+    # Also include relationship words → resolve to person
+    parsed = parse_beneficiary_shares(user_text, known_names)
+    if not parsed:
+        # Try matching by relationship words (wife/son/daughter/etc.)
+        REL_MAP = {
+            'wife': 'spouse', 'husband': 'spouse', 'spouse': 'spouse',
+            'son': 'son', 'daughter': 'daughter', 'father': 'father',
+            'mother': 'mother', 'children': None, 'kids': None,
+        }
+        words = re.findall(r'\b[a-z\-]+\b', txt)
+        matched_persons = []
+        for w in words:
+            target_rel = REL_MAP.get(w, w)
+            if target_rel is None:
+                # 'children' → all sons + daughters
+                for p in s4:
+                    if (p.get('relationship') or '').lower() in ('son', 'daughter'):
+                        matched_persons.append(p)
+            else:
+                for p in s4:
+                    rel = (p.get('relationship') or '').lower()
+                    if rel == target_rel or rel == w:
+                        matched_persons.append(p)
+        # Dedupe
+        seen_n = set()
+        uniq = []
+        for p in matched_persons:
+            n = p.get('full_name', '').upper()
+            if n and n not in seen_n:
+                seen_n.add(n); uniq.append(p)
+        if uniq:
+            share = '100%' if len(uniq) == 1 else 'equal'
+            parsed = [{'name': p['full_name'], 'share': share} for p in uniq]
+
+    if not parsed:
+        return None
+
+    gifts.append({
+        'document_id': doc_id,
+        'kind': 'property',
+        'property_address': (target.get('extracted', {}) or {}).get('property_address', ''),
+        'title_number': (target.get('extracted', {}) or {}).get('title_number', ''),
+        'beneficiaries': parsed,
+    })
+    will.step5_data = json.dumps(gifts)
+    db.session.commit()
+
+    desc = ', '.join(f"{b['name']} {b['share']}" for b in parsed)
+    addr = (target.get('extracted', {}) or {}).get('property_address', 'property')
+    return {'name': desc, 'role': f'gift of {addr[:50]}', 'kind': 'gift'}
 
 
 def _try_save_executor(client_id: str, user_text: str):

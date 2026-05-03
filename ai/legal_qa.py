@@ -7,9 +7,15 @@ from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
 
 
 _QUESTION_STARTERS = (
-    'what', 'why', 'how', 'when', 'where', 'who',
-    'is', 'are', 'can', 'should', 'do', 'does', 'will',
-    'must', 'may', 'could',
+    'what', 'why', 'how', 'when', 'where', 'who', 'which',
+    'is', 'are', 'am', 'was', 'were',
+    'can', 'should', 'do', 'does', 'did', 'will', 'would',
+    'must', 'may', 'might', 'could', 'shall',
+    # contractions
+    "what's", "how's", "why's", "where's", "who's", "when's",
+    "isn't", "aren't", "doesn't", "don't", "didn't",
+    "can't", "couldn't", "wouldn't", "shouldn't", "won't",
+    'whats', 'hows', 'whys', 'wheres', 'whos', 'whens',  # apostrophe-stripped
 )
 
 
@@ -24,16 +30,22 @@ def is_question(text: str) -> bool:
     # Direct ? mark
     if t.endswith('?'):
         return True
-    # Question-word start, but only if message is at least 4 words long
-    # (so 'is wife the spouse' looks like a question, while a short reply
-    # like 'is wife' could go either way — we err toward NOT treating as Q).
     words = t.split()
-    if len(words) >= 4 and words[0] in _QUESTION_STARTERS:
+    if not words:
+        return False
+    # Question-word start. We accept 3+ words so "what's a witness" qualifies,
+    # but a short blunt reply like "is wife" doesn't get mis-classed.
+    if len(words) >= 3 and words[0] in _QUESTION_STARTERS:
         return True
-    # Common help intents
+    # Common help intents (substring match)
     if any(p in t for p in (
-        'explain', 'tell me about', 'what is', 'what does', 'meaning of',
-        'difference between', 'why do', 'why must',
+        'explain', 'tell me about', 'what is', 'what does', 'what s ',
+        "what's", 'meaning of', 'definition of',
+        'difference between', 'diff between', 'vs ', ' vs.',
+        'why do', 'why must', 'why is', 'why are',
+        'how do', 'how does', 'how can', 'how should',
+        'can i ', 'can we ', 'should i', 'do i need', 'is it ok',
+        'is it required', 'is it mandatory',
     )):
         return True
     return False
@@ -143,5 +155,22 @@ That's it. No "I hope this helps", no extra paragraphs."""
         if resume_quick:
             out += f"\n\n<!--quickreplies:{_json.dumps(resume_quick)}-->"
         return out
-    except Exception:
-        return ''
+    except Exception as e:
+        # NEVER return empty silently — that makes the question look "ignored"
+        # to the user. Surface a friendly fallback (with the same resume
+        # button) so the chat keeps moving, and log the underlying cause.
+        try:
+            import logging
+            logging.getLogger(__name__).warning(
+                "legal_qa.answer_question failed: %s", e, exc_info=True)
+        except Exception:
+            pass
+        fallback = (
+            "**Answer:** I couldn't reach the legal-Q&A engine just now — "
+            "please retry in a moment, or check the [Legal Library](/library) "
+            "for the relevant Act.\n\n"
+            "**Citation:** _(engine error: " + str(e)[:120] + ")_"
+        )
+        if resume_quick:
+            fallback += f"\n\n<!--quickreplies:{_json.dumps(resume_quick)}-->"
+        return fallback
