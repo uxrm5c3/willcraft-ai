@@ -5335,12 +5335,15 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
     # issued by the guided confirm gate (ownership prompt / encumbrance prompt).
     _is_ownership_gate   = t.startswith('inventory ownership')
     _is_encumbrance_gate = t.startswith('inventory encumbered')
+    # "inventory nlc …" sub-commands for Gate 3 (NLC completeness).
+    _is_nlc_gate         = t.startswith('inventory nlc')
     if not (t.startswith('inventory confirm')
             or t.startswith('inventory skip')
             or t.startswith('inventory unlink')
             or _is_delete
             or _is_ownership_gate
-            or _is_encumbrance_gate):
+            or _is_encumbrance_gate
+            or _is_nlc_gate):
         return None
 
     from services.gift_walker import get_pending_gift_documents
@@ -5609,6 +5612,76 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                     + _enc_marker
                 ),
             }
+
+        # ── Gate 3: NLC completeness ──────────────────────────────────
+        # Required National Land Code fields for a valid will gift clause.
+        # Fires after ownership + encumbrance are both answered.
+        # Writer can enter them now (fill prompt) or defer to later.
+        _NLC_REQUIRED = [
+            ('title_number', 'Title/Geran No.',  'title: HS(D) 12345/2005'),
+            ('lot_number',   'Lot/PTD No.',       'lot: 12345'),
+            ('mukim',        'Mukim',             'mukim: Tebrau'),
+            ('daerah',       'Daerah',            'daerah: Johor Bahru'),
+            ('negeri',       'Negeri/State',      'negeri: Johor'),
+        ]
+        if _is_nlc_gate:
+            if t == 'inventory nlc skip':
+                _gex['_nlc_deferred'] = True
+                try:
+                    doc.extracted_data = json.dumps(_gex)
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                # Fall through to stamp _inventoried
+            elif t == 'inventory nlc fill':
+                _missing_fields = [
+                    (key, lbl, eg) for key, lbl, eg in _NLC_REQUIRED
+                    if not (_gex.get(key) or '').strip()
+                ]
+                _fill_lines = '\n'.join(
+                    f"  • `{eg}`  →  {lbl}" for _, lbl, eg in _missing_fields
+                )
+                _qr_nlc_fill = [{'label': '⏭ Fill in later', 'value': 'inventory nlc skip'}]
+                return {
+                    'name': 'nlc fill prompt',
+                    'role': 'nlc_gate',
+                    'kind': 'property_fill',
+                    'reply_override': (
+                        "**📋 Type the missing land registry details:**\n\n"
+                        + _fill_lines
+                        + "\n\n_Reply with each field (e.g. `mukim: Tebrau`). "
+                        "Tap Accept on the property card again when done._"
+                        + f'<!--quickreplies:{json.dumps(_qr_nlc_fill)}-->'
+                    ),
+                }
+        else:
+            # Not an NLC sub-command — check if gate should fire naturally
+            # (i.e. ownership + encumbrance answered but NLC fields still missing).
+            if not _gex.get('_nlc_deferred'):
+                _ow_type_now  = (_gex.get('ownership_type') or '').strip()
+                _enc_now      = _gex.get('encumbrance_confirmed')
+                if _ow_type_now and _enc_now is not None:
+                    _missing_nlc = [
+                        (key, lbl, eg) for key, lbl, eg in _NLC_REQUIRED
+                        if not (_gex.get(key) or '').strip()
+                    ]
+                    if _missing_nlc:
+                        _missing_labels = ', '.join(lbl for _, lbl, _ in _missing_nlc)
+                        _qr_nlc = [
+                            {'label': '✏️ Enter now',    'value': 'inventory nlc fill'},
+                            {'label': '⏭ Fill in later', 'value': 'inventory nlc skip'},
+                        ]
+                        return {
+                            'name': 'nlc check',
+                            'role': 'nlc_gate',
+                            'kind': 'property_fill',
+                            'reply_override': (
+                                f"**📋 Missing land registry details**\n\n"
+                                f"The will clause needs: **{_missing_labels}**.\n\n"
+                                f"Do you have this information to hand?"
+                                + f'<!--quickreplies:{json.dumps(_qr_nlc)}-->'
+                            ),
+                        }
 
     # 'inventory confirm' or 'inventory skip' → mark inventoried
     try:
@@ -6042,17 +6115,54 @@ def _try_delete_pending_gift(client_id: str, user_text: str):
             'kind': f'gift_{target_kind}_delete'}
 
 
+def _pct_to_frac(share_str: str) -> str:
+    """Convert a share string to fractional form for the will clause.
+
+    '50%' → '1/2'  |  '33%' → '1/3'  |  '100%' → '1/1'
+    '1/2' → '1/2'  (fractions already fine)
+    'equal' → 'equal'  (keyword kept as-is)
+    """
+    s = (share_str or '').strip()
+    if not s or s.lower() in ('equal', 'equally', 'all', ''):
+        return s
+    if '%' in s:
+        try:
+            from fractions import Fraction
+            n = float(s.rstrip('%'))
+            if n == 0:
+                return s
+            f = Fraction(n / 100).limit_denominator(20)
+            return str(f)
+        except Exception:
+            return s
+    return s  # already fraction or other string
+
+
 def _try_save_property_gift(client_id: str, user_text: str):
-    """Step 6 (Property gift) handler. Persists a parsed gift to the active
-    Will's step5_data, marked with the source document_id so gift_walker
-    stops re-asking. Returns {'name', 'role', 'kind'} or None.
+    """Step 6 (Property gift) handler — two-phase: main beneficiary then substitute.
+
+    Phase A (main): user says "Joshua 1/2, Esther 1/2" or "Joshua 50%"
+      → shares stored as fractions (50% → 1/2).
+      → saves to extracted_data, sets _main_beneficiary_set: True.
+      → returns 'gift_main' kind so planner shows substitute prompt next turn.
+
+    Phase B (substitute): _main_beneficiary_set detected.
+      Substitute mode from wizard design:
+        'equal'   → surviving MBs get equal shares
+        'prorata' → surviving MBs get pro-rata shares
+        'specific'→ named specific substitute(s)
+        'none'    → no substitute clause
+      → saves full gift to step5_data → returns 'gift' kind.
 
     Accepts replies like:
-      - "Joshua 100%"
-      - "Esther 50%, Joshua 50%"
-      - "Wife"  (single name → defaults to 100%)
-      - "skip" → mark this property as skipped (writes a sentinel gift entry
-                 with no beneficiaries so it's not re-asked)
+      - "Joshua 1/2, Esther 1/2"      → main (fractional)
+      - "Joshua 100%"                  → main → converted to 1/1
+      - "Wife"                         → resolves via relationship
+      - "skip"                         → skip gift (Phase A)
+      - "substitute equal"             → Phase B: equal surviving MBs
+      - "substitute prorata"           → Phase B: pro-rata surviving MBs
+      - "substitute specific <name>"   → Phase B: named substitute
+      - "gift substitute skip"         → Phase B: no substitute
     """
     if not user_text:
         return None
@@ -6077,6 +6187,15 @@ def _try_save_property_gift(client_id: str, user_text: str):
     target = pending_props[0]
     doc_id = target['document_id']
 
+    # Load the document's extracted_data to check phase state
+    doc = db.session.get(Document, doc_id)
+    if not doc:
+        return None
+    try:
+        doc_ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+    except (json.JSONDecodeError, TypeError):
+        doc_ex = {}
+
     # Load existing gifts list
     try:
         gifts = json.loads(will.step5_data or '[]')
@@ -6086,7 +6205,189 @@ def _try_save_property_gift(client_id: str, user_text: str):
         gifts = []
 
     txt = user_text.strip().lower()
-    # "skip" → save a sentinel so this property stops being asked
+    ex_t = (target.get('extracted', {}) or {})
+    addr = ex_t.get('property_address', '') or ex_t.get('title_number', '') or 'property'
+
+    # ── Helper: parse beneficiary text ───────────────────────────────
+    def _parse_beneficiary(text: str):
+        """Parse names + shares; convert % → fraction. Returns list or []."""
+        known_names = [p.get('full_name', '') for p in s4 if p.get('full_name')]
+        result = parse_beneficiary_shares(text, known_names)
+        if not result:
+            # Fallback: relationship words
+            REL_MAP = {
+                'wife': 'spouse', 'husband': 'spouse', 'spouse': 'spouse',
+                'son': 'son', 'daughter': 'daughter', 'father': 'father',
+                'mother': 'mother', 'children': None, 'kids': None,
+            }
+            words_lower = re.findall(r'\b[a-z\-]+\b', text.lower())
+            matched = []
+            for w in words_lower:
+                rel = REL_MAP.get(w, w)
+                if rel is None:
+                    for p in s4:
+                        if (p.get('relationship') or '').lower() in ('son', 'daughter'):
+                            matched.append(p)
+                else:
+                    for p in s4:
+                        if (p.get('relationship') or '').lower() in (rel, w):
+                            matched.append(p)
+            seen_n: set = set()
+            uniq = []
+            for p in matched:
+                n = p.get('full_name', '').upper()
+                if n and n not in seen_n:
+                    seen_n.add(n); uniq.append(p)
+            if uniq:
+                share = '1/1' if len(uniq) == 1 else 'equal'
+                result = [{'name': p['full_name'], 'share': share} for p in uniq]
+        # Convert percentages → fractions for NLC will clause format
+        for entry in result:
+            entry['share'] = _pct_to_frac(entry.get('share') or '1/1')
+        return result
+
+    # ── Helper: NLC alert after saving ───────────────────────────────
+    def _nlc_alert(ex_data: dict) -> str:
+        missing = []
+        if not (ex_data.get('title_number') or '').strip():
+            missing.append('Title/Geran No.')
+        if not (ex_data.get('lot_number') or '').strip():
+            missing.append('Lot/PTD No.')
+        if not (ex_data.get('mukim') or '').strip():
+            missing.append('Mukim')
+        if not (ex_data.get('daerah') or '').strip():
+            missing.append('Daerah')
+        if not (ex_data.get('negeri') or '').strip():
+            missing.append('Negeri')
+        if not missing:
+            return ''
+        return (
+            "🚨 **Probate alert:** missing **" + ', '.join(missing) + "**"
+            " — the lawyer needs these to file _Borang 14A_ at the Pejabat Tanah."
+        )
+
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE B — substitute beneficiary (main already set)
+    # ═══════════════════════════════════════════════════════════════
+    if doc_ex.get('_main_beneficiary_set'):
+        main_bens = doc_ex.get('_main_beneficiaries') or []
+
+        # Determine substitute mode from user input
+        _skip_tokens = ('skip', 'next', 'pass', 'no substitute',
+                        'none', 'gift substitute skip', 'no sub')
+        substitute_mode = None
+        substitute_specific = None  # [{name, share}] for 'specific' mode
+
+        if txt in _skip_tokens:
+            substitute_mode = 'none'
+
+        elif txt in ('substitute equal', 'gift substitute equal', 'equal shares',
+                     'surviving equal', 'equal'):
+            substitute_mode = 'equal'
+
+        elif txt in ('substitute prorata', 'gift substitute prorata', 'pro-rata',
+                     'prorata', 'pro rata', 'surviving prorata'):
+            substitute_mode = 'prorata'
+
+        elif txt.startswith('substitute specific ') or txt.startswith('gift substitute specific '):
+            # "substitute specific SARAH BT ALI" → named specific substitute
+            raw = re.sub(r'^(?:gift\s+)?substitute\s+specific\s+', '', txt, flags=re.IGNORECASE).strip()
+            substitute_mode = 'specific'
+            substitute_specific = [{'name': raw.upper(), 'share': '1/1'}]
+
+        else:
+            # Try to parse as a named substitute (free-form)
+            sub_parsed = _parse_beneficiary(user_text)
+            if sub_parsed:
+                substitute_mode = 'specific'
+                substitute_specific = sub_parsed
+            else:
+                # Accept raw text as a named substitute (unnamed person)
+                raw = user_text.strip()
+                # Allow any text 3+ chars that looks like a name
+                if (len(raw) >= 3
+                        and re.match(r"^[A-Za-z][A-Za-z '\-,.]+$", raw)):
+                    substitute_mode = 'specific'
+                    substitute_specific = [{'name': raw.upper(), 'share': '1/1'}]
+                else:
+                    # Can't understand → keep showing prompt
+                    return None
+
+        # Build wizard-compatible gift entry
+        # Main allocations: [{beneficiary_name, share, role: 'MB'}]
+        allocations = [
+            {'beneficiary_name': b.get('name', ''), 'share': b.get('share', '1/1'), 'role': 'MB'}
+            for b in main_bens
+        ]
+        gift_entry = {
+            'document_id':    doc_id,
+            'kind':           'property',
+            'gift_type':      'property',
+            'property_details': {
+                'property_address': ex_t.get('property_address', ''),
+                'title_number':     ex_t.get('title_number', ''),
+                'lot_number':       ex_t.get('lot_number', ''),
+                'mukim':            ex_t.get('mukim', '') or ex_t.get('bandar_pekan', ''),
+                'daerah':           ex_t.get('daerah', ''),
+                'negeri':           ex_t.get('negeri', ''),
+                'encumbrance_status': (
+                    'encumbered' if ex_t.get('encumbrance_confirmed') else 'clean'
+                ),
+                'undivided_share': True,
+                'testator_share':  ex_t.get('ownership_share', ''),
+            },
+            'allocations':        allocations,
+            'substitute_mode':    substitute_mode or 'none',
+            # For 'specific' mode: store substitutes inside each MB's allocations
+            # (wizard expects alloc.substitutes) — attach to first MB for simplicity
+            'substitute_specific': substitute_specific,
+            # Keep legacy fields for backward compat with normalise_gifts
+            'property_address': ex_t.get('property_address', ''),
+            'title_number':     ex_t.get('title_number', ''),
+            'beneficiaries':    main_bens,
+        }
+        # Embed specific substitutes inside each MB allocation (wizard format)
+        if substitute_mode == 'specific' and substitute_specific:
+            for alloc in allocations:
+                alloc['substitutes'] = [
+                    {'beneficiary_name': s.get('name',''), 'share': s.get('share','1/1')}
+                    for s in substitute_specific
+                ]
+
+        gifts.append(gift_entry)
+        will.step5_data = json.dumps(gifts)
+
+        # Clear the phase flag in extracted_data
+        doc_ex['_main_beneficiary_set'] = False
+        doc_ex['_substitute_assigned']  = True
+        doc.extracted_data = json.dumps(doc_ex)
+
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+
+        main_desc = ', '.join(f"{b.get('name','?')} {b.get('share','')}" for b in main_bens)
+        sub_label = {
+            'equal':    'equal shares among survivors',
+            'prorata':  'pro-rata among survivors',
+            'specific': ', '.join(s.get('name','?') for s in (substitute_specific or [])),
+            'none':     'no substitute',
+        }.get(substitute_mode or 'none', substitute_mode)
+        alert = _nlc_alert(ex_t)
+        return {
+            'name':  f"{addr[:50]} → {main_desc}",
+            'role':  sub_label,
+            'kind':  'gift',
+            'alert': alert,
+        }
+
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE A — main beneficiary
+    # ═══════════════════════════════════════════════════════════════
+
+    # "skip" on Phase A → skip the whole gift (sentinel entry)
     if txt in ('skip', 'next', 'pass'):
         gifts.append({
             'document_id': doc_id,
@@ -6095,93 +6396,33 @@ def _try_save_property_gift(client_id: str, user_text: str):
             'beneficiaries': [],
         })
         will.step5_data = json.dumps(gifts)
-        db.session.commit()
-        return {'name': target.get('extracted', {}).get('property_address', 'this property'),
-                'role': 'skipped', 'kind': 'gift_skip'}
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {'name': addr[:80], 'role': 'skipped', 'kind': 'gift_skip'}
 
-    # Parse beneficiary names + shares
-    known_names = [p.get('full_name', '') for p in s4 if p.get('full_name')]
-    # Also include relationship words → resolve to person
-    parsed = parse_beneficiary_shares(user_text, known_names)
-    if not parsed:
-        # Try matching by relationship words (wife/son/daughter/etc.)
-        REL_MAP = {
-            'wife': 'spouse', 'husband': 'spouse', 'spouse': 'spouse',
-            'son': 'son', 'daughter': 'daughter', 'father': 'father',
-            'mother': 'mother', 'children': None, 'kids': None,
-        }
-        words = re.findall(r'\b[a-z\-]+\b', txt)
-        matched_persons = []
-        for w in words:
-            target_rel = REL_MAP.get(w, w)
-            if target_rel is None:
-                # 'children' → all sons + daughters
-                for p in s4:
-                    if (p.get('relationship') or '').lower() in ('son', 'daughter'):
-                        matched_persons.append(p)
-            else:
-                for p in s4:
-                    rel = (p.get('relationship') or '').lower()
-                    if rel == target_rel or rel == w:
-                        matched_persons.append(p)
-        # Dedupe
-        seen_n = set()
-        uniq = []
-        for p in matched_persons:
-            n = p.get('full_name', '').upper()
-            if n and n not in seen_n:
-                seen_n.add(n); uniq.append(p)
-        if uniq:
-            share = '100%' if len(uniq) == 1 else 'equal'
-            parsed = [{'name': p['full_name'], 'share': share} for p in uniq]
-
+    parsed = _parse_beneficiary(user_text)
     if not parsed:
         return None
 
-    gifts.append({
-        'document_id': doc_id,
-        'kind': 'property',
-        'property_address': (target.get('extracted', {}) or {}).get('property_address', ''),
-        'title_number': (target.get('extracted', {}) or {}).get('title_number', ''),
-        'beneficiaries': parsed,
-    })
-    will.step5_data = json.dumps(gifts)
-    db.session.commit()
+    # Save main to extracted_data only — step5 updated in Phase B
+    doc_ex['_main_beneficiary_set'] = True
+    doc_ex['_main_beneficiaries']   = parsed
+    doc.extracted_data = json.dumps(doc_ex)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
 
-    desc = ', '.join(f"{b['name']} {b['share']}" for b in parsed)
-    ex_t = (target.get('extracted', {}) or {})
-    addr = ex_t.get('property_address', 'property')
-
-    # ── Probate-critical alert ──────────────────────────────────────
-    # Even though the gift is now saved, the lawyer still needs Geran +
-    # lot + mukim/daerah/negeri to file Borang 14A / Deed of Transmission
-    # at the Land Office. If any are blank, raise the alert NOW (during
-    # gift completion) so the writer chases the client before the will
-    # is finalised — not after.
-    alert_parts = []
-    if not (ex_t.get('title_number') or '').strip():
-        alert_parts.append('title number (Geran/PTD/HSD/HSM/Hakmilik)')
-    if not (ex_t.get('lot_number') or '').strip():
-        alert_parts.append('lot number')
-    if not (ex_t.get('mukim') or '').strip():
-        alert_parts.append('Mukim')
-    if not (ex_t.get('daerah') or '').strip():
-        alert_parts.append('Daerah')
-    if not (ex_t.get('negeri') or '').strip():
-        alert_parts.append('Negeri')
-    alert = ''
-    if alert_parts:
-        alert = (
-            "🚨 **Probate alert:** this gift is missing **"
-            + ', '.join(alert_parts)
-            + "** — the lawyer cannot file _Borang 14A / Deed of "
-            "Transmission_ at the Pejabat Tanah without these. Please "
-            "ask the client for a clearer Geran/Hakmilik scan before "
-            "finalising the will."
-        )
-
-    return {'name': desc, 'role': f'gift of {addr[:50]}', 'kind': 'gift',
-            'alert': alert}
+    main_desc = ', '.join(f"{b['name']} {b.get('share','')}" for b in parsed)
+    return {
+        'name': main_desc,
+        'role': f'main beneficiary set for {addr[:40]}',
+        'kind': 'gift_main',
+    }
 
 
 def _try_save_executor(client_id: str, user_text: str):

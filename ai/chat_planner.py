@@ -92,6 +92,12 @@ def plan_turn(
             pass  # card for the NEXT asset IS the headline — no prefix needed
         elif just_kind.startswith('inventory_skipped_'):
             pass  # same — card follows immediately
+        elif just_kind == 'gift_main':
+            pass  # Phase B substitute prompt IS the headline — no ack prefix needed
+        elif just_kind == 'gift':
+            pass  # Next gift's Phase A card IS the headline
+        elif just_kind == 'gift_skip':
+            pass  # Next gift card follows immediately
         elif just_kind in ('inbox_start', 'inbox_removed', 'inbox_restart',
                            'gifts_restart'):
             pass  # inbox/restart action — reply_override handles the message
@@ -1691,37 +1697,31 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     if ownership_type == 'joint':
         share_display = ownership_share or ownership_shares or 'TBC'
         parts.append(f"**🤝 Joint ownership** — {share_display} undivided share")
-    else:
-        parts.append("**👤 Sole ownership**")
-
-    # ── Encumbrance: one-line summary ──
-    encumbrance      = (ex.get('encumbrance') or '').strip()
-    encumbrance_type = (ex.get('encumbrance_type') or '').strip().lower()
-    enc_confirmed    = ex.get('encumbrance_confirmed')
-
-    if enc_confirmed is False:
-        parts.append("**✅ Clean title** — no loan or caveat")
-    elif enc_confirmed is True or encumbrance or encumbrance_type:
-        enc_icon  = '🏦' if encumbrance_type == 'charge' else '🚩'
-        enc_label = ('Bank charge / mortgage' if encumbrance_type == 'charge'
-                     else 'Private caveat' if encumbrance_type == 'caveat'
-                     else 'Encumbrance')
-        detail    = f" — _{encumbrance[:120]}_" if encumbrance else ''
-        parts.append(f"**{enc_icon} {enc_label} detected**{detail}")
-    else:
-        parts.append("**✅ No encumbrance detected**")
-
-    # Missing NLC fields — show as a one-line warning, not a checklist
-    _COMPULSORY_KEYS = ('title_number', 'lot_number', 'mukim', 'daerah', 'negeri')
-    missing = [k.replace('_', ' ') for k in _COMPULSORY_KEYS
-               if not (ex.get(k) or '').strip()]
-    if missing:
-        parts.append(f"⚠️ Missing info needed for will: **{', '.join(missing)}** — please provide.")
+    # Ownership and encumbrance are confirmed via Accept gates — don't show
+    # them upfront on the card. Only show if already confirmed (from a
+    # previous Accept + gate flow) so returning to this card shows status.
+    enc_confirmed = ex.get('encumbrance_confirmed')
+    ow_type       = (ex.get('ownership_type') or '').strip().lower()
+    if ow_type or enc_confirmed is not None:
+        status_parts = []
+        if ow_type == 'joint':
+            share = (ex.get('ownership_share') or '').strip()
+            status_parts.append(f"🤝 Joint — {share}" if share else "🤝 Joint")
+        elif ow_type == 'sole':
+            status_parts.append("👤 Sole owner")
+        if enc_confirmed is False:
+            status_parts.append("✅ No encumbrance")
+        elif enc_confirmed is True:
+            enc_label = ('🏦 Bank charge' if (ex.get('encumbrance_type') or '') == 'charge'
+                         else '🚩 Caveat')
+            status_parts.append(enc_label)
+        if status_parts:
+            parts.append("  ".join(status_parts))
 
     if warnings:
         parts.append("🚨 " + " · ".join(w.lstrip('⚠️ ').strip() for w in warnings))
 
-    parts.append("_Tap **Accept** to add this property, **Skip** to come back later, or **Remove** if wrong upload._")
+    parts.append("_Tap **✅ Accept** to confirm, **⏭ Skip** to come back later, or **🗑 Remove** if wrong upload._")
 
     # ── 3 clean action buttons — always the same, no conditionals ──────
     quick = [
@@ -1915,21 +1915,70 @@ def _assets_prompt_for_uploads() -> str:
 
 
 def _step6_property_question(pending_props, recent_text, will_data):
-    """Walk one property at a time. ONLY asks what goes into the will:
-    who inherits + share.
+    """Walk one property at a time — two-phase per gift:
 
-    UX: deduce the LIKELY answer from email text and present that as the
-    primary highlighted button with a "📧 from email" rationale. Other
-    options follow as smaller secondary buttons.
+    Phase A: "Who inherits?" (main beneficiary)
+    Phase B: "Who is the substitute?" (fires when _main_beneficiary_set: True)
+
+    After both answered → planner moves to next property.
     """
     p = pending_props[0]
     ex = p.get('extracted') or {}
     formatted = _format_property_description(ex)
 
-    # Build an "evidence" footnote that lists what each uploaded image for
-    # THIS property actually proves. Users dump multiple images per
-    # property (front + back of geran, SPA, cukai tanah); without this,
-    # they can't tell which image the bot is talking about.
+    ident_names = [i.get('full_name','').strip()
+                   for i in (will_data.get('identities') or [])
+                   if i.get('full_name')]
+    s1_name = ((will_data.get('step1') or {}).get('full_name') or '').strip().upper()
+    candidates = [n for n in ident_names if n.upper() != s1_name]
+
+    addr_label = (ex.get('property_address') or ex.get('title_number') or 'this property')[:60]
+
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE B — substitute beneficiary prompt (wizard-aligned)
+    # ═══════════════════════════════════════════════════════════════
+    if ex.get('_main_beneficiary_set'):
+        main_bens = ex.get('_main_beneficiaries') or []
+        main_desc = ', '.join(
+            f"**{b.get('name','?').title()}** {b.get('share','')}" for b in main_bens
+        )
+        n_main = len(main_bens)
+        parts = [
+            f"### 🏠 Specific Gift — Substitute",
+            formatted,
+            f"✅ **Main beneficiary(ies):** {main_desc}",
+            ("**If a main beneficiary dies before the testator, what happens to this gift?**\n\n"
+             "_This is the substitute clause — strongly recommended._"),
+        ]
+        quick: List[Dict[str, str]] = []
+        # Option 1 & 2: surviving MBs (only available when 2+ main beneficiaries)
+        if n_main >= 2:
+            quick.append({'label': '🔄 Surviving beneficiaries — equal shares',
+                          'value': 'substitute equal'})
+            quick.append({'label': '📊 Surviving beneficiaries — pro-rata shares',
+                          'value': 'substitute prorata'})
+        # Option 3: Name specific person(s)
+        main_names_upper = {b.get('name','').upper() for b in main_bens}
+        for n in candidates[:3]:
+            if n.upper() not in main_names_upper:
+                quick.append({'label': f'👤 {n.title()}',
+                              'value': f'substitute specific {n}'})
+        quick.append({'label': '⏭ No substitute clause', 'value': 'gift substitute skip'})
+        parts.append(
+            "_Or type a name: e.g. `substitute specific SARAH BT ALI`_"
+            if n_main == 1 else
+            "_Or type a name for a specific person outside this list._"
+        )
+        return {
+            'text': '\n\n'.join(parts) + _qr_marker(quick),
+            'focus_doc_id': p.get('document_id'),
+        }
+
+    # ═══════════════════════════════════════════════════════════════
+    # PHASE A — main beneficiary prompt
+    # ═══════════════════════════════════════════════════════════════
+
+    # Build evidence footnote (which uploads belong to this property)
     evidence_lines = []
     primary_purpose = (p.get('purpose') or '').strip()
     if primary_purpose:
@@ -1949,42 +1998,24 @@ def _step6_property_question(pending_props, recent_text, will_data):
         sp = (s.get('purpose') or s.get('extracted', {}).get('purpose') or
               s.get('original_filename') or 'supporting doc').strip()
         evidence_lines.append(f"  • {kind_label} — _{sp[:120]}_")
-    evidence_block = ('\n'.join(evidence_lines)) if evidence_lines else ''
+    evidence_block = '\n'.join(evidence_lines) if evidence_lines else ''
 
-    ident_names = [i.get('full_name','').strip()
-                   for i in (will_data.get('identities') or [])
-                   if i.get('full_name')]
-    s1_name = ((will_data.get('step1') or {}).get('full_name') or '').strip().upper()
-    candidates = [n for n in ident_names if n.upper() != s1_name]
-
-    # ── Deduce from email text: find share patterns near each name ──────
-    # Strategy: normalise the email text first ("50percent" / "50 percent" /
-    # "50 %" → "50%"), then find ALL percent occurrences with their byte
-    # offsets, and ALL name occurrences with theirs. For each name pick the
-    # CLOSEST percent within 80 chars. This avoids greedy-regex pitfalls
-    # where `[^.]{0,60}` could "eat" the leading "5" of "50%" and leave
-    # "0%" for the digit-capture (which is exactly the bug we just shipped).
-    deduced = []  # [{name, share, evidence}]
+    # ── Deduce beneficiary from email text ───────────────────────
+    deduced = []
     if recent_text and candidates:
         import re as _re
-        # 1. Normalise the text so every percent token looks like "<n>%"
         norm = _re.sub(r'(\d+)\s*(?:percent|pct|per\s*cent)\b',
                        r'\1%', recent_text, flags=_re.IGNORECASE)
-        norm = _re.sub(r'(\d+)\s+%', r'\1%', norm)  # collapse "50 %" → "50%"
-        # 2. Collect every (offset, "<n>%") — anchored so we never capture
-        #    a partial number ((?<!\d) lookbehind) and the trailing % must
-        #    follow with no digits in between.
+        norm = _re.sub(r'(\d+)\s+%', r'\1%', norm)
         percent_hits = [(m.start(), m.group(0))
                         for m in _re.finditer(r'(?<!\d)(\d{1,3}%)', norm)]
         if percent_hits:
             for name in candidates:
-                # Find every occurrence of the name (case-insensitive)
                 name_hits = [m.start() for m in
                              _re.finditer(_re.escape(name), norm, _re.IGNORECASE)]
                 if not name_hits:
                     continue
-                # For each name occurrence, find the nearest percent within 80c
-                best = None  # (distance, share_str, snippet)
+                best = None
                 for n_off in name_hits:
                     for p_off, share in percent_hits:
                         dist = abs(p_off - n_off)
@@ -1998,11 +2029,7 @@ def _step6_property_question(pending_props, recent_text, will_data):
                                 snippet = snippet[:77] + '…'
                             best = (dist, share, snippet)
                 if best:
-                    deduced.append({'name': name, 'share': best[1],
-                                    'evidence': best[2]})
-        # 3. Sanity check: if the deduced shares don't add to 100, drop the
-        #    suggestion entirely rather than show nonsense like "Esther 50%,
-        #    Joshua 0%". The user can still tap a per-name button.
+                    deduced.append({'name': name, 'share': best[1], 'evidence': best[2]})
         if deduced:
             try:
                 total = sum(int(d['share'].rstrip('%')) for d in deduced)
@@ -2011,35 +2038,32 @@ def _step6_property_question(pending_props, recent_text, will_data):
             if total != 100:
                 deduced = []
 
-    # Build the primary suggestion (first button, large/highlighted)
     quick: List[Dict[str, str]] = []
     parts = [
-        f"### 🏠 Step 6 — Property ({len(pending_props)} left)",
+        f"### 🏠 Specific Gift ({len(pending_props)} left) — {addr_label}",
         formatted,
     ]
     if evidence_block:
         parts.append(f"**📎 Based on these uploads:**\n{evidence_block}")
-    parts.append("**Who inherits this property?**")
+    parts.append("**Who is the main beneficiary for this property?**")
 
     if deduced:
-        # Primary suggestion = combine all deduced shares into one string
         primary_value = ', '.join(f"{d['name']} {d['share']}" for d in deduced)
         primary_label = '✓ ' + ', '.join(f"{d['name'].title()} {d['share']}" for d in deduced)
-        evidence_lines = '\n'.join(f"  • _{d['evidence']}_" for d in deduced)
-        parts.append(f"📧 **Suggested from email:**\n{evidence_lines}")
+        ev_lines = '\n'.join(f"  • _{d['evidence']}_" for d in deduced)
+        parts.append(f"📧 **Suggested from email:**\n{ev_lines}")
         quick.append({'label': primary_label, 'value': primary_value})
 
-    # Secondary single-beneficiary options
     for n in candidates[:4]:
         if deduced and any(d['name'].upper() == n.upper() for d in deduced):
-            continue  # already covered by primary
+            continue
         quick.append({'label': f"{n.title()} 100%", 'value': f"{n} 100%"})
     if len(candidates) >= 2 and not deduced:
         a, b = candidates[0], candidates[1]
         quick.append({'label': f"{a.title()} 50% + {b.title()} 50%",
                       'value': f"{a} 50%, {b} 50%"})
-    quick.append({'label': 'Skip', 'value': 'skip'})
-    quick.append({'label': 'Delete', 'value': 'delete'})
+    quick.append({'label': '⏭ Skip this gift', 'value': 'skip'})
+    quick.append({'label': '🗑 Remove', 'value': 'delete'})
 
     text = '\n\n'.join(parts) + _qr_marker(quick)
     return {'text': text, 'focus_doc_id': p.get('document_id')}
