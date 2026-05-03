@@ -5125,7 +5125,10 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
             'role': 'inbox_restarted',
             'kind': 'inbox_restart',
             'reply_override': inbox_card,
-            'focus_attachments': _focus_ids,
+            # No thumbnails on the intake card — the AI summary card
+            # (posted by background thread) carries all the attachments.
+            # This prevents the exhibit grid from appearing twice.
+            'focus_attachments': [],
         }
     except Exception as _rst_err:
         import traceback as _tb
