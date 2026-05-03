@@ -5075,7 +5075,8 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
                 if _ct and len(_ct) > len(_best_ctx):
                     _best_ctx = _ct
 
-        inbox_card = _iec(artifacts, _best_ctx)
+        _will_snap = _will_data_snapshot(will) if will else {}
+        inbox_card = _iec(artifacts, _best_ctx, current_will_data=_will_snap)
         _focus_ids = [a['document_id'] for a in artifacts]
 
         # Spawn background thread to generate the AI summary and post it as

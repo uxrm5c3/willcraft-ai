@@ -124,7 +124,9 @@ def plan_turn(
         # Use the rich Email Inbox Review card (shows cleaned message text,
         # numbered image list, per-image remove buttons, start-analysis CTA).
         # The plain _intake_summary is only used as fallback inside the card.
-        _intake_card = _intake_email_card(artifacts, user_text or '')
+        _intake_card = _intake_email_card(
+            artifacts, user_text or '', current_will_data=current_will_data
+        )
         reply_parts.append(_intake_card)
         # Show ALL fresh attachment thumbnails in the carousel
         focus_ids = [a['document_id'] for a in artifacts if a.get('document_id')]
@@ -397,7 +399,63 @@ def _summarise_message(raw_text: str) -> str:
         return ''
 
 
-def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
+def _next_step_cta(will_data: dict) -> dict:
+    """Return {'label': str, 'value': str} for the ▶️ next-step button.
+
+    Mirrors the step-gate logic in plan_turn so the button label tells the
+    user exactly what happens when they tap it.
+    """
+    if not will_data:
+        return {'label': '▶️ Start — verify testator identity', 'value': 'inbox start'}
+
+    s1         = will_data.get('step1') or {}
+    s2         = will_data.get('step2') or {}
+    s4         = will_data.get('step4') or []
+    completed  = will_data.get('completed_steps') or []
+    pg         = will_data.get('pending_gifts') or {}
+    identities = will_data.get('identities') or []
+
+    pending_ics = [i for i in identities
+                   if i.get('kind') == 'nric' and not i.get('confirmed')]
+
+    # Step 1: identity documents to match
+    if pending_ics:
+        return {'label': '▶️ Match identity documents', 'value': 'inbox start'}
+
+    # Step 2: testator details not yet confirmed
+    if s1.get('full_name') and not _is_confirmed(will_data, 'testator'):
+        return {'label': '▶️ Confirm testator details', 'value': 'inbox start'}
+
+    # Asset inventory not yet done
+    has_assets = any(pg.get(k) for k in ('property', 'bank', 'vehicle'))
+    if 'assets_confirmed' not in completed:
+        if not has_assets:
+            return {'label': '▶️ Start — describe your assets', 'value': 'inbox start'}
+        return {'label': '▶️ Review asset documents', 'value': 'inbox start'}
+
+    # Step 3: executors
+    n_exec = len(s2.get('executors') or [])
+    if n_exec < 2:
+        return {'label': '▶️ Assign executors', 'value': 'inbox start'}
+
+    # Step 5: beneficiaries
+    if not s4:
+        return {'label': '▶️ Assign beneficiaries', 'value': 'inbox start'}
+
+    # Step 6: specific gifts — properties
+    if pg.get('property'):
+        return {'label': '▶️ Match property documents', 'value': 'inbox start'}
+
+    # Step 6: specific gifts — bank accounts
+    if pg.get('bank') and not (will_data.get('step5') or []):
+        return {'label': '▶️ Assign bank accounts', 'value': 'inbox start'}
+
+    # Step 7+: residuary / review
+    return {'label': '▶️ Continue to next step', 'value': 'inbox start'}
+
+
+def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str,
+                       current_will_data: dict = None) -> str:
     """Email brief card — shown when new attachments arrive or on reset.
 
     The exhibit thumbnails are rendered by the frontend from m.attachments —
@@ -417,7 +475,8 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
     warn_note = " ⚠️ Some may need review." if has_wrong else ""
     has_text = bool(_clean_email_body(user_text or ''))
 
-    quick = [{'label': '▶️ Start matching', 'value': 'inbox start'}]
+    cta = _next_step_cta(current_will_data or {})
+    quick = [cta]
     qr = f'<!--quickreplies:{json.dumps(quick)}-->'
 
     lines = [
@@ -425,11 +484,14 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
     ]
     if has_text:
         lines.append(
-            "_Analysing your message — summary will appear below in a moment. "
-            "Review exhibits then tap **▶️ Start matching** when ready._"
+            f"_Analysing your message — summary will appear below in a moment. "
+            f"Review exhibits then tap **{cta['label']}** when ready._"
         )
     else:
-        lines.append("_No message text — only attachments received._")
+        lines.append(
+            f"_No message text — only attachments received. "
+            f"Tap **{cta['label']}** when ready._"
+        )
 
     return '\n'.join(lines) + qr
 
@@ -1545,75 +1607,42 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     _title_wrong_reason = (ex.get('_wrong_reason') or '').strip()
 
     parts = [
-        f"### 🏠 Reviewing property ({n_left} of {total_remaining} left)",
-        doc_type_line,
+        f"### 🏠 Property {n_left} of {total_remaining}",
         formatted,
     ]
+
     if _title_wrong and _title_wrong_reason:
-        parts.append(
-            f"**⚠️ Possible wrong upload on main document:**\n"
-            f"  _{_title_wrong_reason}_\n"
-            f"  Please verify this is the correct document. Tap 🗑 Remove if uploaded by mistake."
-        )
+        parts.append(f"⚠️ _{_title_wrong_reason}_ — tap 🗑 Remove if wrong upload.")
 
-    # Identifiers grid — surface every field so writer can spot OCR errors
-    fields = []
-    for label, key in (('Title type', 'title_type'),
-                       ('Title no.', 'title_number'),
-                       ('Lot no.', 'lot_number'),
-                       ('Mukim', 'mukim'),
-                       ('Daerah', 'daerah'),
-                       ('Negeri', 'negeri'),
-                       ('Area', 'area')):
-        v = (ex.get(key) or '').strip()
-        if v:
-            fields.append(f"  • **{label}:** {v}")
-    if fields:
-        parts.append("**📋 Identifiers (read from geran):**\n" + '\n'.join(fields))
+    # Compact identifiers — only show what isn't already in the address line
+    id_parts = []
+    lot = (ex.get('lot_number') or '').strip()
+    title_no = (ex.get('title_number') or '').strip()
+    if lot:
+        id_parts.append(f"Lot {lot}")
+    if title_no:
+        id_parts.append(title_no)
+    mukim = (ex.get('mukim') or '').strip()
+    daerah = (ex.get('daerah') or '').strip()
+    if mukim:
+        id_parts.append(f"Mukim {mukim}")
+    if daerah and daerah.lower() not in (mukim.lower(), ''):
+        id_parts.append(daerah)
+    if id_parts:
+        parts.append("📋 " + " · ".join(id_parts))
 
-    # ── Address verification badge (from Nominatim lookup at OCR time) ──
-    _addr_note = (ex.get('address_note') or '').strip()
-    _addr_canon = (ex.get('address_canonical') or '').strip()
-    _addr_level = (ex.get('address_level') or '').strip()
-    _addr_verified = ex.get('address_verified')  # True / False / None
-    if _addr_note:
-        canon_line = f"\n  _{_addr_canon[:180]}_" if _addr_canon and _addr_level == 'street' else ''
-        parts.append(f"{_addr_note}{canon_line}")
-
-    # Show enrichment provenance so the writer trusts the back-filled
-    # fields: "Mukim & Daerah back-filled from cukai_tanah_2024.pdf".
-    enriched_from = ex.get('_enriched_from') or []
-    manually_edited = ex.get('_manually_edited') or []
-    if enriched_from or manually_edited:
-        srcs = {}
-        for ent in enriched_from:
-            try:
-                fname, _, key = ent.rpartition('.')
-            except Exception:
-                fname, key = ent, ''
-            # Pretty-print source name
-            src_label = ('💬 client message' if fname == 'chat_text'
-                         else f'📄 _{fname}_' if fname else '📎 sibling doc')
-            srcs.setdefault(src_label, []).append(key)
-        bullets = [f"  • {', '.join(keys)} ← {src}" for src, keys in srcs.items()]
-        if manually_edited:
-            bullets.append(f"  • ✏️ manually entered: {', '.join(manually_edited[:5])}")
-        parts.append("**🔗 Auto-filled from:**\n" + '\n'.join(bullets))
-
-    # Supporting docs grouped under this property.
-    # Index i here matches thumbnail position i+1 in the image carousel
-    # (thumbnail 1 = title doc, thumbnails 2..N = support docs in order).
+    # Supporting docs — brief list of types only
     support = p.get('support_docs') or []
     _unrelated_warnings = []
     if support:
-        sup_lines = [f"**📎 {len(support)} supporting doc{'s' if len(support) != 1 else ''} grouped under this property:**"]
+        sup_labels = []
         for i, s in enumerate(support, 1):
             kind = s.get('category', '')
             kind_label = {
                 'property_spa':      '📝 SPA',
-                'property_tax':      '🧾 Cukai Tanah / Property Tax',
-                'property_title':    '📜 Geran (extra page)',
-                'property_transfer': '📋 Memorandum of Transfer (Borang 14A/16A)',
+                'property_tax':      '🧾 Cukai Tanah',
+                'property_title':    '📜 Title page',
+                'property_transfer': '📋 Transfer form',
                 'utility_bill':      '⚡ Utility bill',
                 'bank_letter':       '🏦 Bank letter',
                 'loan_agreement':    '🏦 Loan / Charge document _(encumbrance)_',
@@ -1632,54 +1661,20 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
             # Override generic labels with the document's own title
             if custom_type and kind in ('chat_inbox', 'other'):
                 kind_label = f'📄 {custom_type}'
-            display_text = custom_type or purpose
-            # Thumbnail position: title doc is #1, support docs are #2, #3, ...
-            thumb_num = i + 1
-            sup_lines.append(f"  {i}. {kind_label} — _{display_text[:140]}_ _(image {thumb_num})_")
-            # Flag wrong uploads: death cert / unrelated, OR any doc where
-            # the named person doesn't match the testator (_wrong_upload_suspected)
             _sup_ex = s.get('extracted') or {}
             _sup_wrong = _sup_ex.get('_wrong_upload_suspected') or kind in ('death_certificate', 'unrelated')
-            _sup_wrong_reason = (_sup_ex.get('_wrong_reason') or '').strip()
+            flag = ' ⚠️' if _sup_wrong else ''
+            sup_labels.append(f"{kind_label}{flag}")
             if _sup_wrong:
-                if not _sup_wrong_reason:
-                    _sup_wrong_reason = (
-                        'Death certificate — likely uploaded by mistake.' if kind == 'death_certificate'
-                        else 'Does not appear related to this property.'
-                    )
-                _unrelated_warnings.append((i, thumb_num, kind, _sup_wrong_reason))
-        parts.append('\n'.join(sup_lines))
+                _unrelated_warnings.append(kind_label)
+        parts.append("📎 Also attached: " + ", ".join(sup_labels))
     if _unrelated_warnings:
-        warn_lines = []
-        for idx, thumb, kind, reason in _unrelated_warnings:
-            warn_lines.append(
-                f"  • Doc {idx} (image {thumb}): _{reason}_\n"
-                f"    Please verify and tap 🗑 Remove if it was uploaded by mistake."
-            )
-        parts.append("**⚠️ Possibly wrong upload(s):**\n" + '\n'.join(warn_lines))
+        parts.append(f"⚠️ Some attached docs may not belong here: {', '.join(_unrelated_warnings)}")
 
-    # Beneficiary hint from batch group analysis — client said "give to Sarah"
-    # in their WhatsApp text; surface it prominently so the writer can
-    # pre-fill the gift assignment instead of asking again.
+    # Beneficiary hint — surface if client said "give to X" in their message
     ben_hint = (ex.get('_beneficiary_hint') or '').strip()
     if ben_hint:
-        parts.append(f"**🎁 Intended beneficiary (from client's message):** _{ben_hint}_")
-
-    # Intent quote from client's messages (needle-matched snippet)
-    if intent:
-        parts.append(f"**💬 Client's message about this property:**\n{intent}")
-    elif not fields:
-        # No identifiers AND no intent match — show raw message context so
-        # the writer can see what the client said alongside this image.
-        msg_ctx = (ex.get('_message_context') or '').strip()
-        if msg_ctx:
-            preview = msg_ctx[:400] + ('…' if len(msg_ctx) > 400 else '')
-            parts.append(
-                f"**💬 Text sent with this image:**\n"
-                f"  > _{preview}_\n"
-                f"_(No lot/title match found — please confirm if this text "
-                f"describes this property, or type `address:`, `lot:`, etc. to fill in manually.)_"
-            )
+        parts.append(f"🎁 **Client wants to give to:** _{ben_hint}_")
 
     # ── Ownership: one-line summary (guided confirm handles the questions) ──
     num_owners   = ex.get('num_owners') or 1
@@ -1718,45 +1713,17 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     else:
         parts.append("**✅ No encumbrance detected**")
 
-    # ── NLC completeness checklist ──────────────────────────────────────
-    _COMPULSORY = [
-        ('title_number', 'Title number (Geran/HSD/Hakmilik no.)'),
-        ('lot_number',   'Lot / PTD number'),
-        ('mukim',        'Mukim'),
-        ('daerah',       'Daerah / District'),
-        ('negeri',       'Negeri / State'),
-    ]
-    missing_fields = [(key, lbl) for key, lbl in _COMPULSORY
-                      if not (ex.get(key) or '').strip()]
-    if missing_fields or not (ex.get('property_address') or '').strip():
-        status_lines = []
-        for key, lbl in _COMPULSORY:
-            tick = '✅' if (ex.get(key) or '').strip() else '❌'
-            status_lines.append(f"  {tick} {lbl}")
-        addr_tick = '✅' if (ex.get('property_address') or '').strip() else '⚠️'
-        status_lines.append(f"  {addr_tick} Property address (recommended)")
-        parts.append("**📝 Will clause fields:**\n" + '\n'.join(status_lines))
+    # Missing NLC fields — show as a one-line warning, not a checklist
+    _COMPULSORY_KEYS = ('title_number', 'lot_number', 'mukim', 'daerah', 'negeri')
+    missing = [k.replace('_', ' ') for k in _COMPULSORY_KEYS
+               if not (ex.get(k) or '').strip()]
+    if missing:
+        parts.append(f"⚠️ Missing info needed for will: **{', '.join(missing)}** — please provide.")
 
     if warnings:
-        parts.append("**🚨 Validation:**\n" + '\n'.join(f"  {w}" for w in warnings))
+        parts.append("🚨 " + " · ".join(w.lstrip('⚠️ ').strip() for w in warnings))
 
-    parts.append("_Tap **Accept** to add this property to your will, or **Skip** to come back later._")
-
-    # ── Data source summary (helps spot phantom assets from email text) ──
-    _enriched_from = ex.get('_enriched_from') or []
-    _msg_ctx = (ex.get('_message_context') or '').strip()
-    if _enriched_from or _msg_ctx:
-        _src_lines = []
-        if _enriched_from:
-            _src_lines.append(
-                f"  🗂 Fields auto-filled from: `{'`, `'.join(set(s.split('.')[0] for s in _enriched_from))}`"
-            )
-        if _msg_ctx:
-            _preview = _msg_ctx[:300].replace('\n', ' ').strip()
-            if len(_msg_ctx) > 300:
-                _preview += '…'
-            _src_lines.append(f"  📨 Message context used for enrichment:\n  > _{_preview}_")
-        parts.append("**🔍 Data sources (how fields were filled):**\n" + '\n'.join(_src_lines))
+    parts.append("_Tap **Accept** to add this property, **Skip** to come back later, or **Remove** if wrong upload._")
 
     # ── 3 clean action buttons — always the same, no conditionals ──────
     quick = [
