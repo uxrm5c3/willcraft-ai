@@ -1317,11 +1317,21 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     if purpose_str:
         doc_type_line += f"\n_{purpose_str[:200]}_"
 
+    # ── Wrong-upload check on the TITLE doc itself ───────────────────────
+    _title_wrong = ex.get('_wrong_upload_suspected')
+    _title_wrong_reason = (ex.get('_wrong_reason') or '').strip()
+
     parts = [
         f"### 🏠 Reviewing property ({n_left} of {total_remaining} left)",
         doc_type_line,
         formatted,
     ]
+    if _title_wrong and _title_wrong_reason:
+        parts.append(
+            f"**⚠️ Possible wrong upload on main document:**\n"
+            f"  _{_title_wrong_reason}_\n"
+            f"  Please verify this is the correct document. Tap 🗑 Remove if uploaded by mistake."
+        )
 
     # Identifiers grid — surface every field so writer can spot OCR errors
     fields = []
@@ -1389,21 +1399,39 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
                 'chat_inbox':        '📷 Unclassified',
                 'other':             '📷 Unclassified',
             }.get(kind, '📄 Document')
+            # custom_type = the document's own heading as read by the classifier
+            # (e.g. "Redemption Statement", "Discharge of Charge"). Use it when
+            # the standard kind label is too generic (chat_inbox / other).
+            custom_type = (s.get('custom_type') or
+                           s.get('extracted', {}).get('custom_type') or '').strip()
             purpose = (s.get('purpose') or s.get('extracted', {}).get('purpose') or
                        s.get('original_filename') or '').strip()
+            # Override generic labels with the document's own title
+            if custom_type and kind in ('chat_inbox', 'other'):
+                kind_label = f'📄 {custom_type}'
+            display_text = custom_type or purpose
             # Thumbnail position: title doc is #1, support docs are #2, #3, ...
             thumb_num = i + 1
-            sup_lines.append(f"  {i}. {kind_label} — _{purpose[:140]}_ _(image {thumb_num})_")
-            if kind in ('death_certificate', 'unrelated'):
-                _unrelated_warnings.append((i, thumb_num, kind, purpose[:80]))
+            sup_lines.append(f"  {i}. {kind_label} — _{display_text[:140]}_ _(image {thumb_num})_")
+            # Flag wrong uploads: death cert / unrelated, OR any doc where
+            # the named person doesn't match the testator (_wrong_upload_suspected)
+            _sup_ex = s.get('extracted') or {}
+            _sup_wrong = _sup_ex.get('_wrong_upload_suspected') or kind in ('death_certificate', 'unrelated')
+            _sup_wrong_reason = (_sup_ex.get('_wrong_reason') or '').strip()
+            if _sup_wrong:
+                if not _sup_wrong_reason:
+                    _sup_wrong_reason = (
+                        'Death certificate — likely uploaded by mistake.' if kind == 'death_certificate'
+                        else 'Does not appear related to this property.'
+                    )
+                _unrelated_warnings.append((i, thumb_num, kind, _sup_wrong_reason))
         parts.append('\n'.join(sup_lines))
     if _unrelated_warnings:
         warn_lines = []
-        for idx, thumb, kind, desc in _unrelated_warnings:
-            label = 'Death certificate' if kind == 'death_certificate' else 'Unrelated document'
+        for idx, thumb, kind, reason in _unrelated_warnings:
             warn_lines.append(
-                f"  • Doc {idx} (image {thumb}): **{label}** — _{desc}_\n"
-                f"    This does not appear to belong to this property. Please verify and tap 🗑 Remove if it was uploaded by mistake."
+                f"  • Doc {idx} (image {thumb}): _{reason}_\n"
+                f"    Please verify and tap 🗑 Remove if it was uploaded by mistake."
             )
         parts.append("**⚠️ Possibly wrong upload(s):**\n" + '\n'.join(warn_lines))
 

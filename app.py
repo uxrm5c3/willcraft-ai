@@ -3459,11 +3459,12 @@ def api_chat_message(client_id):
         # 4. Update Document with classification result
         doc.category = kind if kind != 'other' else 'chat_inbox'
         doc.description = classification.get('reason', '')[:500] if classification.get('reason') else None
-        # Persist per-image `purpose` (what THIS image proves) and
-        # `property_hint` (lot/address used to cluster multiple uploads
-        # under one property) so the chat planner can surface and group.
-        purpose = (classification.get('purpose') or '').strip()
-        prop_hint = (classification.get('property_hint') or '').strip()
+        # Persist per-image `purpose`, `property_hint`, `custom_type`,
+        # and `person_name` so the chat planner can surface and group.
+        purpose      = (classification.get('purpose')      or '').strip()
+        prop_hint    = (classification.get('property_hint') or '').strip()
+        custom_type  = (classification.get('custom_type')  or '').strip()
+        person_name  = (classification.get('person_name')  or '').strip()
         will_relevant = classification.get('will_relevant', True)
         if extracted is None:
             extracted = {}
@@ -3471,6 +3472,42 @@ def api_chat_message(client_id):
             extracted['purpose'] = purpose[:300]
         if prop_hint:
             extracted['property_hint'] = prop_hint[:300]
+        if custom_type:
+            extracted['custom_type'] = custom_type[:200]
+        if person_name:
+            extracted['_doc_person_name'] = person_name[:200]
+
+        # ── Wrongly-uploaded detection ────────────────────────────────────
+        # death_certificate and unrelated docs are almost always wrong uploads.
+        # For any doc with a named person, also compare against testator name.
+        if kind in ('death_certificate', 'unrelated'):
+            extracted['_wrong_upload_suspected'] = True
+            extracted['_wrong_reason'] = (
+                'Death certificate detected — likely uploaded by mistake.' if kind == 'death_certificate'
+                else 'Document classified as unrelated to asset ownership.'
+            )
+        elif person_name:
+            # Compare against testator name to catch docs about third parties
+            try:
+                _testator_name = ''
+                if _will_for_ctx:
+                    _s1 = json.loads(_will_for_ctx.step1_data or '{}')
+                    _testator_name = (_s1.get('full_name') or '').strip().upper()
+                if not _testator_name:
+                    _testator_name = (client.full_name or '').strip().upper()
+                if _testator_name and person_name.upper() != _testator_name:
+                    # Simple fuzzy check: if NO word from doc person_name appears
+                    # in testator name, flag it (avoids false positive on aliases)
+                    _doc_words = set(person_name.upper().split())
+                    _testator_words = set(_testator_name.split())
+                    if not _doc_words.intersection(_testator_words):
+                        extracted['_wrong_upload_suspected'] = True
+                        extracted['_wrong_reason'] = (
+                            f'Document appears to be about "{person_name}", '
+                            f'not the testator. Possibly uploaded by mistake.'
+                        )
+            except Exception:
+                pass
         # ── Message context ──────────────────────────────────────────────
         # Store the text the client sent WITH this file. This is the single
         # most reliable context clue — the client typed "my house at Lot

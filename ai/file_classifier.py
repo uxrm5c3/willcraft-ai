@@ -255,61 +255,68 @@ def classify_file(file_path: str, group_context: dict = None) -> dict:
     try:
         from config import CLAUDE_MODEL_FAST
         msg = client_api.messages.create(
-            model=CLAUDE_MODEL_FAST,   # Use sonnet — haiku misses document headings
-            max_tokens=300,
+            model=CLAUDE_MODEL_FAST,   # Sonnet — haiku misses headings on complex docs
+            max_tokens=400,
             messages=[{
                 "role": "user",
                 "content": [
                     content_block,
-                    {"type": "text", "text": f"""You are a Malaysian legal document expert. Look carefully at this image — read ALL visible headings, logos, bank names, form numbers, and text to classify it precisely.{group_section}
+                    {"type": "text", "text": f"""You are a Malaysian legal document expert with strong vision. Your job: read this image carefully and identify what the document IS — even if you have never seen this exact format before.{group_section}
 
-**STEP 1 — What do you see?** Read every heading, logo, form number, and key phrase visible.
-**STEP 2 — Match to category below.**
+━━━ STEP 1: READ FIRST ━━━
+Before classifying, scan the image for these signals (in priority order):
+1. **Main heading / title** (largest text at top — e.g. "GERAN", "SIJIL KEMATIAN", "PERJANJIAN PINJAMAN")
+2. **Issuing authority logo or name** (government department, bank name, company)
+3. **Form number** (e.g. BORANG 14A, Form JPN.DP01)
+4. **Key phrases** (lot number, IC number, account number, amount, date of death)
+5. **Language** (BM headings are common in Malaysian govt docs)
 
-CATEGORIES (pick the SINGLE best match):
+━━━ STEP 2: CLASSIFY (best-effort — always pick closest match) ━━━
 
-**nric** — Malaysian MyKad IC (front: photo + IC number like 700101-01-1234, back: thumbprint grid) OR Malaysian passport. IC number format: ######-##-####.
+Standard categories (use one):
+• **nric** — MyKad (photo + IC no. ######-##-####) or Malaysian passport
+• **property_title** — Land title: "HAKMILIK", "GERAN", "STRATA TITLE", "INDIVIDUAL TITLE". PTD seal. Has lot no. + "TUAN PUNYA BERDAFTAR"
+• **property_spa** — Sale & Purchase Agreement / Perjanjian Jual Beli. Buyer+seller+price+date
+• **property_tax** — Cukai Tanah / Cukai Harta / Cukai Pintu / quit rent. Local council (MBJB, DBKL, MBPJ)
+• **property_transfer** — BORANG 14A / 16A. "MEMORANDUM PINDAHMILIK". Transferor + Transferee sections
+• **utility_bill** — TNB / Air Selangor / SAJ / PBA / Indah Water / unifi / Maxis. Service address shown
+• **loan_agreement** — Loan/charge/mortgage document. Bank name (RHB, Maybank, CIMB, Public Bank, HLB, AmBank, Alliance, BSN, Bank Islam, Bank Rakyat, UOB, OCBC) + "LOAN AGREEMENT" / "PERJANJIAN PINJAMAN" / "DEED OF ASSIGNMENT" / "CHARGE" / "BEBANAN" / signing page with borrower + bank stamp
+• **bank_letter** — Brief bank correspondence (welcome letter, account confirmation). NOT a statement or loan
+• **bank_statement** — Transaction list with dates + amounts + running balance. Passbook, FD cert, e-statement
+• **insurance** — Policy schedule / takaful cert. Prudential, AIA, Great Eastern, Etiqa, Takaful Malaysia
+• **epf_kwsp** — EPF/KWSP logo. Member no. + contribution history. i-Akaun screenshot
+• **vehicle** — JPJ registration card (Kad Pendaftaran Kenderaan). Plate no. + chassis + engine cc
+• **will** — "WASIAT TERAKHIR" / "LAST WILL AND TESTAMENT". Executor appointment + witness signatures
+• **death_certificate** — "SIJIL KEMATIAN" / "CERTIFICATE OF DEATH". Deceased name + date/place of death
+• **unrelated** — Clearly not an asset: birth cert, marriage cert, medical record, receipt, photo, court order, document about a deceased person's estate
 
-**property_title** — Official LAND TITLE issued by Pejabat Tanah. Header says "HAKMILIK", "GERAN", "INDIVIDUAL TITLE", "STRATA TITLE". Has PTD official seal, lot number, land area, "TUAN PUNYA BERDAFTAR" (registered owner) section. Proves current ownership.
+⚡ BEST-EFFORT RULE: If the document does NOT match any standard category, still provide:
+  - `kind`: the CLOSEST standard category (never default to "other" unless truly unreadable)
+  - `custom_type`: the document's actual name/title as you read it from the image (e.g. "Redemption Statement", "Letter of Undertaking", "Discharge of Charge", "Strata Title Application", "Developer's Progress Billing")
+  - `purpose`: what this document proves or is used for
+  - Only use `kind: "other"` + `confidence: "low"` when the image is so blurry/dark that you cannot read ANY text
 
-**property_spa** — Sale & Purchase Agreement / Perjanjian Jual Beli. CONTRACT to buy property — has buyer+seller names, purchase price, completion date. Lawyer-drafted, signed by both parties.
-
-**property_tax** — Cukai Tanah, Cukai Harta, Cukai Pintu, Bil Cukai Taksiran. Tax bill/receipt from local council (MBJB, DBKL, MBPJ, MPKj, etc.) or PTD. Does NOT prove ownership.
-
-**property_transfer** — Memorandum of Transfer / Memorandum Pindahmilik. Form number "BORANG 14A" or "BORANG 16A" visible. Has TRANSFEROR + TRANSFEREE sections.
-
-**utility_bill** — Bills from: TNB (Tenaga Nasional), Air Selangor, SAJ (Syarikat Air Johor), PBA, Indah Water (IWK), unifi, Maxis, Celcom, TIME, Astro. Shows service address.
-
-**loan_agreement** — Loan / mortgage / charge document signed with a bank. Look for: bank name (RHB, Maybank, CIMB, Public Bank, Hong Leong, AmBank, Alliance, BSN, Bank Islam, Bank Rakyat, UOB, OCBC, Standard Chartered) + words like "LOAN AGREEMENT", "PERJANJIAN PINJAMAN", "DEED OF ASSIGNMENT", "CHARGE", "BEBANAN", "FACILITIES AGREEMENT", signing pages with borrower signature + bank stamp. This proves the property has a bank loan/mortgage (encumbrance).
-
-**bank_letter** — Short letter FROM a bank (not a loan agreement) — account confirmation letter, offer letter, correspondence. Bank letterhead + brief content.
-
-**bank_statement** — Periodic transaction listing with dates, amounts, running balance. OR passbook, FD certificate, e-statement screenshot, i-Invest statement.
-
-**insurance** — Insurance policy schedule, takaful certificate, cover note. Issuer: Prudential, AIA, Great Eastern, Etiqa, Takaful Malaysia, etc.
-
-**epf_kwsp** — KWSP / EPF statement or i-Akaun screenshot. Has EPF logo, member number, contribution history.
-
-**vehicle** — JPJ vehicle registration card (Kad Pendaftaran Kenderaan), road tax (Cukai Jalan) renewal, grant. Has plate number, engine cc, chassis number.
-
-**will** — Signed Last Will and Testament (Wasiat Terakhir / Last Will). Has testator name, executor appointment, witness signatures.
-
-**death_certificate** — Sijil Kematian / Certificate of Death issued by JPN (Jabatan Pendaftaran Negara) or hospital. Has deceased's name, IC, date/place of death. This is about someone who has DIED — not an asset of the testator.
-
-**unrelated** — Document clearly unrelated to the testator's assets: birth certificate, marriage certificate, court order, photos, medical records, receipts, or any document about a DIFFERENT person that is not an asset.
-
-**other** — Everything else that doesn't clearly fit the above.
-
-RULES:
-- Read the HEADING / TITLE of the document first — it's the strongest signal
-- Bank name (RHB, Maybank, CIMB, etc.) visible on a signing page with loan terms → loan_agreement
-- "SIJIL KEMATIAN" or "CERTIFICATE OF DEATH" → death_certificate, will_relevant=false
-- Blurry/dark image where nothing is readable → other, confidence=low
-- For property_hint: copy the PROPERTY lot number, title number, or address verbatim if visible (NOT the owner's home address)
+━━━ RULES ━━━
+- Document heading is the STRONGEST signal — trust what you read
+- Bank name visible on a contract/agreement → loan_agreement
+- "SIJIL KEMATIAN" → death_certificate, will_relevant=false
+- Truly unreadable (black/blank/photo) → other, confidence=low, custom_type="Unreadable image"
+- property_hint: copy verbatim the property lot number, title number, or address (NOT owner's home address)
+- person_name: the PRIMARY person named in the document (owner, borrower, deceased, IC holder). Full name as printed. Empty if no clear name visible.
+- For death_certificate: set will_relevant=false, person_name=deceased full name
 
 Return ONLY this JSON (no other text):
 ```json
-{{"kind": "<category>", "confidence": "high|medium|low", "reason": "<one sentence: what you saw that determined the category>", "purpose": "<what this document proves, max 20 words>", "property_hint": "<lot/title/address if visible, else empty>", "will_relevant": true}}
+{{
+  "kind": "<standard category>",
+  "custom_type": "<document's own title as read from image, or empty if matches standard category exactly>",
+  "confidence": "high|medium|low",
+  "reason": "<one sentence: exactly what heading/text/logo you saw>",
+  "purpose": "<what this document is for, max 20 words>",
+  "property_hint": "<lot/title/address if visible, else empty>",
+  "person_name": "<primary person named in document, or empty>",
+  "will_relevant": true
+}}
 ```"""}
                 ]
             }]
@@ -335,7 +342,16 @@ Return ONLY this JSON (no other text):
         result['kind'] = 'other'
     result.setdefault('confidence', 'low')
     result.setdefault('reason', '')
+    result.setdefault('custom_type', '')
+    result.setdefault('person_name', '')
     result.setdefault('will_relevant', True)
-    if result['kind'] == 'other' and result['confidence'] == 'low':
+    if result['kind'] in ('death_certificate', 'unrelated'):
+        result['will_relevant'] = False
+    elif result['kind'] == 'other' and result['confidence'] == 'low':
         result.setdefault('will_relevant', False)
+    # If model gave a custom_type but no standard kind, keep kind='other'
+    # but surface custom_type as the display label everywhere.
+    # Normalise: strip whitespace
+    result['custom_type'] = (result.get('custom_type') or '').strip()
+    result['person_name'] = (result.get('person_name') or '').strip()
     return result
