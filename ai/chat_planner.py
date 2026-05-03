@@ -1379,6 +1379,13 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
             sup_lines.append(f"  {i}. {kind_label} — _{purpose[:140]}_")
         parts.append('\n'.join(sup_lines))
 
+    # Beneficiary hint from batch group analysis — client said "give to Sarah"
+    # in their WhatsApp text; surface it prominently so the writer can
+    # pre-fill the gift assignment instead of asking again.
+    ben_hint = (ex.get('_beneficiary_hint') or '').strip()
+    if ben_hint:
+        parts.append(f"**🎁 Intended beneficiary (from client's message):** _{ben_hint}_")
+
     # Intent quote from client's messages (needle-matched snippet)
     if intent:
         parts.append(f"**💬 Client's message about this property:**\n{intent}")
