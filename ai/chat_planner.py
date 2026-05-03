@@ -86,6 +86,28 @@ def plan_turn(
                 "👍 Got it — drop the additional documents and I'll cluster "
                 "them in. Reply 'confirm' when you're done."
             )
+        elif just_kind.startswith('inventory_reviewed_'):
+            reply_parts.append(
+                f"✅ **{just_assigned.get('name','')}** queued for the wizard. "
+                "Next asset:"
+            )
+        elif just_kind.startswith('inventory_skipped_'):
+            reply_parts.append(
+                f"⏭ Skipped **{just_assigned.get('name','')}**. Next asset:"
+            )
+        elif just_kind == 'inventory_unlink_pending':
+            reply_parts.append(
+                f"✂️  Reviewing supporting docs for **{just_assigned.get('name','')}**…"
+            )
+        elif just_kind == 'unlink_one':
+            reply_parts.append(
+                f"🗑 Unlinked **{just_assigned.get('name','')}** — moved to "
+                "the unclassified pool."
+            )
+        elif just_kind == 'unlink_done':
+            reply_parts.append(
+                "✅ Kept all supporting docs as-is. Back to the property:"
+            )
         else:
             reply_parts.append(
                 f"✅ Saved **{just_assigned.get('name','')}** as **{just_assigned.get('role','')}**."
@@ -128,25 +150,36 @@ def plan_turn(
         reply_parts.append(_step2_question(s1))
         return _wrap(reply_parts, questions, patch, advice)
 
-    # ── 3.5 ASSET INVENTORY (NEW) — collect & confirm ALL gifts FIRST ──
-    # Mirror of the identity flow: gather every asset (clustered by
-    # property) and let the user say "yes that's everything" before
-    # we start asking "who inherits this?". Without this gate the chat
-    # interleaves uploads with assignment questions and the user can't
-    # see the full picture.
+    # ── 3.5 ASSET INVENTORY — walk one cleaned-up property at a time ───
+    # Job-to-be-done: the WILL WRITER (chat user) gets messy image+message
+    # dumps from CLIENTS. This phase cleans the dump up — groups multi-
+    # image uploads under one property, deduces the client's intent from
+    # email text, formats per National Land Code conventions — and
+    # presents one property card at a time for the writer to approve so
+    # they can paste a clean inventory into the wizard.
     completed = current_will_data.get('completed_steps') or []
     pending_gifts = current_will_data.get('pending_gifts') or {}
     has_any_assets = any(pending_gifts.get(k) for k in ('property', 'bank', 'vehicle'))
     if 'assets_confirmed' not in completed:
-        # Show the inventory + ask for confirmation. If the user answered
-        # 'yes / confirm / done' last turn, _try_confirm_assets in app.py
-        # would have stamped 'assets_confirmed' and we'd skip past this.
-        if has_any_assets:
-            reply_parts.append(_assets_inventory_question(pending_gifts))
+        if not has_any_assets:
+            reply_parts.append(_assets_prompt_for_uploads())
             return _wrap(reply_parts, questions, patch, advice)
-        # Zero assets uploaded yet — prompt for them before moving on.
-        reply_parts.append(_assets_prompt_for_uploads())
-        return _wrap(reply_parts, questions, patch, advice)
+        # Walk one un-reviewed property at a time. When all properties
+        # are reviewed, walk banks, then vehicles. _asset_walkthrough_*
+        # picks the FIRST item where extracted._inventoried is not True.
+        wt = _asset_walkthrough_question(pending_gifts, recent_text)
+        if wt is None:
+            # Everything reviewed — auto-stamp assets_confirmed via the
+            # app handler on next turn. For now just nudge the user.
+            reply_parts.append(
+                "✅ All assets reviewed. Reply **`confirm assets`** to lock "
+                "in the inventory and move to executor + beneficiary "
+                "assignment."
+            )
+            return _wrap(reply_parts, questions, patch, advice)
+        reply_parts.append(wt['text'])
+        focus = wt.get('focus_doc_ids') or []
+        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
 
     # ── 4. STEP 3: Executor (main + substitute) ─────────────────────────
     # Walk through main first, then substitute. Only stop after both are
@@ -568,6 +601,292 @@ def _format_property_description(ex: Dict[str, Any]) -> str:
     if held:
         parts.append(', '.join(held))
     return '\n\n'.join(parts)
+
+
+def _is_inventoried(item: Dict[str, Any]) -> bool:
+    """A doc is 'inventoried' once the will writer has reviewed it and
+    pressed confirm/skip in the walk-through. Marker lives in
+    extracted_data._inventoried set by the app handler."""
+    ex = item.get('extracted') or {}
+    return bool(ex.get('_inventoried'))
+
+
+def _deduce_intent_from_messages(p: Dict[str, Any], recent_text: str) -> str:
+    """Pull any messages from the client that mention this specific
+    property by lot/title number/address. The will writer needs to see
+    'what did the client actually say about this one?' next to the
+    auto-grouped doc evidence."""
+    if not recent_text:
+        return ''
+    ex = p.get('extracted') or {}
+    needles = []
+    for k in ('title_number', 'lot_number', 'property_address',
+              'description', 'mukim', 'property_hint'):
+        v = (ex.get(k) or '').strip()
+        if v and len(v) >= 3:
+            needles.append(v)
+    if not needles:
+        return ''
+    # Find any sentence in recent_text that mentions one of the needles.
+    import re as _re
+    text_l = recent_text.lower()
+    matches = []
+    for needle in needles:
+        n = needle.lower()
+        idx = text_l.find(n)
+        if idx == -1:
+            continue
+        # Grab a window of ±120 chars around the mention
+        lo = max(0, idx - 120)
+        hi = min(len(recent_text), idx + len(needle) + 120)
+        snippet = recent_text[lo:hi].strip()
+        # Trim to sentence bounds if possible
+        snippet = _re.sub(r'\s+', ' ', snippet)
+        if len(snippet) > 200:
+            snippet = '…' + snippet[-200:]
+        matches.append(snippet)
+        if len(matches) >= 2:
+            break
+    return '\n'.join(f"  > _{m}_" for m in matches)
+
+
+def _validate_property_format(ex: Dict[str, Any]) -> List[str]:
+    """Surface obvious formatting / completeness issues per the National
+    Land Code. The will writer sees these inline so they can correct
+    BEFORE the gift goes into the wizard. Cheap heuristic checks — not
+    a substitute for legal review."""
+    warnings = []
+    title_no = (ex.get('title_number') or '').strip()
+    title_type = (ex.get('title_type') or '').strip()
+    lot_no = (ex.get('lot_number') or '').strip()
+    mukim = (ex.get('mukim') or '').strip()
+    daerah = (ex.get('daerah') or '').strip()
+    negeri = (ex.get('negeri') or '').strip()
+    addr = (ex.get('property_address') or ex.get('description') or '').strip()
+    if not addr and not title_no:
+        warnings.append("⚠️  Address AND title number both blank — re-OCR or ask client for a clearer scan.")
+    if title_no and not any(p in title_no.upper()
+                            for p in ('GERAN', 'HSD', 'HSM', 'HS(D)', 'HS(M)',
+                                      'PT', 'PN', 'GM', 'PM')):
+        warnings.append(
+            f"⚠️  Title `{title_no}` doesn't match common Malaysian formats "
+            "(Geran / HS(D) / HS(M) / PT / PN / GM / PM) — verify with client."
+        )
+    if not lot_no:
+        warnings.append("⚠️  Lot number missing — National Land Code requires it for the gift clause.")
+    if not mukim and not daerah:
+        warnings.append("⚠️  Mukim AND daerah both blank — needed to draft the property description.")
+    # Quick spelling sanity for common Mukim/Daerah patterns. Anything
+    # ending in obviously wrong characters likely an OCR error.
+    for label, val in (('Mukim', mukim), ('Daerah', daerah), ('Negeri', negeri)):
+        if val and (any(ch.isdigit() for ch in val) or len(val) > 60):
+            warnings.append(f"⚠️  {label} `{val}` looks suspicious (digits or unusually long) — likely OCR error, verify.")
+    return warnings
+
+
+def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
+                                 recent_text: str) -> Optional[Dict[str, Any]]:
+    """One-asset-at-a-time review for the will-writer. Picks the first
+    un-reviewed property → bank → vehicle and renders a clean card with:
+
+      • Formatted address per Malaysian legal-doc conventions
+      • Full identifiers (title / lot / mukim / daerah / negeri)
+      • Auto-grouped supporting docs (geran back / SPA / cukai / utility)
+        with their per-image purpose so the writer knows what each is
+      • Quote from the client's recent messages mentioning this property
+        (intent — 'they said give to Joshua 50%')
+      • NLC format warnings inline
+      • Buttons: ✅ Looks right / 🗑 Remove / ✂️ Wrong support docs / ✏️ Edit
+
+    Returns {text, focus_doc_ids} or None if everything's reviewed.
+    """
+    props = [p for p in (pending_gifts.get('property') or []) if not _is_inventoried(p)]
+    banks = [b for b in (pending_gifts.get('bank') or []) if not _is_inventoried(b)]
+    vehicles = [v for v in (pending_gifts.get('vehicle') or []) if not _is_inventoried(v)]
+
+    if props:
+        target = props[0]
+        # If the writer just pressed "Wrong supporting docs" on this
+        # property, the app handler stamped _unlink_pending. Render the
+        # support-doc picker instead of the normal card.
+        if (target.get('extracted') or {}).get('_unlink_pending'):
+            return _walkthrough_unlink_picker(target)
+        return _walkthrough_property_card(target, len(props), recent_text,
+                                           total_remaining=len(props) + len(banks) + len(vehicles))
+    if banks:
+        return _walkthrough_bank_card(banks[0], len(banks))
+    if vehicles:
+        return _walkthrough_vehicle_card(vehicles[0], len(vehicles))
+    return None
+
+
+def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
+                                recent_text: str,
+                                total_remaining: int) -> Dict[str, Any]:
+    ex = p.get('extracted') or {}
+    formatted = _format_property_description(ex)
+    warnings = _validate_property_format(ex)
+    intent = _deduce_intent_from_messages(p, recent_text)
+
+    parts = [
+        f"### 🏠 Reviewing property ({n_left} of {total_remaining} left)",
+        formatted,
+    ]
+
+    # Identifiers grid — surface every field so writer can spot OCR errors
+    fields = []
+    for label, key in (('Title type', 'title_type'),
+                       ('Title no.', 'title_number'),
+                       ('Lot no.', 'lot_number'),
+                       ('Mukim', 'mukim'),
+                       ('Daerah', 'daerah'),
+                       ('Negeri', 'negeri'),
+                       ('Area', 'area')):
+        v = (ex.get(key) or '').strip()
+        if v:
+            fields.append(f"  • **{label}:** {v}")
+    if fields:
+        parts.append("**📋 Identifiers (read from geran):**\n" + '\n'.join(fields))
+
+    # Supporting docs grouped under this property
+    support = p.get('support_docs') or []
+    if support:
+        sup_lines = [f"**📎 {len(support)} supporting doc{'s' if len(support) != 1 else ''} grouped under this property:**"]
+        for i, s in enumerate(support, 1):
+            kind = s.get('category', '')
+            kind_label = {
+                'property_spa': '📝 SPA',
+                'property_tax': '🧾 Cukai Tanah',
+                'property_title': '📜 Geran (extra page)',
+                'utility_bill': '⚡ Utility bill',
+                'bank_letter': '🏦 Bank letter',
+            }.get(kind, '📄')
+            purpose = (s.get('purpose') or s.get('original_filename') or '').strip()
+            sup_lines.append(f"  {i}. {kind_label} — _{purpose[:140]}_")
+        parts.append('\n'.join(sup_lines))
+
+    # Intent quote from client's messages
+    if intent:
+        parts.append(f"**💬 Client's message about this property:**\n{intent}")
+
+    # NLC warnings
+    if warnings:
+        parts.append("**🚨 Validation:**\n" + '\n'.join(f"  {w}" for w in warnings))
+
+    parts.append(
+        "**Does this property look correctly grouped & formatted?**\n"
+        "Confirm, and I'll add it to the wizard's gift list. The "
+        "beneficiary assignment happens AFTER all assets are reviewed."
+    )
+
+    quick = [
+        {'label': '✅ Looks right — add to wizard', 'value': 'inventory confirm'},
+        {'label': '✂️ Wrong supporting docs', 'value': 'inventory unlink'},
+        {'label': '🗑 Remove this property', 'value': 'delete'},
+        {'label': '⏭ Skip for now', 'value': 'inventory skip'},
+    ]
+
+    # Focus the title image plus first 3 supporting docs as inline previews
+    focus_ids = [p.get('document_id')]
+    for s in support[:3]:
+        if s.get('document_id'):
+            focus_ids.append(s['document_id'])
+    focus_ids = [d for d in focus_ids if d]
+
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': focus_ids,
+    }
+
+
+def _walkthrough_unlink_picker(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Show each support doc with its own 'remove from this property'
+    button. Lets the writer fix AI mis-grouping (e.g. an SPA that was
+    auto-attached to the wrong lot)."""
+    ex = p.get('extracted') or {}
+    formatted = _format_property_description(ex)
+    support = p.get('support_docs') or []
+    parts = [
+        f"### ✂️  Wrong supporting docs?",
+        formatted,
+        ("Below are the docs auto-grouped under this property. Tap one "
+         "to **remove** it from this group — it'll go back to the "
+         "unclassified pool so you can re-group it under the correct "
+         "property."),
+    ]
+    quick: List[Dict[str, str]] = []
+    for i, s in enumerate(support, 1):
+        kind = s.get('category', '')
+        kind_label = {
+            'property_spa': 'SPA',
+            'property_tax': 'Cukai Tanah',
+            'property_title': 'Geran (extra page)',
+            'utility_bill': 'Utility bill',
+            'bank_letter': 'Bank letter',
+        }.get(kind, 'Doc')
+        purpose = (s.get('purpose') or s.get('original_filename') or '').strip()
+        parts.append(f"  {i}. **{kind_label}** — _{purpose[:120]}_")
+        quick.append({
+            'label': f'🗑 Remove #{i} ({kind_label})',
+            'value': f'unlink {s.get("document_id")}',
+        })
+    quick.append({'label': '✅ All correct — keep all', 'value': 'unlink done'})
+    focus_ids = [p.get('document_id')] + [s.get('document_id') for s in support[:5]]
+    focus_ids = [d for d in focus_ids if d]
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': focus_ids,
+    }
+
+
+def _walkthrough_bank_card(b: Dict[str, Any], n_left: int) -> Dict[str, Any]:
+    ex = b.get('extracted') or {}
+    bank = (ex.get('bank_name') or '').strip() or 'Unnamed bank'
+    acct = (ex.get('account_number') or '').strip() or '(account no unread)'
+    holder = (ex.get('holder_name') or '').strip()
+    parts = [
+        f"### 🏦 Reviewing bank account ({n_left} left)",
+        f"**{bank}**",
+        f"  • **Account no.:** `{acct}`",
+    ]
+    if holder:
+        parts.append(f"  • **Holder:** {holder}")
+    purpose = (ex.get('purpose') or '').strip()
+    if purpose:
+        parts.append(f"  • _{purpose}_")
+    parts.append("**Include this account in the will?**")
+    quick = [
+        {'label': '✅ Include — add to wizard', 'value': 'inventory confirm'},
+        {'label': '🗑 Remove (not testator\'s)', 'value': 'delete'},
+        {'label': '⏭ Skip', 'value': 'inventory skip'},
+    ]
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': [b.get('document_id')] if b.get('document_id') else [],
+    }
+
+
+def _walkthrough_vehicle_card(v: Dict[str, Any], n_left: int) -> Dict[str, Any]:
+    ex = v.get('extracted') or {}
+    desc = (ex.get('description') or ex.get('vehicle_make') or 'Vehicle').strip()
+    reg = (ex.get('reg_number') or ex.get('registration_number') or '').strip()
+    parts = [
+        f"### 🚗 Reviewing vehicle ({n_left} left)",
+        f"**{desc}** {reg}".strip(),
+    ]
+    purpose = (ex.get('purpose') or '').strip()
+    if purpose:
+        parts.append(f"  • _{purpose}_")
+    parts.append("**Include this vehicle in the will?**")
+    quick = [
+        {'label': '✅ Include — add to wizard', 'value': 'inventory confirm'},
+        {'label': '🗑 Remove', 'value': 'delete'},
+        {'label': '⏭ Skip', 'value': 'inventory skip'},
+    ]
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': [v.get('document_id')] if v.get('document_id') else [],
+    }
 
 
 def _assets_inventory_question(pending_gifts: Dict[str, Any]) -> str:

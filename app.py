@@ -3432,8 +3432,16 @@ def api_chat_message(client_id):
     # asset-inventory gate, stamp the marker (or clear it) so the planner
     # advances past the gate to the per-asset assignment step.
     just_assets_gate = None
+    just_inventory = None
     if not just_assigned and not just_deleted:
-        just_assets_gate = _try_handle_assets_gate(client_id, user_text)
+        # Walk-through actions take priority — the writer is reviewing
+        # one specific asset card, so 'inventory confirm' / 'inventory
+        # skip' / 'inventory unlink' must hit the per-asset handler
+        # before the gate fallback.
+        just_inventory = (_try_handle_unlink_action(client_id, user_text)
+                          or _try_handle_inventory_action(client_id, user_text))
+        if not just_inventory:
+            just_assets_gate = _try_handle_assets_gate(client_id, user_text)
     # If past Step 1, attempt executor save then beneficiaries save then
     # gift-delete then gift-save. Delete BEFORE save so a "delete" reply
     # at a Step-6 property card removes the doc instead of trying to parse
@@ -3467,7 +3475,8 @@ def api_chat_message(client_id):
     will_snapshot = _will_data_snapshot(active_will)
     # Treat any save as "just_assigned" so the planner acknowledges + advances
     just = (just_assigned or just_executor or just_benef
-            or just_gift_deleted or just_gift or just_assets_gate)
+            or just_gift_deleted or just_gift or just_assets_gate
+            or just_inventory)
     will_snapshot['pending_gifts'] = pending_gifts
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
@@ -4139,6 +4148,198 @@ def _try_save_beneficiaries(client_id: str, user_text: str):
     db.session.commit()
     names = ', '.join(p.full_name for p in final)
     return {'name': names, 'role': f'{len(final)} beneficiaries', 'kind': 'beneficiaries'}
+
+
+def _try_handle_unlink_action(client_id: str, user_text: str):
+    """Handle the support-doc picker:
+      • 'unlink <doc_id>' → remove that doc from its parent property's
+        group by clearing its property_hint + setting category='other',
+        so it pops out of the cluster and lands in chat_inbox for the
+        writer to manually re-attach.
+      • 'unlink done' → clear the parent's _unlink_pending flag so the
+        normal property card returns next turn.
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    if not (t.startswith('unlink ') or t == 'unlink done'):
+        return None
+
+    if t == 'unlink done':
+        # Find the property currently in unlink mode and clear the flag
+        from services.gift_walker import get_pending_gift_documents
+        pend = get_pending_gift_documents(client_id)
+        for p in (pend.get('property') or []):
+            if (p.get('extracted') or {}).get('_unlink_pending'):
+                doc = db.session.get(Document, p.get('document_id'))
+                if not doc:
+                    continue
+                try:
+                    ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+                    ex.pop('_unlink_pending', None)
+                    doc.extracted_data = json.dumps(ex)
+                    db.session.commit()
+                    return {'name': 'support docs', 'role': 'kept all',
+                            'kind': 'unlink_done'}
+                except Exception:
+                    db.session.rollback()
+                    return None
+        return None
+
+    # 'unlink <doc_id>'
+    parts = t.split(maxsplit=1)
+    if len(parts) != 2:
+        return None
+    doc_id = parts[1].strip()
+    doc = db.session.get(Document, doc_id)
+    if not doc or doc.client_id != client_id:
+        return None
+    # Move out of the property cluster: clear identifying fields so
+    # _property_group_key returns '' and gift_walker treats it as orphan.
+    try:
+        ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+    except (json.JSONDecodeError, TypeError):
+        ex = {}
+    ex['_unlinked_from_property'] = True
+    for k in ('title_number', 'lot_number', 'mukim', 'property_address',
+              'description', 'property_hint'):
+        ex.pop(k, None)
+    # Drop into chat_inbox so it doesn't pollute another cluster
+    doc.category = 'chat_inbox'
+    try:
+        doc.extracted_data = json.dumps(ex)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+    return {'name': doc.original_filename or 'doc', 'role': 'unlinked',
+            'kind': 'unlink_one'}
+
+
+def _try_handle_inventory_action(client_id: str, user_text: str):
+    """Per-asset walk-through actions issued by the inventory card:
+
+      • 'inventory confirm' → the writer approves THIS asset; mark its
+        Document as inventoried (extracted_data._inventoried = True) so
+        it disappears from the walk and the next un-reviewed asset
+        comes up.
+      • 'inventory skip'    → leave the doc untouched but mark inventoried
+        anyway so the walk can progress. Writer can revisit later.
+      • 'inventory unlink'  → switch into "wrong supporting docs" picker
+        mode — emit a list of the support docs with individual remove
+        buttons. (Picker UI in next slice; for now stamp a flag the
+        planner can read.)
+
+    Each call resolves ONE focused asset (the same priority order the
+    walk-through uses: property → bank → vehicle).
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    if not (t.startswith('inventory confirm')
+            or t.startswith('inventory skip')
+            or t.startswith('inventory unlink')):
+        return None
+
+    from services.gift_walker import get_pending_gift_documents
+    pend = get_pending_gift_documents(client_id)
+    target = None
+    target_kind = None
+    for kind in ('property', 'bank', 'vehicle'):
+        items = pend.get(kind) or []
+        # Pick the first NOT-yet-inventoried one (matches what the chat
+        # card showed the writer this turn).
+        for it in items:
+            if not (it.get('extracted') or {}).get('_inventoried'):
+                target = it
+                target_kind = kind
+                break
+        if target:
+            break
+    if not target:
+        return None
+
+    doc = db.session.get(Document, target['document_id'])
+    if not doc:
+        return None
+
+    if t.startswith('inventory unlink'):
+        # Stamp a transient marker so the planner shows the support-doc
+        # picker on its next render. Real picker UI lands next slice.
+        try:
+            ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            ex = {}
+        ex['_unlink_pending'] = True
+        try:
+            doc.extracted_data = json.dumps(ex)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        label = (ex.get('property_address') or ex.get('title_number')
+                 or 'this asset')
+        return {'name': label[:80], 'role': 'review supporting docs',
+                'kind': 'inventory_unlink_pending'}
+
+    # 'inventory confirm' or 'inventory skip' → mark inventoried
+    try:
+        ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+    except (json.JSONDecodeError, TypeError):
+        ex = {}
+    ex['_inventoried'] = True
+    if t.startswith('inventory skip'):
+        ex['_skipped'] = True
+    try:
+        doc.extracted_data = json.dumps(ex)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+
+    # Friendly ack label
+    if target_kind == 'property':
+        label = (ex.get('property_address') or ex.get('title_number')
+                 or 'property')
+    elif target_kind == 'bank':
+        label = (ex.get('bank_name') or 'bank account')
+    else:
+        label = (ex.get('description') or ex.get('vehicle_make') or 'vehicle')
+
+    action = 'skipped' if t.startswith('inventory skip') else 'reviewed'
+
+    # Auto-stamp `assets_confirmed` if this was the LAST un-reviewed asset.
+    # Saves the writer from having to type "confirm assets" at the end —
+    # walk-through completion IS the confirmation.
+    pend_after = get_pending_gift_documents(client_id)
+    any_left = False
+    for k in ('property', 'bank', 'vehicle'):
+        for it in (pend_after.get(k) or []):
+            if not (it.get('extracted') or {}).get('_inventoried'):
+                any_left = True
+                break
+        if any_left:
+            break
+    if not any_left:
+        will = (Will.query.filter_by(client_id=client_id, status='draft')
+                .filter(Will.deleted_at.is_(None))
+                .order_by(Will.updated_at.desc()).first())
+        if will:
+            try:
+                completed = json.loads(will.completed_steps or '[]')
+            except (json.JSONDecodeError, TypeError):
+                completed = []
+            if not isinstance(completed, list):
+                completed = []
+            if 'assets_confirmed' not in completed:
+                completed.append('assets_confirmed')
+                will.completed_steps = json.dumps(completed)
+                try:
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
+    return {'name': label[:80], 'role': f'{action} & queued for wizard',
+            'kind': f'inventory_{action}_{target_kind}'}
 
 
 _ASSETS_CONFIRM_TOKENS = (
