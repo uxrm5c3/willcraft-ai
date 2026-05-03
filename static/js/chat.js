@@ -346,6 +346,8 @@
         .map(a => ({
           docId: a.id,
           label: (a.purpose || a.address || categoryLabel(a.category) || '').trim(),
+          suspectedWrong: !!a.suspected_wrong,
+          wrongReason: a.wrong_reason || '',
         }));
 
       const isMany = m.attachments.length > 6;
@@ -382,21 +384,25 @@
           const thisIdx = carouselIdx;
           const thumbNum = carouselIdx + 1; // 1-based position shown as overlay
           carouselIdx++;
-          // Warn badge for unrelated / death_certificate uploads
-          const isUnrelated = (a.category === 'death_certificate' || a.category === 'unrelated');
-          const warnBadge = isUnrelated
-            ? `<div class="absolute top-0.5 right-0.5 bg-red-500 text-white text-[8px] font-bold px-1 rounded leading-tight">⚠️ wrong?</div>`
+          // Flag documents suspected as wrong/irrelevant
+          const isSuspect = !!a.suspected_wrong;
+          const warnBadge = isSuspect
+            ? `<div class="absolute top-0.5 right-0.5 bg-amber-500 text-white text-[8px] font-bold px-1 rounded leading-tight">⚠️ check</div>`
             : '';
+          // Amber dashed border for suspect docs, normal border otherwise
+          const borderCls = isSuspect
+            ? 'ring-2 ring-amber-400 border-amber-300'
+            : 'border-gray-200 hover:border-primary-400';
           // Show purpose/address as label if available, else category
           const thumbLabel = escapeHtml((a.purpose || a.address || catLabel || '').trim().slice(0, 40));
           html += `<button type="button"
                       onclick="window.__openCarousel(${JSON.stringify(imgCarouselUrls).replace(/"/g, '&quot;')}, ${thisIdx}, ${JSON.stringify(imgCarouselMeta).replace(/"/g, '&quot;')})"
-                      title="${escapeHtml(a.filename || '')} — ${thumbLabel}"
-                      class="relative block bg-white border border-gray-200 rounded-md overflow-hidden hover:border-primary-400 hover:shadow transition-all text-left w-full ${isUnrelated ? 'ring-2 ring-red-400' : ''}">
+                      title="${escapeHtml(a.filename || '')} — ${thumbLabel}${isSuspect ? ' ⚠️ may be incorrect' : ''}"
+                      class="relative block bg-white border rounded-md overflow-hidden hover:shadow transition-all text-left w-full ${borderCls}">
             ${inner}
             <div class="absolute top-0.5 left-0.5 bg-black/50 text-white text-[9px] font-bold px-1 rounded leading-tight">${thumbNum}</div>
             ${warnBadge}
-            <div class="px-1 py-0.5 text-[9px] truncate ${catColor} font-medium">${thumbLabel || catLabel}</div>
+            <div class="px-1 py-0.5 text-[9px] truncate ${isSuspect ? 'bg-amber-100 text-amber-800' : catColor} font-medium">${thumbLabel || catLabel}</div>
           </button>`;
         } else {
           html += `<a href="${url}" target="_blank" rel="noopener" title="${escapeHtml(a.filename)} (${catLabel})"
@@ -1013,7 +1019,25 @@
         &#8250;
       </button>
 
-      <!-- Bottom bar: exhibit label + remove button -->
+      <!-- Warning banner for suspect exhibits — shown above the image -->
+      <div id="car-warn-banner" style="display:none"
+        class="absolute top-14 left-1/2 -translate-x-1/2 z-20 w-[90vw] max-w-md
+               bg-amber-50 border border-amber-300 rounded-xl shadow-lg px-4 py-3 text-center">
+        <div class="text-amber-800 font-semibold text-sm mb-1">⚠️ This exhibit may not be needed</div>
+        <div id="car-warn-reason" class="text-amber-700 text-xs mb-3"></div>
+        <div class="flex gap-2 justify-center">
+          <button id="car-warn-keep"
+            class="px-4 py-1.5 bg-white border border-amber-300 text-amber-800 text-sm font-medium rounded-lg hover:bg-amber-50 transition-colors">
+            ✅ Keep it
+          </button>
+          <button id="car-warn-remove"
+            class="px-4 py-1.5 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors">
+            🗑 Remove
+          </button>
+        </div>
+      </div>
+
+      <!-- Bottom bar: exhibit label + manual remove button -->
       <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 max-w-[90vw]">
         <div id="car-label"
           class="text-white/80 text-xs font-medium bg-black/40 px-3 py-1.5 rounded-full truncate max-w-[60vw]">
@@ -1038,6 +1062,19 @@
     document.getElementById('car-next').addEventListener('click', (e) => {
       e.stopPropagation();
       _carouselNav(1);
+    });
+    // Warning banner: Keep dismisses it, Remove sends inbox remove command
+    document.getElementById('car-warn-keep').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('car-warn-banner').style.display = 'none';
+    });
+    document.getElementById('car-warn-remove').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const meta = _carouselMeta[_carouselIdx] || {};
+      if (meta.docId) {
+        _closeCarousel();
+        window.__quickReply(`inbox remove ${meta.docId}`);
+      }
     });
 
     // Keyboard nav
@@ -1064,14 +1101,16 @@
   }
 
   function _carouselShow() {
-    const overlay   = document.getElementById('img-carousel');
-    const img       = document.getElementById('car-img');
-    const counter   = document.getElementById('car-counter');
-    const prevBtn   = document.getElementById('car-prev');
-    const nextBtn   = document.getElementById('car-next');
-    const label     = document.getElementById('car-label');
-    const newTab    = document.getElementById('car-newtab');
-    const removeBtn = document.getElementById('car-remove');
+    const overlay    = document.getElementById('img-carousel');
+    const img        = document.getElementById('car-img');
+    const counter    = document.getElementById('car-counter');
+    const prevBtn    = document.getElementById('car-prev');
+    const nextBtn    = document.getElementById('car-next');
+    const label      = document.getElementById('car-label');
+    const newTab     = document.getElementById('car-newtab');
+    const removeBtn  = document.getElementById('car-remove');
+    const warnBanner = document.getElementById('car-warn-banner');
+    const warnReason = document.getElementById('car-warn-reason');
 
     const url  = _carouselUrls[_carouselIdx];
     const meta = _carouselMeta[_carouselIdx] || {};
@@ -1091,7 +1130,19 @@
     // Show exhibit label (purpose/address) or fallback to doc id segment
     label.textContent = meta.label || url.split('/').pop() || '';
 
-    // Remove button — only shown when we have a docId (inbox context)
+    // Warning banner — auto-shown for suspect/irrelevant docs
+    if (warnBanner) {
+      if (meta.suspectedWrong) {
+        const reason = meta.wrongReason
+          || 'Please check whether this image is correct or if it was uploaded by mistake.';
+        if (warnReason) warnReason.textContent = reason;
+        warnBanner.style.display = '';
+      } else {
+        warnBanner.style.display = 'none';
+      }
+    }
+
+    // Manual remove button — shown whenever we have a docId
     if (removeBtn) {
       if (meta.docId) {
         removeBtn.style.display = '';

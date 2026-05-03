@@ -3258,6 +3258,17 @@ def _serialise_chat_message(m):
                 _dex = json.loads(d.extracted_data) if d.extracted_data else {}
             except (json.JSONDecodeError, TypeError):
                 _dex = {}
+            _suspected = bool(
+                _dex.get('_wrong_upload_suspected')
+                or _dex.get('_likely_irrelevant')
+                or d.category in ('death_certificate', 'unrelated')
+            )
+            _wrong_reason = (
+                _dex.get('_wrong_reason')
+                or _dex.get('_irrelevant_reason')
+                or ('Death certificate — not a will asset' if d.category == 'death_certificate' else '')
+                or ('Unrelated document' if d.category == 'unrelated' else '')
+            ).strip()[:200]
             attachments.append({
                 'id': d.id,
                 'filename': d.original_filename,
@@ -3265,6 +3276,8 @@ def _serialise_chat_message(m):
                 'size': d.file_size,
                 'purpose': (_dex.get('purpose') or '').strip()[:120],
                 'address': (_dex.get('address') or '').strip()[:80],
+                'suspected_wrong': _suspected,
+                'wrong_reason': _wrong_reason,
             })
     return {
         'id': m.id,
