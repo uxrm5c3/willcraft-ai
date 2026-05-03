@@ -386,6 +386,7 @@ def _summarise_message(raw_text: str) -> str:
         msg = client.messages.create(
             model=CLAUDE_MODEL_CHEAP,
             max_tokens=500,
+            timeout=15.0,   # hard cap — never block the reset for more than 15s
             messages=[{"role": "user", "content": prompt}]
         )
         try:

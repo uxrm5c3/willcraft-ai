@@ -3342,6 +3342,20 @@ def api_chat_history(client_id):
 @login_required
 def api_chat_message(client_id):
     """Receive a chat message (text + optional file uploads) and return the assistant reply."""
+    try:
+        return _api_chat_message_impl(client_id)
+    except Exception as _top_err:
+        import traceback as _tb
+        app.logger.error(f'api_chat_message unhandled: {_tb.format_exc()}')
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return jsonify({'ok': False, 'error': f'Server error: {str(_top_err)[:300]}'}), 500
+
+
+def _api_chat_message_impl(client_id):
+    """Inner implementation — wrapped by api_chat_message for JSON error handling."""
     from uploads import save_uploaded_file
     from ai.file_classifier import classify_file
     from ai.ocr import extract_nric_data
