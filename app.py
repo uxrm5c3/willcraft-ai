@@ -3533,7 +3533,9 @@ def api_chat_message(client_id):
             _action_starts = ('yes', 'skip', 'delete', 'no', 'confirm',
                               'remove', 'inventory ', 'unlink ',
                               'guardian ', 'trust ', 'trust yes', 'trust skip',
-                              'others ', 'residuary skip',
+                              'others ', 'residuary skip', 'property fill',
+                              'property ', 'address:', 'daerah:', 'negeri:',
+                              'mukim:', 'lot:', 'title:',
                               'change ', 'confirm defaults')
             has_share = bool(re.search(r'\b\d{1,3}\s*%|\bequal\b|\b\d+/\d+\b', _kw))
             also_action = (
@@ -3561,7 +3563,8 @@ def api_chat_message(client_id):
         # skip' / 'inventory unlink' must hit the per-asset handler
         # before the gate fallback.
         just_inventory = (_try_handle_unlink_action(client_id, user_text)
-                          or _try_handle_inventory_action(client_id, user_text))
+                          or _try_handle_inventory_action(client_id, user_text)
+                          or _try_handle_property_fill(client_id, user_text))
         if not just_inventory:
             just_assets_gate = _try_handle_assets_gate(client_id, user_text)
     # If past Step 1, attempt executor save then beneficiaries save then
@@ -3613,9 +3616,17 @@ def api_chat_message(client_id):
             or just_inventory or just_guardian or just_trust
             or just_others or just_residuary_skip)
     will_snapshot['pending_gifts'] = pending_gifts
+    # If a property_fill action produced a reply_override (e.g. the "how to
+    # type missing fields" prompt), inject it into the plan instead of running
+    # the normal planner — it's a simple instructional message, not a full turn.
+    _fill_override = (isinstance(just_inventory, dict)
+                      and just_inventory.get('kind') == 'property_fill'
+                      and just_inventory.get('reply_override'))
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
                      just_assigned=just, just_deleted=just_deleted)
+    if _fill_override:
+        plan['reply'] = just_inventory['reply_override']
 
     if file_errors:
         plan['reply'] = (plan.get('reply') or '') + (
@@ -4341,6 +4352,122 @@ def _try_save_beneficiaries(client_id: str, user_text: str):
     db.session.commit()
     names = ', '.join(p.full_name for p in final)
     return {'name': names, 'role': f'{len(final)} beneficiaries', 'kind': 'beneficiaries'}
+
+
+def _try_handle_property_fill(client_id: str, user_text: str):
+    """Let the writer manually supply missing property fields directly in chat.
+
+    Accepted formats (all case-insensitive):
+      address: No. 22, Jalan Rimbun, Seri Alam
+      daerah: Johor Bahru
+      negeri: Johor
+      mukim: Plentong
+      lot: 127082
+      title: HS(D) 251041
+      lot_number: 127082
+      title_number: HS(D) 251041
+      property fill      ← bare "property fill" → show a prompt template
+
+    Also handles the trigger button value 'property fill' by returning a
+    prompt text that tells the writer how to type the values.
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+
+    # ── Bare trigger — show instructions ──────────────────────────────
+    if t == 'property fill':
+        from services.gift_walker import get_pending_gift_documents
+        pend = get_pending_gift_documents(client_id)
+        props = pend.get('property') or []
+        # Find the first non-inventoried property
+        target_ex = {}
+        for p in props:
+            if not (p.get('extracted') or {}).get('_inventoried'):
+                target_ex = p.get('extracted') or {}
+                break
+        _FIELD_LABELS = [
+            ('property_address', 'address'),
+            ('title_number',     'title'),
+            ('lot_number',       'lot'),
+            ('mukim',            'mukim'),
+            ('daerah',           'daerah'),
+            ('negeri',           'negeri'),
+        ]
+        missing = [(fld, kw) for fld, kw in _FIELD_LABELS
+                   if not (target_ex.get(fld) or '').strip()]
+        if not missing:
+            return {'name': 'all fields complete', 'role': 'property_fill_noop', 'kind': 'property_fill'}
+        lines = ['Type the missing field(s) directly — one per message or all at once:']
+        for fld, kw in missing:
+            lines.append(f"  `{kw}: <value>`   e.g. `{kw}: ...`")
+        return {
+            'name': 'fill prompt shown',
+            'role': 'property_fill_prompt',
+            'kind': 'property_fill',
+            'reply_override': '\n'.join(lines),
+        }
+
+    # ── Field assignment: "daerah: Johor Bahru" ──────────────────────
+    _FIELD_MAP = {
+        'address':         'property_address',
+        'property_address': 'property_address',
+        'title':           'title_number',
+        'title_number':    'title_number',
+        'lot':             'lot_number',
+        'lot_number':      'lot_number',
+        'mukim':           'mukim',
+        'daerah':          'daerah',
+        'negeri':          'negeri',
+        'state':           'negeri',
+        'district':        'daerah',
+        'area':            'area',
+    }
+    # Match "keyword: value" at the start of the message
+    m = re.match(r'^([a-z_]+)\s*:\s*(.+)$', t, re.IGNORECASE)
+    if not m:
+        return None
+    kw = m.group(1).strip().lower()
+    raw_val = user_text[m.start(2):].strip()  # preserve original casing
+    field = _FIELD_MAP.get(kw)
+    if not field:
+        return None
+
+    # Find focused property doc
+    from services.gift_walker import get_pending_gift_documents
+    pend = get_pending_gift_documents(client_id)
+    props = pend.get('property') or []
+    target = next((p for p in props if not (p.get('extracted') or {}).get('_inventoried')), None)
+    if not target:
+        return None
+
+    doc = db.session.get(Document, target['document_id'])
+    if not doc:
+        return None
+    try:
+        ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+    except (json.JSONDecodeError, TypeError):
+        ex = {}
+
+    old_val = (ex.get(field) or '').strip()
+    ex[field] = raw_val.strip()
+    ex.setdefault('_manually_edited', [])
+    if isinstance(ex['_manually_edited'], list):
+        ex['_manually_edited'].append(f'{field}={raw_val.strip()[:60]}')
+
+    try:
+        doc.extracted_data = json.dumps(ex)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+
+    label = raw_val.strip()[:60]
+    return {
+        'name': f'{field} → {label}',
+        'role': f'manual edit{"" if not old_val else f" (was: {old_val[:40]})"}',
+        'kind': 'property_fill',
+    }
 
 
 def _try_handle_unlink_action(client_id: str, user_text: str):

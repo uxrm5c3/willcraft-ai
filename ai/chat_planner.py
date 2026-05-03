@@ -845,6 +845,155 @@ def _enrich_property_from_siblings(p: Dict[str, Any]) -> Dict[str, Any]:
     return ex
 
 
+_MY_ADDRESS_RE = re.compile(
+    r'(?:'
+    # "No. 22, Jalan Rimbun…" / "No 5A Lorong Damai 3…"
+    r'No\.?\s*\d+[A-Z\-]?\s*[,-]\s*'
+    r'(?:Jalan|Jln|Lorong|Persiaran|Lebuh|Lebuhraya|Lingkaran|'
+    r'Taman|Bandar|Desa|Sri|Seri|Bukit|Pandan|Damansara|'
+    r'Ampang|Petaling|Cheras|Kepong|Setapak|Pudu|Wangsa|'
+    r'Shah Alam|Subang|Klang|Puchong|Putrajaya)[^\n]{3,80}'
+    r'|'
+    # "Jalan Rimbun 2, Seri Alam…"
+    r'(?:Jalan|Jln|Lorong|Persiaran|Lebuh)\s+[A-Za-z][^\n,]{3,60}'
+    r'|'
+    # "Apartment / Unit / Blok X, Taman…"
+    r'(?:Apartment|Apt|Unit|Blok|Block|Flat|Condominium|Condo)\s+'
+    r'[A-Za-z0-9\-]+[^\n,]{5,60}'
+    r')',
+    re.IGNORECASE,
+)
+
+_MY_NEGERI_MAP = {
+    'johor': 'JOHOR', 'johor bahru': 'JOHOR', 'jb': 'JOHOR',
+    'selangor': 'SELANGOR', 'shah alam': 'SELANGOR',
+    'kuala lumpur': 'KUALA LUMPUR', 'kl': 'KUALA LUMPUR',
+    'penang': 'PENANG', 'pulau pinang': 'PENANG', 'georgetown': 'PENANG',
+    'perak': 'PERAK', 'ipoh': 'PERAK',
+    'kedah': 'KEDAH', 'alor setar': 'KEDAH',
+    'kelantan': 'KELANTAN', 'kota bharu': 'KELANTAN',
+    'terengganu': 'TERENGGANU', 'kuala terengganu': 'TERENGGANU',
+    'pahang': 'PAHANG', 'kuantan': 'PAHANG',
+    'negeri sembilan': 'NEGERI SEMBILAN', 'seremban': 'NEGERI SEMBILAN',
+    'melaka': 'MELAKA', 'malacca': 'MELAKA',
+    'perlis': 'PERLIS', 'kangar': 'PERLIS',
+    'sabah': 'SABAH', 'kota kinabalu': 'SABAH',
+    'sarawak': 'SARAWAK', 'kuching': 'SARAWAK',
+    'putrajaya': 'PUTRAJAYA', 'labuan': 'LABUAN',
+}
+
+_MY_POSTCODE_STATE_RE = re.compile(
+    r'\b(\d{5})\s+'
+    r'(Johor|Selangor|Penang|Pulau Pinang|Perak|Kedah|Kelantan|'
+    r'Terengganu|Pahang|Negeri Sembilan|Melaka|Perlis|Sabah|Sarawak|'
+    r'Kuala Lumpur|KL|Putrajaya|Labuan)\b',
+    re.IGNORECASE,
+)
+
+
+def _enrich_from_chat_text(ex: Dict[str, Any], recent_text: str) -> Dict[str, Any]:
+    """Scan email/chat message text for property fields missing from the OCR.
+
+    Strategy:
+      1. Build identifier needles from what we already know (lot number,
+         title number, mukim).
+      2. Find the window in recent_text closest to each needle.
+      3. In that window look for:
+           • A Malaysian street address pattern → property_address
+           • A postcode → narrow down negeri
+           • State / district keywords → negeri / daerah
+      4. Back-fill only blank fields — never overwrite confirmed OCR data.
+
+    Enriched fields are tagged with '_enriched_from': ['chat_text.fieldname']
+    so the card can show provenance ("address back-filled from client message").
+    """
+    if not recent_text:
+        return ex
+    # Already complete? Skip the scan.
+    need_addr = not (ex.get('property_address') or '').strip()
+    need_daerah = not (ex.get('daerah') or '').strip()
+    need_negeri = not (ex.get('negeri') or '').strip()
+    if not (need_addr or need_daerah or need_negeri):
+        return ex
+
+    # Build needles from what we DO know
+    needles = set()
+    for k in ('title_number', 'lot_number', 'mukim', 'property_hint'):
+        v = (ex.get(k) or '').strip()
+        if len(v) >= 3:
+            needles.add(v.lower())
+    for k in ('title_number', 'lot_number'):
+        for m in re.findall(r'\d{4,}', ex.get(k) or ''):
+            needles.add(m)
+    if not needles:
+        return ex
+
+    text_l = recent_text.lower()
+    for needle in needles:
+        idx = text_l.find(needle.lower())
+        if idx == -1:
+            continue
+        # Wide window (±400 chars) around the mention
+        lo = max(0, idx - 400)
+        hi = min(len(recent_text), idx + len(needle) + 400)
+        window = recent_text[lo:hi]
+
+        # ── Address ───────────────────────────────────────────────────
+        if need_addr:
+            m = _MY_ADDRESS_RE.search(window)
+            if m:
+                candidate = m.group(0).strip().rstrip(',').rstrip('.')
+                if len(candidate) >= 10:
+                    ex['property_address'] = candidate[:200]
+                    ex.setdefault('_enriched_from', []).append('chat_text.property_address')
+                    need_addr = False
+
+        # ── Negeri from "NNNNN State" postcode pattern ────────────────
+        if need_negeri:
+            pm = _MY_POSTCODE_STATE_RE.search(window)
+            if pm:
+                negeri_raw = pm.group(2).strip()
+                negeri_norm = _MY_NEGERI_MAP.get(negeri_raw.lower(), negeri_raw.upper())
+                ex['negeri'] = negeri_norm
+                ex.setdefault('_enriched_from', []).append('chat_text.negeri')
+                need_negeri = False
+
+        # ── Negeri / Daerah from keyword list ────────────────────────
+        win_l = window.lower()
+        if need_negeri:
+            for kw, norm in _MY_NEGERI_MAP.items():
+                if re.search(r'\b' + re.escape(kw) + r'\b', win_l):
+                    ex['negeri'] = norm
+                    ex.setdefault('_enriched_from', []).append('chat_text.negeri')
+                    need_negeri = False
+                    break
+
+        # Common Johor daerah
+        if need_daerah:
+            _DAERAH_HINTS = {
+                'johor bahru': 'Johor Bahru', 'jb': 'Johor Bahru',
+                'kluang': 'Kluang', 'batu pahat': 'Batu Pahat',
+                'muar': 'Muar', 'segamat': 'Segamat', 'mersing': 'Mersing',
+                'kota tinggi': 'Kota Tinggi', 'pontian': 'Pontian',
+                'kulai': 'Kulai', 'iskandar puteri': 'Johor Bahru',
+                'klang': 'Klang', 'petaling': 'Petaling Jaya',
+                'sepang': 'Sepang', 'hulu langat': 'Hulu Langat',
+                'subang': 'Petaling', 'puchong': 'Petaling',
+                'ipoh': 'Kinta', 'taiping': 'Larut', 'teluk intan': 'Hilir Perak',
+            }
+            for kw, daerah_name in _DAERAH_HINTS.items():
+                if re.search(r'\b' + re.escape(kw) + r'\b', win_l):
+                    ex['daerah'] = daerah_name
+                    ex.setdefault('_enriched_from', []).append('chat_text.daerah')
+                    need_daerah = False
+                    break
+
+        if not (need_addr or need_daerah or need_negeri):
+            break
+
+    return ex
+
+
 def _deduce_intent_from_messages(p: Dict[str, Any], recent_text: str) -> str:
     """Pull any messages from the client that mention this specific
     property by lot/title number/address. The will writer needs to see
@@ -1081,6 +1230,7 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         # for the same client and pull mukim/daerah/address from the
         # match. The writer sees the enriched view, not the sparse one.
         enriched = _enrich_property_from_siblings(target)
+        enriched = _enrich_from_chat_text(enriched, recent_text)
         target = dict(target)
         target['extracted'] = enriched
         return _walkthrough_property_card(target, len(props), recent_text,
@@ -1131,17 +1281,22 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     # Show enrichment provenance so the writer trusts the back-filled
     # fields: "Mukim & Daerah back-filled from cukai_tanah_2024.pdf".
     enriched_from = ex.get('_enriched_from') or []
-    if enriched_from:
-        # Group by source filename
+    manually_edited = ex.get('_manually_edited') or []
+    if enriched_from or manually_edited:
         srcs = {}
         for ent in enriched_from:
             try:
                 fname, _, key = ent.rpartition('.')
             except Exception:
                 fname, key = ent, ''
-            srcs.setdefault(fname or 'sibling', []).append(key)
-        bullets = [f"  • {', '.join(keys)} ← _{src}_" for src, keys in srcs.items()]
-        parts.append("**🔗 Cross-referenced from sibling docs:**\n" + '\n'.join(bullets))
+            # Pretty-print source name
+            src_label = ('💬 client message' if fname == 'chat_text'
+                         else f'📄 _{fname}_' if fname else '📎 sibling doc')
+            srcs.setdefault(src_label, []).append(key)
+        bullets = [f"  • {', '.join(keys)} ← {src}" for src, keys in srcs.items()]
+        if manually_edited:
+            bullets.append(f"  • ✏️ manually entered: {', '.join(manually_edited[:5])}")
+        parts.append("**🔗 Auto-filled from:**\n" + '\n'.join(bullets))
 
     # Supporting docs grouped under this property
     support = p.get('support_docs') or []
@@ -1165,18 +1320,56 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     if intent:
         parts.append(f"**💬 Client's message about this property:**\n{intent}")
 
-    # NLC warnings
+    # ── NLC completeness checklist ──────────────────────────────────────
+    # A Malaysian will property clause requires: title_number, lot_number,
+    # mukim, daerah, negeri. Address is strongly recommended. Show a clear
+    # traffic-light so the writer knows what to chase before finalising.
+    _COMPULSORY = [
+        ('title_number', 'Title number (Geran/HSD/Hakmilik no.)'),
+        ('lot_number',   'Lot / PTD number'),
+        ('mukim',        'Mukim'),
+        ('daerah',       'Daerah / District'),
+        ('negeri',       'Negeri / State'),
+    ]
+    missing_fields = [(key, lbl) for key, lbl in _COMPULSORY
+                      if not (ex.get(key) or '').strip()]
+    if missing_fields or not (ex.get('property_address') or '').strip():
+        status_lines = []
+        for key, lbl in _COMPULSORY:
+            tick = '✅' if (ex.get(key) or '').strip() else '❌'
+            status_lines.append(f"  {tick} {lbl}")
+        addr_tick = '✅' if (ex.get('property_address') or '').strip() else '⚠️'
+        status_lines.append(f"  {addr_tick} Property address (recommended)")
+        parts.append("**📝 Will clause fields** _(required for Malaysian property description in will)_:\n"
+                     + '\n'.join(status_lines))
+
+    # NLC validation warnings
     if warnings:
         parts.append("**🚨 Validation:**\n" + '\n'.join(f"  {w}" for w in warnings))
 
+    if missing_fields:
+        example_lines = []
+        for key, lbl in missing_fields[:3]:
+            example_lines.append(f"`{key}: <value>`")
+        parts.append(
+            "**✏️ Missing fields?** Type the values directly, e.g.:\n"
+            + "  " + "   ".join(example_lines)
+            + "\n_Or ask the client for a clearer Geran scan._"
+        )
+
     parts.append(
         "**Does this property look correctly grouped & formatted?**\n"
-        "Confirm, and I'll add it to the wizard's gift list. The "
-        "beneficiary assignment happens AFTER all assets are reviewed."
+        "Confirm to add to the wizard's gift list. "
+        "Beneficiary assignment happens AFTER all assets are reviewed."
     )
 
+    has_missing = bool(missing_fields)
     quick = [
         {'label': '✅ Looks right — add to wizard', 'value': 'inventory confirm'},
+    ]
+    if has_missing:
+        quick.append({'label': '✏️ Fill in missing fields', 'value': 'property fill'})
+    quick += [
         {'label': '✂️ Wrong supporting docs', 'value': 'inventory unlink'},
         {'label': '🗑 Remove this property', 'value': 'delete'},
         {'label': '⏭ Skip for now', 'value': 'inventory skip'},
