@@ -286,26 +286,46 @@ def _wrap(parts, questions, patch, advice, focus_attachments=None):
 
 
 def _intake_summary(artifacts: List[Dict[str, Any]]) -> str:
-    """Aggregated by-kind summary for fresh artifacts."""
-    buckets = {}
+    """Aggregated by-kind summary for fresh artifacts.
+
+    Property-type documents show per-file type + the classifier's `purpose`
+    sentence so the writer immediately knows what was identified (e.g. "📜
+    Property Title (Geran/Hakmilik) — Lot 207922 Mukim Plentong …").
+    Other kinds are grouped and counted as before.
+    """
+    buckets: Dict[str, list] = {}
     for a in artifacts:
         buckets.setdefault(a.get('kind', 'other'), []).append(a)
     lines = [f"📥 Received **{len(artifacts)} attachment{'s' if len(artifacts)!=1 else ''}**:"]
 
+    # ── ICs ─────────────────────────────────────────────────────────────────
     if buckets.get('nric'):
         ics = buckets['nric']
-        names = [(a.get('extracted') or {}).get('full_name','').strip() for a in ics]
+        names = [(a.get('extracted') or {}).get('full_name', '').strip() for a in ics]
         named = [n for n in names if n]
-        line = f"📇 **{len(ics)} IC{'s' if len(ics)!=1 else ''}**"
+        line = f"📇 **{len(ics)} IC{'s' if len(ics) != 1 else ''}**"
         if named:
             line += " — read as: " + ", ".join(named[:6])
             if len(named) > 6:
                 line += f", and {len(named)-6} more"
         lines.append(line)
-    if buckets.get('property_title'):
-        lines.append(f"🏠 **{len(buckets['property_title'])} property title{'s' if len(buckets['property_title'])!=1 else ''}** — filed under property/.")
-    if buckets.get('property_tax'):
-        lines.append(f"🧾 **{len(buckets['property_tax'])} property tax notice{'s' if len(buckets['property_tax'])!=1 else ''}**.")
+
+    # ── Property documents — show each one individually ─────────────────────
+    _PROP_KINDS = ('property_title', 'property_spa', 'property_tax',
+                   'property_transfer', 'utility_bill', 'bank_letter')
+    for kind in _PROP_KINDS:
+        for a in buckets.get(kind, []):
+            label = _KIND_LABELS.get(kind, '📄 Document')
+            ex = a.get('extracted') or {}
+            purpose = (ex.get('purpose') or '').strip()
+            fname = (a.get('original_filename') or '').strip()
+            detail = purpose or fname
+            line = f"{label}"
+            if detail:
+                line += f" — _{detail[:120]}_"
+            lines.append(line)
+
+    # ── Other kinds — simple counts ──────────────────────────────────────────
     if buckets.get('bank_statement'):
         lines.append(f"🏦 **{len(buckets['bank_statement'])} bank statement{'s' if len(buckets['bank_statement'])!=1 else ''}**.")
     if buckets.get('insurance'):
@@ -319,7 +339,15 @@ def _intake_summary(artifacts: List[Dict[str, Any]]) -> str:
     if buckets.get('voice'):
         lines.append(f"🎙 **{len(buckets['voice'])} voice note{'s' if len(buckets['voice'])!=1 else ''}** transcribed.")
     if buckets.get('other'):
-        lines.append(f"❓ **{len(buckets['other'])}** I couldn't classify (tap thumbnails to view, then tell me).")
+        for a in buckets['other']:
+            fname = (a.get('original_filename') or '').strip()
+            ex = a.get('extracted') or {}
+            purpose = (ex.get('purpose') or '').strip()
+            detail = purpose or fname
+            line = "❓ **Unclassified**"
+            if detail:
+                line += f" — _{detail[:120]}_"
+            lines.append(line)
     return '\n'.join(lines)
 
 
@@ -648,32 +676,65 @@ def _is_inventoried(item: Dict[str, Any]) -> bool:
     return bool(ex.get('_inventoried'))
 
 
+# Human-readable labels for each document kind — used in intake summary and
+# on property review cards so the writer immediately knows what was uploaded.
+_KIND_LABELS: Dict[str, str] = {
+    'nric':               '🪪 MyKad / Passport',
+    'property_title':     '📜 Property Title (Geran / Hakmilik)',
+    'property_spa':       '📝 Sale & Purchase Agreement (SPA)',
+    'property_tax':       '🧾 Cukai Tanah / Cukai Pintu',
+    'property_transfer':  '📋 Memorandum of Transfer (Borang 14A / 16A)',
+    'utility_bill':       '⚡ Utility Bill',
+    'bank_letter':        '🏦 Bank Letter',
+    'bank_statement':     '🏦 Bank Statement',
+    'insurance':          '🛡 Insurance Policy',
+    'epf_kwsp':           '💼 EPF / KWSP Statement',
+    'vehicle':            '🚗 Vehicle Document',
+    'will':               '📄 Existing Will',
+    'other':              '❓ Unclassified',
+}
+
+
 # Property fields that count as a "signal" — if every one of these is
 # blank AND there are no support docs, the card is just noise. Showing
 # it would force the writer to dismiss an empty husk over and over.
-_PROPERTY_SIGNAL_KEYS = (
-    'property_address', 'address', 'title_number', 'lot_number',
-    'mukim', 'daerah', 'negeri', 'property_hint', 'description',
-    'area', 'title_type',
+# Fields that actually identify a Malaysian property for probate purposes.
+# Deliberately EXCLUDES 'description' and 'area' — the OCR often writes
+# "Property Title document" in description even when the image is unreadable,
+# which would make _is_truly_empty_property think there's something to show.
+_PROPERTY_IDENTIFIER_KEYS = (
+    'property_address', 'address',
+    'title_number', 'lot_number',
+    'mukim', 'daerah', 'negeri',
+    'title_type',
 )
+
+# property_hint gets special treatment: non-empty but useless values like
+# "Property Title" / "unknown" should NOT count as real signals.
+_HINT_NOISE = frozenset({
+    'property title', 'property document', 'title document',
+    'land title', 'geran', 'hakmilik', 'hsd', 'hsm',
+    'unknown', 'unreadable', 'unable to read', 'n/a', '',
+})
 
 
 def _is_truly_empty_property(p: Dict[str, Any]) -> bool:
-    """True iff a property card has NOTHING worth asking about — no
-    address, no title, no lot, no mukim/daerah/negeri, no property_hint,
-    AND no support docs auto-grouped under it.
+    """True iff a property card has NO real probate-useful identifiers AND
+    no grouped support docs.
 
-    Per the will writer: 'if there is nothing at all and isolated piece,
-    can completely ignore. no point asking because there is nothing in
-    there.'
-
-    Cards passing this test are silently soft-skipped in the walk so the
-    writer never sees the '(address & title both unreadable)' dead-end
-    review."""
+    Key insight: OCR often writes "Property Title document" into the
+    `description` field even for completely unreadable images. We only
+    count fields that actually identify the property at the Pejabat Tanah
+    (address, title no., lot no., mukim, daerah, negeri, title type).
+    """
     ex = p.get('extracted') or {}
-    has_signal = any((ex.get(k) or '').strip() for k in _PROPERTY_SIGNAL_KEYS)
+    # Check real identifier fields
+    has_identifier = any((ex.get(k) or '').strip() for k in _PROPERTY_IDENTIFIER_KEYS)
+    # Check property_hint — but filter out noise phrases
+    hint = (ex.get('property_hint') or '').strip().lower()
+    has_hint = bool(hint and hint not in _HINT_NOISE)
     has_support = bool(p.get('support_docs'))
-    return not (has_signal or has_support)
+    return not (has_identifier or has_hint or has_support)
 
 
 def _autoskip_empty_properties(props: List[Dict[str, Any]], client_id: str = None):
@@ -1006,8 +1067,18 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     warnings = _validate_property_format(ex)
     intent = _deduce_intent_from_messages(p, recent_text)
 
+    # Surface what document type was detected by the classifier
+    doc_kind = p.get('category', 'property_title')
+    kind_label = _KIND_LABELS.get(doc_kind, '📜 Property Document')
+    # Also show the classifier's purpose sentence if available
+    purpose_str = (ex.get('purpose') or '').strip()
+    doc_type_line = f"🔍 **Identified as:** {kind_label}"
+    if purpose_str:
+        doc_type_line += f"\n_{purpose_str[:200]}_"
+
     parts = [
         f"### 🏠 Reviewing property ({n_left} of {total_remaining} left)",
+        doc_type_line,
         formatted,
     ]
 
@@ -1051,6 +1122,7 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
                 'property_spa': '📝 SPA',
                 'property_tax': '🧾 Cukai Tanah',
                 'property_title': '📜 Geran (extra page)',
+                'property_transfer': '📋 Memorandum of Transfer (Borang 14A/16A)',
                 'utility_bill': '⚡ Utility bill',
                 'bank_letter': '🏦 Bank letter',
             }.get(kind, '📄')
@@ -1114,6 +1186,7 @@ def _walkthrough_unlink_picker(p: Dict[str, Any]) -> Dict[str, Any]:
             'property_spa': 'SPA',
             'property_tax': 'Cukai Tanah',
             'property_title': 'Geran (extra page)',
+            'property_transfer': 'Memorandum of Transfer (Borang 14A/16A)',
             'utility_bill': 'Utility bill',
             'bank_letter': 'Bank letter',
         }.get(kind, 'Doc')
@@ -1286,6 +1359,7 @@ def _step6_property_question(pending_props, recent_text, will_data):
             'property_spa': '📝 SPA',
             'property_tax': '🧾 Cukai Tanah',
             'property_title': '📜 Geran (extra page)',
+            'property_transfer': '📋 Memorandum of Transfer (Borang 14A/16A)',
             'utility_bill': '⚡ Utility bill',
             'bank_letter': '🏦 Bank letter',
         }.get(kind, '📄 Doc')

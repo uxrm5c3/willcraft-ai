@@ -3747,8 +3747,9 @@ def api_chat_replan(client_id, message_id):
         doc_ids = []
     docs = Document.query.filter(Document.id.in_(doc_ids)).all() if doc_ids else []
 
-    KNOWN_KINDS = {'nric', 'property_title', 'property_tax', 'bank_statement',
-                   'insurance', 'epf_kwsp', 'vehicle', 'will', 'voice'}
+    KNOWN_KINDS = {'nric', 'property_title', 'property_spa', 'property_tax',
+                   'property_transfer', 'utility_bill', 'bank_letter',
+                   'bank_statement', 'insurance', 'epf_kwsp', 'vehicle', 'will', 'voice'}
     artifacts = []
     for doc in docs:
         try:

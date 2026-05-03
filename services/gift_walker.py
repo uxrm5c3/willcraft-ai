@@ -18,7 +18,7 @@ from database import Document, Will
 _GIFT_KINDS = ('property_title', 'bank_statement', 'vehicle')
 # Anything tied to a property address but NOT a title — clusters under
 # the matching title in the chat for context, never as its own gift.
-_PROPERTY_SUPPORT_KINDS = ('property_spa', 'property_tax',
+_PROPERTY_SUPPORT_KINDS = ('property_spa', 'property_tax', 'property_transfer',
                            'utility_bill', 'bank_letter')
 
 

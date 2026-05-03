@@ -12,15 +12,16 @@ from ai.ocr import _make_content_block, _extract_json
 
 KINDS = [
     'nric',            # Malaysian MyKad / passport
-    # Property — five distinct kinds. ONLY property_title is evidence of
+    # Property — six distinct kinds. ONLY property_title is evidence of
     # ownership and counts toward the will's gift list. The rest are
     # SUPPORTING context (tied to a property by address / lot) and get
     # clustered under the matching title in the chat.
-    'property_title',  # Geran/Hakmilik/HSD/HSM/Pajakan Negeri/Strata Title — OWNERSHIP
-    'property_spa',    # Sale & Purchase Agreement — contract, transfer pending
-    'property_tax',    # Cukai Tanah / Cukai Pintu / quit rent / assessment
-    'utility_bill',    # TNB electric / Air Selangor / SAJ / Indah Water / unifi — ties to a property address
-    'bank_letter',     # Letter from bank confirming account / loan statement (NOT a statement itself)
+    'property_title',    # Geran/Hakmilik/HSD/HSM/Pajakan Negeri/Strata Title — OWNERSHIP
+    'property_spa',      # Sale & Purchase Agreement — contract, transfer pending
+    'property_tax',      # Cukai Tanah / Cukai Pintu / quit rent / assessment
+    'property_transfer', # Memorandum of Transfer (Borang 14A / Borang 16A) — NLC transfer form
+    'utility_bill',      # TNB electric / Air Selangor / SAJ / Indah Water / unifi — ties to a property address
+    'bank_letter',       # Letter from bank confirming account / loan statement (NOT a statement itself)
     # Financial assets
     'bank_statement',  # bank statement / passbook
     'insurance',       # insurance policy
@@ -59,6 +60,7 @@ def classify_file(file_path: str) -> dict:
 - property_title: LAND TITLE document — Geran, Hakmilik, HSD, HSM, Pajakan Negeri, Strata Title, individual or qualified title. PROVES ownership. Has lot number, registered owner name, issued by Pejabat Tanah dan Daerah (PTD). NOT the same as a tax receipt or contract.
 - property_spa: Sale & Purchase Agreement (SPA / Perjanjian Jual Beli). A CONTRACT to buy — does NOT prove current ownership; transfer may still be pending. Usually has buyer/seller signatures, purchase price, completion date.
 - property_tax: Cukai Tanah / Cukai Harta / Cukai Pintu / quit rent receipt / property assessment notice. Tax document — does NOT prove ownership. Issued by local council or PTD as a payment demand/receipt.
+- property_transfer: Memorandum of Transfer / Memorandum Pindahmilik — Borang 14A (Peninsular Malaysia NLC 1965) or Borang 16A (Sabah/Sarawak land rules). A statutory form used to effect a transfer of land title between parties. Shows transferor, transferee, consideration price, and lot/title details. Signed before a solicitor or commissioner for oaths. Implies the transfer is in progress but registration at Land Registry may not yet be complete. Distinct from SPA (SPA is the contract; Memorandum of Transfer is the court/registry form).
 - utility_bill: TNB electricity, Air Selangor / SAJ / PBA water, Indah Water sewerage, unifi/Maxis/Celcom internet. Bill or invoice tied to a service address — useful as evidence the testator lives at / occupies that address but does NOT prove ownership.
 - bank_letter: a LETTER from a bank (welcome letter, loan offer letter, account confirmation, mortgage letter). NOT a periodic statement showing transactions or balances — that's bank_statement.
 - bank_statement: periodic bank statement listing transactions / balance, passbook, FD certificate, e-statement screenshot
