@@ -11,6 +11,20 @@ Each stage knows how to advance to the next; the planner emits a
 "✅ Step N complete — moving to Step N+1" line at the boundary.
 """
 from typing import List, Dict, Any, Optional
+import json as _json
+
+
+def _qr_marker(quick: List[Dict[str, str]]) -> str:
+    """Encode quick-reply buttons as a comment marker the chat.js renderer
+    parses out and renders as a button row. Always appends a 'None — type
+    in chat' fallback so the user can free-form when buttons don't fit."""
+    if not quick:
+        return ''
+    has_fallback = any((q.get('value') or '').lower() in ('other', 'none', 'type')
+                       for q in quick)
+    if not has_fallback:
+        quick = list(quick) + [{'label': '✏️ None of above — I\'ll type', 'value': 'other'}]
+    return f"\n\n<!--quickreplies:{_json.dumps(quick)}-->"
 
 
 def _ddmmyyyy_to_iso(dob: str) -> str:
@@ -224,39 +238,53 @@ def _identity_question(pending_ics: List[Dict[str, Any]], recent_text: str) -> s
             deduction = None
 
     parts = [
-        f"### 👤 Step 1: Identity walk-through ({len(pending_ics)} remaining)",
+        f"### 👤 Step 1: Identity ({len(pending_ics)} left)",
         f"**{name}** — {nric}",
     ]
+    quick: List[Dict[str, str]] = []
     if deduction:
         parts.append(
-            f"📌 From the email this looks like **{deduction['role']}** "
-            f"(evidence: _\"{deduction['evidence']}\"_)."
+            f"Looks like **{deduction['role']}** "
+            f"(_{deduction['evidence']}_). Confirm?"
         )
-        parts.append(
-            "Reply: **`yes`** to confirm · a different role to correct · "
-            "**`skip`** to defer · **`delete`** if this IC was uploaded by mistake."
-        )
+        quick = [
+            {'label': f"✓ Yes — {deduction['role']}", 'value': 'yes'},
+            {'label': 'Skip', 'value': 'skip'},
+            {'label': 'Delete', 'value': 'delete'},
+        ]
     else:
-        parts.append(
-            "What's their relationship to the testator?\n"
-            "Reply with: **Spouse · Son · Daughter · Father · Mother · "
-            "Brother · Sister · Executor · Guardian · Witness · Beneficiary · Trustee**\n"
-            "Or **`skip`** to defer · **`delete`** if uploaded by mistake."
-        )
-    return '\n\n'.join(parts)
+        parts.append("**Relationship to testator?**")
+        quick = [
+            {'label': 'Spouse', 'value': 'spouse'},
+            {'label': 'Son', 'value': 'son'},
+            {'label': 'Daughter', 'value': 'daughter'},
+            {'label': 'Father', 'value': 'father'},
+            {'label': 'Mother', 'value': 'mother'},
+            {'label': 'Brother', 'value': 'brother'},
+            {'label': 'Sister', 'value': 'sister'},
+            {'label': 'Executor', 'value': 'executor'},
+            {'label': 'Witness', 'value': 'witness'},
+            {'label': 'Skip', 'value': 'skip'},
+            {'label': 'Delete', 'value': 'delete'},
+        ]
+    return '\n\n'.join(parts) + _qr_marker(quick)
 
 
 def _step2_question(s1: Dict[str, Any]) -> str:
     """Confirm testator details once identities are in."""
-    return (
+    body = (
         "### 👔 Step 2: Confirm Testator\n\n"
         f"- **Name:** {s1.get('full_name','?')}\n"
         f"- **NRIC:** {s1.get('nric_passport','?')}\n"
         f"- **DOB:** {s1.get('date_of_birth','?')}\n"
         f"- **Address:** {s1.get('residential_address','?')}\n\n"
-        "Reply `confirm` to lock this in, or correct any field "
-        "(e.g. `address: <new address>`)."
+        "**All correct?**"
     )
+    quick = [
+        {'label': '✓ Confirm', 'value': 'confirm'},
+        {'label': 'Edit address', 'value': 'address: '},
+    ]
+    return body + _qr_marker(quick)
 
 
 def _eligible_executor_candidates(identities):
@@ -388,44 +416,37 @@ def _step3_executor_question(will_data: Dict[str, Any], recent_text: str = '') -
     parts = [f"### ⚖️ Step 3: {'Main' if role=='main' else 'Substitute'} Executor"]
 
     if role == 'main':
-        parts.append(
-            "Who should be the **main executor** — the person who carries out "
-            "your wishes when you pass on?"
-        )
+        parts.append("**Who should be your main executor?**")
     else:
-        # Show who the main is for context
         m = executors[0] if executors else {}
         parts.append(
-            f"✓ Main executor: **{m.get('full_name','?')}**.\n\n"
-            "Now choose a **substitute (backup) executor** — they take over if "
-            "the main predeceases you or declines."
+            f"✓ Main: **{m.get('full_name','?')}**\n\n"
+            "**Pick a substitute (backup) executor:**"
         )
 
+    # Build button row — eligible identity names + Skip (substitute only)
+    quick: List[Dict[str, str]] = []
     if candidate:
-        parts.append(
-            f"📌 Suggestion: **{candidate['name']}** "
-            f"(_{candidate['evidence']}_)."
-        )
-        parts.append(
-            "Reply **`yes`** to confirm, name someone else from your identities, "
-            "or **`skip`** to skip the substitute (only valid for substitute)."
-        )
-    else:
-        names = ', '.join(i['full_name'] for i in identities[:6])
-        parts.append(
-            f"Reply with a name from your identities ({names}{', …' if len(identities)>6 else ''})."
-        )
-        if role == 'substitute':
-            parts.append("Or **`skip`** if you don't want a substitute.")
+        quick.append({'label': f"✓ {candidate['name']} (suggested)", 'value': 'yes'})
+    # Other eligible identities
+    for i in identities:
+        n = i.get('full_name', '').strip()
+        if not n: continue
+        if candidate and n == candidate['name']: continue
+        if _is_already_executor(i, executors): continue
+        quick.append({'label': n.title(), 'value': n})
+        if len(quick) >= 5: break
+    if role == 'substitute':
+        quick.append({'label': 'Skip — no substitute', 'value': 'skip'})
 
-    # Tailored note — only if relevant
     if minors and role == 'main':
         parts.append(
-            f"⚠️ {len(minors)} minor beneficiary(ies) detected ({', '.join(n for n,_ in minors)}). "
-            "Joint executors strongly recommended; you'll also need a guardian (Step 4)."
+            f"⚠️ {len(minors)} minor(s): {', '.join(n for n,_ in minors)}. "
+            "Joint executors recommended."
         )
 
-    return {'text': '\n\n'.join(parts), 'focus_doc_id': candidate.get('document_id') if candidate else None}
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick),
+            'focus_doc_id': candidate.get('document_id') if candidate else None}
 
 
 def _step5_beneficiaries_question(will_data):
@@ -451,19 +472,22 @@ def _step5_beneficiaries_question(will_data):
             likely.append(i)
 
     parts = [
-        "### 👨‍👩‍👧 Step 5: Confirm Beneficiaries",
-        "These are the people who could inherit something. Confirm or adjust:",
+        "### 👨‍👩‍👧 Step 5: Beneficiaries",
+        "Proposed beneficiary list:",
     ]
+    quick: List[Dict[str, str]] = []
     if likely:
         for i in likely:
             parts.append(f"- **{i['full_name']}** ({i.get('relationship') or 'unknown'})")
-        parts.append(
-            "Reply **`yes`** to confirm all of these as the beneficiary list, "
-            "or correct it (e.g. `remove sister-in-law, add Joshua and Esther only`)."
-        )
+        parts.append("**Confirm this list?**")
+        quick = [{'label': '✓ Yes, all of these', 'value': 'yes'}]
+        # Quick-remove buttons for each so user can drop in one tap
+        for i in likely:
+            n = i['full_name']
+            quick.append({'label': f"❌ Remove {n.title()}", 'value': f'remove {n}'})
     else:
         parts.append("⚠️ No likely beneficiaries detected. Add identities first or list names manually.")
-    return '\n\n'.join(parts)
+    return '\n\n'.join(parts) + _qr_marker(quick)
 
 
 def _format_property_description(ex: Dict[str, Any]) -> str:
@@ -546,10 +570,7 @@ def _step6_property_question(pending_props, recent_text, will_data):
         formatted,
         "**Who inherits this property?** Tap a button or type a name + share.",
     ]
-    text = '\n\n'.join(parts)
-    # Encode quick replies as a comment marker the chat.js renderer parses.
-    import json as _json
-    text += f"\n\n<!--quickreplies:{_json.dumps(quick)}-->"
+    text = '\n\n'.join(parts) + _qr_marker(quick)
     return {'text': text, 'focus_doc_id': p.get('document_id')}
 
 
@@ -557,15 +578,21 @@ def _step6_bank_question(pending_banks, will_data):
     """One generic question for ALL bank accounts unless user specifies."""
     n = len(pending_banks)
     parts = [
-        f"### 🏦 Step 6: Bank Accounts ({n} statement{'s' if n!=1 else ''} on file)",
-        "Per the standard clause, **all bank accounts** can go to one beneficiary "
-        "(any account specifically given away above is excluded automatically).",
-        "Who should inherit your bank accounts? Reply with a name, e.g. `Wife` or "
-        "the beneficiary's full name.",
-        "If you want to assign each account separately, reply `walk one by one` and "
-        "I'll go through each.",
+        f"### 🏦 Step 6 — Bank Accounts ({n} statement{'s' if n!=1 else ''})",
+        "**Who inherits all your bank accounts?**",
     ]
-    return {'text': '\n\n'.join(parts), 'focus_doc_id': None}
+    # Suggest from beneficiaries
+    s4 = will_data.get('step4') or []
+    quick: List[Dict[str, str]] = []
+    seen = set()
+    for b in s4:
+        n_b = (b.get('full_name') or '').strip()
+        if n_b and n_b.upper() not in seen:
+            seen.add(n_b.upper())
+            quick.append({'label': n_b.title(), 'value': n_b})
+            if len(quick) >= 4: break
+    quick.append({'label': 'Walk through one by one', 'value': 'walk one by one'})
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick), 'focus_doc_id': None}
 
 
 def _is_already_executor(identity, executors):

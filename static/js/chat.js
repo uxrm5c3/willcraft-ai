@@ -524,6 +524,19 @@
 
   // ── Quick reply (walk-through buttons send a one-word message) ──────
   window.__quickReply = function (word) {
+    // Special value 'other' → just focus the input so user can type their own.
+    if (word === 'other' || word === 'type') {
+      textInput.focus();
+      textInput.placeholder = 'Type your answer here…';
+      return;
+    }
+    // Values ending in ': ' (e.g. 'address: ') prefill but don't send — the
+    // user fills in the rest, then hits Send.
+    if (typeof word === 'string' && word.endsWith(': ')) {
+      textInput.value = word;
+      textInput.focus();
+      return;
+    }
     textInput.value = word;
     sendChatMessage();
   };
