@@ -94,24 +94,46 @@ jobs:
 
       - name: Bump HOST nginx upload cap (apt-installed reverse proxy)
         # The 413 from "nginx/1.24.0 (Ubuntu)" is the apt-nginx in front of
-        # docker, not our compose nginx. Set client_max_body_size = 100M in
-        # /etc/nginx/conf.d/upload-cap.conf and reload. Idempotent.
+        # docker, not our compose nginx. Strip any existing
+        # client_max_body_size from sites-enabled/sites-available/conf.d
+        # AND nginx.conf, then set it to 100M in conf.d/upload-cap.conf at
+        # the http {} level. Then verify via `nginx -T | grep`.
         run: |
           ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
               'set -e; \
                if ! command -v nginx >/dev/null 2>&1; then \
-                 echo "Host nginx not installed — skipping (docker nginx only)."; exit 0; \
+                 echo "Host nginx not installed — skipping."; exit 0; \
                fi; \
                echo "Host nginx version: $(nginx -v 2>&1)"; \
+               echo "=== BEFORE: any existing client_max_body_size: ==="; \
+               sudo grep -RHn "client_max_body_size" /etc/nginx/ 2>/dev/null || echo "(none found)"; \
+               echo "=== Stripping any existing client_max_body_size lines ==="; \
+               for d in /etc/nginx/sites-enabled /etc/nginx/sites-available /etc/nginx/conf.d; do \
+                 [ -d "$d" ] || continue; \
+                 for f in "$d"/*; do \
+                   [ -f "$f" ] || continue; \
+                   if sudo grep -q "client_max_body_size" "$f" 2>/dev/null; then \
+                     echo "  scrubbing $f"; \
+                     sudo sed -i.bak "/client_max_body_size/d" "$f"; \
+                   fi; \
+                 done; \
+               done; \
+               if sudo grep -q "client_max_body_size" /etc/nginx/nginx.conf 2>/dev/null; then \
+                 echo "  scrubbing /etc/nginx/nginx.conf"; \
+                 sudo sed -i.bak "/client_max_body_size/d" /etc/nginx/nginx.conf; \
+               fi; \
                SNIPPET=/etc/nginx/conf.d/upload-cap.conf; \
                echo "client_max_body_size 100M;" | sudo tee "$SNIPPET" >/dev/null; \
-               echo "Wrote $SNIPPET:"; sudo cat "$SNIPPET"; \
-               echo "Testing nginx config…"; \
+               echo "=== Wrote $SNIPPET ==="; sudo cat "$SNIPPET"; \
+               echo "=== Testing nginx config ==="; \
                sudo nginx -t; \
-               echo "Reloading nginx…"; \
+               echo "=== Reloading nginx ==="; \
                sudo systemctl reload nginx; \
-               echo "Done. Host nginx upload cap is now 100M."'
+               echo "=== AFTER: effective client_max_body_size: ==="; \
+               sudo nginx -T 2>/dev/null | grep -i client_max_body_size || \
+                 echo "WARN: directive missing from full effective config"; \
+               echo "=== Done ==="'
 
       - name: Reload nginx (picks up nginx/default.conf changes)
         run: |
