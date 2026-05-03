@@ -65,6 +65,94 @@ def _extract_pdf_text(path: str) -> str:
     return text
 
 
+# ── Topic → Act mapping ─────────────────────────────────────────────────
+# Maps a question keyword/phrase to the SINGLE most likely Act slug. This
+# lets us identify the right Act first (cheap lookup) and then drill into
+# its sections, instead of scoring all 23 Acts for every question.
+#
+# Order matters — earlier patterns win on ties. Add aggressively as we
+# encounter new question types.
+_TOPIC_HINTS: List[tuple] = [
+    # (regex pattern in lowered question, slug to prefer)
+    (r'\bwill\b|testament|testator|witness|attest|revoke|codicil',
+     'wills_act_1959'),
+    (r'\bprobate|grant of probate|letters of administration|administrator|executor',
+     'probate_administration_act_1959'),
+    (r'distribution act|intestate|intestacy|spouse and children|share of estate',
+     'distribution_act_1958'),
+    (r'family provision|dependant|maintenance from estate',
+     'inheritance_family_provision_act_1971'),
+    (r'\bgeran\b|individual title|land title|land code|nlc|qualified title|caveat',
+     'national_land_code_1965'),
+    (r'\bstrata\b|parcel|management corporation|sub-?divided',
+     'strata_titles_act_1985'),
+    (r'strata management|jmb|joint management body|maintenance fee|sinking fund',
+     'strata_management_act_2013'),
+    (r'\brpgt\b|real property gains|cgt|capital gains',
+     'rpgt_act_1976'),
+    (r'\bstamp\b|stamping|stamp duty',
+     'stamp_act_1949'),
+    (r'small estate|estate distribution officer|edo',
+     'small_estates_distribution_act_1955'),
+    (r'\binsolvenc|bankrupt',
+     'insolvency_act_1967'),
+    (r'\btax\b|income tax|chargeable income',
+     'income_tax_act_1967'),
+]
+
+
+def identify_act(question: str) -> Optional[str]:
+    """Return the slug of the single most-likely Act for this question,
+    or None if no topic hint matches. Cheap regex lookup, no PDF reads."""
+    if not question:
+        return None
+    q = question.lower()
+    available = {a['slug'] for a in list_available_acts()}
+    for pattern, slug in _TOPIC_HINTS:
+        if slug not in available:
+            continue
+        if re.search(pattern, q):
+            return slug
+    return None
+
+
+def section_excerpt(slug: str, question: str, max_chars: int = 1600
+                    ) -> Optional[Dict[str, str]]:
+    """Given a known-good Act slug, find the most relevant paragraph(s)
+    inside it for the question. Returns {title, excerpt} or None if the
+    Act isn't loaded / has no matching keyword."""
+    if not slug:
+        return None
+    acts = {a['slug']: a for a in list_available_acts()}
+    act = acts.get(slug)
+    if not act:
+        return None
+    text = _extract_pdf_text(act['path'])
+    if not text:
+        return None
+    keywords = set(re.findall(r'\b[a-z]{4,}\b', question.lower()))
+    keywords -= {'what', 'when', 'where', 'which', 'this', 'that', 'with',
+                 'have', 'does', 'will', 'should', 'would', 'about', 'cite',
+                 'tell', 'explain', 'mean', 'meaning', 'difference', 'between',
+                 'whats', 'hows', 'definition'}
+    if not keywords:
+        return None
+    paragraphs = re.split(r'\n\s*\n', text)
+    scored = []
+    for i, para in enumerate(paragraphs):
+        pl = para.lower()
+        h = sum(1 for k in keywords if k in pl)
+        if h:
+            scored.append((h, i, para.strip()))
+    scored.sort(reverse=True)
+    if not scored:
+        return None
+    # Take top 2 sections, joined with separator, truncated
+    top = [s[2] for s in scored[:2]]
+    excerpt = '\n\n…\n\n'.join(top)[:max_chars]
+    return {'title': act['title'], 'slug': slug, 'excerpt': excerpt}
+
+
 def relevant_excerpts(question: str, max_chars: int = 2400,
                       max_acts: int = 3, per_act_chars: int = 800
                       ) -> List[Dict[str, str]]:

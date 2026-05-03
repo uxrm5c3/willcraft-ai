@@ -130,22 +130,51 @@ def answer_question(user_text: str, current_stage_summary: str = '',
     try:
         # Hard 25s timeout so we fail fast instead of hanging the chat.
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=25.0)
+        # ── Step A: identify the SINGLE most likely Act first ────────────
+        # Cheap regex topic-match. Then read only that Act and grab the
+        # best section. Falls back to broad keyword search across top-3
+        # Acts only if no topic hint matches. This cuts both tokens AND
+        # latency dramatically vs. the old "scan all 23 Acts" approach.
+        focused = None
+        try:
+            from services.legal_library import identify_act, section_excerpt
+            focus_slug = identify_act(user_text)
+            if focus_slug:
+                focused = section_excerpt(focus_slug, user_text)
+        except Exception:
+            focused = None
         nudge = (f"\n\nNow back to **{current_stage_summary}** — please continue."
                  if current_stage_summary else "")
-        # MANDATORY library lookup first
+        # ── Step B: build excerpts_block ─────────────────────────────────
+        # Prefer the focused excerpt from Step A if we found one (single
+        # Act, single section — cleanest possible context). Otherwise fall
+        # back to broad keyword scan across top-3 Acts.
         excerpts_block = ''
         ex = []
-        try:
-            from services.legal_library import relevant_excerpts
-            ex = relevant_excerpts(user_text)
-            if ex:
-                matched_titles = [e['title'] for e in ex]
-                excerpts_block = ("\n\nRELEVANT ACT PROVISIONS — cite the Act + section when "
-                                  "you use them, and prefer these over general knowledge:\n")
-                for e in ex:
-                    excerpts_block += f"\n--- {e['title']} ---\n{e['excerpt']}\n"
-        except Exception:
-            pass
+        if focused:
+            matched_titles = [focused['title']]
+            excerpts_block = (
+                "\n\nRELEVANT ACT PROVISION — this is the ONLY excerpt the "
+                "library returned for this question. If your answer is not "
+                "directly supported by it, say you don't know.\n"
+                f"\n--- {focused['title']} ---\n{focused['excerpt']}\n"
+            )
+            ex = [focused]
+        else:
+            try:
+                from services.legal_library import relevant_excerpts
+                ex = relevant_excerpts(user_text)
+                if ex:
+                    matched_titles = [e['title'] for e in ex]
+                    excerpts_block = (
+                        "\n\nRELEVANT ACT PROVISIONS — cite the Act + "
+                        "section ONLY if the section text directly supports "
+                        "the answer. Do not infer or generalise:\n"
+                    )
+                    for e in ex:
+                        excerpts_block += f"\n--- {e['title']} ---\n{e['excerpt']}\n"
+            except Exception:
+                pass
 
         # Log the gap if no library match (so tech team can enhance the library)
         if not ex:
@@ -171,27 +200,41 @@ def answer_question(user_text: str, current_stage_summary: str = '',
                 db.session.commit()
             except Exception:
                 pass
-        # Prompt rule: ONLY emit a Citation line when the answer can point
-        # to a real Act + section. If nothing fits, omit the line entirely.
-        # We strip any "General knowledge / not in library / not specified"
-        # cop-out citations during post-processing — never show them to the
-        # client.
+        # Prompt — anti-hallucination first, format second.
+        #
+        # Rules (per client mandate "NO hallucination"):
+        #   1. If the excerpts above directly answer the question → answer
+        #      with a precise Act + section citation.
+        #   2. If the excerpts are tangentially related but don't actually
+        #      answer it → say "I'm not certain" and point to the Act for
+        #      the user to verify. Do NOT fabricate a section number.
+        #   3. If you have no excerpt and the answer is not basic Malaysian
+        #      legal common knowledge → say "I don't know" upfront. Do NOT
+        #      guess.
+        #   4. If you DO know it as basic common knowledge (e.g. "Geran is
+        #      the land title") → answer plainly with NO citation line.
         msg = client.messages.create(
             model=CLAUDE_MODEL_FAST,
-            max_tokens=300,  # was 500 — answer + citation + example fits in 250
+            max_tokens=300,
             messages=[{
                 'role': 'user',
                 'content': f"""You help a Malaysian advisor draft a non-Muslim will.{excerpts_block}
 
 USER QUESTION: {user_text}
 
-Reply in this EXACT format (no preface, no filler, no disclaimer, no apologies):
+ANTI-HALLUCINATION RULES (highest priority):
+- If the excerpts above DIRECTLY answer the question → cite "<Act> s.<n>".
+- If the excerpts are only tangentially related → say "I'm not 100% sure" and point the user to the Act for verification. NEVER invent a section number.
+- If you have NO excerpt AND the answer is not basic terminology common knowledge → reply with **Answer:** "I don't know — please consult a lawyer or check the relevant Act in the [Legal Library](/library)." and stop. No fake example, no guessed citation.
+- Confidence over completeness. A short "I don't know" beats a wrong answer.
 
-**Answer:** <one or two short plain-English sentences — maximum 40 words. Direct, no hedging. Use everyday Malaysian terms (Geran, Strata Title, etc.) when relevant.>
+Reply in this EXACT format (no preface, no filler, no apologies):
 
-**Citation:** <ONLY include this line if you can cite a SPECIFIC Malaysian Act + section number from the excerpts above (e.g. "Wills Act 1959 s.5(2)"). If you cannot cite a specific section, OMIT this entire line — do NOT write "General knowledge", "not in library", "N/A", "not specified", or any cop-out. Just leave it out.>
+**Answer:** <one or two short plain-English sentences — maximum 40 words. Direct. Use everyday Malaysian terms (Geran, Strata Title) when relevant. If you don't know, say so HERE.>
 
-**Example:** <one short concrete example — maximum 25 words — illustrating the answer in a typical Malaysian situation. Skip this line ENTIRELY if no useful example fits.>
+**Citation:** <ONLY include this line if you cite a SPECIFIC Act + section number from the excerpts above (e.g. "Wills Act 1959 s.5(2)"). Otherwise OMIT this line entirely. NEVER write "General knowledge", "not in library", "N/A", "not specified", "based on common practice", or any cop-out — just leave the line out.>
+
+**Example:** <one concrete Malaysian example — max 25 words. Skip this line if you said "I don't know" or no useful example fits.>
 
 That's it. No "I hope this helps", no "feel free to ask", no extra paragraphs."""
             }]
@@ -211,6 +254,14 @@ That's it. No "I hope this helps", no "feel free to ask", no extra paragraphs.""
         lines = body.split('\n')
         kept = []
         real_citation = False
+        # Detect "I don't know" up-front so we strip Citation+Example and
+        # don't pretend we have evidence we don't.
+        body_lower = body.lower()
+        is_dont_know = any(p in body_lower for p in (
+            "i don't know", 'i do not know', "i'm not certain",
+            "i am not certain", "not 100% sure", 'not entirely sure',
+            'cannot answer with certainty', 'unable to answer',
+        ))
         for ln in lines:
             stripped_ln = ln.strip()
             # Detect a citation line (with or without ** **)
@@ -218,17 +269,22 @@ That's it. No "I hope this helps", no "feel free to ask", no extra paragraphs.""
                                         stripped_ln, _re_post.IGNORECASE)
             if cite_match:
                 cite_value = cite_match.group(1).strip().rstrip('.').lower()
-                # Empty value or matches a cop-out → drop the whole line
-                if not cite_value or any(_re_post.search(p, cite_value)
-                                         for p in _COPOUT_PATTERNS):
-                    continue  # skip this line
+                # Empty value, cop-out, OR don't-know answer → drop line
+                if (not cite_value
+                    or is_dont_know
+                    or any(_re_post.search(p, cite_value) for p in _COPOUT_PATTERNS)):
+                    continue
                 real_citation = True
+            # Strip Example line too if don't-know
+            if is_dont_know and _re_post.match(
+                    r'^\*?\*?example\*?\*?\s*:', stripped_ln, _re_post.IGNORECASE):
+                continue
             kept.append(ln)
         # Collapse 3+ consecutive newlines down to 2 after pruning
         body = _re_post.sub(r'\n{3,}', '\n\n', '\n'.join(kept)).strip()
 
-        # Footer ONLY when we kept a real citation. No real cite → no noise.
-        if real_citation and matched_titles:
+        # Footer ONLY when we kept a real citation AND we're confident.
+        if real_citation and matched_titles and not is_dont_know:
             footer = f"\n\n<sub>📚 _Cited from library: {', '.join(matched_titles)}_</sub>"
         else:
             footer = ''
