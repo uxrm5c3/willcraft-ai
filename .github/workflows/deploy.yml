@@ -92,6 +92,32 @@ jobs:
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
               'bash ~/deploy-alantanjb.sh'
 
+      - name: Force-rebuild python container (safety net)
+        # ~/deploy-alantanjb.sh may just restart instead of rebuild, leaving
+        # python code (chat_planner.py etc.) stale. Explicitly rebuild.
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+              'set -e; \
+               PROJ=""; \
+               for d in ~/willcraft-ai ~/will.alantanjb.com ~/will-writing-ai ~/willcraft ~/app /opt/willcraft /srv/willcraft; do \
+                 if [ -f "$d/docker-compose.yml" ]; then PROJ="$d"; break; fi; \
+               done; \
+               if [ -z "$PROJ" ]; then \
+                 PROJ=$(find ~ -maxdepth 4 -name docker-compose.yml -not -path "*/node_modules/*" 2>/dev/null | head -1); \
+                 [ -n "$PROJ" ] && PROJ=$(dirname "$PROJ"); \
+               fi; \
+               if [ -z "$PROJ" ]; then echo "ERROR: no compose file found"; exit 1; fi; \
+               cd "$PROJ"; \
+               echo "Pulling latest in $PROJ"; \
+               git pull --ff-only origin main 2>&1 | tail -10 || echo "git pull noop/skip"; \
+               echo "HEAD: $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"; \
+               echo "Rebuilding + recreating web container…"; \
+               docker compose build web 2>&1 | tail -15; \
+               docker compose up -d --no-deps --force-recreate web 2>&1 | tail -10; \
+               echo "Web container status:"; \
+               docker compose ps web | tail -5'
+
       - name: Bump HOST nginx upload cap (apt-installed reverse proxy)
         # The 413 from "nginx/1.24.0 (Ubuntu)" is the apt-nginx in front of
         # docker, not our compose nginx. Strip any existing
