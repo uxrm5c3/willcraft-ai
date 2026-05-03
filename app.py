@@ -4974,24 +4974,26 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
         # 3. Build inbox card from existing docs
         from ai.chat_planner import _intake_email_card as _iec
 
-        # Gather extracted data and deduplicate by original_filename
-        # (same file re-uploaded/re-classified creates multiple rows — keep newest)
-        _fname_to_doc: dict = {}
-        _msg_contexts: list = []
+        # Deduplicate by (original_filename, file_size) — same name + same size
+        # means the same physical file uploaded/forwarded multiple times.
+        # Different photos CAN share a WhatsApp timestamp filename but have
+        # different file sizes, so filename alone is too aggressive.
+        _key_to_doc: dict = {}
+        _chat_msg_ids: set = set()
         for d in docs:
             try:
                 ex = json.loads(d.extracted_data) if d.extracted_data else {}
             except (json.JSONDecodeError, TypeError):
                 ex = {}
-            # Collect message context before dedup (any doc may have it)
-            _mc = (ex.get('_message_context') or '').strip()
-            if _mc and _mc not in _msg_contexts:
-                _msg_contexts.append(_mc)
-            fname = (d.original_filename or d.filename or d.id or '').strip()
-            # Keep the doc with the higher (newer) id for each filename
-            existing = _fname_to_doc.get(fname)
+            fname = (d.original_filename or d.filename or '').strip()
+            fsize = d.file_size or 0
+            _dedup_key = (fname, fsize) if fname else d.id
+            # Track chat_message_ids so we can retrieve the original email text
+            if d.chat_message_id:
+                _chat_msg_ids.add(d.chat_message_id)
+            existing = _key_to_doc.get(_dedup_key)
             if existing is None or str(d.id) > str(existing['_doc_id']):
-                _fname_to_doc[fname] = {
+                _key_to_doc[_dedup_key] = {
                     '_doc_id': d.id,
                     'document_id': d.id,
                     'kind': d.category or 'other',
@@ -4999,7 +5001,7 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
                     'extracted': ex,
                     'original_filename': fname,
                 }
-        artifacts = list(_fname_to_doc.values())
+        artifacts = list(_key_to_doc.values())
 
         if not artifacts:
             return {
@@ -5012,8 +5014,22 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
                 ),
             }
 
-        # Pick the most informative message context (longest one)
-        _best_ctx = max(_msg_contexts, key=len) if _msg_contexts else ''
+        # Retrieve original email/WhatsApp body from ChatMessage records.
+        # This is more reliable than _message_context on docs (which is capped
+        # at 800 chars and may miss long email bodies).
+        _best_ctx = ''
+        if _chat_msg_ids:
+            _chat_msgs = (ChatMessage.query
+                          .filter(ChatMessage.id.in_(_chat_msg_ids),
+                                  ChatMessage.role == 'user')
+                          .order_by(ChatMessage.created_at.desc())
+                          .all())
+            # Pick the most recent non-empty message content
+            for _cm in _chat_msgs:
+                _ct = (_cm.content or '').strip()
+                if _ct and len(_ct) > len(_best_ctx):
+                    _best_ctx = _ct
+
         inbox_card = _iec(artifacts, _best_ctx)
         _focus_ids = [a['document_id'] for a in artifacts]
         return {

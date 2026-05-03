@@ -286,9 +286,9 @@ Standard categories (use one):
 • **insurance** — Policy schedule / takaful cert. Prudential, AIA, Great Eastern, Etiqa, Takaful Malaysia
 • **epf_kwsp** — EPF/KWSP logo. Member no. + contribution history. i-Akaun screenshot
 • **vehicle** — JPJ registration card (Kad Pendaftaran Kenderaan). Plate no. + chassis + engine cc
-• **will** — "WASIAT TERAKHIR" / "LAST WILL AND TESTAMENT". Executor appointment + witness signatures
-• **death_certificate** — "SIJIL KEMATIAN" / "CERTIFICATE OF DEATH". Deceased name + date/place of death
-• **unrelated** — Clearly not an asset: birth cert, marriage cert, medical record, receipt, photo, court order, document about a deceased person's estate
+• **will** — The document IS a will: titled "WASIAT TERAKHIR", "LAST WILL AND TESTAMENT", or "MY LAST WILL". Contains BOTH testator declaration AND executor appointment AND witness attestation clause. A DRAFT will also counts. Do NOT classify as will: letters about wills, probate orders, grant of probate, letters of administration, legal opinions about wills, redemption letters, discharge documents.
+• **death_certificate** — Official government death registration. Look for ANY of: "SIJIL KEMATIAN", "CERTIFICATE OF DEATH", "DEATH CERTIFICATE", "TARIKH KEMATIAN", "SEBAB KEMATIAN", "CAUSE OF DEATH", "DATE OF DEATH", JPN (Jabatan Pendaftaran Negara) logo with a deceased person's details, or a document with a date-of-death field filled in. Set will_relevant=false, person_name=deceased full name.
+• **unrelated** — Clearly not an asset: birth cert, marriage cert, medical record, receipt, photo of people/objects, court order unrelated to property
 
 ⚡ BEST-EFFORT RULE: If the document does NOT match any standard category, still provide:
   - `kind`: the CLOSEST standard category (never default to "other" unless truly unreadable)
@@ -299,11 +299,12 @@ Standard categories (use one):
 ━━━ RULES ━━━
 - Document heading is the STRONGEST signal — trust what you read
 - Bank name visible on a contract/agreement → loan_agreement
-- "SIJIL KEMATIAN" → death_certificate, will_relevant=false
-- Truly unreadable (black/blank/photo) → other, confidence=low, custom_type="Unreadable image"
+- "SIJIL KEMATIAN" / "TARIKH KEMATIAN" / "SEBAB KEMATIAN" / JPN death form → death_certificate (will_relevant=false)
+- Truly unreadable (black/blank/photo of scenery) → other, confidence=low, custom_type="Unreadable image"
 - property_hint: copy verbatim the property lot number, title number, or address (NOT owner's home address)
 - person_name: the PRIMARY person named in the document (owner, borrower, deceased, IC holder). Full name as printed. Empty if no clear name visible.
 - For death_certificate: set will_relevant=false, person_name=deceased full name
+- For will: ONLY classify as will if you can clearly see both "LAST WILL AND TESTAMENT" / "WASIAT" AND the executor/witness structure. When in doubt, use other + custom_type with the actual document title.
 
 Return ONLY this JSON (no other text):
 ```json
