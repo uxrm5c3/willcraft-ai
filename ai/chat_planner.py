@@ -650,11 +650,29 @@ def _deduce_intent_from_messages(p: Dict[str, Any], recent_text: str) -> str:
     return '\n'.join(f"  > _{m}_" for m in matches)
 
 
+_TITLE_TYPE_KEYWORDS = (
+    'GERAN', 'HAKMILIK', 'HS(D)', 'HSD', 'HS(M)', 'HSM',
+    'PAJAKAN NEGERI', 'PN', 'PAJAKAN MUKIM', 'PM',
+    'GERAN MUKIM', 'GM', 'STRATA', 'PT', 'PTD',
+)
+
+
 def _validate_property_format(ex: Dict[str, Any]) -> List[str]:
     """Surface obvious formatting / completeness issues per the National
-    Land Code. The will writer sees these inline so they can correct
-    BEFORE the gift goes into the wizard. Cheap heuristic checks — not
-    a substitute for legal review."""
+    Land Code. Cheap heuristic checks — not a substitute for legal
+    review. The validator is intentionally LENIENT on the title number
+    itself — under NLC titles have two distinct parts:
+
+      • Title TYPE (the prefix word): Geran / Hakmilik / HS(D) / HS(M) /
+        PN / PM / GM / Strata Title — lives in `title_type`.
+      • Title NUMBER: usually pure digits (e.g. "564662" for a Geran),
+        or with slashes for strata ("12345/67/8/9") — lives in
+        `title_number`.
+
+    A pure-digit title number is perfectly valid for a Geran/Hakmilik.
+    The earlier rule that looked for "GERAN" / "HSD" inside the NUMBER
+    field was wrong and cried wolf on every legitimate title.
+    """
     warnings = []
     title_no = (ex.get('title_number') or '').strip()
     title_type = (ex.get('title_type') or '').strip()
@@ -663,24 +681,58 @@ def _validate_property_format(ex: Dict[str, Any]) -> List[str]:
     daerah = (ex.get('daerah') or '').strip()
     negeri = (ex.get('negeri') or '').strip()
     addr = (ex.get('property_address') or ex.get('description') or '').strip()
+
     if not addr and not title_no:
-        warnings.append("⚠️  Address AND title number both blank — re-OCR or ask client for a clearer scan.")
-    if title_no and not any(p in title_no.upper()
-                            for p in ('GERAN', 'HSD', 'HSM', 'HS(D)', 'HS(M)',
-                                      'PT', 'PN', 'GM', 'PM')):
         warnings.append(
-            f"⚠️  Title `{title_no}` doesn't match common Malaysian formats "
-            "(Geran / HS(D) / HS(M) / PT / PN / GM / PM) — verify with client."
+            "⚠️  Address AND title number both blank — re-OCR or ask client "
+            "for a clearer scan."
         )
+
+    # If we have a title NUMBER, check that EITHER title_type OR the
+    # number itself indicates a recognised NLC instrument. Pure digits
+    # alone are fine when title_type is set (typical Geran).
+    if title_no:
+        type_known = any(k in title_type.upper() for k in _TITLE_TYPE_KEYWORDS)
+        no_known = any(k in title_no.upper() for k in _TITLE_TYPE_KEYWORDS)
+        # Pure-digit title number AND no title_type → can't tell which
+        # instrument. Most likely a Geran but worth verifying.
+        if not type_known and not no_known:
+            warnings.append(
+                f"⚠️  Title number `{title_no}` has no instrument type "
+                "(Geran / Hakmilik / HS(D) / HS(M) / PN / PM). Confirm with "
+                "client whether this is a final Geran or a qualified title."
+            )
+        # Garbled-OCR sniff test: a real title number is alphanumeric
+        # plus a small set of separators ( / - . space and the parens
+        # used in HS(D) / HS(M) ). Anything else (commas, asterisks,
+        # control chars) is almost certainly an OCR artefact.
+        cleaned = title_no
+        for ch in (' ', '/', '-', '.', '(', ')'):
+            cleaned = cleaned.replace(ch, '')
+        if cleaned and not cleaned.isalnum():
+            warnings.append(
+                f"⚠️  Title number `{title_no}` contains unexpected "
+                "characters — verify OCR."
+            )
+
     if not lot_no:
-        warnings.append("⚠️  Lot number missing — National Land Code requires it for the gift clause.")
+        warnings.append(
+            "⚠️  Lot number missing — National Land Code requires it for "
+            "the gift clause."
+        )
     if not mukim and not daerah:
-        warnings.append("⚠️  Mukim AND daerah both blank — needed to draft the property description.")
-    # Quick spelling sanity for common Mukim/Daerah patterns. Anything
-    # ending in obviously wrong characters likely an OCR error.
+        warnings.append(
+            "⚠️  Mukim AND daerah both blank — needed to draft the property "
+            "description."
+        )
+    # Quick sanity for Mukim/Daerah/Negeri — digits in these fields are
+    # almost always OCR errors.
     for label, val in (('Mukim', mukim), ('Daerah', daerah), ('Negeri', negeri)):
         if val and (any(ch.isdigit() for ch in val) or len(val) > 60):
-            warnings.append(f"⚠️  {label} `{val}` looks suspicious (digits or unusually long) — likely OCR error, verify.")
+            warnings.append(
+                f"⚠️  {label} `{val}` looks suspicious (digits or unusually "
+                "long) — likely OCR error, verify."
+            )
     return warnings
 
 
