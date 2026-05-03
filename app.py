@@ -3125,6 +3125,70 @@ def _get_or_create_active_will(client_id, user_id):
     return will
 
 
+def _normalise_gifts(gifts: list) -> list:
+    """Ensure every gift in step5_data has a `kind` field that the snapshot
+    JS can use to display a meaningful label.
+
+    Two historic save paths produced gifts without `kind`:
+      1. Old `_try_save_property_gift` before the `kind` field was added —
+         these have `document_id` + optional `property_address`/`title_number`.
+      2. Wizard-format gifts using `gift_type` instead of `kind`.
+
+    We normalise in place so the JS only needs to check one field.
+    """
+    if not isinstance(gifts, list):
+        return gifts
+    result = []
+    for g in gifts:
+        if not isinstance(g, dict):
+            result.append(g)
+            continue
+        g = dict(g)   # copy so we don't mutate the original
+        # --- already has kind ---
+        if g.get('kind'):
+            result.append(g)
+            continue
+        # --- wizard format: gift_type → kind ---
+        gt = (g.get('gift_type') or '').strip().lower()
+        if gt == 'property':
+            g['kind'] = 'property'
+            # Flatten property_details to top-level so JS checks propAddr etc.
+            pd = g.get('property_details') or {}
+            for f in ('property_address', 'title_number', 'lot_number',
+                      'mukim', 'daerah', 'negeri'):
+                if not g.get(f) and pd.get(f):
+                    g[f] = pd[f]
+            # Flatten allocations → beneficiaries
+            if not g.get('beneficiaries') and g.get('allocations'):
+                g['beneficiaries'] = [
+                    {'name': a.get('beneficiary_name', ''), 'share': a.get('share', '')}
+                    for a in g['allocations'] if a.get('beneficiary_name')
+                ]
+        elif gt in ('financial', 'bank'):
+            g['kind'] = 'bank'
+            fd = g.get('financial_details') or {}
+            if not g.get('bank_name') and fd.get('institution'):
+                g['bank_name'] = fd['institution']
+            if not g.get('account_number') and fd.get('account_number'):
+                g['account_number'] = fd['account_number']
+            if not g.get('beneficiaries') and g.get('allocations'):
+                g['beneficiaries'] = [
+                    {'name': a.get('beneficiary_name', ''), 'share': a.get('share', '')}
+                    for a in g['allocations'] if a.get('beneficiary_name')
+                ]
+        elif gt == 'vehicle':
+            g['kind'] = 'vehicle'
+        elif gt in ('other', ''):
+            g['kind'] = 'other'
+        else:
+            g['kind'] = gt   # pass through unknown types
+        # --- old chat-format: has document_id but no kind → property gift ---
+        if not g.get('kind') and g.get('document_id'):
+            g['kind'] = 'property'
+        result.append(g)
+    return result
+
+
 def _will_data_snapshot(will_record):
     """Parse a Will's step JSON columns into a single dict for the chat planner & UI.
     Also includes the live Person registry from DB so the chat's right-pane
@@ -3163,7 +3227,7 @@ def _will_data_snapshot(will_record):
         'step2': _j(will_record.step2_data, {}),
         'step3': _j(will_record.step3_data, {}),
         'step4': _j(will_record.step4_data, []),
-        'step5': _j(will_record.step5_data, []),
+        'step5': _normalise_gifts(_j(will_record.step5_data, [])),
         'step6': _j(will_record.step6_data, {}),
         'step7': _j(will_record.step7_data, {}),
         'step8': _j(will_record.step8_data, {}),

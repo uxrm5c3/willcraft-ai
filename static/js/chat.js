@@ -667,10 +667,18 @@
             ident = g.insurer_name || g.policy_number || 'Insurance';
           } else if (kind === 'epf_kwsp') {
             prefix = '💼 EPF/KWSP';
+          } else if (g.document_id) {
+            // Legacy chat-format gift: has document_id but no recognised kind.
+            // Only _try_save_property_gift saves with document_id, so this is
+            // always a property gift saved before `kind` was introduced.
+            prefix = '🏠 Property';
+            ident = g.title_number || g.lot_number || g.property_address || '';
           } else {
             // Other/disclaimer — use description if any, else a readable gift type
             const typeLabel = { other: 'Other Gift', financial: 'Financial Asset', property: '🏠 Property' }[kind] || '';
-            prefix = g.description || typeLabel || 'Gift';
+            const rawDesc = g.description || '';
+            // Don't use generic placeholders like 'Gift' as the label — they add no value
+            prefix = (rawDesc && rawDesc.toLowerCase() !== 'gift') ? rawDesc : (typeLabel || '📦 Asset');
           }
           let label = ident ? `${prefix} — ${ident}` : prefix;
           if (benList.length) label += ' → ' + benList.slice(0, 2).join(', ') + (benList.length > 2 ? '…' : '');
