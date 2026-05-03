@@ -341,6 +341,64 @@ def _clean_email_body(raw: str) -> str:
     return cleaned
 
 
+def _summarise_message(raw_text: str) -> str:
+    """Use Claude Haiku to produce a two-part structured summary of a
+    forwarded WhatsApp/email message in a will-writing context.
+
+    Returns markdown with two sections:
+      **What was communicated** — coherent paraphrase of the message
+      **What we deduce** — interpreted will-writing intent (assets, beneficiaries, etc.)
+
+    Returns empty string on failure (caller falls back to blockquote).
+    """
+    if not raw_text or len(raw_text.strip()) < 30:
+        return ''
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_CHEAP
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        prompt = (
+            "You are a will-writing assistant at a Malaysian law firm. "
+            "A client or planner has forwarded this WhatsApp/email message along with document attachments.\n\n"
+            "Produce TWO sections:\n\n"
+            "**Section 1 — What was communicated:**\n"
+            "Write 2–4 sentences in plain English that faithfully summarise what the sender actually said. "
+            "No interpretation — just what they wrote, clearly and naturally. "
+            "Skip email headers, forwarding noise, and greetings.\n\n"
+            "**Section 2 — What we deduce:**\n"
+            "List 3–6 bullet points of will-writing implications. Be specific. Include:\n"
+            "- Each property/asset mentioned (lot number, address, title number if given)\n"
+            "- Intended beneficiary for each asset (full name if mentioned)\n"
+            "- Ownership type (sole / joint; share if given)\n"
+            "- Any loan, mortgage, or caveat mentioned\n"
+            "- Any special wishes or instructions\n"
+            "If a detail was not mentioned, omit that bullet. "
+            "If something is ambiguous, flag it: e.g. '❓ Beneficiary not specified for this property'\n\n"
+            "Format exactly like this (use these exact bold headings):\n"
+            "**What was communicated:**\n"
+            "<2-4 sentence prose summary>\n\n"
+            "**What we deduce:**\n"
+            "• **Property:** ...\n"
+            "• **Beneficiary:** ...\n"
+            "• etc.\n\n"
+            f"Message:\n{raw_text[:2500]}"
+        )
+        msg = client.messages.create(
+            model=CLAUDE_MODEL_CHEAP,
+            max_tokens=500,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='ai.chat_planner._summarise_message')
+        except Exception:
+            pass
+        result = (msg.content[0].text or '').strip() if msg.content else ''
+        return result
+    except Exception:
+        return ''
+
+
 def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
     """Email brief card — shown when new attachments arrive or on reset.
 
@@ -361,74 +419,17 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
         "then tap **▶️ Start matching** to begin._"
     )
 
-    # ── 2. Clean email body + structured key-point extraction ────────────────
+    # ── 2. Clean + AI-summarise the email/WhatsApp body ─────────────────────
     cleaned_body = _clean_email_body(user_text or '')
-    summary_section = ''
     if cleaned_body:
-        key_points = []
-
-        # Properties / lot numbers mentioned
-        _lot_mentions = re.findall(
-            r'(?:lot|ptd|hsd|hsm|geran|hakmilik|title)[^\w]?\s*(\w[\w\-/]*)',
-            cleaned_body, re.I)
-        if _lot_mentions:
-            key_points.append(
-                f"🏠 **Property reference{'s' if len(_lot_mentions) > 1 else ''}:** "
-                f"{', '.join(dict.fromkeys(_lot_mentions[:4]))}"
-            )
-
-        # Beneficiary names
-        _kw_re2 = re.compile(
-            r'(?:give\s+to|kepada|beneficiary[:\s]+|to\s+be\s+given\s+to|'
-            r'pass\s+to|left\s+to|bequeath\s+to)\s+', re.I)
-        _kw_m2 = _kw_re2.search(cleaned_body)
-        if _kw_m2:
-            _after = cleaned_body[_kw_m2.end():]
-            _name_parts2 = []
-            _rel2 = {'my','his','her','our','their','the','son','daughter','wife',
-                     'husband','spouse','child','children','eldest','youngest'}
-            _stop2 = {'my','the','all','each','whom','any','her','him','them',
-                      'children','child','beneficiaries','heirs','estate','me','us'}
-            _in_n = False
-            for _w in re.split(r'\s+', _after.strip())[:7]:
-                _c = re.sub(r"[^a-zA-Z'/-]", '', _w)
-                if not _c: break
-                if _c.lower() in ('bin','binte','binti','bte','bt','a/l','a/p'):
-                    if _name_parts2: _name_parts2.append(_c)
-                    continue
-                if _c.lower() in _rel2:
-                    if _in_n: break
-                    continue
-                if _c[0].isupper() and _c.lower() not in _stop2:
-                    _name_parts2.append(_c); _in_n = True
-                elif _in_n: break
-            if _name_parts2:
-                key_points.append(f"🎁 **Beneficiary mentioned:** {' '.join(_name_parts2)}")
-
-        # Ownership type
-        if re.search(r'\b(sole\s*owner|sendiri|myself\s*only|hak\s*penuh)\b', cleaned_body, re.I):
-            key_points.append("👤 **Ownership:** Sole owner")
-        elif re.search(r'\b(joint|bersama|co[-\s]?owner|berkongsi)\b', cleaned_body, re.I):
-            _sh = re.search(r'(\d+/\d+|\d+\s*%|half)', cleaned_body, re.I)
-            share_str = f" ({_sh.group(1)})" if _sh else ''
-            key_points.append(f"🤝 **Ownership:** Joint{share_str}")
-
-        # Encumbrance
-        if re.search(r'\b(loan|mortgage|charge|lien|caveat|pinjaman|bebanan)\b',
-                     cleaned_body, re.I):
-            key_points.append("🏦 **Encumbrance:** Possible loan/caveat mentioned")
-
-        # ── Format summary section ─────────────────────────────────────────
+        ai_summary = _summarise_message(cleaned_body)
         lines_s = ["### 📨 Message from sender"]
-        if key_points:
-            lines_s.extend(f"• {p}" for p in key_points)
-            lines_s.append("")
-        # Full cleaned message as blockquote (up to 800 chars)
-        _preview = cleaned_body[:800]
-        if len(cleaned_body) > 800:
-            _preview += '…'
-        _quoted = '> ' + _preview.replace('\n', '\n> ').rstrip('> ').strip()
-        lines_s.append(_quoted)
+        if ai_summary:
+            lines_s.append(ai_summary)
+        else:
+            # Fallback: show cleaned text as blockquote if AI call failed
+            _preview = cleaned_body[:600] + ('…' if len(cleaned_body) > 600 else '')
+            lines_s.append('> ' + _preview.replace('\n', '\n> ').strip('> ').strip())
         summary_section = '\n'.join(lines_s)
     else:
         summary_section = "### 📨 Message from sender\n_No message text — only attachments were received._"
