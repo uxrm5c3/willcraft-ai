@@ -556,25 +556,58 @@ def _step6_property_question(pending_props, recent_text, will_data):
     candidates = [n for n in ident_names if n.upper() != s1_name]
 
     # ── Deduce from email text: find share patterns near each name ──────
+    # Strategy: normalise the email text first ("50percent" / "50 percent" /
+    # "50 %" → "50%"), then find ALL percent occurrences with their byte
+    # offsets, and ALL name occurrences with theirs. For each name pick the
+    # CLOSEST percent within 80 chars. This avoids greedy-regex pitfalls
+    # where `[^.]{0,60}` could "eat" the leading "5" of "50%" and leave
+    # "0%" for the digit-capture (which is exactly the bug we just shipped).
     deduced = []  # [{name, share, evidence}]
     if recent_text and candidates:
         import re as _re
-        for name in candidates:
-            # Look for "<digits>%" or "<digits>percent" near the name
-            pat = _re.compile(
-                r'(\d+\s*(?:%|percent))[^.]{0,60}' + _re.escape(name)
-                + r'|' + _re.escape(name) + r'[^.]{0,60}(\d+\s*(?:%|percent))',
-                _re.IGNORECASE,
-            )
-            m = pat.search(recent_text)
-            if m:
-                share_raw = (m.group(1) or m.group(2) or '').strip()
-                # Normalise '50percent' → '50%'
-                share = _re.sub(r'\s*percent\s*', '%', share_raw, flags=_re.IGNORECASE)
-                snippet = m.group(0).strip()
-                if len(snippet) > 80:
-                    snippet = snippet[:77] + '…'
-                deduced.append({'name': name, 'share': share, 'evidence': snippet})
+        # 1. Normalise the text so every percent token looks like "<n>%"
+        norm = _re.sub(r'(\d+)\s*(?:percent|pct|per\s*cent)\b',
+                       r'\1%', recent_text, flags=_re.IGNORECASE)
+        norm = _re.sub(r'(\d+)\s+%', r'\1%', norm)  # collapse "50 %" → "50%"
+        # 2. Collect every (offset, "<n>%") — anchored so we never capture
+        #    a partial number ((?<!\d) lookbehind) and the trailing % must
+        #    follow with no digits in between.
+        percent_hits = [(m.start(), m.group(0))
+                        for m in _re.finditer(r'(?<!\d)(\d{1,3}%)', norm)]
+        if percent_hits:
+            for name in candidates:
+                # Find every occurrence of the name (case-insensitive)
+                name_hits = [m.start() for m in
+                             _re.finditer(_re.escape(name), norm, _re.IGNORECASE)]
+                if not name_hits:
+                    continue
+                # For each name occurrence, find the nearest percent within 80c
+                best = None  # (distance, share_str, snippet)
+                for n_off in name_hits:
+                    for p_off, share in percent_hits:
+                        dist = abs(p_off - n_off)
+                        if dist > 80:
+                            continue
+                        if best is None or dist < best[0]:
+                            lo = max(0, min(n_off, p_off) - 5)
+                            hi = min(len(norm), max(n_off, p_off) + len(share) + 5)
+                            snippet = norm[lo:hi].strip()
+                            if len(snippet) > 80:
+                                snippet = snippet[:77] + '…'
+                            best = (dist, share, snippet)
+                if best:
+                    deduced.append({'name': name, 'share': best[1],
+                                    'evidence': best[2]})
+        # 3. Sanity check: if the deduced shares don't add to 100, drop the
+        #    suggestion entirely rather than show nonsense like "Esther 50%,
+        #    Joshua 0%". The user can still tap a per-name button.
+        if deduced:
+            try:
+                total = sum(int(d['share'].rstrip('%')) for d in deduced)
+            except Exception:
+                total = 0
+            if total != 100:
+                deduced = []
 
     # Build the primary suggestion (first button, large/highlighted)
     quick: List[Dict[str, str]] = []

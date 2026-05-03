@@ -120,18 +120,11 @@ def answer_question(user_text: str, current_stage_summary: str = '',
                 db.session.commit()
             except Exception:
                 pass
-        # Different prompt depending on whether we have library matches.
-        # Library hits → require Citation. Otherwise → SKIP Citation entirely
-        # so the user never sees the noisy "General knowledge — not in
-        # library" line. Keep it client-friendly.
-        if matched_titles:
-            cite_instruction = (
-                '**Citation:** <Act name + section, e.g. "Wills Act 1959 s.5(2)". '
-                'Use the excerpts above. ONE line only.>\n\n'
-            )
-        else:
-            cite_instruction = ''  # omit the Citation section entirely
-
+        # Prompt rule: ONLY emit a Citation line when the answer can point
+        # to a real Act + section. If nothing fits, omit the line entirely.
+        # We strip any "General knowledge / not in library / not specified"
+        # cop-out citations during post-processing — never show them to the
+        # client.
         msg = client.messages.create(
             model=CLAUDE_MODEL_FAST,
             max_tokens=500,
@@ -145,17 +138,46 @@ Reply in this EXACT format (no preface, no filler, no disclaimer, no apologies):
 
 **Answer:** <one or two short plain-English sentences — maximum 40 words. Direct, no hedging. Use everyday Malaysian terms (Geran, Strata Title, etc.) when relevant.>
 
-{cite_instruction}**Example:** <one short concrete example — maximum 25 words — illustrating the answer in a typical Malaysian situation. Skip this line ENTIRELY if no useful example fits.>
+**Citation:** <ONLY include this line if you can cite a SPECIFIC Malaysian Act + section number from the excerpts above (e.g. "Wills Act 1959 s.5(2)"). If you cannot cite a specific section, OMIT this entire line — do NOT write "General knowledge", "not in library", "N/A", "not specified", or any cop-out. Just leave it out.>
+
+**Example:** <one short concrete example — maximum 25 words — illustrating the answer in a typical Malaysian situation. Skip this line ENTIRELY if no useful example fits.>
 
 That's it. No "I hope this helps", no "feel free to ask", no extra paragraphs."""
             }]
         )
         body = (msg.content[0].text or '').strip() if msg.content else ''
 
-        # Tiny citation footer ONLY when we actually cited from the library.
-        # If nothing matched, stay quiet — don't pester the user with
-        # "not in library" warnings, that's tech-team noise.
-        if matched_titles:
+        # ── Post-process: strip cop-out Citation lines ─────────────────────
+        # Even with explicit instructions, Claude sometimes still writes
+        # "Citation: General knowledge — not in library" or similar. Detect
+        # and remove. Also detect whether a real citation survived so we
+        # know whether to emit the footer.
+        import re as _re_post
+        _COPOUT_PATTERNS = (
+            r'general knowledge', r'not in (the )?library', r'not (specified|applicable|available)',
+            r'^n/?a$', r'no (specific )?citation', r'none', r'not provided',
+        )
+        lines = body.split('\n')
+        kept = []
+        real_citation = False
+        for ln in lines:
+            stripped_ln = ln.strip()
+            # Detect a citation line (with or without ** **)
+            cite_match = _re_post.match(r'^\*?\*?citation\*?\*?\s*:\s*(.*)$',
+                                        stripped_ln, _re_post.IGNORECASE)
+            if cite_match:
+                cite_value = cite_match.group(1).strip().rstrip('.').lower()
+                # Empty value or matches a cop-out → drop the whole line
+                if not cite_value or any(_re_post.search(p, cite_value)
+                                         for p in _COPOUT_PATTERNS):
+                    continue  # skip this line
+                real_citation = True
+            kept.append(ln)
+        # Collapse 3+ consecutive newlines down to 2 after pruning
+        body = _re_post.sub(r'\n{3,}', '\n\n', '\n'.join(kept)).strip()
+
+        # Footer ONLY when we kept a real citation. No real cite → no noise.
+        if real_citation and matched_titles:
             footer = f"\n\n<sub>📚 _Cited from library: {', '.join(matched_titles)}_</sub>"
         else:
             footer = ''
