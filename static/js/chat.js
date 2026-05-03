@@ -606,35 +606,54 @@
     // Step numbers MATCH the wizard sidebar (Identities=1 above, Testator=2,
     // Executors=3, Guardians=4, Beneficiaries=5, Gifts=6, Residuary=7,
     // Trust=8, Other=9). DB columns are step1_data…step8_data offset −1.
+    // `optional` flag stops the fallback "first empty" cursor from
+    // glowing skipped steps forever (Guardians/Trust/Other are commonly
+    // skipped — without this the chat snapshot would always say current
+    // = Guardians even when the chat is actually on Specific Gifts).
     const stepData = [
-      { n: '2', name: 'Testator', link: '/wizard/step/2',
+      { n: '2', name: 'Testator', link: '/wizard/step/2', optional: false,
         fields: s1.full_name ? [
           ['Name', s1.full_name], ['NRIC', s1.nric_passport],
           ['DOB', s1.date_of_birth], ['Address', s1.residential_address],
         ] : null },
-      { n: '3', name: 'Executors', link: '/wizard/step/3',
+      { n: '3', name: 'Executors', link: '/wizard/step/3', optional: false,
         fields: execs.length ? execs.map(e => [
           e.is_substitute ? 'Substitute' : 'Main',
           e.full_name + (e.relationship ? ` (${e.relationship})` : '')
         ]) : null },
-      { n: '4', name: 'Guardians', link: '/wizard/step/4',
+      { n: '4', name: 'Guardians', link: '/wizard/step/4', optional: true,
         fields: guardians.length ? guardians.map(g => [null, g.full_name || g.name || '?']) : null },
-      { n: '5', name: 'Beneficiaries', link: '/wizard/step/5',
+      { n: '5', name: 'Beneficiaries', link: '/wizard/step/5', optional: false,
         fields: benefs.length ? benefs.map(b => [null,
           (b.full_name || b.name || '?') + (b.share ? ` — ${b.share}` : '')]) : null },
-      { n: '6', name: 'Specific Gifts', link: '/wizard/step/6',
+      { n: '6', name: 'Specific Gifts', link: '/wizard/step/6', optional: true,
         fields: gifts.length ? gifts.map(g => [null,
           (g.description || g.gift_type || 'Gift').slice(0, 60)]) : null },
-      { n: '7', name: 'Residuary Estate', link: '/wizard/step/7',
+      { n: '7', name: 'Residuary Estate', link: '/wizard/step/7', optional: false,
         fields: will.step6 && Object.keys(will.step6).length ? [[null, 'Configured']] : null },
-      { n: '8', name: 'Trust', link: '/wizard/step/8',
+      { n: '8', name: 'Trust', link: '/wizard/step/8', optional: true,
         fields: will.step7 && Object.keys(will.step7).length ? [[null, 'Configured']] : null },
-      { n: '9', name: 'Other Matters', link: '/wizard/step/9',
+      { n: '9', name: 'Other Matters', link: '/wizard/step/9', optional: true,
         fields: will.step8 && Object.keys(will.step8).length ? [[null, 'Configured']] : null },
     ];
 
-    // "Current" step = first one without data. If all filled, last one.
-    let currentIdx = stepData.findIndex(s => !s.fields);
+    // Pick "current" step in priority order:
+    //   1. The chat planner's actual stage (server-side current_stage_num) —
+    //      this is the source of truth, e.g. 6 when reviewing assets.
+    //   2. Else: first REQUIRED empty step (skips optional gaps).
+    //   3. Else: first empty step (any kind).
+    //   4. Else: last step (everything filled).
+    let currentIdx = -1;
+    const stageNum = will && will.current_stage_num;
+    if (stageNum) {
+      currentIdx = stepData.findIndex(s => String(s.n) === String(stageNum));
+    }
+    if (currentIdx === -1) {
+      currentIdx = stepData.findIndex(s => !s.fields && !s.optional);
+    }
+    if (currentIdx === -1) {
+      currentIdx = stepData.findIndex(s => !s.fields);
+    }
     if (currentIdx === -1) currentIdx = stepData.length - 1;
 
     for (let i = 0; i < stepData.length; i++) {

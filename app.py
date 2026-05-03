@@ -3134,6 +3134,7 @@ def _will_data_snapshot(will_record):
         'step8': _j(will_record.step8_data, {}),
         'identities': identities,
         'completed_steps': completed,
+        'current_stage_num': _current_stage_num(will_record.client_id, will_record),
     }
 
 
@@ -4013,6 +4014,51 @@ def _try_delete_pending_identity(client_id: str, user_text: str):
     return {'name': label, 'action': 'deleted', 'count': count}
 
 
+def _current_stage_num(client_id: str, will) -> int:
+    """Numeric counterpart of _current_stage_label — the wizard step
+    number the chat planner is currently working on. Used by the chat's
+    right-pane snapshot so the "current" indicator pulses on the RIGHT
+    step (e.g. Step 6 Specific Gifts), not the first empty optional step
+    (Step 4 Guardians is optional and often skipped — the snapshot used
+    to glow it forever).
+
+    Mirrors the planner's stage ordering in ai/chat_planner.plan_turn.
+    """
+    from services.identity_walker import get_pending_ic_documents
+    if get_pending_ic_documents(client_id):
+        return 1
+    if not will:
+        return 1
+    try:
+        s1 = json.loads(will.step1_data) if will.step1_data else {}
+        s2 = json.loads(will.step2_data) if will.step2_data else {}
+        s4 = json.loads(will.step4_data) if will.step4_data else []
+        s5 = json.loads(will.step5_data) if will.step5_data else []
+        s6 = json.loads(will.step6_data) if will.step6_data else {}
+        completed = json.loads(will.completed_steps or '[]')
+    except (json.JSONDecodeError, TypeError):
+        s1, s2, s4, s5, s6, completed = {}, {}, [], [], {}, []
+    if not isinstance(completed, list):
+        completed = []
+    if not (s1 or {}).get('full_name'):
+        return 2  # Step 2 Testator
+    n_exec = len((s2 or {}).get('executors') or [])
+    # Asset inventory phase happens BEFORE executor in the new flow —
+    # snapshot it as Step 6 (Specific Gifts) so the writer knows that's
+    # what the chat is reviewing.
+    if 'assets_confirmed' not in completed:
+        return 6
+    if n_exec < 2:
+        return 3  # Step 3 Executors
+    if not isinstance(s4, list) or len(s4) == 0:
+        return 5  # Step 5 Beneficiaries
+    if isinstance(s5, list) and any(isinstance(g, dict) and g.get('document_id') for g in s5):
+        return 6  # Step 6 mid-assignment
+    if not s6 or not (s6.get('beneficiaries') or s6.get('residuary_beneficiary_name')):
+        return 7  # Step 7 Residuary
+    return 10  # done — Generate
+
+
 def _current_stage_label(client_id: str, will) -> str:
     """Short human-readable label for the planner's current stage. Used by
     the Q&A nudge to remind the user where to come back to."""
@@ -4024,9 +4070,14 @@ def _current_stage_label(client_id: str, will) -> str:
     try:
         s2 = json.loads(will.step2_data) if will.step2_data else {}
         s4 = json.loads(will.step4_data) if will.step4_data else []
+        completed = json.loads(will.completed_steps or '[]')
     except (json.JSONDecodeError, TypeError):
-        s2, s4 = {}, []
+        s2, s4, completed = {}, [], []
+    if not isinstance(completed, list):
+        completed = []
     n_exec = len((s2 or {}).get('executors') or [])
+    if 'assets_confirmed' not in completed:
+        return "Step 6: Asset inventory review"
     if n_exec < 2:
         return f"Step 3: {'main' if n_exec == 0 else 'substitute'} Executor"
     if not isinstance(s4, list) or len(s4) == 0:
