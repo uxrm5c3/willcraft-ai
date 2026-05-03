@@ -89,9 +89,10 @@ def classify_batch(file_paths: list, message_context: str = '') -> dict:
     if not file_paths:
         return {"groups": []}
 
-    # Limit to first 8 images — sufficient for any normal document batch;
-    # beyond that we'd hit API limits and diminishing returns.
-    paths_to_analyse = file_paths[:8]
+    # Limit to first 12 images — covers most real-world batches.
+    # Beyond that we'd hit API limits; remaining images fall back to
+    # individual classify_file() calls without batch context.
+    paths_to_analyse = file_paths[:12]
     n = len(paths_to_analyse)
 
     content_blocks = []
@@ -114,25 +115,51 @@ def classify_batch(file_paths: list, message_context: str = '') -> dict:
             f"one property. Also look for a beneficiary named in the text."
         )
 
-    prompt = f"""You are analysing {n} images sent together in one WhatsApp/email message to a will-writing consultant.{ctx_section}
+    prompt = f"""You are analysing {n} images sent together in one WhatsApp/email message to a Malaysian will-writing consultant.{ctx_section}
 
-Your task: group the images by ASSET. Images are the same asset if they are pages of the same document (e.g. front + back of a geran, multiple pages of an SPA) OR if they visually overlap in content (same lot number, same title number, same account number).
+━━━ YOUR TASK ━━━
+Group these images by PROPERTY / ASSET IDENTITY.
 
-The client's text message (above) is the STRONGEST clue — if they described one property/asset and then sent all the images, treat them as the same asset unless you have clear visual evidence of a different document.
+IMPORTANT — grouping is NOT about "pages of the same document".
+A group = all documents that relate to the SAME PROPERTY or ASSET, regardless of document type.
 
-For EACH group, identify:
-- Which image numbers belong to it (1-based)
-- The asset kind (use ONLY: nric / property_title / property_spa / property_tax / property_transfer / utility_bill / bank_letter / bank_statement / insurance / epf_kwsp / vehicle / will / other)
-- Key identifiers visible across the group: lot_number, title_number, mukim, daerah, negeri, property_address, bank_name, account_number, reg_number (leave blank if not found)
-- A short summary of what this group represents
-- Any beneficiary mentioned in the client's text for this asset (e.g. "give to daughter")
+Example of one group for a single property:
+  - Image 2: Geran (title deed) for Lot 127082
+  - Image 5: SPA (Sale & Purchase Agreement) for Lot 127082
+  - Image 7: Cukai Tanah receipt for Lot 127082
+  - Image 9: Bank offer letter for loan on Lot 127082
+  → These all belong to ONE group: "Lot 127082"
 
+Each image gets assigned to exactly ONE group. Create a separate group for:
+  - Each distinct property (different lot number, different address, or clearly different building)
+  - Each distinct financial asset (different bank account, different insurance policy, different vehicle)
+  - Each IC / MyKad (one group per person)
+  - Irrelevant or unrelated images (death cert, court orders, unrelated documents, images of unclear content) — put these in their own group with asset_kind = "other"
+
+━━━ HOW TO IDENTIFY WHICH PROPERTY AN IMAGE BELONGS TO ━━━
+Match images to the same property group if they share ANY of:
+  - Same lot number (e.g. "Lot 127082" appears on multiple documents)
+  - Same title/geran/HSD/HSM/PTD number
+  - Same property address (even partially matching)
+  - Same mukim + daerah combination
+If none of these match, treat it as a separate asset or irrelevant.
+
+━━━ DOCUMENT TYPES (asset_kind) ━━━
+Use ONLY: nric / property_title / property_spa / property_tax / property_transfer / utility_bill / bank_letter / loan_agreement / bank_statement / insurance / epf_kwsp / vehicle / will / death_certificate / other
+
+Notes on harder cases:
+- SPA schedule or signing page (no heading visible): look for "Vendor/Purchaser/Penjual/Pembeli" + property reference → property_spa
+- Loan signing or schedule page (no heading visible): look for "Borrower/Chargor/Peminjam" + bank name → loan_agreement
+- Death certificate: "Sijil Kematian" / "Date of Death" / "Tarikh Kematian" → death_certificate, NOT part of any property group
+- Blurry or unreadable image: assign to nearest matching group if lot/address visible, else → other
+
+━━━ OUTPUT FORMAT ━━━
 Return ONLY this JSON (no other text):
 ```json
 {{
   "groups": [
     {{
-      "image_indices": [1, 2, 3, 4, 5],
+      "image_indices": [2, 5, 7, 9],
       "asset_kind": "property_title",
       "identifiers": {{
         "lot_number": "127082",
@@ -140,13 +167,20 @@ Return ONLY this JSON (no other text):
         "mukim": "Plentong",
         "daerah": "Johor Bahru",
         "negeri": "Johor",
-        "property_address": "",
-        "bank_name": "",
+        "property_address": "No 12 Jalan Plentong",
+        "bank_name": "Maybank",
         "account_number": "",
         "reg_number": ""
       }},
-      "summary": "5 pages of same Geran for Lot 127082 Mukim Plentong",
+      "summary": "Lot 127082, Mukim Plentong — Geran + SPA + Cukai Tanah + Maybank loan letter",
       "beneficiary_hint": "give to daughter Sarah"
+    }},
+    {{
+      "image_indices": [3],
+      "asset_kind": "death_certificate",
+      "identifiers": {{}},
+      "summary": "Death certificate — not related to any property",
+      "beneficiary_hint": ""
     }}
   ]
 }}
@@ -158,7 +192,7 @@ Return ONLY this JSON (no other text):
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = client.messages.create(
             model=CLAUDE_MODEL_CHEAP,
-            max_tokens=600,
+            max_tokens=1000,
             messages=[{"role": "user", "content": content_blocks}]
         )
     except Exception as e:
