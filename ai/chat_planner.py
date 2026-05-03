@@ -1457,9 +1457,11 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
         {'label': '⏭ Skip for now', 'value': 'inventory skip'},
     ]
 
-    # Focus the title image plus first 3 supporting docs as inline previews
+    # Focus the title image plus ALL supporting docs so every page appears in
+    # the carousel. Previously capped at 3 — this meant 5-page gerens would
+    # only show 4 thumbnails and the rest were invisible to the writer.
     focus_ids = [p.get('document_id')]
-    for s in support[:3]:
+    for s in support:
         if s.get('document_id'):
             focus_ids.append(s['document_id'])
     focus_ids = [d for d in focus_ids if d]
@@ -1503,7 +1505,7 @@ def _walkthrough_unlink_picker(p: Dict[str, Any]) -> Dict[str, Any]:
             'value': f'unlink {s.get("document_id")}',
         })
     quick.append({'label': '✅ All correct — keep all', 'value': 'unlink done'})
-    focus_ids = [p.get('document_id')] + [s.get('document_id') for s in support[:5]]
+    focus_ids = [p.get('document_id')] + [s.get('document_id') for s in support]
     focus_ids = [d for d in focus_ids if d]
     return {
         'text': '\n\n'.join(parts) + _qr_marker(quick),

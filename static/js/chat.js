@@ -323,8 +323,15 @@
     }
 
     if (m.attachments && m.attachments.length) {
+      // Collect image URLs for carousel (in order) — only images participate;
+      // PDFs and audio open in a new tab as before.
+      const imgCarouselUrls = m.attachments
+        .filter(a => /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(a.filename || ''))
+        .map(a => `/api/documents/${a.id}`);
+
       const isMany = m.attachments.length > 6;
       html += `<div class="mt-2 grid ${isMany ? 'grid-cols-4 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-4'} gap-1.5">`;
+      let carouselIdx = 0; // index into imgCarouselUrls for each image thumb
       for (const a of m.attachments) {
         const url = `/api/documents/${a.id}`;
         const isImg = /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(a.filename || '');
@@ -351,11 +358,26 @@
         } else {
           inner = `<div class="w-full h-16 flex items-center justify-center bg-gray-50 text-gray-500 text-2xl">📎</div>`;
         }
-        html += `<a href="${url}" target="_blank" rel="noopener" title="${escapeHtml(a.filename)} (${catLabel})"
-                    class="block bg-white border border-gray-200 rounded-md overflow-hidden hover:border-primary-400 hover:shadow transition-all">
-          ${inner}
-          <div class="px-1 py-0.5 text-[9px] truncate ${catColor} font-medium">${catLabel}</div>
-        </a>`;
+
+        if (isImg) {
+          // Images open the carousel at the clicked index; escape quotes for inline handler
+          const escapedUrls = JSON.stringify(imgCarouselUrls).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+          const thisIdx = carouselIdx;
+          carouselIdx++;
+          html += `<button type="button"
+                      onclick="window.__openCarousel(${JSON.stringify(imgCarouselUrls).replace(/"/g, '&quot;')}, ${thisIdx})"
+                      title="${escapeHtml(a.filename)} (${catLabel}) — click to browse all images"
+                      class="block bg-white border border-gray-200 rounded-md overflow-hidden hover:border-primary-400 hover:shadow transition-all text-left w-full">
+            ${inner}
+            <div class="px-1 py-0.5 text-[9px] truncate ${catColor} font-medium">${catLabel}</div>
+          </button>`;
+        } else {
+          html += `<a href="${url}" target="_blank" rel="noopener" title="${escapeHtml(a.filename)} (${catLabel})"
+                      class="block bg-white border border-gray-200 rounded-md overflow-hidden hover:border-primary-400 hover:shadow transition-all">
+            ${inner}
+            <div class="px-1 py-0.5 text-[9px] truncate ${catColor} font-medium">${catLabel}</div>
+          </a>`;
+        }
       }
       html += '</div>';
     }
@@ -894,4 +916,160 @@
 
   loadChatHistory();
   startPolling();
+
+  // ── Image carousel / lightbox ─────────────────────────────────────────
+  // Renders a full-screen overlay with prev/next arrows, just like WhatsApp.
+  // Used whenever a thumbnail inside the chat is tapped.
+  //
+  // Usage: window.__openCarousel(urlArray, startIndex)
+
+  let _carouselUrls = [];
+  let _carouselIdx = 0;
+
+  function _ensureCarouselDOM() {
+    if (document.getElementById('img-carousel')) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'img-carousel';
+    overlay.className = [
+      'fixed inset-0 z-50 flex items-center justify-center',
+      'bg-black/90',
+      'select-none',
+    ].join(' ');
+    overlay.style.cssText = 'display:none';
+    overlay.innerHTML = `
+      <!-- Close button -->
+      <button id="car-close" aria-label="Close"
+        class="absolute top-3 right-4 text-white text-3xl leading-none hover:text-gray-300 z-10">&#215;</button>
+
+      <!-- Counter -->
+      <div id="car-counter"
+        class="absolute top-3 left-1/2 -translate-x-1/2 text-white text-sm font-medium bg-black/40 px-3 py-1 rounded-full z-10">
+      </div>
+
+      <!-- Prev arrow -->
+      <button id="car-prev" aria-label="Previous"
+        class="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 text-white text-4xl leading-none
+               hover:text-gray-300 bg-black/30 hover:bg-black/50 rounded-full w-10 h-10 flex items-center justify-center z-10
+               disabled:opacity-20 disabled:cursor-not-allowed transition-opacity">
+        &#8249;
+      </button>
+
+      <!-- Image -->
+      <img id="car-img" src="" alt=""
+        class="max-h-[90vh] max-w-[90vw] object-contain rounded shadow-2xl transition-opacity duration-150"
+        style="opacity:1">
+
+      <!-- Loading spinner shown while image loads -->
+      <div id="car-spinner" class="absolute inset-0 flex items-center justify-center pointer-events-none" style="display:none!important">
+        <svg class="animate-spin w-8 h-8 text-white opacity-60" fill="none" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" class="opacity-25"/>
+          <path d="M4 12a8 8 0 018-8" stroke="currentColor" stroke-width="3" class="opacity-75"/>
+        </svg>
+      </div>
+
+      <!-- Next arrow -->
+      <button id="car-next" aria-label="Next"
+        class="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 text-white text-4xl leading-none
+               hover:text-gray-300 bg-black/30 hover:bg-black/50 rounded-full w-10 h-10 flex items-center justify-center z-10
+               disabled:opacity-20 disabled:cursor-not-allowed transition-opacity">
+        &#8250;
+      </button>
+
+      <!-- Filename label at bottom -->
+      <div id="car-label"
+        class="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/70 text-xs font-mono bg-black/30 px-3 py-1 rounded-full max-w-[80vw] truncate">
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    // Wire up controls
+    document.getElementById('car-close').addEventListener('click', _closeCarousel);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) _closeCarousel();
+    });
+    document.getElementById('car-prev').addEventListener('click', (e) => {
+      e.stopPropagation();
+      _carouselNav(-1);
+    });
+    document.getElementById('car-next').addEventListener('click', (e) => {
+      e.stopPropagation();
+      _carouselNav(1);
+    });
+
+    // Keyboard nav
+    document.addEventListener('keydown', (e) => {
+      const overlay = document.getElementById('img-carousel');
+      if (!overlay || overlay.style.display === 'none') return;
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); _carouselNav(-1); }
+      if (e.key === 'ArrowRight') { e.preventDefault(); _carouselNav(1); }
+      if (e.key === 'Escape')     { e.preventDefault(); _closeCarousel(); }
+    });
+
+    // Touch swipe support (left/right)
+    let _touchStartX = null;
+    overlay.addEventListener('touchstart', (e) => {
+      _touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    overlay.addEventListener('touchend', (e) => {
+      if (_touchStartX === null) return;
+      const dx = e.changedTouches[0].clientX - _touchStartX;
+      _touchStartX = null;
+      if (Math.abs(dx) < 40) return; // too small — ignore
+      _carouselNav(dx < 0 ? 1 : -1);
+    }, { passive: true });
+  }
+
+  function _carouselShow() {
+    const overlay  = document.getElementById('img-carousel');
+    const img      = document.getElementById('car-img');
+    const counter  = document.getElementById('car-counter');
+    const prevBtn  = document.getElementById('car-prev');
+    const nextBtn  = document.getElementById('car-next');
+    const label    = document.getElementById('car-label');
+
+    const url = _carouselUrls[_carouselIdx];
+    const n   = _carouselUrls.length;
+
+    // Fade-swap the image
+    img.style.opacity = '0.3';
+    img.onload = () => { img.style.opacity = '1'; };
+    img.src = url;
+    img.alt = `Image ${_carouselIdx + 1} of ${n}`;
+
+    counter.textContent = `${_carouselIdx + 1} / ${n}`;
+    // Extract filename from URL path (last segment after the last /)
+    label.textContent = url.split('/').pop() || '';
+
+    prevBtn.disabled = (_carouselIdx === 0);
+    nextBtn.disabled = (_carouselIdx === n - 1);
+
+    // Hide arrows when only 1 image
+    prevBtn.style.display = n <= 1 ? 'none' : '';
+    nextBtn.style.display = n <= 1 ? 'none' : '';
+    counter.style.display = n <= 1 ? 'none' : '';
+
+    overlay.style.display = 'flex';
+    document.body.style.overflow = 'hidden';
+  }
+
+  function _carouselNav(delta) {
+    const next = _carouselIdx + delta;
+    if (next < 0 || next >= _carouselUrls.length) return;
+    _carouselIdx = next;
+    _carouselShow();
+  }
+
+  function _closeCarousel() {
+    const overlay = document.getElementById('img-carousel');
+    if (overlay) overlay.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+
+  window.__openCarousel = function (urls, startIdx) {
+    if (!urls || !urls.length) return;
+    _ensureCarouselDOM();
+    _carouselUrls = urls;
+    _carouselIdx  = Math.max(0, Math.min(startIdx || 0, urls.length - 1));
+    _carouselShow();
+  };
 })();

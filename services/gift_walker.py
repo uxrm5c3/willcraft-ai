@@ -8,7 +8,7 @@ share assignments.
 import json
 import re
 from typing import List, Dict, Any
-from database import Document, Will
+from database import ChatMessage, Document, Will
 
 
 # Only `property_title` proves OWNERSHIP and triggers a "who inherits this?"
@@ -136,6 +136,32 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         Document.category.in_(all_kinds),
     ).order_by(Document.created_at.asc()).all())
 
+    # ── Retroactive message context lookup ────────────────────────────────
+    # Old documents (processed before _message_context was added to
+    # extracted_data) don't have the WhatsApp text stored in extracted_data.
+    # Pre-fetch it now from the linked ChatMessage so the property card can
+    # display "Client's message about this property" even for old uploads.
+    #
+    # We only do this for documents that:
+    #   a) have a chat_message_id, AND
+    #   b) their extracted_data lacks _message_context
+    # One DB query fetches ALL needed messages in bulk — no N+1.
+    _all_chat_msg_ids = set(
+        str(d.chat_message_id) for d in docs
+        if d.chat_message_id
+    )
+    _chat_msg_content: Dict[str, str] = {}  # chat_message_id → content text
+    if _all_chat_msg_ids:
+        try:
+            msgs = ChatMessage.query.filter(
+                ChatMessage.id.in_(_all_chat_msg_ids)
+            ).all()
+            for cm in msgs:
+                if cm.content:
+                    _chat_msg_content[str(cm.id)] = cm.content
+        except Exception:
+            pass  # non-fatal — retroactive context is best-effort
+
     # First pass: index property-related docs (title + support) by group key.
     # Also track chat_message_id → best group key so we can later absorb
     # sibling docs (same email batch, unclassified pages) into the group.
@@ -155,6 +181,22 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             ex = json.loads(d.extracted_data) if d.extracted_data else {}
         except (json.JSONDecodeError, TypeError):
             ex = {}
+
+        # Retroactively inject _message_context for documents that don't
+        # already have it stored (old uploads processed before the feature).
+        if d.chat_message_id and not ex.get('_message_context'):
+            raw_ctx = _chat_msg_content.get(str(d.chat_message_id), '')
+            if raw_ctx:
+                # Strip pure attachment lines (they're noise, not intent text)
+                clean_lines = [
+                    ln for ln in raw_ctx.splitlines()
+                    if '<attached:' not in ln.lower()
+                    and not ln.strip().lower().endswith('(file attached)')
+                ]
+                clean = '\n'.join(clean_lines).strip()
+                if clean:
+                    ex = dict(ex)  # shallow copy — don't mutate the parsed JSON
+                    ex['_message_context'] = clean
 
         doc_summary = {
             'document_id': d.id,
@@ -327,17 +369,34 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
     for gk, grp in prop_groups.items():
         primary = grp['title_doc']
         if primary:
-            # Deduplicate support docs by original_filename
+            # Deduplicate support docs by BOTH document_id AND original_filename.
+            # Two separate checks are needed:
+            #   1. document_id: same DB row added twice from multiple merge passes
+            #   2. original_filename: same physical file uploaded multiple times
+            # Previously only deduplicated by filename, so a doc with an empty
+            # filename would bypass the check entirely (if fname → False).
+            seen_doc_ids: set = set()
             seen_fnames: set = set()
+            primary_did = primary.get('document_id')
             primary_fname = (primary.get('original_filename') or '').strip()
+            if primary_did is not None:
+                seen_doc_ids.add(primary_did)
             if primary_fname:
                 seen_fnames.add(primary_fname)
             deduped: list = []
             for s in grp['support_docs']:
+                did   = s.get('document_id')
                 fname = (s.get('original_filename') or '').strip()
+                # Skip if same document_id already included
+                if did is not None and did in seen_doc_ids:
+                    continue
+                # Skip if same non-empty filename already included
                 if fname and fname in seen_fnames:
                     continue
-                seen_fnames.add(fname or str(s.get('document_id', '')))
+                if did is not None:
+                    seen_doc_ids.add(did)
+                if fname:
+                    seen_fnames.add(fname)
                 deduped.append(s)
             primary['support_docs'] = deduped
             primary['group_key'] = gk
