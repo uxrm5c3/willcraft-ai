@@ -330,6 +330,47 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                 if gk not in mid_to_named_gks[mid]:
                     mid_to_named_gks[mid].append(gk)
 
+    def _group_identifiers(gk: str) -> dict:
+        """Return the key OCR identifiers for a group (title_no, lot_no, negeri)."""
+        if gk not in prop_groups:
+            return {}
+        td = prop_groups[gk].get('title_doc') or {}
+        ex_ = td.get('extracted') or {}
+        return {
+            'title_number': (ex_.get('title_number') or '').strip().upper(),
+            'lot_number':   (ex_.get('lot_number')   or '').strip().upper(),
+            'negeri':       (ex_.get('negeri')        or '').strip().upper(),
+            'daerah':       (ex_.get('daerah')        or '').strip().upper(),
+        }
+
+    def _groups_conflict(gk_a: str, gk_b: str) -> bool:
+        """Return True if two groups have CONFLICTING OCR data — meaning they
+        cannot possibly be the same property and must stay separate.
+
+        Rules (strongest signal first):
+          1. Different title_number (both non-empty) → CONFLICT
+          2. Different lot_number (both non-empty) AND different negeri → CONFLICT
+          3. Different lot_number AND different daerah (same state) → CONFLICT
+        A missing value is never treated as a conflict — absence of data ≠ mismatch.
+        """
+        a = _group_identifiers(gk_a)
+        b = _group_identifiers(gk_b)
+        # Rule 1 — title numbers exist and differ
+        tn_a, tn_b = a.get('title_number',''), b.get('title_number','')
+        if tn_a and tn_b and tn_a != tn_b:
+            return True
+        # Rule 2 — lot numbers exist and differ, and states also differ
+        ln_a, ln_b = a.get('lot_number',''), b.get('lot_number','')
+        neg_a, neg_b = a.get('negeri',''), b.get('negeri','')
+        if ln_a and ln_b and ln_a != ln_b:
+            if neg_a and neg_b and neg_a != neg_b:
+                return True
+            # Same state but different daerah → also a conflict
+            da_a, da_b = a.get('daerah',''), b.get('daerah','')
+            if da_a and da_b and da_a != da_b:
+                return True
+        return False
+
     for mid, gk_list in mid_to_named_gks.items():
         if len(gk_list) < 2:
             continue  # only one group for this email → nothing to merge
@@ -354,6 +395,12 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         for gk in gk_list_alive:
             if gk == best_gk:
                 continue
+            # ── CONFLICT CHECK ──────────────────────────────────────────
+            # If the other group has OCR data that CONTRADICTS the best
+            # group (different title/lot/state), they are different
+            # properties — never merge them, even if sent in the same email.
+            if _groups_conflict(best_gk, gk):
+                continue  # keep as a separate property card
             grp = prop_groups[gk]
             for ds in (([grp['title_doc']] if grp['title_doc'] else [])
                        + grp['support_docs']):

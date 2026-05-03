@@ -170,6 +170,24 @@ Return ONLY the JSON, no explanation."""
             result = reocr_if_suspicious(file_path, result)
         except Exception:
             pass
+        # Address verification via OpenStreetMap Nominatim (free, no key).
+        # Only run when we have at least daerah+negeri so there's something
+        # meaningful to geocode.  Wrapped in try/except so a network hiccup
+        # never blocks the OCR result from saving.
+        _addr  = (result.get('property_address') or '').strip()
+        _mukim = (result.get('mukim') or '').strip()
+        _daer  = (result.get('daerah') or '').strip()
+        _neg   = (result.get('negeri') or '').strip()
+        if (_daer or _neg) and result.get('document_type') in ('title', 'cukai_harta', 'cukai_pintu', 'spa', None, ''):
+            try:
+                from ai.address_verifier import verify_property_address
+                _vr = verify_property_address(_addr, _mukim, _daer, _neg)
+                result['address_verified']  = _vr.get('verified')   # True/False/None
+                result['address_level']     = _vr.get('level', '')  # 'street'/'district'/'none'
+                result['address_canonical'] = _vr.get('canonical', '')
+                result['address_note']      = _vr.get('note', '')
+            except Exception:
+                pass
         return result
     except json.JSONDecodeError:
         return {"error": "Could not parse extraction results", "raw": response_text}

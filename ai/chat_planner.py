@@ -1338,6 +1338,15 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     if fields:
         parts.append("**📋 Identifiers (read from geran):**\n" + '\n'.join(fields))
 
+    # ── Address verification badge (from Nominatim lookup at OCR time) ──
+    _addr_note = (ex.get('address_note') or '').strip()
+    _addr_canon = (ex.get('address_canonical') or '').strip()
+    _addr_level = (ex.get('address_level') or '').strip()
+    _addr_verified = ex.get('address_verified')  # True / False / None
+    if _addr_note:
+        canon_line = f"\n  _{_addr_canon[:180]}_" if _addr_canon and _addr_level == 'street' else ''
+        parts.append(f"{_addr_note}{canon_line}")
+
     # Show enrichment provenance so the writer trusts the back-filled
     # fields: "Mukim & Daerah back-filled from cukai_tanah_2024.pdf".
     enriched_from = ex.get('_enriched_from') or []
