@@ -3407,6 +3407,32 @@ def api_chat_message(client_id):
             extracted['purpose'] = purpose[:300]
         if prop_hint:
             extracted['property_hint'] = prop_hint[:300]
+        # ── Message context ──────────────────────────────────────────────
+        # Store the text the client sent WITH this file. This is the single
+        # most reliable context clue — the client typed "my house at Lot
+        # 127082, give to Joshua" in the same WhatsApp/email message as
+        # they attached the geran. We use it later to back-fill missing
+        # OCR fields and to surface intent on the property card.
+        # Also look at the previous chat message (sent ≤120 s before this
+        # one) since WhatsApp often sends text then image in back-to-back
+        # separate messages.
+        msg_context_parts = []
+        if user_text:
+            msg_context_parts.append(user_text)
+        try:
+            prev_msgs = (ChatMessage.query
+                         .filter_by(session_id=cs.id, role='user')
+                         .filter(ChatMessage.id != user_msg.id)
+                         .order_by(ChatMessage.created_at.desc())
+                         .limit(3).all())
+            for pm in prev_msgs:
+                txt = (pm.content or '').strip()
+                if txt:
+                    msg_context_parts.append(txt)
+        except Exception:
+            pass
+        if msg_context_parts:
+            extracted['_message_context'] = '\n'.join(msg_context_parts)[:800]
         # For low-confidence 'other' docs: cross-check recent chat messages
         # to see if the client mentioned this image (by filename keyword or
         # asset reference). If no mention found, flag as likely irrelevant.
@@ -5469,9 +5495,16 @@ def _api_inbound_email_impl():
     if not text_body and not attachments:
         return jsonify({'ok': True, 'ignored': 'empty email'}), 200
 
+    # Postmark puts the original email Date header in 'Date' field.
+    # Include it so the AI can understand message sequencing when
+    # the user forwards a WhatsApp chat (the body will contain the
+    # WhatsApp timestamps, and the email Date gives arrival time).
+    email_date = (payload.get('Date') or '').strip()
     body_with_meta = f"_(forwarded via email from {from_email})_\n\n"
     if subject:
         body_with_meta += f"**Subject:** {subject}\n\n"
+    if email_date:
+        body_with_meta += f"**Email date:** {email_date}\n\n"
     body_with_meta += text_body
 
     cs = _get_or_create_chat_session(client.id, user_id=None)
@@ -5657,6 +5690,29 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                     extracted['purpose'] = purpose[:300]
                 if prop_hint:
                     extracted['property_hint'] = prop_hint[:300]
+                # Store the email/WhatsApp text that came WITH this image.
+                # For email: body text describes ALL attachments → most useful context.
+                # For WhatsApp: client typed a description immediately before/after.
+                # We also grab the 2 previous user messages (back-to-back sequential
+                # WhatsApp messages where text precedes the image).
+                try:
+                    msg_context_parts = []
+                    msg_body = (user_msg.content or '').strip()
+                    if msg_body:
+                        msg_context_parts.append(msg_body)
+                    prev_msgs = (ChatMessage.query
+                                 .filter_by(session_id=user_msg.session_id, role='user')
+                                 .filter(ChatMessage.id != user_msg.id)
+                                 .order_by(ChatMessage.created_at.desc())
+                                 .limit(3).all())
+                    for pm in prev_msgs:
+                        ptxt = (pm.content or '').strip()
+                        if ptxt:
+                            msg_context_parts.append(ptxt)
+                    if msg_context_parts:
+                        extracted['_message_context'] = '\n'.join(msg_context_parts)[:800]
+                except Exception:
+                    pass
                 if kind == 'other' and not will_relevant:
                     try:
                         recent = _gather_recent_chat_text(client.id)

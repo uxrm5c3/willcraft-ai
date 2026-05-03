@@ -847,8 +847,9 @@ def _enrich_property_from_siblings(p: Dict[str, Any]) -> Dict[str, Any]:
 
 _MY_ADDRESS_RE = re.compile(
     r'(?:'
-    # "No. 22, Jalan Rimbun…" / "No 5A Lorong Damai 3…"
-    r'No\.?\s*\d+[A-Z\-]?\s*[,-]\s*'
+    # "No. 22, Jalan Rimbun…" / "No 5A, Lorong Damai 3…" / "No 22 Jalan Rimbun…"
+    # (comma optional — Malaysian informal writing often omits it)
+    r'No\.?\s*\d+[A-Z\-]?\s*[,\s]\s*'
     r'(?:Jalan|Jln|Lorong|Persiaran|Lebuh|Lebuhraya|Lingkaran|'
     r'Taman|Bandar|Desa|Sri|Seri|Bukit|Pandan|Damansara|'
     r'Ampang|Petaling|Cheras|Kepong|Setapak|Pudu|Wangsa|'
@@ -891,32 +892,26 @@ _MY_POSTCODE_STATE_RE = re.compile(
 )
 
 
-def _enrich_from_chat_text(ex: Dict[str, Any], recent_text: str) -> Dict[str, Any]:
-    """Scan email/chat message text for property fields missing from the OCR.
+def _scan_text_for_property_fields(ex: Dict[str, Any], text: str,
+                                     source_tag: str,
+                                     force_full: bool = False) -> Dict[str, Any]:
+    """Single-pass scan of `text` for missing property fields.
 
-    Strategy:
-      1. Build identifier needles from what we already know (lot number,
-         title number, mukim).
-      2. Find the window in recent_text closest to each needle.
-      3. In that window look for:
-           • A Malaysian street address pattern → property_address
-           • A postcode → narrow down negeri
-           • State / district keywords → negeri / daerah
-      4. Back-fill only blank fields — never overwrite confirmed OCR data.
-
-    Enriched fields are tagged with '_enriched_from': ['chat_text.fieldname']
-    so the card can show provenance ("address back-filled from client message").
+    Tries to fill: property_address, negeri, daerah.
+    Tags filled fields as `_enriched_from: ['<source_tag>.fieldname']`.
+    Returns the (possibly mutated) ex dict.
     """
-    if not recent_text:
+    if not text:
         return ex
-    # Already complete? Skip the scan.
     need_addr = not (ex.get('property_address') or '').strip()
-    need_daerah = not (ex.get('daerah') or '').strip()
     need_negeri = not (ex.get('negeri') or '').strip()
-    if not (need_addr or need_daerah or need_negeri):
+    need_daerah = not (ex.get('daerah') or '').strip()
+    if not (need_addr or need_negeri or need_daerah):
         return ex
 
-    # Build needles from what we DO know
+    # ── Build search windows ──────────────────────────────────────────
+    # If we have identifier needles, search near them.
+    # If not (completely blank image), search the WHOLE text.
     needles = set()
     for k in ('title_number', 'lot_number', 'mukim', 'property_hint'):
         v = (ex.get(k) or '').strip()
@@ -925,50 +920,60 @@ def _enrich_from_chat_text(ex: Dict[str, Any], recent_text: str) -> Dict[str, An
     for k in ('title_number', 'lot_number'):
         for m in re.findall(r'\d{4,}', ex.get(k) or ''):
             needles.add(m)
-    if not needles:
-        return ex
 
-    text_l = recent_text.lower()
-    for needle in needles:
-        idx = text_l.find(needle.lower())
-        if idx == -1:
-            continue
-        # Wide window (±400 chars) around the mention
-        lo = max(0, idx - 400)
-        hi = min(len(recent_text), idx + len(needle) + 400)
-        window = recent_text[lo:hi]
+    text_l = text.lower()
+    if force_full or not needles:
+        # force_full=True  → text came WITH this specific image (message_context);
+        #   always scan all of it — the lot number is on the geran, not in the email.
+        # no needles → blank OCR; no choice but to scan everything.
+        windows = [text]
+    else:
+        # Narrow windows — only scan near identifier needles in global text.
+        windows = []
+        for needle in needles:
+            idx = text_l.find(needle.lower())
+            if idx == -1:
+                continue
+            lo = max(0, idx - 500)
+            hi = min(len(text), idx + len(needle) + 500)
+            windows.append(text[lo:hi])
+        if not windows:
+            return ex  # needles not found in this text at all
 
-        # ── Address ───────────────────────────────────────────────────
+    for window in windows:
+        win_l = window.lower()
+
         if need_addr:
             m = _MY_ADDRESS_RE.search(window)
             if m:
-                candidate = m.group(0).strip().rstrip(',').rstrip('.')
+                candidate = m.group(0).strip()
+                # Stop at sentence boundaries (. ! ?) and action phrases
+                candidate = re.split(r'[.!?]|\bPlease\b|\bKindly\b|\bAttached\b',
+                                     candidate, maxsplit=1)[0]
+                candidate = candidate.strip().rstrip(',').rstrip('.')
                 if len(candidate) >= 10:
                     ex['property_address'] = candidate[:200]
-                    ex.setdefault('_enriched_from', []).append('chat_text.property_address')
+                    ex.setdefault('_enriched_from', []).append(
+                        f'{source_tag}.property_address')
                     need_addr = False
 
-        # ── Negeri from "NNNNN State" postcode pattern ────────────────
         if need_negeri:
             pm = _MY_POSTCODE_STATE_RE.search(window)
             if pm:
                 negeri_raw = pm.group(2).strip()
-                negeri_norm = _MY_NEGERI_MAP.get(negeri_raw.lower(), negeri_raw.upper())
-                ex['negeri'] = negeri_norm
-                ex.setdefault('_enriched_from', []).append('chat_text.negeri')
+                ex['negeri'] = _MY_NEGERI_MAP.get(negeri_raw.lower(),
+                                                   negeri_raw.upper())
+                ex.setdefault('_enriched_from', []).append(f'{source_tag}.negeri')
                 need_negeri = False
 
-        # ── Negeri / Daerah from keyword list ────────────────────────
-        win_l = window.lower()
         if need_negeri:
             for kw, norm in _MY_NEGERI_MAP.items():
                 if re.search(r'\b' + re.escape(kw) + r'\b', win_l):
                     ex['negeri'] = norm
-                    ex.setdefault('_enriched_from', []).append('chat_text.negeri')
+                    ex.setdefault('_enriched_from', []).append(f'{source_tag}.negeri')
                     need_negeri = False
                     break
 
-        # Common Johor daerah
         if need_daerah:
             _DAERAH_HINTS = {
                 'johor bahru': 'Johor Bahru', 'jb': 'Johor Bahru',
@@ -984,12 +989,48 @@ def _enrich_from_chat_text(ex: Dict[str, Any], recent_text: str) -> Dict[str, An
             for kw, daerah_name in _DAERAH_HINTS.items():
                 if re.search(r'\b' + re.escape(kw) + r'\b', win_l):
                     ex['daerah'] = daerah_name
-                    ex.setdefault('_enriched_from', []).append('chat_text.daerah')
+                    ex.setdefault('_enriched_from', []).append(f'{source_tag}.daerah')
                     need_daerah = False
                     break
 
-        if not (need_addr or need_daerah or need_negeri):
+        if not (need_addr or need_negeri or need_daerah):
             break
+
+    return ex
+
+
+def _enrich_from_chat_text(ex: Dict[str, Any], recent_text: str) -> Dict[str, Any]:
+    """Back-fill missing address/negeri/daerah from the client's chat messages.
+
+    Two-pass strategy, highest-priority first:
+
+    Pass 1 — Message context (text sent WITH this specific image)
+      Stored at upload time as `_message_context` in extracted_data.
+      For WhatsApp: the text the client typed in the same or immediately
+        preceding message as the image.
+      For email: the full email body (which describes ALL attachments).
+      This is the most reliable source — closest to the image in time/intent.
+
+    Pass 2 — Global recent text (all recent chat messages)
+      Broader search using needle-based windows. Catches cases where the
+      client mentioned the address in a separate earlier message.
+
+    For images with NO OCR identifiers at all (completely blank), Pass 1
+    searches the ENTIRE message context (no needle filter) — any address
+    pattern in the accompanying text is a valid candidate.
+    """
+    # Pass 1: message context (text sent WITH this specific image) — force_full
+    # because the lot number is on the geran image, not in the email body.
+    msg_ctx = (ex.get('_message_context') or '').strip()
+    if msg_ctx:
+        ex = _scan_text_for_property_fields(ex, msg_ctx, 'message_context',
+                                             force_full=True)
+
+    # Pass 2: global recent text — needle-based windows only (avoid false matches
+    # from unrelated properties in the same conversation).
+    if recent_text:
+        ex = _scan_text_for_property_fields(ex, recent_text, 'chat_text',
+                                             force_full=False)
 
     return ex
 
@@ -1316,9 +1357,21 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
             sup_lines.append(f"  {i}. {kind_label} — _{purpose[:140]}_")
         parts.append('\n'.join(sup_lines))
 
-    # Intent quote from client's messages
+    # Intent quote from client's messages (needle-matched snippet)
     if intent:
         parts.append(f"**💬 Client's message about this property:**\n{intent}")
+    elif not fields:
+        # No identifiers AND no intent match — show raw message context so
+        # the writer can see what the client said alongside this image.
+        msg_ctx = (ex.get('_message_context') or '').strip()
+        if msg_ctx:
+            preview = msg_ctx[:400] + ('…' if len(msg_ctx) > 400 else '')
+            parts.append(
+                f"**💬 Text sent with this image:**\n"
+                f"  > _{preview}_\n"
+                f"_(No lot/title match found — please confirm if this text "
+                f"describes this property, or type `address:`, `lot:`, etc. to fill in manually.)_"
+            )
 
     # ── NLC completeness checklist ──────────────────────────────────────
     # A Malaysian will property clause requires: title_number, lot_number,
