@@ -175,7 +175,24 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
     for gk, grp in prop_groups.items():
         primary = grp['title_doc']
         if primary:
-            primary['support_docs'] = grp['support_docs']
+            # Deduplicate support docs:
+            #   • Drop any with the SAME original_filename as the primary
+            #     (same image uploaded multiple times, e.g. photo of Borang 16A
+            #     sent 3 times; only the first copy matters).
+            #   • Also drop consecutive support docs with the same filename as
+            #     each other (pages of the same multi-page doc can appear once).
+            seen_fnames: set = set()
+            primary_fname = (primary.get('original_filename') or '').strip()
+            if primary_fname:
+                seen_fnames.add(primary_fname)
+            deduped: list = []
+            for s in grp['support_docs']:
+                fname = (s.get('original_filename') or '').strip()
+                if fname and fname in seen_fnames:
+                    continue  # exact duplicate — skip silently
+                seen_fnames.add(fname or s.get('document_id', ''))
+                deduped.append(s)
+            primary['support_docs'] = deduped
             primary['group_key'] = gk
             out['property'].append(primary)
         # Else: orphaned support docs — leave them out of the gift walk.

@@ -627,8 +627,25 @@
         fields: benefs.length ? benefs.map(b => [null,
           (b.full_name || b.name || '?') + (b.share ? ` — ${b.share}` : '')]) : null },
       { n: '6', name: 'Specific Gifts', link: '/wizard/step/6', optional: true,
-        fields: gifts.length ? gifts.map(g => [null,
-          (g.description || g.gift_type || 'Gift').slice(0, 60)]) : null },
+        fields: gifts.length ? gifts.filter(g => !g.skipped).map(g => {
+          // Build a meaningful label: property address / bank name+acct / vehicle reg
+          let label = g.description || '';
+          if (!label) {
+            if (g.kind === 'property' || g.property_address) {
+              label = g.property_address || g.title_number || 'Property';
+            } else if (g.kind === 'bank' || g.bank_name || g.account_number) {
+              label = [g.bank_name, g.account_number ? `(…${g.account_number.slice(-4)})` : ''].filter(Boolean).join(' ') || 'Bank account';
+            } else if (g.kind === 'vehicle' || g.reg_number) {
+              label = g.reg_number || g.vehicle_description || 'Vehicle';
+            } else {
+              label = g.gift_type || 'Gift';
+            }
+          }
+          // Append beneficiary names
+          const bens = (g.beneficiaries || []).map(b => b.name || b).filter(Boolean);
+          if (bens.length) label += ' → ' + bens.slice(0, 2).join(', ') + (bens.length > 2 ? '…' : '');
+          return [null, label.slice(0, 70)];
+        }) : null },
       { n: '7', name: 'Residuary Estate', link: '/wizard/step/7', optional: false,
         fields: will.step6 && Object.keys(will.step6).length ? [[null, 'Configured']] : null },
       { n: '8', name: 'Trust', link: '/wizard/step/8', optional: true,

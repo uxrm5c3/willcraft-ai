@@ -3367,10 +3367,12 @@ def api_chat_message(client_id):
         try:
             if kind == 'nric':
                 extracted = extract_nric_data(abs_path)
-            elif kind in ('property_title', 'property_spa', 'property_tax'):
-                # Same OCR for all three — they share the same field shape
-                # (title_number / lot / mukim / address). The KIND tells the
-                # downstream walker whether this counts as ownership evidence.
+            elif kind in ('property_title', 'property_spa', 'property_tax',
+                           'property_transfer'):
+                # Full property OCR for all four — Borang 14A/16A contains
+                # lot_number and title_number which the extractor can read.
+                # The KIND tells the downstream walker whether this counts
+                # as registered ownership evidence (only property_title does).
                 from ai.property_extractor import extract_property_data
                 extracted = extract_property_data(abs_path, doc_type='general')
             elif kind in ('utility_bill', 'bank_letter'):
@@ -3398,12 +3400,32 @@ def api_chat_message(client_id):
         # under one property) so the chat planner can surface and group.
         purpose = (classification.get('purpose') or '').strip()
         prop_hint = (classification.get('property_hint') or '').strip()
+        will_relevant = classification.get('will_relevant', True)
         if extracted is None:
             extracted = {}
         if purpose:
             extracted['purpose'] = purpose[:300]
         if prop_hint:
             extracted['property_hint'] = prop_hint[:300]
+        # For low-confidence 'other' docs: cross-check recent chat messages
+        # to see if the client mentioned this image (by filename keyword or
+        # asset reference). If no mention found, flag as likely irrelevant.
+        if kind == 'other' and not will_relevant:
+            try:
+                recent = _gather_recent_chat_text(client_id)
+                fname_stem = doc.original_filename.rsplit('.', 1)[0].lower()
+                # Rough check: any asset keywords in context?
+                asset_keywords = ('property', 'house', 'land', 'lot', 'geran',
+                                  'bank', 'account', 'insurance', 'car', 'vehicle',
+                                  'lot', 'mukim', 'title', fname_stem)
+                if not any(kw in (recent or '').lower() for kw in asset_keywords):
+                    extracted['_likely_irrelevant'] = True
+                    extracted['_irrelevant_reason'] = (
+                        'Classified as unrecognised document type and no matching '
+                        'asset was mentioned in the chat.'
+                    )
+            except Exception:
+                pass
         if extracted:
             try:
                 doc.extracted_data = json.dumps(extracted)
@@ -5480,7 +5502,8 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                 try:
                     if kind == 'nric':
                         extracted = extract_nric_data(abs_path)
-                    elif kind in ('property_title', 'property_spa', 'property_tax'):
+                    elif kind in ('property_title', 'property_spa', 'property_tax',
+                                   'property_transfer'):
                         from ai.property_extractor import extract_property_data
                         extracted = extract_property_data(abs_path, doc_type='general')
                     elif kind in ('utility_bill', 'bank_letter'):
@@ -5500,12 +5523,28 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                 doc.description = (classification.get('reason') or '')[:500] or None
                 purpose = (classification.get('purpose') or '').strip()
                 prop_hint = (classification.get('property_hint') or '').strip()
+                will_relevant = classification.get('will_relevant', True)
                 if extracted is None:
                     extracted = {}
                 if purpose:
                     extracted['purpose'] = purpose[:300]
                 if prop_hint:
                     extracted['property_hint'] = prop_hint[:300]
+                if kind == 'other' and not will_relevant:
+                    try:
+                        recent = _gather_recent_chat_text(client.id)
+                        fname_stem = doc.original_filename.rsplit('.', 1)[0].lower()
+                        asset_keywords = ('property', 'house', 'land', 'lot', 'geran',
+                                          'bank', 'account', 'insurance', 'car', 'vehicle',
+                                          'mukim', 'title', fname_stem)
+                        if not any(kw in (recent or '').lower() for kw in asset_keywords):
+                            extracted['_likely_irrelevant'] = True
+                            extracted['_irrelevant_reason'] = (
+                                'Classified as unrecognised document type and no matching '
+                                'asset was mentioned in the chat.'
+                            )
+                    except Exception:
+                        pass
                 if extracted:
                     try:
                         doc.extracted_data = json.dumps(extracted)

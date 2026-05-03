@@ -891,7 +891,8 @@ _TITLE_TYPE_KEYWORDS = (
 )
 
 
-def _validate_property_format(ex: Dict[str, Any]) -> List[str]:
+def _validate_property_format(ex: Dict[str, Any],
+                               doc_kind: str = 'property_title') -> List[str]:
     """Surface obvious formatting / completeness issues per the National
     Land Code. Cheap heuristic checks — not a substitute for legal
     review. The validator is intentionally LENIENT on the title number
@@ -915,6 +916,38 @@ def _validate_property_format(ex: Dict[str, Any]) -> List[str]:
     daerah = (ex.get('daerah') or '').strip()
     negeri = (ex.get('negeri') or '').strip()
     addr = (ex.get('property_address') or ex.get('description') or '').strip()
+
+    # ── TRANSFER-FORM WARNING ─────────────────────────────────────────
+    # Borang 14A / 16A = Memorandum of Transfer. This IS evidence that the
+    # testator acquired a property, BUT it is NOT the registered title.
+    # Important nuance for the will-writer:
+    #   • The address in PENERIMA PINDAHMILIK section = TRANSFEREE's residential
+    #     address (where they live) — NOT the address of the property being transferred.
+    #   • The actual property is identified by the LOT NUMBER + TITLE NUMBER
+    #     listed in the "PERIHAL TANAH" section of the form.
+    #   • Ownership confirmation requires the Geran/Hakmilik (registered title)
+    #     from the Land Registry. Until registered, the transfer is equitable only.
+    if doc_kind == 'property_transfer':
+        if addr and not lot_no and not title_no:
+            addr_short = addr[:60] + ('…' if len(addr) > 60 else '')
+            warnings.append(
+                "📋 **Memorandum of Transfer (Borang 14A / 16A) detected.**\n"
+                f"     ⚠️ The address shown (**{addr_short}**) is likely the "
+                "**transferee's residential address**, not the property being "
+                "transferred.\n"
+                "     • To identify the actual property, look for the **Lot number** "
+                "and **Title number** in the PERIHAL TANAH section of the form.\n"
+                "     • This form alone is NOT sufficient for probate — the registered "
+                "**Geran / Hakmilik** (from the Land Registry) is required for the "
+                "Deed of Transmission."
+            )
+        else:
+            warnings.append(
+                "📋 **Memorandum of Transfer (Borang 14A / 16A)** — confirms a "
+                "property was transferred to the testator, but this is not the "
+                "registered title. **Add the Geran / Hakmilik** if available for a "
+                "complete probate trail."
+            )
 
     # ── PROBATE-CRITICAL FIELD CHECK ─────────────────────────────────
     # The lawyer needs these to file Borang 14A / Deed of Transmission /
@@ -1064,11 +1097,9 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
                                 total_remaining: int) -> Dict[str, Any]:
     ex = p.get('extracted') or {}
     formatted = _format_property_description(ex)
-    warnings = _validate_property_format(ex)
-    intent = _deduce_intent_from_messages(p, recent_text)
-
-    # Surface what document type was detected by the classifier
     doc_kind = p.get('category', 'property_title')
+    warnings = _validate_property_format(ex, doc_kind=doc_kind)
+    intent = _deduce_intent_from_messages(p, recent_text)
     kind_label = _KIND_LABELS.get(doc_kind, '📜 Property Document')
     # Also show the classifier's purpose sentence if available
     purpose_str = (ex.get('purpose') or '').strip()

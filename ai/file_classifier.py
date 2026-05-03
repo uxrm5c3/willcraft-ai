@@ -57,10 +57,10 @@ def classify_file(file_path: str) -> dict:
                     {"type": "text", "text": """Classify this document into ONE category. Think about what the image actually IS and what it PROVES — not what's near it. A Cukai Tanah receipt is NOT a title even if it lists the same lot; an SPA is NOT a title even if it describes one.
 
 - nric: MyKad IC card (front or back) or Malaysian passport
-- property_title: LAND TITLE document — Geran, Hakmilik, HSD, HSM, Pajakan Negeri, Strata Title, individual or qualified title. PROVES ownership. Has lot number, registered owner name, issued by Pejabat Tanah dan Daerah (PTD). NOT the same as a tax receipt or contract.
+- property_title: LAND TITLE document — Geran, Hakmilik, HSD, HSM, Pajakan Negeri, Strata Title. PROVES registered ownership. Issued by Pejabat Tanah dan Daerah (PTD) with official seal. Header reads "HAKI MILIK", "GERAN", "HAKMILIK", or "INDIVIDUAL TITLE". Has lot number, land area, category of land use, and registered owner section ("TUAN PUNYA BERDAFTAR"). NOT a Memorandum of Transfer (which has transferor+transferee sections instead).
 - property_spa: Sale & Purchase Agreement (SPA / Perjanjian Jual Beli). A CONTRACT to buy — does NOT prove current ownership; transfer may still be pending. Usually has buyer/seller signatures, purchase price, completion date.
 - property_tax: Cukai Tanah / Cukai Harta / Cukai Pintu / quit rent receipt / property assessment notice. Tax document — does NOT prove ownership. Issued by local council or PTD as a payment demand/receipt.
-- property_transfer: Memorandum of Transfer / Memorandum Pindahmilik — Borang 14A (Peninsular Malaysia NLC 1965) or Borang 16A (Sabah/Sarawak land rules). A statutory form used to effect a transfer of land title between parties. Shows transferor, transferee, consideration price, and lot/title details. Signed before a solicitor or commissioner for oaths. Implies the transfer is in progress but registration at Land Registry may not yet be complete. Distinct from SPA (SPA is the contract; Memorandum of Transfer is the court/registry form).
+- property_transfer: Memorandum of Transfer / Memorandum Pindahmilik — BORANG 14A (Peninsular Malaysia, National Land Code 1965) or BORANG 16A (Sabah, Sarawak). CRITICAL visual cues: the heading prominently says "MEMORANDUM PINDAHMILIK" or "MEMORANDUM OF TRANSFER". The form number "BORANG 14A", "FORM 14A", "BORANG 16A", or "FORM 16A" appears on the document. It has two separate party sections: PINDAHMILIK / TRANSFEROR (the person transferring away) and PENERIMA PINDAHMILIK / TRANSFEREE (the person receiving). Also shows BALASAN / CONSIDERATION (purchase price). Signed in front of a Solicitor or Commissioner for Oaths. Choose this over property_title if you see any of those heading/form-number cues, even if the image is blurry or partially visible.
 - utility_bill: TNB electricity, Air Selangor / SAJ / PBA water, Indah Water sewerage, unifi/Maxis/Celcom internet. Bill or invoice tied to a service address — useful as evidence the testator lives at / occupies that address but does NOT prove ownership.
 - bank_letter: a LETTER from a bank (welcome letter, loan offer letter, account confirmation, mortgage letter). NOT a periodic statement showing transactions or balances — that's bank_statement.
 - bank_statement: periodic bank statement listing transactions / balance, passbook, FD certificate, e-statement screenshot
@@ -70,13 +70,15 @@ def classify_file(file_path: str) -> dict:
 - will: a signed Last Will and Testament (Wasiat Terakhir)
 - other: anything that doesn't fit above (including property docs from outside Malaysia, e.g. Singapore strata, since this tool only drafts Malaysian wills)
 
-Be precise: the `purpose` field should describe what THIS specific image proves (e.g. "Geran for Lot 207922 Mukim Plentong proving Koid Beng Sun's individual title", not just "land document").
+Be precise: the `purpose` field should describe what THIS specific image proves (e.g. "Geran for Lot 207922 Mukim Plentong proving Koid Beng Sun's individual title", not just "land document"). If the image is too blurry, dark, or low-quality to read, say so explicitly in `purpose` (e.g. "Image too blurry to identify — appears to be a property-related form but content unreadable").
 
 If the document mentions a property address, lot number, or title number, copy it verbatim into `property_hint`. This is used to cluster multiple uploads (geran + SPA + cukai + electric bill) that all refer to the SAME property under one card. Leave `property_hint` empty for documents that aren't tied to a specific property (e.g. bank statement of a savings account, EPF, vehicle).
 
+Set `will_relevant` to true if this document is relevant to a Malaysian will (i.e. it relates to an asset the testator may own — property, bank account, vehicle, EPF, insurance, identity). Set it to false for things like receipts, menus, unrelated personal photos, promotional material, or anything with no clear asset connection.
+
 Return ONLY this JSON (no other text):
 ```json
-{"kind": "<one above>", "confidence": "high|medium|low", "reason": "<one short sentence>", "purpose": "<what this image proves, max 25 words>", "property_hint": "<address or lot/title no, or empty>"}
+{"kind": "<one above>", "confidence": "high|medium|low", "reason": "<one short sentence>", "purpose": "<what this image proves, max 25 words>", "property_hint": "<address or lot/title no, or empty>", "will_relevant": true}
 ```"""}
                 ]
             }]
@@ -102,4 +104,8 @@ Return ONLY this JSON (no other text):
         result['kind'] = 'other'
     result.setdefault('confidence', 'low')
     result.setdefault('reason', '')
+    result.setdefault('will_relevant', True)  # default to relevant; only low-conf 'other' is suspect
+    # If classified as 'other' with low confidence, treat as potentially irrelevant
+    if result['kind'] == 'other' and result['confidence'] == 'low':
+        result.setdefault('will_relevant', False)
     return result
