@@ -4109,42 +4109,78 @@ def _gather_recent_chat_text(client_id: str, max_chars: int = 8000) -> str:
 
 
 def _extract_whatsapp_context_for_file(body: str, filename: str) -> str:
-    """Return the WhatsApp text messages immediately preceding this filename's
-    attachment reference in an exported WhatsApp chat log.
+    """Return text messages adjacent to this filename's attachment reference
+    in an exported WhatsApp chat log.
 
     WhatsApp exports (iOS / Android) embed attachment lines like:
       [02/05/26, 13:52] Ahmad: ‎<attached: PHOTO-2026-05-02-13-52-35.jpg>
       [02/05/26, 13:52] Ahmad: IMG-20260502-WA0001.jpg (file attached)
 
-    The text messages typed just before the images are the richest context
-    (e.g. "Ini property saya lot 127082, bagi anak saya Sarah").
+    Clients send context BEFORE or AFTER images — both patterns are common:
+      Pattern A — message then image:
+        [time] Client: This is my property lot 127082, give to Sarah.
+        [time] Client: <attached: photo.jpg>
+      Pattern B — image then message:
+        [time] Client: <attached: photo.jpg>
+        [time] Client: This is my property, please give to daughter.
+      Pattern C — multiple images with one surrounding message:
+        [time] Client: All these are for lot 127082.
+        [time] Client: <attached: photo1.jpg>
+        [time] Client: <attached: photo2.jpg>   ← for this image, message is BEFORE
 
-    Returns up to 4 lines of preceding non-attachment text, or '' if the
-    filename isn't found in the body (caller should fall back to full body).
+    We look up to 4 text lines BEFORE and up to 3 text lines AFTER, then
+    return whichever side has more content (prefer before if equal).
+    Returns '' if the filename isn't found (caller falls back to full body).
     """
     if not filename or not body:
         return ''
     fn_lower = filename.lower()
-    idx = body.lower().find(fn_lower)
+    body_lower = body.lower()
+    idx = body_lower.find(fn_lower)
     if idx == -1:
         return ''
-    preceding = body[:idx]
-    lines = preceding.split('\n')
-    context_lines = []
-    for line in reversed(lines):
+
+    def _is_attach_line(s: str) -> bool:
+        sl = s.lower()
+        return '<attached:' in sl or 'file attached' in sl
+
+    # ── Look BEFORE the attachment reference ──────────────────────────────
+    before_lines = body[:idx].split('\n')
+    before_ctx = []
+    for line in reversed(before_lines):
         stripped = line.strip()
         if not stripped:
             continue
-        sl = stripped.lower()
-        # Skip attachment reference lines
-        if '<attached:' in sl or 'file attached' in sl:
+        if _is_attach_line(stripped):
+            # Skip other attachment lines but don't stop — the text we want
+            # may be interspersed with other image sends (Pattern C).
             continue
-        # Stop if we go back past a different message block (a blank sequence
-        # means a natural break in the conversation — don't reach too far back)
-        context_lines.insert(0, stripped)
-        if len(context_lines) >= 4:
+        before_ctx.insert(0, stripped)
+        if len(before_ctx) >= 4:
             break
-    return '\n'.join(context_lines)
+
+    # ── Look AFTER the attachment reference ───────────────────────────────
+    after_start = idx + len(filename)
+    after_lines = body[after_start:].split('\n')
+    after_ctx = []
+    for line in after_lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if _is_attach_line(stripped):
+            # Another attachment line — stop scanning (the text after this
+            # belongs to that next image, not ours)
+            break
+        after_ctx.append(stripped)
+        if len(after_ctx) >= 3:
+            break
+
+    # ── Pick the richer side (or combine if both non-empty) ───────────────
+    if before_ctx and after_ctx:
+        # Both sides have text — combine for maximum context
+        combined = before_ctx + after_ctx
+        return '\n'.join(combined)
+    return '\n'.join(before_ctx or after_ctx)
 
 
 _CONFIRM_TOKENS = ('yes', 'confirm', 'correct', 'ok ', 'okay', 'yep', 'yeah', 'true', 'right')
