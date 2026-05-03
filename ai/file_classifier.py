@@ -32,8 +32,14 @@ KINDS = [
 ]
 
 
-def classify_file(file_path: str) -> dict:
+def classify_file(file_path: str, sibling_hint: str = '') -> dict:
     """Return {kind, confidence, reason}. Falls back to 'other' on any error.
+
+    sibling_hint: optional one-line description of other documents already
+    classified in the same upload batch (e.g. "Other images in this batch:
+    property_title — Geran for Lot 127082, Mukim Plentong"). Injected into
+    the prompt so the classifier can use context from sibling pages of a
+    multi-page document.
 
     Cost telemetry: if the caller wraps this in `cost_tracker.track_context(...)`,
     each Anthropic call is logged to ApiCallLog with client_id/will_id/user_id
@@ -46,6 +52,16 @@ def classify_file(file_path: str) -> dict:
     except Exception as e:
         return {**fallback, "reason": f"Could not open file: {e}"}
 
+    sibling_section = ''
+    if sibling_hint:
+        sibling_section = (
+            f"\n\n**BATCH CONTEXT — other images already classified in this upload:**\n"
+            f"{sibling_hint}\n"
+            f"Use this only as supporting context, not as a reason to override what you actually see. "
+            f"A back-page or condition-sheet of a Geran belongs to the same batch and should be "
+            f"classified as `property_title` even if it shows fewer identifying fields."
+        )
+
     try:
         msg = client.messages.create(
             model=CLAUDE_MODEL_CHEAP,
@@ -54,7 +70,7 @@ def classify_file(file_path: str) -> dict:
                 "role": "user",
                 "content": [
                     content_block,
-                    {"type": "text", "text": """Classify this document into ONE category. Think about what the image actually IS and what it PROVES — not what's near it. A Cukai Tanah receipt is NOT a title even if it lists the same lot; an SPA is NOT a title even if it describes one.
+                    {"type": "text", "text": f"""Classify this document into ONE category. Think about what the image actually IS and what it PROVES — not what's near it. A Cukai Tanah receipt is NOT a title even if it lists the same lot; an SPA is NOT a title even if it describes one.{sibling_section}
 
 - nric: MyKad IC card (front or back) or Malaysian passport
 - property_title: LAND TITLE document — Geran, Hakmilik, HSD, HSM, Pajakan Negeri, Strata Title. PROVES registered ownership. Issued by Pejabat Tanah dan Daerah (PTD) with official seal. Header reads "HAKI MILIK", "GERAN", "HAKMILIK", or "INDIVIDUAL TITLE". Has lot number, land area, category of land use, and registered owner section ("TUAN PUNYA BERDAFTAR"). NOT a Memorandum of Transfer (which has transferor+transferee sections instead).

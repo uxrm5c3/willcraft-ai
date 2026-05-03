@@ -5707,6 +5707,29 @@ def _process_inbound_message_async(app_obj, user_msg_id):
             docs = (Document.query.filter(Document.id.in_(doc_ids)).all()
                     if doc_ids else [])
 
+            # ── Batch context ─────────────────────────────────────────────
+            # When multiple images arrive in one email (e.g. 8 pages of the
+            # same geran forwarded from WhatsApp), later images are classified
+            # in isolation and often land as 'other'. We accumulate a running
+            # summary of already-classified docs in this batch and pass it as
+            # a hint to the classifier so it can say "this is another page of
+            # the same geran" instead of "unrecognised document".
+            batch_classified: list = []   # [{kind, purpose, lot, title}, ...]
+
+            def _batch_hint() -> str:
+                """Build a one-liner sibling hint from already-processed docs."""
+                if not batch_classified:
+                    return ''
+                parts = []
+                for bc in batch_classified[-4:]:   # show up to last 4 siblings
+                    kind_lbl = bc.get('kind', 'other')
+                    purpose  = bc.get('purpose', '')
+                    lot      = bc.get('lot_number', '')
+                    title    = bc.get('title_number', '')
+                    ident    = purpose or (f'lot {lot}' if lot else '') or (f'title {title}' if title else '')
+                    parts.append(f"  • {kind_lbl}: {ident}" if ident else f"  • {kind_lbl}")
+                return '\n'.join(parts)
+
             for doc in docs:
                 abs_path = os.path.join(UPLOAD_DIR, doc.file_path)
                 if not os.path.isfile(abs_path):
@@ -5737,7 +5760,7 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                     db.session.commit()
                     continue
 
-                classification = classify_file(abs_path)
+                classification = classify_file(abs_path, sibling_hint=_batch_hint())
                 kind = classification.get('kind', 'other')
                 extracted = None
                 try:
@@ -5771,6 +5794,39 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                     extracted['purpose'] = purpose[:300]
                 if prop_hint:
                     extracted['property_hint'] = prop_hint[:300]
+
+                # ── Cross-fill from batch siblings ───────────────────────
+                # If this image is a property doc with missing NLC fields,
+                # borrow them from already-classified sibling docs in the
+                # same email batch. This is safe: they're all pages of the
+                # same document, so lot/title/mukim must be the same.
+                if kind in ('property_title', 'property_spa', 'property_tax',
+                            'property_transfer', 'other', 'chat_inbox'):
+                    prop_siblings = [bc for bc in batch_classified
+                                     if bc.get('kind') in ('property_title', 'property_spa',
+                                                            'property_tax', 'property_transfer')]
+                    if prop_siblings:
+                        best = prop_siblings[-1]   # most recently classified sibling
+                        for field in ('lot_number', 'title_number', 'mukim',
+                                      'daerah', 'negeri', 'title_type'):
+                            if not (extracted.get(field) or '').strip():
+                                val = (best.get(field) or '').strip()
+                                if val:
+                                    extracted[field] = val
+                                    extracted.setdefault('_enriched_from', []).append(
+                                        f'batch_sibling.{field}'
+                                    )
+
+                # ── Update batch context for subsequent images ────────────
+                batch_classified.append({
+                    'kind': kind,
+                    'purpose': purpose,
+                    'lot_number': (extracted.get('lot_number') or '').strip(),
+                    'title_number': (extracted.get('title_number') or '').strip(),
+                    'mukim': (extracted.get('mukim') or '').strip(),
+                    'daerah': (extracted.get('daerah') or '').strip(),
+                    'negeri': (extracted.get('negeri') or '').strip(),
+                })
                 # Store the text context that came WITH this image.
                 # For WhatsApp-forwarded emails the body is a chat log:
                 #   [time] Client: please add this property, lot 127082 to sarah
