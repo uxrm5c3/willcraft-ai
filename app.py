@@ -5107,12 +5107,15 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
             }
 
     # ── Guided confirm gates (property only) ────────────────────────────
-    # After address gate passes, we ask two quick questions before saving:
-    #   1. Ownership: sole or joint? (if joint, what share?)
-    #   2. Encumbrance: clean, bank charge, or caveat?
+    # Sequential 3-step flow triggered by tapping Accept:
+    #
+    #   Step 1 — Ownership type:  2 buttons  (Sole / Joint)
+    #   Step 1b — If Joint, share: 3 buttons  (1/2 / 1/3 / type manually)
+    #   Step 2 — Encumbrance:     2 buttons  (Clean / Has loan or caveat)
+    #
     # Sub-commands "inventory ownership …" and "inventory encumbered …" are
-    # emitted by the quick-reply buttons on these gate prompts. They save the
-    # answer and then re-enter the gate logic to show the next prompt or finalise.
+    # emitted by the quick-reply buttons. They save the answer then re-enter
+    # gate logic to show the next prompt or finalise.
     _is_confirm = t.startswith('inventory confirm')
 
     if target_kind == 'property' and not t.startswith('inventory skip'):
@@ -5121,19 +5124,38 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
         except (json.JSONDecodeError, TypeError):
             _gex = {}
 
-        # ── Parse and save inline ownership answer (from gate button) ──
+        # ── Parse and save ownership answer ──────────────────────────
         if _is_ownership_gate:
             _ow_rest = t[len('inventory ownership'):].strip()
             if 'sole' in _ow_rest:
                 _gex['ownership_type']  = 'sole'
                 _gex['ownership_share'] = ''
+            elif _ow_rest == 'joint':
+                # "joint" with no share yet → show share picker (Step 1b)
+                # Don't save yet; return the share prompt immediately.
+                _qr_share = [
+                    {'label': '1/2 share',      'value': 'inventory ownership joint 1/2'},
+                    {'label': '1/3 share',      'value': 'inventory ownership joint 1/3'},
+                    {'label': '✏️ Other — type', 'value': 'inventory ownership joint '},
+                ]
+                return {
+                    'name': 'joint share',
+                    'role': 'ownership_gate',
+                    'kind': 'property_fill',
+                    'reply_override': (
+                        "**🤝 Joint ownership — what is the testator's share?**\n\n"
+                        "_(Select the undivided share, or tap Other and type e.g. `inventory ownership joint 2/5`)_"
+                        + f'<!--quickreplies:{json.dumps(_qr_share)}-->'
+                    ),
+                }
             else:
+                # "joint 1/2", "joint 1/3", "joint 2/5" etc.
                 _sh = re.search(r'(\d+/\d+|\d+\s*%)', _ow_rest)
                 _gex['ownership_type']  = 'joint'
-                _gex['ownership_share'] = _sh.group(1).strip() if _sh else ''
+                _gex['ownership_share'] = _sh.group(1).strip() if _sh else _ow_rest.replace('joint', '').strip()
             _gex.setdefault('_manually_edited', [])
             _ow_tag = f"ownership={_gex['ownership_type']}"
-            if _gex['ownership_share']:
+            if _gex.get('ownership_share'):
                 _ow_tag += '/' + _gex['ownership_share']
             if isinstance(_gex['_manually_edited'], list):
                 _gex['_manually_edited'].append(_ow_tag)
@@ -5143,7 +5165,7 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
             except Exception:
                 db.session.rollback()
 
-        # ── Parse and save inline encumbrance answer (from gate button) ──
+        # ── Parse and save encumbrance answer ────────────────────────
         if _is_encumbrance_gate:
             _enc_rest = t[len('inventory encumbered'):].strip()
             if _enc_rest in ('clean', 'no', 'none', 'false'):
@@ -5157,19 +5179,16 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                 _gex['encumbrance_type']      = 'caveat'
             else:
                 _gex['encumbrance_confirmed'] = True
-                _gex['encumbrance_type']      = 'other'
+                _gex['encumbrance_type']      = 'charge'  # default to charge if ambiguous
             try:
                 doc.extracted_data = json.dumps(_gex)
                 db.session.commit()
             except Exception:
                 db.session.rollback()
 
-        # ── Gate 1: ownership not yet confirmed ──────────────────────
-        # Skip gate if user is only clicking Skip, or if already set.
+        # ── Gate 1: Ownership type not yet set ───────────────────────
         _ow_type = (_gex.get('ownership_type') or '').strip().lower()
         if not _ow_type and (_is_confirm or _is_ownership_gate):
-            # Show ownership selection prompt
-            # Detect from OCR whether joint is likely — pre-highlight
             _num_own = _gex.get('num_owners') or 1
             try:
                 _num_own = int(_num_own)
@@ -5178,41 +5197,39 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
             _ocr_shares = (_gex.get('ownership_shares') or '').strip()
             _ocr_hint   = ''
             if _num_own > 1 or _ocr_shares:
-                _ocr_hint = f"\n\n_OCR detected {_num_own} registered owners{(': ' + _ocr_shares) if _ocr_shares else ''}. Likely joint — please confirm share._"
+                _ocr_hint = (
+                    f"\n\n_OCR detected {_num_own} registered owners"
+                    + (f" ({_ocr_shares})" if _ocr_shares else '')
+                    + " — likely joint ownership._"
+                )
             _qr_ow = [
-                {'label': '👤 Sole owner', 'value': 'inventory ownership sole'},
-                {'label': '🤝 Joint — 1/2 share', 'value': 'inventory ownership joint 1/2'},
-                {'label': '🤝 Joint — 1/3 share', 'value': 'inventory ownership joint 1/3'},
-                {'label': '🤝 Joint — other',      'value': 'inventory ownership joint '},
+                {'label': '👤 Sole owner',  'value': 'inventory ownership sole'},
+                {'label': '🤝 Joint owner', 'value': 'inventory ownership joint'},
             ]
-            _ow_marker = f'<!--quickreplies:{json.dumps(_qr_ow)}-->'
             return {
                 'name': 'ownership',
                 'role': 'ownership_gate',
                 'kind': 'property_fill',
                 'reply_override': (
-                    "**👥 Step 1 of 2 — Ownership**\n\n"
-                    "Is this property **solely owned** by the testator, or **jointly owned** with someone else?"
+                    "**Step 1 of 2 — Ownership**\n\n"
+                    "Is the testator the **sole owner**, or is it **jointly owned** with another person?"
                     + _ocr_hint
-                    + "\n\n_(The will clause will state the exact undivided share if jointly owned.)_"
-                    + _ow_marker
+                    + f'<!--quickreplies:{json.dumps(_qr_ow)}-->'
                 ),
             }
 
-        # ── Gate 2: encumbrance not yet confirmed ────────────────────
+        # ── Gate 2: Encumbrance not yet confirmed ────────────────────
         _enc_confirmed = _gex.get('encumbrance_confirmed')  # None = not yet answered
         if _enc_confirmed is None and (_is_confirm or _is_ownership_gate or _is_encumbrance_gate):
-            # Show encumbrance selection prompt
             _enc_ocr      = (_gex.get('encumbrance') or '').strip()
             _enc_type_ocr = (_gex.get('encumbrance_type') or '').strip().lower()
             _enc_hint     = ''
             if _enc_ocr or _enc_type_ocr:
-                _enc_icon  = '🏦' if _enc_type_ocr == 'charge' else '🚩'
-                _enc_hint  = f"\n\n_{_enc_icon} OCR detected: {_enc_ocr[:150]}_"
+                _enc_icon = '🏦' if _enc_type_ocr == 'charge' else '🚩'
+                _enc_hint = f"\n\n_{_enc_icon} OCR detected: {_enc_ocr[:150]}_"
             _qr_enc = [
-                {'label': '✅ Clean — no loan or caveat',  'value': 'inventory encumbered clean'},
-                {'label': '🏦 Bank loan / charge',          'value': 'inventory encumbered charge'},
-                {'label': '🚩 Private caveat',              'value': 'inventory encumbered caveat'},
+                {'label': '✅ Clean title',       'value': 'inventory encumbered clean'},
+                {'label': '🏦 Has loan or caveat', 'value': 'inventory encumbered charge'},
             ]
             _enc_marker = f'<!--quickreplies:{json.dumps(_qr_enc)}-->'
             return {
@@ -5220,10 +5237,10 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                 'role': 'encumbrance_gate',
                 'kind': 'property_fill',
                 'reply_override': (
-                    "**🏠 Step 2 of 2 — Encumbrance**\n\n"
-                    "Does this property have a **bank loan / charge** or a **private caveat** registered on the title?"
+                    "**Step 2 of 2 — Encumbrance**\n\n"
+                    "Is there a **bank loan or caveat** registered on this property?"
                     + _enc_hint
-                    + "\n\n_(The Executor will be directed to discharge the loan or withdraw the caveat if encumbered.)_"
+                    + "\n\n_(The Executor will be directed to settle the loan or withdraw the caveat.)_"
                     + _enc_marker
                 ),
             }
