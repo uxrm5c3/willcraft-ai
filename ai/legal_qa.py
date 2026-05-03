@@ -110,44 +110,36 @@ def answer_question(user_text: str, current_stage_summary: str = '',
                 pass
         msg = client.messages.create(
             model=CLAUDE_MODEL_FAST,
-            max_tokens=700,
+            max_tokens=500,
             messages=[{
                 'role': 'user',
-                'content': f"""You're an assistant helping a Malaysian advisor draft a non-Muslim will.{excerpts_block}
-{('When citing, prefer the EXCERPTS above (cite as e.g. \"Wills Act 1959 s.5\") '
-  'over general training-data recall. If the excerpts do not cover the question, '
-  'say so plainly: \"Not covered in our library — answering from general knowledge.\"'
-  if excerpts_block else
-  'No matching Act excerpts found in our library. Answer from general knowledge '
-  'and start your reply with: \"⚠️ Not in library — general knowledge only:\"')}
-The user paused the workflow to ask a question. Answer concisely (max 3 short
-paragraphs, 200 words). Cite the relevant Malaysian act + section when
-useful: Wills Act 1959, Probate and Administration Act 1959, Distribution
-Act 1958. Be plain-language.
-
-End with a one-line disclaimer: 'This is general guidance, not legal advice
-— consult a qualified lawyer for your specific situation.'
+                'content': f"""You help a Malaysian advisor draft a non-Muslim will.{excerpts_block}
 
 USER QUESTION: {user_text}
 
-Answer the question, then end with the disclaimer. Do NOT preface with
-'Great question' or similar filler.{nudge if False else ''}"""
+Reply in this EXACT format (no preface, no filler, no disclaimer):
+
+**Answer:** <one or two short plain-English sentences — maximum 40 words. Direct, no hedging.>
+
+**Citation:** <Act name + section, e.g. "Wills Act 1959 s.5(2)". If the excerpts above cover it, cite from there. If not, write "General knowledge — not in library".>
+
+**Example:** <one short concrete example — maximum 25 words — illustrating the answer in a typical Malaysian situation. Skip this line ENTIRELY if no useful example fits.>
+
+That's it. No "I hope this helps", no extra paragraphs."""
             }]
         )
         body = (msg.content[0].text or '').strip() if msg.content else ''
 
-        # Transparency header: show what we searched + what matched
-        if library_titles:
-            header = f"🔍 Searched **{len(library_titles)} Act{'s' if len(library_titles)!=1 else ''}** in the library: " \
-                     f"_{', '.join(library_titles[:5])}{', …' if len(library_titles)>5 else ''}_\n\n"
-            if matched_titles:
-                header += f"📚 Matched citations in: **{', '.join(matched_titles)}**\n\n"
-            else:
-                header += "⚠️ No direct match in library — answering from general knowledge.\n\n"
+        # Tiny one-line citation footer below the body — minimal, italic, gray.
+        # The body itself already contains "Answer:" + "Citation:" sections.
+        if matched_titles:
+            footer = f"\n\n<sub>📚 _Cited from library: {', '.join(matched_titles)}_</sub>"
+        elif library_titles:
+            footer = f"\n\n<sub>⚠️ _Not in library — answered from general knowledge ({len(library_titles)} Acts loaded)_</sub>"
         else:
-            header = "⚠️ Library is empty (no Acts uploaded yet) — answering from general knowledge.\n\n"
+            footer = "\n\n<sub>⚠️ _Library empty — general knowledge only_</sub>"
 
-        out = header + body + nudge
+        out = body + footer
         if resume_quick:
             out += f"\n\n<!--quickreplies:{_json.dumps(resume_quick)}-->"
         return out
