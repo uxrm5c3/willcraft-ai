@@ -444,7 +444,7 @@ def _next_step_cta(will_data: dict) -> dict:
 
     # Step 6: specific gifts — properties
     if pg.get('property'):
-        return {'label': '▶️ Match property documents', 'value': 'inbox start'}
+        return {'label': '▶️ Match specific gift documents', 'value': 'inbox start'}
 
     # Step 6: specific gifts — bank accounts
     if pg.get('bank') and not (will_data.get('step5') or []):
@@ -1614,22 +1614,20 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     if _title_wrong and _title_wrong_reason:
         parts.append(f"⚠️ _{_title_wrong_reason}_ — tap 🗑 Remove if wrong upload.")
 
-    # Compact identifiers — only show what isn't already in the address line
-    id_parts = []
-    lot = (ex.get('lot_number') or '').strip()
-    title_no = (ex.get('title_number') or '').strip()
-    if lot:
-        id_parts.append(f"Lot {lot}")
-    if title_no:
-        id_parts.append(title_no)
-    mukim = (ex.get('mukim') or '').strip()
-    daerah = (ex.get('daerah') or '').strip()
-    if mukim:
-        id_parts.append(f"Mukim {mukim}")
-    if daerah and daerah.lower() not in (mukim.lower(), ''):
-        id_parts.append(daerah)
-    if id_parts:
-        parts.append("📋 " + " · ".join(id_parts))
+    # Full NLC identifiers — required by National Land Code for will description
+    nlc_lines = []
+    for label, key in (
+        ('Title No.',  'title_number'),
+        ('Lot No.',    'lot_number'),
+        ('Mukim',      'mukim'),
+        ('Daerah',     'daerah'),
+        ('Negeri',     'negeri'),
+    ):
+        v = (ex.get(key) or '').strip()
+        if v:
+            nlc_lines.append(f"  • **{label}:** {v}")
+    if nlc_lines:
+        parts.append("📋 **Land Registry Details:**\n" + '\n'.join(nlc_lines))
 
     # Supporting docs — brief list of types only
     support = p.get('support_docs') or []
