@@ -92,6 +92,13 @@ jobs:
               ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
               'bash ~/deploy-alantanjb.sh'
 
+      - name: Reload nginx (picks up nginx/default.conf changes)
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no \
+              ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+              'cd ~/willcraft-ai 2>/dev/null || cd ~/will.alantanjb.com 2>/dev/null || cd ~/will-writing-ai 2>/dev/null; \
+               docker compose restart nginx 2>&1 | tail -3'
+
       - name: Smoke-check
         run: |
           # Wait for the container to be healthy + simple HTTP check

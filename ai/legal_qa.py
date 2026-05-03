@@ -39,32 +39,75 @@ def is_question(text: str) -> bool:
     return False
 
 
-def answer_question(user_text: str, current_stage_summary: str = '') -> str:
+def answer_question(user_text: str, current_stage_summary: str = '',
+                    client_id: str = None, user_id: str = None) -> str:
     """Short Claude answer + nudge back to the active step. Returns ''
     on any failure (caller can fall back to ignoring)."""
     if not user_text:
         return ''
+    matched_titles = []
+    # Snapshot of which Acts the library currently holds (for transparency)
+    library_titles = []
+    try:
+        from services.legal_library import list_available_acts
+        library_titles = [a['title'] for a in list_available_acts()]
+    except Exception:
+        pass
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         nudge = (f"\n\nNow back to **{current_stage_summary}** — please continue."
                  if current_stage_summary else "")
-        # Pull excerpts from the legal library if any Acts are loaded
+        # MANDATORY library lookup first
         excerpts_block = ''
+        ex = []
         try:
             from services.legal_library import relevant_excerpts
             ex = relevant_excerpts(user_text)
             if ex:
-                excerpts_block = "\n\nRELEVANT ACT PROVISIONS (cite these by section if applicable):\n"
+                matched_titles = [e['title'] for e in ex]
+                excerpts_block = ("\n\nRELEVANT ACT PROVISIONS — cite the Act + section when "
+                                  "you use them, and prefer these over general knowledge:\n")
                 for e in ex:
                     excerpts_block += f"\n--- {e['title']} ---\n{e['excerpt']}\n"
         except Exception:
             pass
+
+        # Log the gap if no library match (so tech team can enhance the library)
+        if not ex:
+            try:
+                from database import db, LegalQAGap
+                gap = LegalQAGap(question=user_text[:1000], client_id=client_id,
+                                 user_id=user_id, matched_acts='[]',
+                                 answered_from='general')
+                db.session.add(gap)
+                db.session.commit()
+            except Exception:
+                pass
+        else:
+            try:
+                import json as _json
+                from database import db, LegalQAGap
+                # Still log so we can see what's frequently asked
+                gap = LegalQAGap(question=user_text[:1000], client_id=client_id,
+                                 user_id=user_id,
+                                 matched_acts=_json.dumps(matched_titles),
+                                 answered_from='library')
+                db.session.add(gap)
+                db.session.commit()
+            except Exception:
+                pass
         msg = client.messages.create(
             model=CLAUDE_MODEL_FAST,
             max_tokens=700,
             messages=[{
                 'role': 'user',
                 'content': f"""You're an assistant helping a Malaysian advisor draft a non-Muslim will.{excerpts_block}
+{('When citing, prefer the EXCERPTS above (cite as e.g. \"Wills Act 1959 s.5\") '
+  'over general training-data recall. If the excerpts do not cover the question, '
+  'say so plainly: \"Not covered in our library — answering from general knowledge.\"'
+  if excerpts_block else
+  'No matching Act excerpts found in our library. Answer from general knowledge '
+  'and start your reply with: \"⚠️ Not in library — general knowledge only:\"')}
 The user paused the workflow to ask a question. Answer concisely (max 3 short
 paragraphs, 200 words). Cite the relevant Malaysian act + section when
 useful: Wills Act 1959, Probate and Administration Act 1959, Distribution
@@ -80,6 +123,18 @@ Answer the question, then end with the disclaimer. Do NOT preface with
             }]
         )
         body = (msg.content[0].text or '').strip() if msg.content else ''
-        return body + nudge
+
+        # Transparency header: show what we searched + what matched
+        if library_titles:
+            header = f"🔍 Searched **{len(library_titles)} Act{'s' if len(library_titles)!=1 else ''}** in the library: " \
+                     f"_{', '.join(library_titles[:5])}{', …' if len(library_titles)>5 else ''}_\n\n"
+            if matched_titles:
+                header += f"📚 Matched citations in: **{', '.join(matched_titles)}**\n\n"
+            else:
+                header += "⚠️ No direct match in library — answering from general knowledge.\n\n"
+        else:
+            header = "⚠️ Library is empty (no Acts uploaded yet) — answering from general knowledge.\n\n"
+
+        return header + body + nudge
     except Exception:
         return ''

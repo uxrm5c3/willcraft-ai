@@ -20,7 +20,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import FLASK_SECRET_KEY, ANTHROPIC_API_KEY, SQLALCHEMY_DATABASE_URI, DATA_DIR, UPLOAD_DIR, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD
-from database import db, Client, Will, WillEditLog, WillVersion, Person, Document, User, ROLE_PERMS, ROLE_LABELS, ProbateApplication, ProbateFormTemplate, ProbateGeneratedForm, ChatSession, ChatMessage
+from database import db, Client, Will, WillEditLog, WillVersion, Person, Document, User, ROLE_PERMS, ROLE_LABELS, ProbateApplication, ProbateFormTemplate, ProbateGeneratedForm, ChatSession, ChatMessage, LegalQAGap
 
 # Enable SQLite WAL mode + a 5s busy timeout on every new connection.
 # Without this, any concurrent write attempt (e.g. inbound email webhook
@@ -3375,7 +3375,8 @@ def api_chat_message(client_id):
                             .filter(Will.deleted_at.is_(None))
                             .order_by(Will.updated_at.desc()).first())
             stage = _current_stage_label(client_id, current_will)
-            ans = answer_question(user_text, stage)
+            ans = answer_question(user_text, stage, client_id=client_id,
+                                  user_id=session.get('user_id'))
             if ans:
                 qa_msg = ChatMessage(session_id=cs.id, role='assistant', content=ans,
                                      attachments_json='[]')

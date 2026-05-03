@@ -180,6 +180,20 @@ class Document(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class LegalQAGap(db.Model):
+    """Logged when ai/legal_qa.py answers a question without a matching
+    library excerpt — i.e. the legal library should be enhanced to cover
+    this topic. Tech team queries this to see what to add."""
+    __tablename__ = 'legal_qa_gaps'
+    id = db.Column(db.Integer, primary_key=True)
+    question = db.Column(db.Text, nullable=False)
+    client_id = db.Column(db.String(36), db.ForeignKey('clients.id'), nullable=True)
+    user_id = db.Column(db.String(36), db.ForeignKey('users.id'), nullable=True)
+    matched_acts = db.Column(db.Text, default='[]')  # which Act titles, if any, were cited
+    answered_from = db.Column(db.String(20), default='general')  # 'library' / 'general' / 'failed'
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class ChatSession(db.Model):
     """A chat thread for a client. One per client (latest active)."""
     __tablename__ = 'chat_sessions'
