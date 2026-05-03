@@ -363,6 +363,75 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                     known_ids.add(ds['document_id'])
             del prop_groups[gk]
 
+    # ── Time-proximity merge (old-data fallback) ──────────────────────────
+    # For OLD uploads that have no chat_message_id, the chat_message_id-based
+    # merges above are all no-ops. A typical WhatsApp batch is sent within
+    # seconds; when the email arrives all attachments are processed in rapid
+    # succession and end up with created_at timestamps ≤ N minutes apart.
+    #
+    # Strategy: for each remaining DOC:{id} group (unreadable OCR → its own
+    # card), find any named group (TN:/LOT:/ADDR:/HINT:) whose docs were
+    # created within PROX_MINUTES. If found, merge the DOC:{id} into the
+    # nearest named group. This is a best-effort heuristic that handles the
+    # "PHOTO-2026-05-02-13-52-32.jpg showing as its own blank card" case.
+    PROX_MINUTES = 10  # images uploaded within 10 min of each other → same batch
+    from datetime import datetime, timedelta, timezone
+    ungrouped_doc_keys = [gk for gk in list(prop_groups.keys()) if gk.startswith('DOC:')]
+    if ungrouped_doc_keys:
+        # Build a map: named group key → list of created_at datetimes
+        def _group_timestamps(grp: Dict[str, Any]):
+            ts_list = []
+            for ds in (([grp['title_doc']] if grp['title_doc'] else [])
+                       + grp['support_docs']):
+                if not ds:
+                    continue
+                raw = ds.get('created_at') or ''
+                if raw:
+                    try:
+                        ts_list.append(datetime.fromisoformat(raw))
+                    except (ValueError, TypeError):
+                        pass
+            return ts_list
+
+        named_gks = [(gk, _group_timestamps(grp))
+                     for gk, grp in prop_groups.items()
+                     if not gk.startswith('DOC:') and prop_groups[gk].get('title_doc')]
+
+        for doc_gk in ungrouped_doc_keys:
+            if doc_gk not in prop_groups:
+                continue
+            doc_grp = prop_groups[doc_gk]
+            doc_ts_list = _group_timestamps(doc_grp)
+            if not doc_ts_list:
+                continue
+
+            best_named_gk = None
+            best_gap_secs = PROX_MINUTES * 60 + 1  # beyond threshold
+
+            for named_gk, named_ts_list in named_gks:
+                if named_gk not in prop_groups:
+                    continue
+                if not named_ts_list:
+                    continue
+                # Minimum gap between any doc in named group and any doc in DOC group
+                for dt in doc_ts_list:
+                    for nt in named_ts_list:
+                        gap = abs((dt - nt).total_seconds())
+                        if gap < best_gap_secs:
+                            best_gap_secs = gap
+                            best_named_gk = named_gk
+
+            if best_named_gk and best_named_gk in prop_groups:
+                target = prop_groups[best_named_gk]
+                known_ids = set(target['all_doc_ids'])
+                for ds in (([doc_grp['title_doc']] if doc_grp['title_doc'] else [])
+                           + doc_grp['support_docs']):
+                    if ds and ds['document_id'] not in known_ids:
+                        target['support_docs'].append(ds)
+                        target['all_doc_ids'].append(ds['document_id'])
+                        known_ids.add(ds['document_id'])
+                del prop_groups[doc_gk]
+
     # ── Emit one card per group ────────────────────────────────────────────
     # Only emit if a property_title is present (ownership evidence required).
     # Groups with only SPA/cukai tanah are orphaned — skip for now.

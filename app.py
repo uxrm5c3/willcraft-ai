@@ -3658,7 +3658,8 @@ def api_chat_message(client_id):
         # one specific asset card, so 'inventory confirm' / 'inventory
         # skip' / 'inventory unlink' must hit the per-asset handler
         # before the gate fallback.
-        just_inventory = (_try_handle_unlink_action(client_id, user_text)
+        just_inventory = (_try_handle_restart_gifts(client_id, user_text)
+                          or _try_handle_unlink_action(client_id, user_text)
                           or _try_handle_inventory_action(client_id, user_text)
                           or _try_handle_property_fill(client_id, user_text)
                           or _try_handle_ownership(client_id, user_text)
@@ -3718,7 +3719,7 @@ def api_chat_message(client_id):
     # type missing fields" prompt), inject it into the plan instead of running
     # the normal planner — it's a simple instructional message, not a full turn.
     _fill_override = (isinstance(just_inventory, dict)
-                      and just_inventory.get('kind') == 'property_fill'
+                      and just_inventory.get('kind') in ('property_fill', 'gifts_restart')
                       and just_inventory.get('reply_override'))
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
@@ -4779,6 +4780,94 @@ def _try_handle_encumbrance(client_id: str, user_text: str):
     return {'name': label, 'role': 'encumbrance_confirmed', 'kind': 'property_fill'}
 
 
+def _try_handle_restart_gifts(client_id: str, user_text: str):
+    """Handle 'restart gifts' / 'restart inventory' / 'reset gifts'.
+
+    Clears the entire Step-6 walkthrough so the writer can redo it from
+    scratch with the latest document grouping improvements:
+
+      1. Removes all gifts from the active Will's step5_data
+      2. Clears 'assets_confirmed' from completed_steps so the planner
+         re-enters the asset-inventory loop
+      3. Clears _inventoried and _skipped from all property/bank/vehicle
+         Documents so they re-appear in the walk
+
+    Does NOT touch the Documents themselves (OCR data is preserved) or
+    any other Will step (beneficiaries, executors, etc.).
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    _RESTART_TOKENS = {'restart gifts', 'restart inventory', 'reset gifts',
+                       'reset inventory', 'redo gifts', 'redo inventory',
+                       'restart step 6', 'restart step6'}
+    if t not in _RESTART_TOKENS:
+        return None
+
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+
+    # 1. Clear all saved gifts
+    will.step5_data = '[]'
+
+    # 2. Remove 'assets_confirmed' from completed_steps so planner re-enters loop
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+        if not isinstance(completed, list):
+            completed = []
+        completed = [c for c in completed if c != 'assets_confirmed']
+        will.completed_steps = json.dumps(completed)
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+
+    # 3. Clear _inventoried + _skipped from all property/bank/vehicle docs
+    kinds = ('property_title', 'property_spa', 'property_tax', 'property_transfer',
+             'utility_bill', 'bank_letter', 'bank_statement', 'vehicle',
+             'chat_inbox', 'other')
+    docs = Document.query.filter(
+        Document.client_id == client_id,
+        Document.category.in_(kinds),
+        Document.deleted_at.is_(None),
+    ).all()
+    changed = 0
+    for d in docs:
+        try:
+            ex = json.loads(d.extracted_data) if d.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            ex = {}
+        if ex.get('_inventoried') or ex.get('_skipped'):
+            ex.pop('_inventoried', None)
+            ex.pop('_skipped', None)
+            d.extracted_data = json.dumps(ex)
+            changed += 1
+    if changed:
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+    return {
+        'name': f'Step 6 reset ({changed} docs unlocked)',
+        'role': 'gifts_restarted',
+        'kind': 'gifts_restart',
+        'reply_override': (
+            f"♻️ **Step 6 reset.** All {changed} documents have been unlocked and "
+            f"the gift list has been cleared.\n\n"
+            f"I'll now walk you through all your properties, bank accounts, and "
+            f"vehicles again — this time with improved grouping. Just reply to each card."
+        ),
+    }
+
+
 def _try_handle_unlink_action(client_id: str, user_text: str):
     """Handle the support-doc picker:
       • 'unlink <doc_id>' → remove that doc from its parent property's
@@ -4967,6 +5056,39 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                  or 'this asset')
         return {'name': label[:80], 'role': 'review supporting docs',
                 'kind': 'inventory_unlink_pending'}
+
+    # ── Address gate (property confirm only) ──────────────────────────
+    # A Malaysian will property clause MUST describe the property — even
+    # a vague address like "No. 5, Jalan Maju, Subang" is essential so
+    # the Executor knows which property to deal with.
+    #
+    # If the writer taps "✅ Looks right" but the title has NO address,
+    # prompt them to type it rather than silently saving a blank gift.
+    # They can still override with "inventory confirm no address" or by
+    # typing `address: leave blank` if they intentionally want it empty.
+    _is_confirm = t.startswith('inventory confirm')
+    _force_no_addr = ('no address' in t or 'leave blank' in t or
+                      'leave address' in t or 'skip address' in t)
+    if _is_confirm and target_kind == 'property' and not _force_no_addr:
+        try:
+            _ex_check = json.loads(doc.extracted_data) if doc.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            _ex_check = {}
+        _addr = (_ex_check.get('property_address') or '').strip()
+        if not _addr:
+            # Address missing — ask for it before confirming
+            return {
+                'name': 'address missing',
+                'role': 'address_required',
+                'kind': 'property_fill',
+                'reply_override': (
+                    "**⚠️ Property address is missing.**\n\n"
+                    "Please type the address so it can be recorded in the will:\n"
+                    "  `address: No. 22, Jalan Rimbun, Taman Seri Alam, 81750 Masai, Johor`\n\n"
+                    "Or if this property genuinely has no street address (e.g. agricultural land):\n"
+                    "  Tap **Confirm without address** below, or type `inventory confirm no address`"
+                ),
+            }
 
     # 'inventory confirm' or 'inventory skip' → mark inventoried
     try:

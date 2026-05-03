@@ -1525,9 +1525,14 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     has_missing = bool(missing_fields)
     needs_ownership = (ownership_type == 'joint' and not ownership_share)
     needs_enc = (enc_confirmed is None)
+    has_address = bool((ex.get('property_address') or '').strip())
     quick = [
         {'label': '✅ Looks right — add to wizard', 'value': 'inventory confirm'},
     ]
+    # If address is blank, add an explicit "confirm without address" button
+    # so the writer doesn't get stuck when the property genuinely has none.
+    if not has_address:
+        quick.append({'label': '🏚 Confirm without address (agricultural/no street)', 'value': 'inventory confirm no address'})
     if needs_ownership:
         quick.append({'label': '🤝 Joint — confirm share', 'value': 'ownership: '})
         quick.append({'label': '👤 Actually sole owner', 'value': 'ownership: sole'})
