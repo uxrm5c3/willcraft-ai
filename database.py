@@ -194,6 +194,30 @@ class LegalQAGap(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class LegalQACache(db.Model):
+    """Persistent cross-user, cross-restart cache of legal Q&A answers.
+    Keyed by a NORMALISED question text (lowered, punctuation stripped,
+    whitespace collapsed) so "Who can be witness?" and "who can be witness"
+    share one slot. Saves an Anthropic round-trip + several KB of excerpt
+    tokens on every repeat ask, regardless of which testator/user/process
+    triggered it. Survives deploys.
+
+    Invalidation: bumping `legal_acts/` library content doesn't auto-evict
+    older cache entries — admin can purge via /api/legal-library/cache/clear
+    after a meaningful library update.
+    """
+    __tablename__ = 'legal_qa_cache'
+    id = db.Column(db.Integer, primary_key=True)
+    question_key = db.Column(db.String(500), nullable=False, unique=True, index=True)
+    question_text = db.Column(db.Text, nullable=False)  # original phrasing, for inspection
+    answer_text = db.Column(db.Text, nullable=False)    # body+footer, no resume button
+    cited_act = db.Column(db.String(200), nullable=True)  # e.g. "Wills Act 1959 s.5(2)"
+    mode = db.Column(db.String(20), default='library')   # library/general/unsure/dontknow
+    hits = db.Column(db.Integer, default=1)              # served-from-cache count
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    last_used_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class ChatSession(db.Model):
     """A chat thread for a client. One per client (latest active)."""
     __tablename__ = 'chat_sessions'

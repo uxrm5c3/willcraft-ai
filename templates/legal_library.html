@@ -86,7 +86,88 @@
     Inheritance (Family Provision) Act 1971, National Land Code 1965, Strata Titles
     Act 1985, Strata Management Act 2013, RPGT Act 1976, Stamp Act 1949.
   </p>
+
+  <!-- Q&A cache panel -->
+  <div class="bg-white border border-gray-200 rounded-xl mt-6 p-5">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h2 class="font-semibold text-gray-900">💾 Q&amp;A Cache</h2>
+        <p class="text-xs text-gray-500 mt-0.5">
+          Persistent across users + restarts. Repeat questions are served instantly with zero token cost.
+        </p>
+      </div>
+      <button onclick="clearQACache()"
+              class="text-xs px-3 py-1.5 border border-red-200 text-red-700 rounded-lg hover:bg-red-50">
+        Clear cache
+      </button>
+    </div>
+    <div id="cacheStats" class="text-sm text-gray-600">Loading…</div>
+  </div>
 </div>
+
+<script>
+async function loadCacheStats() {
+  try {
+    const r = await fetch('/api/legal-library/cache/stats');
+    const d = await r.json();
+    if (!d.ok) { document.getElementById('cacheStats').textContent = '⚠️ ' + (d.error || 'Failed'); return; }
+    const k = (n) => n.toLocaleString();
+    let html = `
+      <div class="grid grid-cols-3 gap-3 mb-4">
+        <div class="bg-gray-50 rounded-lg p-3">
+          <div class="text-2xl font-bold text-gray-900">${k(d.cached_questions)}</div>
+          <div class="text-xs text-gray-500">unique questions cached</div>
+        </div>
+        <div class="bg-emerald-50 rounded-lg p-3">
+          <div class="text-2xl font-bold text-emerald-700">${k(d.total_cache_hits)}</div>
+          <div class="text-xs text-emerald-700/80">cache hits served</div>
+        </div>
+        <div class="bg-indigo-50 rounded-lg p-3">
+          <div class="text-2xl font-bold text-indigo-700">~${k(d.estimated_tokens_saved)}</div>
+          <div class="text-xs text-indigo-700/80">tokens saved (est.)</div>
+        </div>
+      </div>`;
+    if (d.top_questions && d.top_questions.length) {
+      html += `<div class="text-xs uppercase text-gray-500 font-semibold mb-2">Most-asked questions</div>`;
+      html += `<table class="w-full text-xs"><thead class="text-gray-500"><tr>
+                <th class="text-left py-1 px-2">Question</th>
+                <th class="text-right py-1 px-2">Hits</th>
+                <th class="text-left py-1 px-2">Mode</th>
+                <th class="text-left py-1 px-2">Citation</th>
+              </tr></thead><tbody>`;
+      for (const q of d.top_questions) {
+        const mode = q.mode || '';
+        const modeColor = mode === 'library' ? 'text-emerald-700' :
+                          mode === 'general' ? 'text-gray-600' :
+                          mode === 'unsure'  ? 'text-amber-700' :
+                          mode === 'dontknow'? 'text-red-700' : 'text-gray-500';
+        html += `<tr class="border-t border-gray-100">
+          <td class="py-1.5 px-2 text-gray-800">${q.question.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</td>
+          <td class="py-1.5 px-2 text-right font-mono">${q.hits}</td>
+          <td class="py-1.5 px-2 ${modeColor}">${mode}</td>
+          <td class="py-1.5 px-2 text-gray-500">${q.cited_act || '—'}</td>
+        </tr>`;
+      }
+      html += `</tbody></table>`;
+    } else {
+      html += `<p class="text-xs text-gray-500 italic">No questions cached yet.</p>`;
+    }
+    document.getElementById('cacheStats').innerHTML = html;
+  } catch (e) {
+    document.getElementById('cacheStats').textContent = '⚠️ Network error';
+  }
+}
+
+async function clearQACache() {
+  if (!confirm('Purge ALL cached Q&A answers? Subsequent questions will hit Claude again until repeats build up.')) return;
+  const r = await fetch('/api/legal-library/cache/clear', { method: 'POST' });
+  const d = await r.json();
+  if (d.ok) { alert(`Cleared ${d.deleted} cached answers.`); loadCacheStats(); }
+  else alert(d.error || 'Clear failed');
+}
+
+loadCacheStats();
+</script>
 
 <script>
 const form = document.getElementById('uploadForm');

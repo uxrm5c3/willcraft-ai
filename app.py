@@ -3681,8 +3681,57 @@ def api_legal_library_delete(slug):
         return jsonify({'ok': False, 'error': 'Not found'}), 404
     try:
         os.remove(path)
+        # Library content changed → cached answers may be stale. Purge.
+        try:
+            from ai.legal_qa import cache_clear_all
+            cache_clear_all()
+        except Exception:
+            pass
         return jsonify({'ok': True})
     except OSError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/legal-library/cache/stats')
+@login_required
+def api_legal_library_cache_stats():
+    """Return how many cached answers we have, total hits served, and the
+    top 10 most-asked questions. Helps quantify token savings."""
+    try:
+        from database import LegalQACache
+        from sqlalchemy import func as _func
+        total = db.session.query(_func.count(LegalQACache.id)).scalar() or 0
+        total_hits = db.session.query(_func.coalesce(_func.sum(LegalQACache.hits), 0)).scalar() or 0
+        top = (LegalQACache.query
+               .order_by(LegalQACache.hits.desc(), LegalQACache.last_used_at.desc())
+               .limit(10).all())
+        return jsonify({
+            'ok': True,
+            'cached_questions': int(total),
+            'total_cache_hits': int(total_hits),
+            'estimated_tokens_saved': int(total_hits) * 1500,  # ~1.5k tokens per LLM call
+            'top_questions': [{
+                'question': r.question_text[:200],
+                'hits': r.hits or 0,
+                'mode': r.mode,
+                'cited_act': r.cited_act,
+                'last_used_at': r.last_used_at.isoformat() if r.last_used_at else None,
+            } for r in top],
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/legal-library/cache/clear', methods=['POST'])
+@login_required
+def api_legal_library_cache_clear():
+    """Admin: purge the legal Q&A cache (RAM + DB). Use after a big
+    library update so stale answers don't keep getting served."""
+    try:
+        from ai.legal_qa import cache_clear_all
+        n = cache_clear_all()
+        return jsonify({'ok': True, 'deleted': int(n)})
+    except Exception as e:
         return jsonify({'ok': False, 'error': str(e)}), 500
 
 

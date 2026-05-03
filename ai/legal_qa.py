@@ -7,13 +7,17 @@ import time
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
 
-# ── Module-level Q&A cache ──────────────────────────────────────────────
-# Same question → same answer, served from RAM. Saves a full Anthropic
-# round-trip + several KB of excerpt tokens for repeat asks like
-# "who can be witness", "what is geran", "what's RPGT". Bounded LRU-ish:
-# expire after _CACHE_TTL seconds, evict oldest when over _CACHE_MAX.
+# ── Two-tier Q&A cache ──────────────────────────────────────────────────
+# L1: in-process RAM dict — sub-millisecond, but per-worker and wiped on
+#     restart.
+# L2: LegalQACache table — shared across users, testators, workers, and
+#     deploys. Survives restarts. Keyed by a normalised question key.
+#
+# Lookup order: L1 → L2 → Anthropic.
+# On L2 hit we backfill L1 so subsequent asks in the same process are
+# zero-DB. On Anthropic hit we write through to BOTH tiers.
 _ANSWER_CACHE: dict = {}     # {normalised_q: (timestamp, answer_body)}
-_CACHE_TTL = 60 * 60 * 24    # 24 hours
+_CACHE_TTL = 60 * 60 * 24    # 24h L1 freshness; L2 doesn't expire
 _CACHE_MAX = 200
 
 
@@ -23,28 +27,99 @@ def _cache_key(text: str) -> str:
     t = (text or '').strip().lower()
     t = re.sub(r'[^\w\s%]', '', t)   # strip punctuation
     t = re.sub(r'\s+', ' ', t)
-    return t
+    return t[:500]  # match LegalQACache.question_key column width
 
 
 def _cache_get(key: str):
+    """Two-tier read: RAM first, DB second. Returns answer text or None."""
+    if not key:
+        return None
+    # L1
     hit = _ANSWER_CACHE.get(key)
-    if not hit:
-        return None
-    ts, body = hit
-    if time.time() - ts > _CACHE_TTL:
+    if hit:
+        ts, body = hit
+        if time.time() - ts <= _CACHE_TTL:
+            return body
         _ANSWER_CACHE.pop(key, None)
-        return None
-    return body
+    # L2 — DB
+    try:
+        from database import db, LegalQACache
+        from datetime import datetime as _dt
+        row = LegalQACache.query.filter_by(question_key=key).first()
+        if row and row.answer_text:
+            # Bump usage stats + backfill L1
+            try:
+                row.hits = (row.hits or 0) + 1
+                row.last_used_at = _dt.utcnow()
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            _ANSWER_CACHE[key] = (time.time(), row.answer_text)
+            return row.answer_text
+    except Exception:
+        pass
+    return None
 
 
-def _cache_set(key: str, body: str):
+def _cache_set(key: str, body: str, *, question_text: str = '',
+               cited_act: str = None, mode: str = 'library'):
+    """Two-tier write: RAM + DB upsert."""
     if not key or not body:
         return
+    # L1 with eviction
     if len(_ANSWER_CACHE) >= _CACHE_MAX:
-        # Evict oldest
         oldest = min(_ANSWER_CACHE.items(), key=lambda kv: kv[1][0])[0]
         _ANSWER_CACHE.pop(oldest, None)
     _ANSWER_CACHE[key] = (time.time(), body)
+    # L2 — DB upsert
+    try:
+        from database import db, LegalQACache
+        from datetime import datetime as _dt
+        row = LegalQACache.query.filter_by(question_key=key).first()
+        now = _dt.utcnow()
+        if row:
+            # Refresh stored answer if it changed (e.g. library updated)
+            row.answer_text = body
+            row.cited_act = cited_act or row.cited_act
+            row.mode = mode or row.mode
+            row.last_used_at = now
+        else:
+            row = LegalQACache(
+                question_key=key,
+                question_text=(question_text or '')[:5000],
+                answer_text=body,
+                cited_act=cited_act,
+                mode=mode,
+                hits=0,            # 0 because this counts cache HITS, not initial save
+                created_at=now,
+                last_used_at=now,
+            )
+            db.session.add(row)
+        db.session.commit()
+    except Exception:
+        try:
+            from database import db as _db
+            _db.session.rollback()
+        except Exception:
+            pass
+
+
+def cache_clear_all() -> int:
+    """Admin: purge both cache tiers (e.g. after a library update). Returns
+    the number of DB rows removed."""
+    _ANSWER_CACHE.clear()
+    try:
+        from database import db, LegalQACache
+        n = LegalQACache.query.delete()
+        db.session.commit()
+        return int(n or 0)
+    except Exception:
+        try:
+            from database import db as _db
+            _db.session.rollback()
+        except Exception:
+            pass
+        return 0
 
 
 _QUESTION_STARTERS = (
@@ -270,6 +345,7 @@ No preface, no filler, no apologies, no "I hope this helps"."""
             "i am not certain", "not 100% sure", 'not entirely sure',
             'cannot answer with certainty', 'unable to answer',
         ))
+        cited_act_value = None  # captured for cache telemetry
         for ln in lines:
             stripped_ln = ln.strip()
             # Detect a citation line (with or without ** **)
@@ -283,6 +359,7 @@ No preface, no filler, no apologies, no "I hope this helps"."""
                     or any(_re_post.search(p, cite_value) for p in _COPOUT_PATTERNS)):
                     continue
                 real_citation = True
+                cited_act_value = cite_match.group(1).strip().rstrip('.')[:200]
             # Strip Example line too if don't-know
             if is_dont_know and _re_post.match(
                     r'^\*?\*?example\*?\*?\s*:', stripped_ln, _re_post.IGNORECASE):
@@ -295,11 +372,23 @@ No preface, no filler, no apologies, no "I hope this helps"."""
         # citation. Listing every Act the library happens to hold is noise
         # (client: "do not list down all the acts").
         footer = ''
+        # Decide which mode label to store in the cache (telemetry).
+        if is_dont_know:
+            cache_mode = 'dontknow'
+        elif real_citation:
+            cache_mode = 'library'
+        elif matched_titles:
+            cache_mode = 'unsure'
+        else:
+            cache_mode = 'general'
 
         out = body + footer
-        # Cache the body+footer (NOT the per-call resume button) so the next
-        # asker of the same question gets it instantly — no LLM round-trip.
-        _cache_set(ck, out)
+        # Persistent cache (RAM + DB). The next testator/user/worker who
+        # asks the same question gets it for free — zero Anthropic tokens.
+        # We exclude the per-call resume-step button from the cached value
+        # so it's recomputed for whoever's chat is actually active.
+        _cache_set(ck, out, question_text=user_text,
+                   cited_act=cited_act_value, mode=cache_mode)
         return _attach_resume(out)
     except Exception as e:
         # NEVER return empty silently. Surface a friendly fallback (with the
