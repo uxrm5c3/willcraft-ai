@@ -1588,6 +1588,22 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
 
     parts.append("_Tap **Accept** to add this property to your will, or **Skip** to come back later._")
 
+    # ── Data source summary (helps spot phantom assets from email text) ──
+    _enriched_from = ex.get('_enriched_from') or []
+    _msg_ctx = (ex.get('_message_context') or '').strip()
+    if _enriched_from or _msg_ctx:
+        _src_lines = []
+        if _enriched_from:
+            _src_lines.append(
+                f"  🗂 Fields auto-filled from: `{'`, `'.join(set(s.split('.')[0] for s in _enriched_from))}`"
+            )
+        if _msg_ctx:
+            _preview = _msg_ctx[:300].replace('\n', ' ').strip()
+            if len(_msg_ctx) > 300:
+                _preview += '…'
+            _src_lines.append(f"  📨 Message context used for enrichment:\n  > _{_preview}_")
+        parts.append("**🔍 Data sources (how fields were filled):**\n" + '\n'.join(_src_lines))
+
     # ── 3 clean action buttons — always the same, no conditionals ──────
     quick = [
         {'label': '✅ Accept', 'value': 'inventory confirm'},

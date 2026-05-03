@@ -961,6 +961,16 @@
       <button id="car-close" aria-label="Close"
         class="absolute top-3 right-4 text-white text-3xl leading-none hover:text-gray-300 z-10">&#215;</button>
 
+      <!-- Open in new tab button -->
+      <a id="car-newtab" href="#" target="_blank" rel="noopener"
+        aria-label="Open in new tab"
+        class="absolute top-3 right-14 text-white/80 hover:text-white z-10
+               bg-black/30 hover:bg-black/60 rounded px-2 py-1 text-xs font-medium
+               flex items-center gap-1 no-underline transition-colors"
+        onclick="event.stopPropagation()">
+        &#128196; new tab
+      </a>
+
       <!-- Counter -->
       <div id="car-counter"
         class="absolute top-3 left-1/2 -translate-x-1/2 text-white text-sm font-medium bg-black/40 px-3 py-1 rounded-full z-10">
@@ -1046,6 +1056,7 @@
     const prevBtn  = document.getElementById('car-prev');
     const nextBtn  = document.getElementById('car-next');
     const label    = document.getElementById('car-label');
+    const newTab   = document.getElementById('car-newtab');
 
     const url = _carouselUrls[_carouselIdx];
     const n   = _carouselUrls.length;
@@ -1055,6 +1066,9 @@
     img.onload = () => { img.style.opacity = '1'; };
     img.src = url;
     img.alt = `Image ${_carouselIdx + 1} of ${n}`;
+
+    // Keep the "open in new tab" link pointing at the current image
+    if (newTab) newTab.href = url;
 
     counter.textContent = `${_carouselIdx + 1} / ${n}`;
     // Extract filename from URL path (last segment after the last /)
