@@ -3724,9 +3724,20 @@ def api_chat_message(client_id):
     # only gate/fill results set it; normal confirm/skip results do not.
     _fill_override = (isinstance(just_inventory, dict)
                       and bool(just_inventory.get('reply_override')))
-    plan = plan_turn(user_text, artifacts, will_snapshot,
-                     pending_ics=pending_ics, recent_text=recent_text,
-                     just_assigned=just, just_deleted=just_deleted)
+    try:
+        plan = plan_turn(user_text, artifacts, will_snapshot,
+                         pending_ics=pending_ics, recent_text=recent_text,
+                         just_assigned=just, just_deleted=just_deleted)
+    except Exception as _plan_err:
+        import traceback as _tb
+        _err_detail = _tb.format_exc()
+        app.logger.error(f'plan_turn crashed: {_err_detail}')
+        # If we have a fill override (e.g. restart gifts reply), still send it
+        if _fill_override:
+            plan = {'reply': just_inventory['reply_override'], 'proposed_patch': None,
+                    'clarifying_questions': [], 'advice': [], 'focus_attachments': []}
+        else:
+            return jsonify({'ok': False, 'error': f'Planner error: {_err_detail[:400]}'}), 500
     if _fill_override:
         plan['reply'] = just_inventory['reply_override']
 
