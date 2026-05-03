@@ -89,14 +89,9 @@ def plan_turn(
                 "them in. Reply 'confirm' when you're done."
             )
         elif just_kind.startswith('inventory_reviewed_'):
-            reply_parts.append(
-                f"✅ **{just_assigned.get('name','')}** queued for the wizard. "
-                "Next asset:"
-            )
+            pass  # card for the NEXT asset IS the headline — no prefix needed
         elif just_kind.startswith('inventory_skipped_'):
-            reply_parts.append(
-                f"⏭ Skipped **{just_assigned.get('name','')}**. Next asset:"
-            )
+            pass  # same — card follows immediately
         elif just_kind == 'inventory_unlink_pending':
             reply_parts.append(
                 f"✂️  Reviewing supporting docs for **{just_assigned.get('name','')}**…"
@@ -897,12 +892,86 @@ def _scan_text_for_property_fields(ex: Dict[str, Any], text: str,
                                      force_full: bool = False) -> Dict[str, Any]:
     """Single-pass scan of `text` for missing property fields.
 
-    Tries to fill: property_address, negeri, daerah.
+    Tries to fill: property_address, negeri, daerah, ownership_type,
+    ownership_share, _beneficiary_hint.
     Tags filled fields as `_enriched_from: ['<source_tag>.fieldname']`.
     Returns the (possibly mutated) ex dict.
     """
     if not text:
         return ex
+
+    # ── Ownership type (sole / joint) from message ────────────────────
+    # Only fill if not already confirmed via the guided gate
+    _manually = ex.get('_manually_edited') or []
+    _ow_locked = any('ownership=' in m for m in (_manually if isinstance(_manually, list) else []))
+    if not _ow_locked and not (ex.get('ownership_type') or '').strip():
+        _txt_l = text.lower()
+        # Patterns: "sole owner", "sendiri", "myself only", "saya sahaja"
+        _sole_re = re.compile(
+            r'\b(sole\s*owner|sendiri|myself\s*only|saya\s*sahaja|hak\s*penuh|full\s*ownership)\b',
+            re.I)
+        # Patterns: "joint owner", "bersama", "co-owner", "shared"
+        _joint_re = re.compile(
+            r'\b(joint|bersama|co[-\s]?owner|shared\s*ownership|berkongsi)\b', re.I)
+        if _sole_re.search(text):
+            ex['ownership_type'] = 'sole'
+            ex.setdefault('_enriched_from', []).append(f'{source_tag}.ownership_type')
+        elif _joint_re.search(text):
+            ex['ownership_type'] = 'joint'
+            ex.setdefault('_enriched_from', []).append(f'{source_tag}.ownership_type')
+            # Try to extract share (e.g. "1/2", "50%", "half share")
+            _share_m = re.search(r'(\d+/\d+|\d+\s*%|half\s*share|1\s*half)', text, re.I)
+            if _share_m:
+                raw = _share_m.group(1).strip()
+                if re.search(r'half', raw, re.I):
+                    raw = '1/2'
+                ex['ownership_share'] = raw
+                ex.setdefault('_enriched_from', []).append(f'{source_tag}.ownership_share')
+
+    # ── Beneficiary hint from message ─────────────────────────────────
+    if not (ex.get('_beneficiary_hint') or '').strip():
+        # Two-step: keyword match (case-insensitive) then title-case name scan
+        _kw_re = re.compile(
+            r'(?:give\s+to|kepada|beneficiary[:\s]+|to\s+be\s+given\s+to|'
+            r'pass\s+to|left\s+to|bequeath\s+to)\s+', re.I)
+        _kw_m = _kw_re.search(text)
+        if _kw_m:
+            after = text[_kw_m.end():]
+            # Collect leading title-case words (ignore lowercase relationship words)
+            _name_parts = []
+            _stop_words = {'my', 'the', 'all', 'each', 'whom', 'any', 'her',
+                           'him', 'them', 'children', 'child', 'son', 'daughter',
+                           'wife', 'husband', 'spouse', 'me', 'us', 'our', 'his',
+                           'their', 'beneficiaries', 'heirs', 'estate', 'a', 'an',
+                           'and', 'or', 'bin', 'binte', 'binti', 'bte', 'bt'}
+            _rel_words = {'my', 'his', 'her', 'our', 'their', 'the',
+                          'son', 'daughter', 'wife', 'husband', 'spouse',
+                          'child', 'children', 'sibling', 'brother', 'sister',
+                          'father', 'mother', 'parent', 'parents',
+                          'eldest', 'youngest', 'second', 'third'}
+            _in_name = False  # once we've started collecting name words, stop on lowercase
+            for word in re.split(r'\s+', after.strip())[:8]:
+                clean = re.sub(r'[^a-zA-Z\'/\\-]', '', word)
+                if not clean:
+                    break
+                cl = clean.lower()
+                if cl in ('bin', 'binte', 'binti', 'bte', 'bt', 'a/l', 'a/p'):
+                    if _name_parts:  # linking word only valid mid-name
+                        _name_parts.append(clean)
+                    continue
+                if cl in _stop_words or cl in _rel_words:
+                    if _in_name:
+                        break  # already started a name, stop here
+                    continue  # skip relationship word before name starts
+                if clean[0].isupper():
+                    _name_parts.append(clean)
+                    _in_name = True
+                elif _in_name:
+                    break  # lowercase word after name started → stop
+            if _name_parts and len(' '.join(_name_parts)) >= 3:
+                ex['_beneficiary_hint'] = ' '.join(_name_parts)[:100]
+                ex.setdefault('_enriched_from', []).append(f'{source_tag}._beneficiary_hint')
+
     need_addr = not (ex.get('property_address') or '').strip()
     need_negeri = not (ex.get('negeri') or '').strip()
     need_daerah = not (ex.get('daerah') or '').strip()

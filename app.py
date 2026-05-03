@@ -4880,13 +4880,13 @@ def _try_handle_restart_gifts(client_id: str, user_text: str):
         db.session.rollback()
         return None
 
-    # 3. Clear _inventoried + _skipped from all property/bank/vehicle docs
-    kinds = ('property_title', 'property_spa', 'property_tax', 'property_transfer',
-             'utility_bill', 'bank_letter', 'bank_statement', 'vehicle',
-             'chat_inbox', 'other')
+    # 3. Clear _inventoried + _skipped from ALL non-deleted, non-nric docs.
+    # Use a negative filter so new kinds (loan_agreement, insurance, etc.)
+    # are automatically included without updating this list every time.
+    _SKIP_CATS = ('nric', 'duplicate', 'deleted', 'voice')
     docs = Document.query.filter(
         Document.client_id == client_id,
-        Document.category.in_(kinds),
+        ~Document.category.in_(_SKIP_CATS),
         Document.deleted_at.is_(None),
     ).all()
     changed = 0
