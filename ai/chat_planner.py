@@ -74,9 +74,22 @@ def plan_turn(
     # ── Acknowledge an assignment / deletion from the previous turn ─────
     just_kind = (just_assigned or {}).get('kind', 'identity')
     if just_assigned:
-        reply_parts.append(
-            f"✅ Saved **{just_assigned.get('name','')}** as **{just_assigned.get('role','')}**."
-        )
+        # Special-case the asset-inventory gate so the ack reads as a
+        # phase transition, not a "saved X as Y" line.
+        if just_kind == 'assets_confirmed':
+            reply_parts.append(
+                "✅ **Asset inventory locked in.** Now let's assign each one "
+                "to a beneficiary."
+            )
+        elif just_kind == 'assets_more':
+            reply_parts.append(
+                "👍 Got it — drop the additional documents and I'll cluster "
+                "them in. Reply 'confirm' when you're done."
+            )
+        else:
+            reply_parts.append(
+                f"✅ Saved **{just_assigned.get('name','')}** as **{just_assigned.get('role','')}**."
+            )
     if just_deleted:
         n = just_deleted.get('count', 1)
         suffix = f" ({n} duplicate{'s' if n != 1 else ''} removed)" if n > 1 else ''
@@ -113,6 +126,26 @@ def plan_turn(
     # ── 3. STEP 2: confirm Testator details ─────────────────────────────
     if s1.get('full_name') and not _is_confirmed(current_will_data, 'testator'):
         reply_parts.append(_step2_question(s1))
+        return _wrap(reply_parts, questions, patch, advice)
+
+    # ── 3.5 ASSET INVENTORY (NEW) — collect & confirm ALL gifts FIRST ──
+    # Mirror of the identity flow: gather every asset (clustered by
+    # property) and let the user say "yes that's everything" before
+    # we start asking "who inherits this?". Without this gate the chat
+    # interleaves uploads with assignment questions and the user can't
+    # see the full picture.
+    completed = current_will_data.get('completed_steps') or []
+    pending_gifts = current_will_data.get('pending_gifts') or {}
+    has_any_assets = any(pending_gifts.get(k) for k in ('property', 'bank', 'vehicle'))
+    if 'assets_confirmed' not in completed:
+        # Show the inventory + ask for confirmation. If the user answered
+        # 'yes / confirm / done' last turn, _try_confirm_assets in app.py
+        # would have stamped 'assets_confirmed' and we'd skip past this.
+        if has_any_assets:
+            reply_parts.append(_assets_inventory_question(pending_gifts))
+            return _wrap(reply_parts, questions, patch, advice)
+        # Zero assets uploaded yet — prompt for them before moving on.
+        reply_parts.append(_assets_prompt_for_uploads())
         return _wrap(reply_parts, questions, patch, advice)
 
     # ── 4. STEP 3: Executor (main + substitute) ─────────────────────────
@@ -535,6 +568,84 @@ def _format_property_description(ex: Dict[str, Any]) -> str:
     if held:
         parts.append(', '.join(held))
     return '\n\n'.join(parts)
+
+
+def _assets_inventory_question(pending_gifts: Dict[str, Any]) -> str:
+    """Show the full clustered asset inventory and ask the user to confirm
+    it's complete BEFORE we start assigning beneficiaries to each one.
+
+    Mirrors the identity flow: collect every IC first, then assign roles.
+    Here: collect every asset (clustering multi-image dumps under the same
+    property), then assign beneficiaries.
+    """
+    props = pending_gifts.get('property') or []
+    banks = pending_gifts.get('bank') or []
+    vehicles = pending_gifts.get('vehicle') or []
+    n_total = len(props) + len(banks) + len(vehicles)
+    parts = [
+        f"### 📋 Asset inventory ({n_total} item{'s' if n_total != 1 else ''})",
+        ("Before we ask **who inherits what**, let's confirm the full list "
+         "of assets you've uploaded. I've grouped multiple uploads of the "
+         "same property together (geran + SPA + cukai tanah + utility bills "
+         "all count as ONE property)."),
+    ]
+    if props:
+        parts.append(f"**🏠 Properties ({len(props)})**")
+        for i, p in enumerate(props, 1):
+            ex = p.get('extracted') or {}
+            label = (ex.get('property_address') or ex.get('description')
+                     or ex.get('title_number') or 'Unnamed property')
+            n_support = len(p.get('support_docs') or [])
+            extra = f" _(+ {n_support} supporting doc{'s' if n_support != 1 else ''})_" if n_support else ''
+            parts.append(f"  {i}. **{label[:80]}**{extra}")
+    if banks:
+        parts.append(f"**🏦 Bank accounts ({len(banks)})**")
+        for i, b in enumerate(banks, 1):
+            ex = b.get('extracted') or {}
+            bn = ex.get('bank_name', '').strip() or 'Bank'
+            an = ex.get('account_number', '').strip()
+            parts.append(f"  {i}. {bn} — `{an or '(account no unread)'}`")
+    if vehicles:
+        parts.append(f"**🚗 Vehicles ({len(vehicles)})**")
+        for i, v in enumerate(vehicles, 1):
+            ex = v.get('extracted') or {}
+            desc = (ex.get('description') or ex.get('vehicle_make')
+                    or 'Vehicle')
+            reg = ex.get('reg_number') or ex.get('registration_number') or ''
+            parts.append(f"  {i}. {desc} {reg}".rstrip())
+
+    parts.append(
+        "**Is this everything you'd like to include in the will?**\n\n"
+        "If yes I'll start asking who inherits each. If no, upload more "
+        "documents now (drag & drop or attach) — I'll cluster them by "
+        "property automatically."
+    )
+    quick = [
+        {'label': "✅ Yes, that's everything", 'value': 'confirm assets'},
+        {'label': '📎 I have more to upload', 'value': 'i have more to upload'},
+    ]
+    return '\n\n'.join(parts) + _qr_marker(quick)
+
+
+def _assets_prompt_for_uploads() -> str:
+    """No assets uploaded yet — gentle prompt to drop docs in."""
+    parts = [
+        "### 📋 Asset inventory",
+        ("No assets uploaded yet. Please share documents for what you'd "
+         "like to include in the will:"),
+        ("• 🏠 **Property** — geran / land title (back + front), and any "
+         "SPA, Cukai Tanah, utility bills for the same property\n"
+         "• 🏦 **Bank** — statement, passbook, FD certificate\n"
+         "• 🚗 **Vehicle** — JPJ grant or road tax\n"
+         "• 💼 **EPF / insurance / shares** — statement or policy"),
+        ("Drop multiple images of the same property in one go — I'll "
+         "cluster them automatically. Tap 'Skip' if you don't have any "
+         "specific assets to gift (residuary clause covers everything else)."),
+    ]
+    quick = [
+        {'label': "I'll skip specific gifts", 'value': 'confirm assets'},
+    ]
+    return '\n\n'.join(parts) + _qr_marker(quick)
 
 
 def _step6_property_question(pending_props, recent_text, will_data):

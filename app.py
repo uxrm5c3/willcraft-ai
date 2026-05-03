@@ -3113,6 +3113,13 @@ def _will_data_snapshot(will_record):
         'date_of_birth': p.date_of_birth or '',
         'document_id': p.document_id or '',
     } for p in persons]
+    # `completed_steps` carries chat-flow markers like 'assets_confirmed'
+    # that the planner uses to gate ordering — collect ALL gifts before
+    # asking who inherits, just like we collect ALL identities before
+    # asking who's the executor.
+    completed = _j(will_record.completed_steps, [])
+    if not isinstance(completed, list):
+        completed = []
     return {
         'will_id': will_record.id,
         'title': will_record.title,
@@ -3126,6 +3133,7 @@ def _will_data_snapshot(will_record):
         'step7': _j(will_record.step7_data, {}),
         'step8': _j(will_record.step8_data, {}),
         'identities': identities,
+        'completed_steps': completed,
     }
 
 
@@ -3420,6 +3428,12 @@ def api_chat_message(client_id):
 
     just_assigned = _try_assign_pending_identity(client_id, user_text)
     just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)
+    # If user replied "confirm assets" / "i have more to upload" at the
+    # asset-inventory gate, stamp the marker (or clear it) so the planner
+    # advances past the gate to the per-asset assignment step.
+    just_assets_gate = None
+    if not just_assigned and not just_deleted:
+        just_assets_gate = _try_handle_assets_gate(client_id, user_text)
     # If past Step 1, attempt executor save then beneficiaries save then
     # gift-delete then gift-save. Delete BEFORE save so a "delete" reply
     # at a Step-6 property card removes the doc instead of trying to parse
@@ -3453,7 +3467,7 @@ def api_chat_message(client_id):
     will_snapshot = _will_data_snapshot(active_will)
     # Treat any save as "just_assigned" so the planner acknowledges + advances
     just = (just_assigned or just_executor or just_benef
-            or just_gift_deleted or just_gift)
+            or just_gift_deleted or just_gift or just_assets_gate)
     will_snapshot['pending_gifts'] = pending_gifts
     plan = plan_turn(user_text, artifacts, will_snapshot,
                      pending_ics=pending_ics, recent_text=recent_text,
@@ -4125,6 +4139,62 @@ def _try_save_beneficiaries(client_id: str, user_text: str):
     db.session.commit()
     names = ', '.join(p.full_name for p in final)
     return {'name': names, 'role': f'{len(final)} beneficiaries', 'kind': 'beneficiaries'}
+
+
+_ASSETS_CONFIRM_TOKENS = (
+    'confirm assets', 'thats everything', "that's everything",
+    'yes thats all', "yes that's all", 'all uploaded',
+    'confirm', 'done', 'looks good', 'looks right',
+    "i'll skip specific gifts", 'skip specific gifts', 'no specific gifts',
+)
+_ASSETS_MORE_TOKENS = (
+    'i have more to upload', 'more to upload', 'add more',
+    'upload more', 'not done', 'wait', 'one more',
+)
+
+
+def _try_handle_assets_gate(client_id: str, user_text: str):
+    """Handle the asset-inventory confirmation step. The planner inserts
+    a confirmation gate AFTER all uploads but BEFORE per-asset gifts to
+    mirror the identity flow ('collect every IC then assign roles').
+
+    - "confirm assets" / "yes that's everything" → stamp 'assets_confirmed'
+      in the will's completed_steps so the planner advances to executor →
+      beneficiaries → per-asset gift assignment.
+    - "i have more to upload" → just acknowledge so the planner re-asks
+      the inventory question on the next turn (giving the user a beat to
+      attach more files).
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    if not t:
+        return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+    except (json.JSONDecodeError, TypeError):
+        completed = []
+    if not isinstance(completed, list):
+        completed = []
+    # Skip if already confirmed — the gate's gone, this isn't the right
+    # handler for whatever they typed.
+    if 'assets_confirmed' in completed:
+        return None
+    if any(tok in t for tok in _ASSETS_MORE_TOKENS):
+        return {'name': 'asset upload', 'role': 'pending more uploads',
+                'kind': 'assets_more'}
+    if any(tok == t or t.startswith(tok) for tok in _ASSETS_CONFIRM_TOKENS):
+        completed.append('assets_confirmed')
+        will.completed_steps = json.dumps(completed)
+        db.session.commit()
+        return {'name': 'asset inventory', 'role': 'confirmed complete',
+                'kind': 'assets_confirmed'}
+    return None
 
 
 def _try_delete_pending_gift(client_id: str, user_text: str):
