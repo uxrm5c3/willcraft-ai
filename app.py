@@ -5089,7 +5089,7 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
                         cleaned = _clean_email_body(raw_ctx)
                         summary = _summarise_message(cleaned) if cleaned else ''
                         if not summary:
-                            return
+                            summary = '_Could not generate summary — review exhibits below._'
                         import json as _json
                         _quick = _json.dumps([
                             {'label': '▶️ Start matching', 'value': 'inbox start'}

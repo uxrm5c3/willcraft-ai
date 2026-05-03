@@ -417,21 +417,21 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
     warn_note = " ⚠️ Some may need review." if has_wrong else ""
     has_text = bool(_clean_email_body(user_text or ''))
 
+    quick = [{'label': '▶️ Start matching', 'value': 'inbox start'}]
+    qr = f'<!--quickreplies:{json.dumps(quick)}-->'
+
     lines = [
         f"## 📋 {n} exhibit{'s' if n != 1 else ''} received{warn_note}",
     ]
     if has_text:
-        lines.append("_Analysing your message and documents…_")
-    else:
-        # No message text — skip loading state, go straight to instructions
         lines.append(
-            "_No message text — only attachments received. "
-            "Tap **▶️ Start matching** when ready._"
+            "_Analysing your message — summary will appear below in a moment. "
+            "Review exhibits then tap **▶️ Start matching** when ready._"
         )
-        quick = [{'label': '▶️ Start matching', 'value': 'inbox start'}]
-        return '\n'.join(lines) + f'<!--quickreplies:{json.dumps(quick)}-->'
+    else:
+        lines.append("_No message text — only attachments received._")
 
-    return '\n'.join(lines)
+    return '\n'.join(lines) + qr
 
 
 def _intake_summary(artifacts: List[Dict[str, Any]]) -> str:
