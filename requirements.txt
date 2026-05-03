@@ -10,3 +10,4 @@ python-dotenv==1.0.1
 Pillow>=10.0.0
 pillow-heif>=0.13.0
 requests>=2.31.0
+pytesseract>=0.3.13

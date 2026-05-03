@@ -90,20 +90,46 @@ def classify_batch(file_paths: list, message_context: str = '') -> dict:
         return {"groups": []}
 
     # Limit to first 12 images — covers most real-world batches.
-    # Beyond that we'd hit API limits; remaining images fall back to
-    # individual classify_file() calls without batch context.
     paths_to_analyse = file_paths[:12]
     n = len(paths_to_analyse)
 
-    content_blocks = []
+    # ── OCR all images first (free, Tesseract) ────────────────────────────────
+    # Then send text-only to Haiku — avoids expensive image token cost.
+    from ai.ocr_preprocessor import ocr_extract, regex_extract
+
+    image_summaries = []
     for i, fp in enumerate(paths_to_analyse):
-        try:
-            cb = _make_content_block(fp)
-            content_blocks.append({"type": "text", "text": f"**Image {i+1} of {n}:**"})
-            content_blocks.append(cb)
-        except Exception:
-            content_blocks.append({"type": "text",
-                                    "text": f"**Image {i+1} of {n}:** (could not load)"})
+        raw = ocr_extract(fp)
+        fields = regex_extract(raw)
+        # Build a compact summary for each image
+        parts = [f"**Image {i+1} of {n}**"]
+        if fields['raw_text_len'] < 50:
+            parts.append("(unreadable / blank)")
+        else:
+            if fields['doc_type']:
+                parts.append(f"Likely type: {fields['doc_type']} "
+                             f"(confidence {fields['confidence']:.0%})")
+            if fields['lot_number']:
+                parts.append(f"Lot: {fields['lot_number']}")
+            if fields['title_number']:
+                parts.append(f"Title: {fields['title_number']}")
+            if fields['bank_name']:
+                parts.append(f"Bank: {fields['bank_name']}")
+            if fields['owner_name']:
+                parts.append(f"Owner: {fields['owner_name']}")
+            if fields['property_address']:
+                parts.append(f"Address: {fields['property_address'][:80]}")
+            if fields['mukim']:
+                parts.append(f"Mukim: {fields['mukim']}")
+            if fields['daerah']:
+                parts.append(f"Daerah: {fields['daerah']}")
+            # Include a short excerpt of the raw OCR for Haiku to reason over
+            excerpt = raw[:300].replace('\n', ' ').strip()
+            if excerpt:
+                parts.append(f"OCR excerpt: {excerpt}")
+        image_summaries.append(' | '.join(parts))
+
+    images_block = '\n'.join(image_summaries)
 
     ctx_section = ''
     if message_context:
@@ -115,7 +141,15 @@ def classify_batch(file_paths: list, message_context: str = '') -> dict:
             f"one property. Also look for a beneficiary named in the text."
         )
 
-    prompt = f"""You are analysing {n} images sent together in one WhatsApp/email message to a Malaysian will-writing consultant.{ctx_section}
+    prompt = f"""You are analysing {n} documents sent together in one WhatsApp/email message to a Malaysian will-writing consultant.
+
+The documents have been OCR-scanned. Here are the extracted text summaries:{ctx_section}
+
+━━━ DOCUMENT SUMMARIES ━━━
+{images_block}
+━━━ END SUMMARIES ━━━
+
+
 
 ━━━ YOUR TASK ━━━
 Group these images by PROPERTY / ASSET IDENTITY.
@@ -186,14 +220,12 @@ Return ONLY this JSON (no other text):
 }}
 ```"""
 
-    content_blocks.append({"type": "text", "text": prompt})
-
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = client.messages.create(
-            model=CLAUDE_MODEL_CHEAP,
+            model=CLAUDE_MODEL_CHEAP,    # Haiku — text-only, no images
             max_tokens=1000,
-            messages=[{"role": "user", "content": content_blocks}]
+            messages=[{"role": "user", "content": prompt}]
         )
     except Exception as e:
         return {"groups": [], "_error": str(e)}
@@ -251,167 +283,316 @@ Return ONLY this JSON (no other text):
     return {"groups": normalised}
 
 
-def classify_file(file_path: str, group_context: dict = None) -> dict:
-    """Return {kind, confidence, reason}. Falls back to 'other' on any error.
+def classify_file(file_path: str, group_context: dict = None,
+                  testator_profile: dict = None) -> dict:
+    """Classify a document image/PDF and extract key fields.
 
-    group_context: optional dict from classify_batch() for this image's group.
-    Injected into the prompt so the classifier knows upfront what asset this
-    image belongs to (e.g. "This image is page 3 of 5 for a Geran, Lot 127082").
+    Pipeline (cheapest-first, no Sonnet vision):
+      1. Tesseract OCR  → raw text
+      2. Regex extract  → doc_type + fields (free)
+         confidence ≥ 0.70  →  return immediately (no AI call)
+         confidence 0.30–0.69 → Haiku text classify (~$0.001)
+         raw_text < 50 chars  → flag manual_review (no AI call)
+      3. Testator match: compare owner_name / ic_number vs testator_profile
 
-    Cost telemetry: if the caller wraps this in `cost_tracker.track_context(...)`,
-    each Anthropic call is logged to ApiCallLog with client_id/will_id/user_id
-    auto-attached. No-op outside a tracked context.
+    Args:
+        file_path:        absolute path to the file
+        group_context:    dict from classify_batch() for this image's group
+        testator_profile: {'name': str, 'ic': str} — testator identity for matching
+
+    Returns dict with keys:
+        kind, confidence, reason, purpose, property_hint, person_name,
+        will_relevant, custom_type,
+        lot_number, title_number, property_address, bank_name,
+        mukim, daerah, negeri,
+        owner_name, ic_number,
+        name_match (bool|None), ic_match (bool|None),
+        manual_review (bool)
     """
-    fallback = {"kind": "other", "confidence": "low", "reason": "Could not classify"}
-    try:
-        client_api = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        content_block = _make_content_block(file_path)
-    except Exception as e:
-        return {**fallback, "reason": f"Could not open file: {e}"}
+    from ai.ocr_preprocessor import ocr_extract, regex_extract
+
+    fallback = {
+        "kind": "other", "confidence": "low", "reason": "Could not classify",
+        "manual_review": False, "will_relevant": True,
+        "custom_type": "", "person_name": "", "purpose": "", "property_hint": "",
+        "lot_number": "", "title_number": "", "property_address": "",
+        "bank_name": "", "mukim": "", "daerah": "", "negeri": "",
+        "owner_name": "", "ic_number": "", "name_match": None, "ic_match": None,
+    }
+
+    if not file_path or not __import__('os').path.isfile(file_path):
+        return {**fallback, "reason": "File not found"}
+
+    # ── Stage 1: OCR ─────────────────────────────────────────────────────────
+    raw_text = ocr_extract(file_path)
+    fields   = regex_extract(raw_text)
+
+    # ── Stage 2a: Unreadable → flag for manual review, no AI ─────────────────
+    if fields['raw_text_len'] < 50:
+        return {
+            **fallback,
+            "kind": "other",
+            "confidence": "low",
+            "reason": "Image unreadable — manual review needed",
+            "manual_review": True,
+            "will_relevant": False,
+        }
+
+    # ── Stage 2b: High-confidence regex match → no AI needed ─────────────────
+    if fields['confidence'] >= 0.70 and fields['doc_type']:
+        result = _build_from_fields(fields, group_context, testator_profile)
+        return result
+
+    # ── Stage 2c: Has text but ambiguous → Haiku text-only classify (~$0.001) ─
+    if fields['raw_text_len'] >= 50:
+        result = _haiku_classify(raw_text, fields, group_context, testator_profile)
+        return result
+
+    return {**fallback, "manual_review": True,
+            "reason": "Could not determine document type"}
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers for classify_file
+# ---------------------------------------------------------------------------
+
+def _build_from_fields(fields: dict, group_context: dict = None,
+                       testator_profile: dict = None) -> dict:
+    """Build a classify_file result dict directly from regex-extracted fields."""
+    kind = fields['doc_type']
+    if kind not in KINDS:
+        kind = 'other'
+
+    conf_float = fields['confidence']
+    conf_label = 'high' if conf_float >= 0.85 else 'medium'
+
+    # Property hint: prefer lot number, fall back to address
+    prop_hint = fields.get('lot_number') or fields.get('property_address') or ''
+
+    # Batch group enrichment: fill missing fields from group identifiers
+    grp_idents = (group_context or {}).get('identifiers') or {}
+    for field in ('lot_number', 'title_number', 'mukim', 'daerah', 'negeri',
+                  'property_address', 'bank_name'):
+        if not fields.get(field) and grp_idents.get(field):
+            fields[field] = grp_idents[field]
+
+    will_rel = kind not in ('death_certificate', 'unrelated')
+    if kind == 'other':
+        will_rel = False
+
+    result = {
+        "kind":             kind,
+        "confidence":       conf_label,
+        "reason":           f"Identified by OCR keyword match (confidence {conf_float:.0%})",
+        "manual_review":    False,
+        "will_relevant":    will_rel,
+        "custom_type":      '',
+        "person_name":      fields.get('owner_name') or fields.get('ic_number') or '',
+        "purpose":          _kind_purpose(kind),
+        "property_hint":    prop_hint[:200],
+        "lot_number":       fields.get('lot_number', ''),
+        "title_number":     fields.get('title_number', ''),
+        "property_address": fields.get('property_address', ''),
+        "bank_name":        fields.get('bank_name', ''),
+        "mukim":            fields.get('mukim', ''),
+        "daerah":           fields.get('daerah', ''),
+        "negeri":           fields.get('negeri', ''),
+        "owner_name":       fields.get('owner_name', ''),
+        "ic_number":        fields.get('ic_number', ''),
+    }
+
+    result.update(_testator_match(fields, testator_profile))
+    return result
+
+
+def _haiku_classify(raw_text: str, fields: dict, group_context: dict = None,
+                    testator_profile: dict = None) -> dict:
+    """Call Claude Haiku with OCR text only (no image). ~$0.001 per call."""
+    fallback = {
+        "kind": "other", "confidence": "low", "manual_review": False,
+        "will_relevant": True, "custom_type": "", "person_name": "",
+        "purpose": "", "property_hint": "",
+        "lot_number": fields.get('lot_number', ''),
+        "title_number": fields.get('title_number', ''),
+        "property_address": fields.get('property_address', ''),
+        "bank_name": fields.get('bank_name', ''),
+        "mukim": fields.get('mukim', ''),
+        "daerah": fields.get('daerah', ''),
+        "negeri": fields.get('negeri', ''),
+        "owner_name": fields.get('owner_name', ''),
+        "ic_number": fields.get('ic_number', ''),
+        "name_match": None, "ic_match": None,
+        "reason": "Haiku classification failed — fallback",
+    }
 
     group_section = ''
     if group_context:
         kind_lbl = group_context.get('asset_kind', '')
         summary  = group_context.get('summary', '')
-        idents   = group_context.get('identifiers') or {}
-        ident_parts = [f"{k}: {v}" for k, v in idents.items() if v]
-        ident_str = ', '.join(ident_parts) if ident_parts else ''
-        n_images  = len(group_context.get('image_indices', []))
+        grp_idents = group_context.get('identifiers') or {}
+        ident_str = ', '.join(f"{k}: {v}" for k, v in grp_idents.items() if v)
         group_section = (
-            f"\n\n**BATCH GROUP CONTEXT (established by analysing all images together):**\n"
-            f"This image is one of {n_images} image(s) in a group identified as: "
-            f"`{kind_lbl}` — {summary}"
-            + (f"\nKnown identifiers: {ident_str}" if ident_str else '') +
-            f"\n\nUse this as strong prior context. Classify consistently with the group "
-            f"unless you have clear visual evidence this image is a DIFFERENT document type."
+            f"\n\nBATCH GROUP CONTEXT: this document is part of a group identified as "
+            f"'{kind_lbl}' — {summary}"
+            + (f"\nKnown identifiers: {ident_str}" if ident_str else '')
+            + "\nUse this as strong prior if consistent with the OCR text."
         )
 
-    try:
-        from config import CLAUDE_MODEL_FAST
-        msg = client_api.messages.create(
-            model=CLAUDE_MODEL_FAST,   # Sonnet — haiku misses headings on complex docs
-            max_tokens=400,
-            messages=[{
-                "role": "user",
-                "content": [
-                    content_block,
-                    {"type": "text", "text": f"""You are a Malaysian legal document expert with strong vision. Your job: read this image carefully and identify what the document IS — even if you have never seen this exact format before.{group_section}
+    # Pre-filled fields hint (regex found something, just not confident enough)
+    hints = []
+    for k in ('lot_number', 'ic_number', 'bank_name', 'owner_name'):
+        if fields.get(k):
+            hints.append(f"{k}: {fields[k]}")
+    hints_section = ('\n\nPartially extracted fields (regex, may be inaccurate):\n'
+                     + '\n'.join(hints)) if hints else ''
 
-━━━ STEP 1: READ FIRST ━━━
-Before classifying, scan the image for these signals (in priority order):
-1. **Main heading / title** (largest text at top — e.g. "GERAN", "SIJIL KEMATIAN", "PERJANJIAN PINJAMAN")
-2. **Issuing authority logo or name** (government department, bank name, company)
-3. **Form number** (e.g. BORANG 14A, Form JPN.DP01)
-4. **Key phrases** (lot number, IC number, account number, amount, date of death)
-5. **Language** (BM headings are common in Malaysian govt docs)
+    prompt = f"""You are a Malaysian legal document classifier. You have been given OCR-extracted text from a document image. Classify the document and extract key fields.{group_section}{hints_section}
 
-━━━ STEP 2: CLASSIFY (best-effort — always pick closest match) ━━━
+━━━ OCR TEXT (first 1200 chars) ━━━
+{raw_text[:1200]}
+━━━ END OCR TEXT ━━━
 
-Standard categories (use one):
-• **nric** — MyKad (photo + IC no. ######-##-####) or Malaysian passport
-• **property_title** — Land title: "HAKMILIK", "GERAN", "STRATA TITLE", "INDIVIDUAL TITLE". PTD seal. Has lot no. + "TUAN PUNYA BERDAFTAR"
-• **property_spa** — Sale & Purchase Agreement / Perjanjian Jual Beli.
-  Covers ALL pages of an SPA — not just the cover page. Classify as property_spa if you see ANY of:
-  - Heading: "PERJANJIAN JUAL BELI", "SALE AND PURCHASE AGREEMENT", "S&P", "SPA"
-  - Schedule pages: tables listing property details, purchase price, conditions, payment schedule within an SPA
-  - Signing/execution pages: signature blocks for Vendor + Purchaser + witnesses, stamp duty section, solicitor stamp — IF the surrounding context (other pages, text) indicates it is an SPA
-  - References to "Penjual" / "Pembeli" (Vendor / Purchaser) with a property address or lot number
-• **property_tax** — Cukai Tanah / Cukai Harta / Cukai Pintu / quit rent. Local council (MBJB, DBKL, MBPJ, MPJBT, MPS, MPK, MPPG, etc.)
-• **property_transfer** — BORANG 14A / 16A. "MEMORANDUM PINDAHMILIK". Transferor + Transferee sections
-• **utility_bill** — TNB / Air Selangor / SAJ / PBA / Indah Water / unifi / Maxis. Service address shown
-• **loan_agreement** — Loan/charge/mortgage document. Covers ALL pages — not just the cover page. Classify as loan_agreement if you see ANY of:
-  - Heading: "LOAN AGREEMENT", "PERJANJIAN PINJAMAN", "DEED OF ASSIGNMENT", "CHARGE", "BEBANAN", "FACILITY AGREEMENT", "LETTER OF OFFER"
-  - Bank name (RHB, Maybank, CIMB, Public Bank, HLB, AmBank, Alliance, BSN, Bank Islam, Bank Rakyat, UOB, OCBC, Affin, HSBC, Standard Chartered) present on any page with legal language
-  - Signing/execution pages: signature block labelled "BORROWER" / "PEMINJAM" / "CHARGOR" / "ASSIGNOR" + bank representative + witness — these are loan agreement pages even without the main heading
-  - References to "facility", "principal sum", "interest rate", "charge", "security" in a banking context
-  - Schedules listing repayment amounts, interest rates, property charged as security
-• **bank_letter** — Brief bank correspondence (welcome letter, account confirmation, redemption statement). NOT a statement or loan agreement
-• **bank_statement** — Transaction list with dates + amounts + running balance. Passbook, FD cert, e-statement
-• **insurance** — Policy schedule / takaful cert. Prudential, AIA, Great Eastern, Etiqa, Takaful Malaysia
-• **epf_kwsp** — EPF/KWSP logo. Member no. + contribution history. i-Akaun screenshot
-• **vehicle** — JPJ registration card (Kad Pendaftaran Kenderaan). Plate no. + chassis + engine cc
-• **will** — The document IS a will: titled "WASIAT TERAKHIR", "LAST WILL AND TESTAMENT", or "MY LAST WILL". Contains BOTH testator declaration AND executor appointment AND witness attestation clause. A DRAFT will also counts. Do NOT classify as will: letters about wills, probate orders, grant of probate, letters of administration, legal opinions about wills, redemption letters, discharge documents, loan signing pages.
-• **death_certificate** — Official government death registration. Look for ANY of:
-  - Headings: "SIJIL KEMATIAN", "CERTIFICATE OF DEATH", "DEATH CERTIFICATE"
-  - Fields: "TARIKH KEMATIAN" / "DATE OF DEATH", "SEBAB KEMATIAN" / "CAUSE OF DEATH", "TEMPAT KEMATIAN" / "PLACE OF DEATH"
-  - JPN (Jabatan Pendaftaran Negara) logo or stamp on a document listing a deceased person's name + death date
-  - Any form where a "date of death" field is filled in with a specific date
-  Set will_relevant=false, person_name=deceased full name.
-• **unrelated** — Clearly not an asset: birth cert, marriage cert, medical record, receipt, photo of people/objects, court order unrelated to property
+Classify into ONE of these categories:
+nric / property_title / property_spa / property_tax / property_transfer /
+utility_bill / bank_letter / loan_agreement / bank_statement / insurance /
+epf_kwsp / vehicle / will / death_certificate / unrelated / other
 
-⚡ INTERIOR PAGE RULE (very important):
-Many documents span multiple pages. The heading "LOAN AGREEMENT" or "PERJANJIAN JUAL BELI" only appears on page 1. Interior pages — schedules, conditions, signing/execution pages — may have NO heading at all, only signatures, tables, or legal text. If you see:
-- Signature blocks with "Borrower / Bank representative / Witness" → loan_agreement
-- Signature blocks with "Vendor / Purchaser / Witness / Solicitor" + property address → property_spa
-- Tabular schedules referencing "facility amount", "interest", "security" → loan_agreement
-- Tabular schedules referencing "purchase price", "property", "conditions" → property_spa
-Use the batch group context if provided — it tells you what type the cover page was classified as.
+Rules:
+- GERAN / HAKMILIK / TUAN PUNYA BERDAFTAR → property_title
+- PERJANJIAN JUAL BELI / VENDOR / PURCHASER / PENJUAL / PEMBELI → property_spa
+- FACILITY AGREEMENT / BORROWER / CHARGOR / PEMINJAM / BEBANAN → loan_agreement
+- CUKAI TANAH / CUKAI HARTA / QUIT RENT → property_tax
+- SIJIL KEMATIAN / DATE OF DEATH / TARIKH KEMATIAN → death_certificate (will_relevant=false)
+- Interior/signing pages with no heading: use party labels (Borrower→loan, Vendor→spa)
+- TNB / AIR SELANGOR / SAJ / utility company → utility_bill (good for address)
+- Only classify as "will" if WASIAT or LAST WILL AND TESTAMENT + executor structure visible
+- Use "other" + custom_type if none fit
 
-⚡ BEST-EFFORT RULE: If the document does NOT match any standard category, still provide:
-  - `kind`: the CLOSEST standard category (never default to "other" unless truly unreadable)
-  - `custom_type`: the document's actual name/title as you read it from the image (e.g. "Redemption Statement", "Letter of Undertaking", "Discharge of Charge", "Strata Title Application", "Developer's Progress Billing")
-  - `purpose`: what this document proves or is used for
-  - Only use `kind: "other"` + `confidence: "low"` when the image is so blurry/dark that you cannot read ANY text
-
-━━━ RULES ━━━
-- Document heading is the STRONGEST signal — trust what you read
-- Interior/signing pages with no heading: use visual cues (signature labels, table headers) — see INTERIOR PAGE RULE above
-- Bank name + legal language on ANY page → loan_agreement (even signing/schedule pages)
-- "Vendor/Purchaser" + property reference on ANY page → property_spa
-- "SIJIL KEMATIAN" / "TARIKH KEMATIAN" / "SEBAB KEMATIAN" / date of death field filled in → death_certificate (will_relevant=false)
-- Truly unreadable (black/blank/photo of scenery/selfie) → other, confidence=low, custom_type="Unreadable image"
-- property_hint: copy verbatim the property lot number, title number, or address (NOT owner's home address)
-- person_name: the PRIMARY person named in the document (owner, borrower, deceased, IC holder). Full name as printed. Empty if no clear name visible.
-- For death_certificate: set will_relevant=false, person_name=deceased full name
-- For will: ONLY classify as will if you can clearly see both "LAST WILL AND TESTAMENT" / "WASIAT" AND the executor/witness structure. When in doubt, use other + custom_type with the actual document title.
-
-Return ONLY this JSON (no other text):
+Return ONLY valid JSON:
 ```json
 {{
-  "kind": "<standard category>",
-  "custom_type": "<document's own title as read from image, or empty if matches standard category exactly>",
+  "kind": "<category>",
+  "custom_type": "<actual document title if not a standard category, else empty>",
   "confidence": "high|medium|low",
-  "reason": "<one sentence: exactly what heading/text/logo you saw>",
-  "purpose": "<what this document is for, max 20 words>",
-  "property_hint": "<lot/title/address if visible, else empty>",
-  "person_name": "<primary person named in document, or empty>",
+  "reason": "<one sentence: what keywords/phrases led to this classification>",
+  "purpose": "<what this document proves, max 15 words>",
+  "property_hint": "<lot number or address if visible, else empty>",
+  "person_name": "<primary person named — owner, borrower, deceased — or empty>",
+  "lot_number": "<PTD/HSD/Lot number or empty>",
+  "title_number": "<title/geran reference number or empty>",
+  "property_address": "<street address if visible, else empty>",
+  "bank_name": "<bank name if visible, else empty>",
+  "mukim": "<mukim if visible, else empty>",
+  "daerah": "<daerah if visible, else empty>",
+  "negeri": "<state if visible, else empty>",
+  "owner_name": "<registered owner / borrower full name if visible, else empty>",
+  "ic_number": "<IC number formatted as XXXXXX-XX-XXXX if visible, else empty>",
   "will_relevant": true
 }}
-```"""}
-                ]
-            }]
+```"""
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model=CLAUDE_MODEL_CHEAP,    # Haiku — text only, cheap
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}]
         )
     except Exception as e:
-        return {**fallback, "reason": f"API error: {e}"}
+        return {**fallback, "reason": f"Haiku API error: {e}"}
 
     try:
         from ai.cost_tracker import log_usage
-        log_usage(msg, call_site='ai.file_classifier.classify_file')
+        log_usage(msg, call_site='ai.file_classifier.classify_file.haiku')
     except Exception:
         pass
 
-    text = (msg.content[0].text or "").strip() if msg.content else ""
-    js = _extract_json(text)
+    text_out = (msg.content[0].text or '').strip() if msg.content else ''
+    js = _extract_json(text_out)
     if not js:
         return fallback
     try:
-        result = json.loads(js)
+        res = json.loads(js)
     except json.JSONDecodeError:
         return fallback
-    if result.get('kind') not in KINDS:
-        result['kind'] = 'other'
-    result.setdefault('confidence', 'low')
-    result.setdefault('reason', '')
-    result.setdefault('custom_type', '')
-    result.setdefault('person_name', '')
-    result.setdefault('will_relevant', True)
-    if result['kind'] in ('death_certificate', 'unrelated'):
-        result['will_relevant'] = False
-    elif result['kind'] == 'other' and result['confidence'] == 'low':
-        result.setdefault('will_relevant', False)
-    # If model gave a custom_type but no standard kind, keep kind='other'
-    # but surface custom_type as the display label everywhere.
-    # Normalise: strip whitespace
-    result['custom_type'] = (result.get('custom_type') or '').strip()
-    result['person_name'] = (result.get('person_name') or '').strip()
+
+    kind = res.get('kind', 'other')
+    if kind not in KINDS:
+        kind = 'other'
+
+    will_rel = res.get('will_relevant', True)
+    if kind in ('death_certificate', 'unrelated'):
+        will_rel = False
+
+    result = {
+        "kind":             kind,
+        "confidence":       res.get('confidence', 'low'),
+        "reason":           (res.get('reason') or '').strip()[:300],
+        "manual_review":    False,
+        "will_relevant":    will_rel,
+        "custom_type":      (res.get('custom_type') or '').strip(),
+        "person_name":      (res.get('person_name') or res.get('owner_name') or '').strip(),
+        "purpose":          (res.get('purpose') or '').strip()[:200],
+        "property_hint":    (res.get('property_hint') or res.get('lot_number') or
+                             res.get('property_address') or '').strip()[:200],
+        "lot_number":       (res.get('lot_number') or fields.get('lot_number') or '').strip(),
+        "title_number":     (res.get('title_number') or fields.get('title_number') or '').strip(),
+        "property_address": (res.get('property_address') or fields.get('property_address') or '').strip(),
+        "bank_name":        (res.get('bank_name') or fields.get('bank_name') or '').strip(),
+        "mukim":            (res.get('mukim') or fields.get('mukim') or '').strip(),
+        "daerah":           (res.get('daerah') or fields.get('daerah') or '').strip(),
+        "negeri":           (res.get('negeri') or fields.get('negeri') or '').strip(),
+        "owner_name":       (res.get('owner_name') or fields.get('owner_name') or '').strip(),
+        "ic_number":        (res.get('ic_number') or fields.get('ic_number') or '').strip(),
+    }
+    result.update(_testator_match(result, testator_profile))
     return result
+
+
+def _testator_match(fields: dict, testator_profile: dict = None) -> dict:
+    """Compare extracted owner_name / ic_number against the testator profile.
+
+    Returns {'name_match': bool|None, 'ic_match': bool|None}
+    None = could not compare (field missing on one side).
+    """
+    out = {"name_match": None, "ic_match": None}
+    if not testator_profile:
+        return out
+
+    # IC match — exact after stripping dashes/spaces
+    t_ic = (testator_profile.get('ic') or '').replace('-', '').replace(' ', '')
+    f_ic = (fields.get('ic_number') or '').replace('-', '').replace(' ', '')
+    if t_ic and f_ic:
+        out['ic_match'] = (t_ic == f_ic)
+
+    # Name match — fuzzy (SequenceMatcher ratio > 0.70)
+    t_name = (testator_profile.get('name') or '').upper().strip()
+    f_name = (fields.get('owner_name') or '').upper().strip()
+    if t_name and f_name:
+        from difflib import SequenceMatcher
+        ratio = SequenceMatcher(None, t_name, f_name).ratio()
+        out['name_match'] = ratio >= 0.70
+
+    return out
+
+
+def _kind_purpose(kind: str) -> str:
+    """Short human-readable purpose string for a document kind."""
+    return {
+        'property_title':    'Proves property ownership',
+        'property_spa':      'Sale & Purchase Agreement',
+        'property_tax':      'Property tax / quit rent record',
+        'property_transfer': 'Transfer of ownership form',
+        'utility_bill':      'Confirms property address',
+        'loan_agreement':    'Loan / charge on property',
+        'bank_letter':       'Bank correspondence',
+        'bank_statement':    'Bank account statement',
+        'insurance':         'Insurance / takaful policy',
+        'epf_kwsp':          'EPF / KWSP savings',
+        'vehicle':           'Vehicle registration',
+        'will':              'Existing will document',
+        'nric':              'Identity document',
+        'death_certificate': 'Death certificate (not an asset)',
+        'unrelated':         'Unrelated document',
+        'valuation':         'Property valuation report',
+    }.get(kind, '')

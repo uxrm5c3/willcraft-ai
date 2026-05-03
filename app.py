@@ -3258,16 +3258,27 @@ def _serialise_chat_message(m):
                 _dex = json.loads(d.extracted_data) if d.extracted_data else {}
             except (json.JSONDecodeError, TypeError):
                 _dex = {}
+            _manual_review = bool(_dex.get('_manual_review'))
+            _name_mismatch = (
+                _dex.get('_name_match') is False   # explicitly False, not None
+            )
+            _ic_mismatch = (
+                _dex.get('_ic_match') is False
+            )
             _suspected = bool(
                 _dex.get('_wrong_upload_suspected')
                 or _dex.get('_likely_irrelevant')
                 or d.category in ('death_certificate', 'unrelated')
+                or _name_mismatch
+                or _ic_mismatch
             )
             _wrong_reason = (
                 _dex.get('_wrong_reason')
                 or _dex.get('_irrelevant_reason')
                 or ('Death certificate — not a will asset' if d.category == 'death_certificate' else '')
                 or ('Unrelated document' if d.category == 'unrelated' else '')
+                or ('Owner name does not match testator' if _name_mismatch else '')
+                or ('IC number does not match testator' if _ic_mismatch else '')
             ).strip()[:200]
             attachments.append({
                 'id': d.id,
@@ -3275,7 +3286,14 @@ def _serialise_chat_message(m):
                 'category': d.category,
                 'size': d.file_size,
                 'purpose': (_dex.get('purpose') or '').strip()[:120],
-                'address': (_dex.get('address') or '').strip()[:80],
+                'address': (
+                    _dex.get('address') or _dex.get('property_address') or ''
+                ).strip()[:80],
+                'lot_number':   (_dex.get('lot_number') or '').strip()[:60],
+                'owner_name':   (_dex.get('owner_name') or '').strip()[:100],
+                'name_match':   _dex.get('_name_match'),   # True/False/None
+                'ic_match':     _dex.get('_ic_match'),     # True/False/None
+                'manual_review': _manual_review,
                 'suspected_wrong': _suspected,
                 'wrong_reason': _wrong_reason,
             })
@@ -6590,7 +6608,15 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                 # STEP 2: Classify this image individually, using the batch
                 # group verdict as strong context (if available).
                 group_ctx = batch_group_map.get(id(doc))
-                classification = classify_file(abs_path, group_context=group_ctx)
+                testator_profile = {
+                    'name': (client.full_name or '').strip(),
+                    'ic':   (client.nric_passport or '').strip(),
+                } if client else None
+                classification = classify_file(
+                    abs_path,
+                    group_context=group_ctx,
+                    testator_profile=testator_profile,
+                )
 
                 # If batch analysis says this image is property but the
                 # individual classifier said 'other', trust the batch verdict —
@@ -6639,6 +6665,21 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                     extracted['purpose'] = purpose[:300]
                 if prop_hint:
                     extracted['property_hint'] = prop_hint[:300]
+                # ── OCR-extracted fields ──────────────────────────────────
+                for _ocr_field in ('lot_number', 'title_number', 'property_address',
+                                   'owner_name', 'ic_number', 'bank_name',
+                                   'mukim', 'daerah', 'negeri'):
+                    val = (classification.get(_ocr_field) or '').strip()
+                    if val and not extracted.get(_ocr_field):
+                        extracted[_ocr_field] = val
+                # ── Testator match flags ──────────────────────────────────
+                if classification.get('name_match') is not None:
+                    extracted['_name_match'] = classification['name_match']
+                if classification.get('ic_match') is not None:
+                    extracted['_ic_match'] = classification['ic_match']
+                # ── Manual review flag (OCR unreadable) ──────────────────
+                if classification.get('manual_review'):
+                    extracted['_manual_review'] = True
 
                 # STEP 3: Cross-fill missing NLC fields from the batch group
                 # identifiers. The batch analysis extracted lot/title/mukim
