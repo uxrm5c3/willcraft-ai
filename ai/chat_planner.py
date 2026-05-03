@@ -92,8 +92,9 @@ def plan_turn(
             pass  # card for the NEXT asset IS the headline — no prefix needed
         elif just_kind.startswith('inventory_skipped_'):
             pass  # same — card follows immediately
-        elif just_kind in ('inbox_start', 'inbox_removed'):
-            pass  # inbox review action — no extra prefix; card or override handles it
+        elif just_kind in ('inbox_start', 'inbox_removed', 'inbox_restart',
+                           'gifts_restart'):
+            pass  # inbox/restart action — reply_override handles the message
         elif just_kind == 'inventory_unlink_pending':
             reply_parts.append(
                 f"✂️  Reviewing supporting docs for **{just_assigned.get('name','')}**…"
