@@ -2,8 +2,49 @@
 advancing the directed-flow stage. Always nudges them back to the step
 they were on.
 """
+import re
+import time
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
+
+# ── Module-level Q&A cache ──────────────────────────────────────────────
+# Same question → same answer, served from RAM. Saves a full Anthropic
+# round-trip + several KB of excerpt tokens for repeat asks like
+# "who can be witness", "what is geran", "what's RPGT". Bounded LRU-ish:
+# expire after _CACHE_TTL seconds, evict oldest when over _CACHE_MAX.
+_ANSWER_CACHE: dict = {}     # {normalised_q: (timestamp, answer_body)}
+_CACHE_TTL = 60 * 60 * 24    # 24 hours
+_CACHE_MAX = 200
+
+
+def _cache_key(text: str) -> str:
+    """Normalise so 'Who can be witness?' and 'who can be witness' hit
+    the same cache slot."""
+    t = (text or '').strip().lower()
+    t = re.sub(r'[^\w\s%]', '', t)   # strip punctuation
+    t = re.sub(r'\s+', ' ', t)
+    return t
+
+
+def _cache_get(key: str):
+    hit = _ANSWER_CACHE.get(key)
+    if not hit:
+        return None
+    ts, body = hit
+    if time.time() - ts > _CACHE_TTL:
+        _ANSWER_CACHE.pop(key, None)
+        return None
+    return body
+
+
+def _cache_set(key: str, body: str):
+    if not key or not body:
+        return
+    if len(_ANSWER_CACHE) >= _CACHE_MAX:
+        # Evict oldest
+        oldest = min(_ANSWER_CACHE.items(), key=lambda kv: kv[1][0])[0]
+        _ANSWER_CACHE.pop(oldest, None)
+    _ANSWER_CACHE[key] = (time.time(), body)
 
 
 _QUESTION_STARTERS = (
@@ -53,24 +94,33 @@ def is_question(text: str) -> bool:
 
 def answer_question(user_text: str, current_stage_summary: str = '',
                     client_id: str = None, user_id: str = None) -> str:
-    """Short Claude answer + nudge back to the active step. Returns ''
-    on any failure (caller can fall back to ignoring)."""
+    """Short Claude answer + nudge back to the active step. Returns a
+    fallback message on failure (never silent ''). Cached by question
+    text so repeats are instant + free."""
     if not user_text:
         return ''
     # Build a "↩ Resume" quick-reply for the current step so the user can
-    # one-tap back to the workflow after the digression. Stage label is
-    # passed in by the caller (e.g. "Step 6: property gift", "Step 1: Identity").
+    # one-tap back to the workflow after the digression.
     import json as _json
     resume_quick = []
     if current_stage_summary:
-        # The literal string 'continue' triggers the planner to re-emit
-        # whatever question was active (it doesn't match any save-keyword).
         resume_quick = [
             {'label': f"↩ Resume {current_stage_summary}", 'value': 'continue'},
             {'label': 'Stay here, I have more questions', 'value': 'not yet'},
         ]
+
+    def _attach_resume(body: str) -> str:
+        if resume_quick:
+            return body + f"\n\n<!--quickreplies:{_json.dumps(resume_quick)}-->"
+        return body
+
+    # ── Cache hit? Return instantly, no Anthropic call. ────────────────
+    ck = _cache_key(user_text)
+    cached = _cache_get(ck)
+    if cached:
+        return _attach_resume(cached)
+
     matched_titles = []
-    # Snapshot of which Acts the library currently holds (for transparency)
     library_titles = []
     try:
         from services.legal_library import list_available_acts
@@ -78,7 +128,8 @@ def answer_question(user_text: str, current_stage_summary: str = '',
     except Exception:
         pass
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        # Hard 25s timeout so we fail fast instead of hanging the chat.
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY, timeout=25.0)
         nudge = (f"\n\nNow back to **{current_stage_summary}** — please continue."
                  if current_stage_summary else "")
         # MANDATORY library lookup first
@@ -127,7 +178,7 @@ def answer_question(user_text: str, current_stage_summary: str = '',
         # client.
         msg = client.messages.create(
             model=CLAUDE_MODEL_FAST,
-            max_tokens=500,
+            max_tokens=300,  # was 500 — answer + citation + example fits in 250
             messages=[{
                 'role': 'user',
                 'content': f"""You help a Malaysian advisor draft a non-Muslim will.{excerpts_block}
@@ -183,13 +234,13 @@ That's it. No "I hope this helps", no "feel free to ask", no extra paragraphs.""
             footer = ''
 
         out = body + footer
-        if resume_quick:
-            out += f"\n\n<!--quickreplies:{_json.dumps(resume_quick)}-->"
-        return out
+        # Cache the body+footer (NOT the per-call resume button) so the next
+        # asker of the same question gets it instantly — no LLM round-trip.
+        _cache_set(ck, out)
+        return _attach_resume(out)
     except Exception as e:
-        # NEVER return empty silently — that makes the question look "ignored"
-        # to the user. Surface a friendly fallback (with the same resume
-        # button) so the chat keeps moving, and log the underlying cause.
+        # NEVER return empty silently. Surface a friendly fallback (with the
+        # same resume button) so the chat keeps moving, and log the cause.
         try:
             import logging
             logging.getLogger(__name__).warning(
@@ -200,8 +251,6 @@ That's it. No "I hope this helps", no "feel free to ask", no extra paragraphs.""
             "**Answer:** I couldn't reach the legal-Q&A engine just now — "
             "please retry in a moment, or check the [Legal Library](/library) "
             "for the relevant Act.\n\n"
-            "**Citation:** _(engine error: " + str(e)[:120] + ")_"
+            "_(engine error: " + str(e)[:120] + ")_"
         )
-        if resume_quick:
-            fallback += f"\n\n<!--quickreplies:{_json.dumps(resume_quick)}-->"
-        return fallback
+        return _attach_resume(fallback)

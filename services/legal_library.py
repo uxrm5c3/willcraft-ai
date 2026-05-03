@@ -65,10 +65,15 @@ def _extract_pdf_text(path: str) -> str:
     return text
 
 
-def relevant_excerpts(question: str, max_chars: int = 6000) -> List[Dict[str, str]]:
-    """For a user question, return excerpts from each Act that contain
-    keywords. Crude keyword-based retrieval — good enough until we add
-    embeddings. Returns [{title, excerpt}] for any matches.
+def relevant_excerpts(question: str, max_chars: int = 2400,
+                      max_acts: int = 3, per_act_chars: int = 800
+                      ) -> List[Dict[str, str]]:
+    """For a user question, return excerpts from the TOP-N acts that contain
+    keywords (default 3, not all 23). Crude keyword retrieval — good enough
+    until we add embeddings.
+
+    Token-budget aware: each call sends at most `max_chars` of excerpt text
+    to the LLM (was 6000 — burned tokens on every 'who can be witness' Q).
     """
     if not question:
         return []
@@ -80,27 +85,46 @@ def relevant_excerpts(question: str, max_chars: int = 6000) -> List[Dict[str, st
     # Drop generic words
     keywords -= {'what', 'when', 'where', 'which', 'this', 'that', 'with',
                  'have', 'does', 'will', 'should', 'would', 'about', 'cite',
-                 'tell', 'explain', 'mean', 'meaning', 'difference', 'between'}
+                 'tell', 'explain', 'mean', 'meaning', 'difference', 'between',
+                 'whats', 'hows', 'difference', 'between', 'definition'}
     if not keywords:
         return []
 
-    out = []
-    per_act_budget = max_chars // max(1, len(acts))
+    # Step 1: score each Act by total keyword hits across all paragraphs.
+    # Only the top-N acts get expensive paragraph-level scoring.
+    act_scores = []
     for act in acts:
         text = _extract_pdf_text(act['path'])
         if not text:
             continue
-        # Score paragraphs by keyword hits, take the top 3 contiguous chunks
+        # Cheap whole-doc keyword count first
+        tl = text.lower()
+        total_hits = sum(tl.count(k) for k in keywords)
+        if total_hits:
+            act_scores.append((total_hits, act, text))
+    act_scores.sort(key=lambda x: -x[0])
+    top_acts = act_scores[:max_acts]
+
+    out: List[Dict[str, str]] = []
+    budget_left = max_chars
+    for _hits, act, text in top_acts:
+        if budget_left <= 0:
+            break
+        # Score paragraphs by keyword hits, take the top 2 (was 3)
         paragraphs = re.split(r'\n\s*\n', text)
         scored = []
         for i, para in enumerate(paragraphs):
             pl = para.lower()
-            hits = sum(1 for k in keywords if k in pl)
-            if hits:
-                scored.append((hits, i, para.strip()))
+            phits = sum(1 for k in keywords if k in pl)
+            if phits:
+                scored.append((phits, i, para.strip()))
         scored.sort(reverse=True)
-        top = [s[2] for s in scored[:3]]
-        excerpt = '\n\n…\n\n'.join(top)[:per_act_budget]
+        top = [s[2] for s in scored[:2]]
+        excerpt = '\n\n…\n\n'.join(top)
+        # Truncate to per_act_chars OR remaining budget, whichever's smaller
+        cap = min(per_act_chars, budget_left)
+        excerpt = excerpt[:cap]
         if excerpt:
             out.append({'title': act['title'], 'excerpt': excerpt})
+            budget_left -= len(excerpt)
     return out
