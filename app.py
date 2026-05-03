@@ -3254,11 +3254,17 @@ def _serialise_chat_message(m):
             d = doc_by_id.get(did)
             if not d:
                 continue
+            try:
+                _dex = json.loads(d.extracted_data) if d.extracted_data else {}
+            except (json.JSONDecodeError, TypeError):
+                _dex = {}
             attachments.append({
                 'id': d.id,
                 'filename': d.original_filename,
                 'category': d.category,
                 'size': d.file_size,
+                'purpose': (_dex.get('purpose') or '').strip()[:120],
+                'address': (_dex.get('address') or '').strip()[:80],
             })
     return {
         'id': m.id,
@@ -3779,6 +3785,10 @@ def api_chat_message(client_id):
             return jsonify({'ok': False, 'error': f'Planner error: {_err_detail[:400]}'}), 500
     if _fill_override:
         plan['reply'] = just_inventory['reply_override']
+        # Propagate focus_attachments from the inventory action if provided
+        # (e.g. inbox reset attaches all doc IDs so thumbnails render in the reply)
+        if just_inventory.get('focus_attachments'):
+            plan['focus_attachments'] = just_inventory['focus_attachments']
 
     if file_errors:
         plan['reply'] = (plan.get('reply') or '') + (
@@ -4963,20 +4973,33 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
 
         # 3. Build inbox card from existing docs
         from ai.chat_planner import _intake_email_card as _iec
-        artifacts = []
+
+        # Gather extracted data and deduplicate by original_filename
+        # (same file re-uploaded/re-classified creates multiple rows — keep newest)
+        _fname_to_doc: dict = {}
+        _msg_contexts: list = []
         for d in docs:
             try:
                 ex = json.loads(d.extracted_data) if d.extracted_data else {}
             except (json.JSONDecodeError, TypeError):
                 ex = {}
-            cat = d.category or 'other'
-            artifacts.append({
-                'document_id': d.id,
-                'kind': cat,
-                'confidence': 'high',
-                'extracted': ex,
-                'original_filename': d.original_filename or d.filename or '',
-            })
+            # Collect message context before dedup (any doc may have it)
+            _mc = (ex.get('_message_context') or '').strip()
+            if _mc and _mc not in _msg_contexts:
+                _msg_contexts.append(_mc)
+            fname = (d.original_filename or d.filename or d.id or '').strip()
+            # Keep the doc with the higher (newer) id for each filename
+            existing = _fname_to_doc.get(fname)
+            if existing is None or str(d.id) > str(existing['_doc_id']):
+                _fname_to_doc[fname] = {
+                    '_doc_id': d.id,
+                    'document_id': d.id,
+                    'kind': d.category or 'other',
+                    'confidence': 'high',
+                    'extracted': ex,
+                    'original_filename': fname,
+                }
+        artifacts = list(_fname_to_doc.values())
 
         if not artifacts:
             return {
@@ -4989,12 +5012,16 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
                 ),
             }
 
-        inbox_card = _iec(artifacts, '')
+        # Pick the most informative message context (longest one)
+        _best_ctx = max(_msg_contexts, key=len) if _msg_contexts else ''
+        inbox_card = _iec(artifacts, _best_ctx)
+        _focus_ids = [a['document_id'] for a in artifacts]
         return {
             'name': f'inbox reset ({len(artifacts)} docs)',
             'role': 'inbox_restarted',
             'kind': 'inbox_restart',
             'reply_override': inbox_card,
+            'focus_attachments': _focus_ids,
         }
     except Exception as _rst_err:
         import traceback as _tb

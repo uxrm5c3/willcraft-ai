@@ -335,11 +335,18 @@
     }
 
     if (m.attachments && m.attachments.length) {
-      // Collect image URLs for carousel (in order) — only images participate;
+      // Collect image URLs + meta for carousel (in order) — only images participate;
       // PDFs and audio open in a new tab as before.
       const imgCarouselUrls = m.attachments
         .filter(a => /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(a.filename || ''))
         .map(a => `/api/documents/${a.id}`);
+      // Meta: label (purpose/address or category) + docId for remove button
+      const imgCarouselMeta = m.attachments
+        .filter(a => /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(a.filename || ''))
+        .map(a => ({
+          docId: a.id,
+          label: (a.purpose || a.address || categoryLabel(a.category) || '').trim(),
+        }));
 
       const isMany = m.attachments.length > 6;
       html += `<div class="mt-2 grid ${isMany ? 'grid-cols-4 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-4'} gap-1.5">`;
@@ -372,8 +379,6 @@
         }
 
         if (isImg) {
-          // Images open the carousel at the clicked index; escape quotes for inline handler
-          const escapedUrls = JSON.stringify(imgCarouselUrls).replace(/'/g, "\\'").replace(/"/g, '&quot;');
           const thisIdx = carouselIdx;
           const thumbNum = carouselIdx + 1; // 1-based position shown as overlay
           carouselIdx++;
@@ -382,14 +387,16 @@
           const warnBadge = isUnrelated
             ? `<div class="absolute top-0.5 right-0.5 bg-red-500 text-white text-[8px] font-bold px-1 rounded leading-tight">⚠️ wrong?</div>`
             : '';
+          // Show purpose/address as label if available, else category
+          const thumbLabel = escapeHtml((a.purpose || a.address || catLabel || '').trim().slice(0, 40));
           html += `<button type="button"
-                      onclick="window.__openCarousel(${JSON.stringify(imgCarouselUrls).replace(/"/g, '&quot;')}, ${thisIdx})"
-                      title="${escapeHtml(a.filename)} — image ${thumbNum} (${catLabel}) — click to browse"
+                      onclick="window.__openCarousel(${JSON.stringify(imgCarouselUrls).replace(/"/g, '&quot;')}, ${thisIdx}, ${JSON.stringify(imgCarouselMeta).replace(/"/g, '&quot;')})"
+                      title="${escapeHtml(a.filename || '')} — ${thumbLabel}"
                       class="relative block bg-white border border-gray-200 rounded-md overflow-hidden hover:border-primary-400 hover:shadow transition-all text-left w-full ${isUnrelated ? 'ring-2 ring-red-400' : ''}">
             ${inner}
             <div class="absolute top-0.5 left-0.5 bg-black/50 text-white text-[9px] font-bold px-1 rounded leading-tight">${thumbNum}</div>
             ${warnBadge}
-            <div class="px-1 py-0.5 text-[9px] truncate ${catColor} font-medium">${catLabel}</div>
+            <div class="px-1 py-0.5 text-[9px] truncate ${catColor} font-medium">${thumbLabel || catLabel}</div>
           </button>`;
         } else {
           html += `<a href="${url}" target="_blank" rel="noopener" title="${escapeHtml(a.filename)} (${catLabel})"
@@ -944,6 +951,7 @@
   // Usage: window.__openCarousel(urlArray, startIndex)
 
   let _carouselUrls = [];
+  let _carouselMeta = []; // parallel array: [{docId, label}]
   let _carouselIdx = 0;
 
   function _ensureCarouselDOM() {
@@ -1005,9 +1013,15 @@
         &#8250;
       </button>
 
-      <!-- Filename label at bottom -->
-      <div id="car-label"
-        class="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/70 text-xs font-mono bg-black/30 px-3 py-1 rounded-full max-w-[80vw] truncate">
+      <!-- Bottom bar: exhibit label + remove button -->
+      <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 max-w-[90vw]">
+        <div id="car-label"
+          class="text-white/80 text-xs font-medium bg-black/40 px-3 py-1.5 rounded-full truncate max-w-[60vw]">
+        </div>
+        <button id="car-remove" style="display:none"
+          class="text-white text-xs font-semibold bg-red-600/80 hover:bg-red-600 px-3 py-1.5 rounded-full flex items-center gap-1 transition-colors whitespace-nowrap">
+          🗑 Remove
+        </button>
       </div>
     `;
     document.body.appendChild(overlay);
@@ -1050,16 +1064,18 @@
   }
 
   function _carouselShow() {
-    const overlay  = document.getElementById('img-carousel');
-    const img      = document.getElementById('car-img');
-    const counter  = document.getElementById('car-counter');
-    const prevBtn  = document.getElementById('car-prev');
-    const nextBtn  = document.getElementById('car-next');
-    const label    = document.getElementById('car-label');
-    const newTab   = document.getElementById('car-newtab');
+    const overlay   = document.getElementById('img-carousel');
+    const img       = document.getElementById('car-img');
+    const counter   = document.getElementById('car-counter');
+    const prevBtn   = document.getElementById('car-prev');
+    const nextBtn   = document.getElementById('car-next');
+    const label     = document.getElementById('car-label');
+    const newTab    = document.getElementById('car-newtab');
+    const removeBtn = document.getElementById('car-remove');
 
-    const url = _carouselUrls[_carouselIdx];
-    const n   = _carouselUrls.length;
+    const url  = _carouselUrls[_carouselIdx];
+    const meta = _carouselMeta[_carouselIdx] || {};
+    const n    = _carouselUrls.length;
 
     // Fade-swap the image
     img.style.opacity = '0.3';
@@ -1071,8 +1087,23 @@
     if (newTab) newTab.href = url;
 
     counter.textContent = `${_carouselIdx + 1} / ${n}`;
-    // Extract filename from URL path (last segment after the last /)
-    label.textContent = url.split('/').pop() || '';
+
+    // Show exhibit label (purpose/address) or fallback to doc id segment
+    label.textContent = meta.label || url.split('/').pop() || '';
+
+    // Remove button — only shown when we have a docId (inbox context)
+    if (removeBtn) {
+      if (meta.docId) {
+        removeBtn.style.display = '';
+        removeBtn.onclick = (e) => {
+          e.stopPropagation();
+          _closeCarousel();
+          window.__quickReply(`inbox remove ${meta.docId}`);
+        };
+      } else {
+        removeBtn.style.display = 'none';
+      }
+    }
 
     prevBtn.disabled = (_carouselIdx === 0);
     nextBtn.disabled = (_carouselIdx === n - 1);
@@ -1099,10 +1130,11 @@
     document.body.style.overflow = '';
   }
 
-  window.__openCarousel = function (urls, startIdx) {
+  window.__openCarousel = function (urls, startIdx, meta) {
     if (!urls || !urls.length) return;
     _ensureCarouselDOM();
     _carouselUrls = urls;
+    _carouselMeta = meta || [];
     _carouselIdx  = Math.max(0, Math.min(startIdx || 0, urls.length - 1));
     _carouselShow();
   };

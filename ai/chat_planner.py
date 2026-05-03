@@ -344,20 +344,21 @@ def _clean_email_body(raw: str) -> str:
 def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
     """Email brief card — shown when new attachments arrive or on reset.
 
-    Presents a formal structured brief:
-    1. Header with attachment count
-    2. Summary — coherent key-point bullets extracted from the message
-    3. Full cleaned message text (blockquote)
-    4. Exhibits — numbered list (Exhibit 1, 2 …) with category + wrong-upload flags
-    5. Footer inviting user to comment before proceeding to identity/asset matching
+    The exhibit thumbnails are rendered by the frontend from m.attachments —
+    this card provides only:
+    1. Header with count + instructions
+    2. Coherent message summary (key points + cleaned text)
+    3. Footer CTA — tap exhibits to view/remove, then Start matching
     """
     n = len(artifacts)
 
     # ── 1. Header ────────────────────────────────────────────────────────────
+    has_wrong = any(a.get('extracted', {}).get('_wrong_upload_suspected') for a in artifacts)
+    warn_note = " ⚠️ Some exhibits may be mismatched — tap to inspect." if has_wrong else ""
     header = (
-        f"## 📋 Email Brief — {n} exhibit{'s' if n != 1 else ''} received\n"
-        "_Please review the summary below, remove any incorrect attachments, "
-        "then tap **▶️ Start matching** to begin identity & asset analysis._"
+        f"## 📋 Email Brief — {n} exhibit{'s' if n != 1 else ''} received{warn_note}\n"
+        "_Tap any exhibit below to view and remove if incorrect, "
+        "then tap **▶️ Start matching** to begin._"
     )
 
     # ── 2. Clean email body + structured key-point extraction ────────────────
@@ -417,67 +418,29 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str) -> str:
                      cleaned_body, re.I):
             key_points.append("🏦 **Encumbrance:** Possible loan/caveat mentioned")
 
-        # ── Format summary section ─────────────────────────────────────
-        lines_s = ["### 📨 Message Summary"]
+        # ── Format summary section ─────────────────────────────────────────
+        lines_s = ["### 📨 Message from sender"]
         if key_points:
             lines_s.extend(f"• {p}" for p in key_points)
             lines_s.append("")
-
-        # Full cleaned message as blockquote (up to 600 chars)
-        _preview = cleaned_body[:600]
-        if len(cleaned_body) > 600:
+        # Full cleaned message as blockquote (up to 800 chars)
+        _preview = cleaned_body[:800]
+        if len(cleaned_body) > 800:
             _preview += '…'
         _quoted = '> ' + _preview.replace('\n', '\n> ').rstrip('> ').strip()
-        lines_s.append("**Full message:**")
         lines_s.append(_quoted)
         summary_section = '\n'.join(lines_s)
     else:
-        summary_section = "### 📨 Message Summary\n_No message text — only attachments were received._"
+        summary_section = "### 📨 Message from sender\n_No message text — only attachments were received._"
 
-    # ── 3. Exhibits list ─────────────────────────────────────────────────────
-    exhibit_lines = ["### 📎 Exhibits"]
-    quick = []
-    has_wrong = False
-    for i, a in enumerate(artifacts, 1):
-        kind        = a.get('kind', 'other')
-        label       = _KIND_LABELS.get(kind, '📄 Document')
-        fname       = (a.get('original_filename') or '').strip()
-        ex          = a.get('extracted') or {}
-        custom_type = (ex.get('custom_type') or '').strip()
-        purpose     = (ex.get('purpose') or '').strip()
-        detail      = custom_type or purpose or fname or kind
-        wrong       = ex.get('_wrong_upload_suspected', False)
-        wrong_reason = (ex.get('_wrong_reason') or '').strip()
-        if wrong:
-            has_wrong = True
-
-        exhibit_lines.append(f"**Exhibit {i}** — {label}")
-        if detail:
-            exhibit_lines.append(f"  _{detail[:120]}_")
-        if wrong:
-            short_reason = wrong_reason[:100] if wrong_reason else 'may not belong to this case'
-            exhibit_lines.append(f"  ⚠️ _Possible mismatch: {short_reason}_")
-        doc_id = a.get('document_id', '')
-        if doc_id:
-            quick.append({'label': f'🗑 Remove Exhibit {i}', 'value': f'inbox remove {doc_id}'})
-
-    quick.append({'label': '▶️ Start matching', 'value': 'inbox start'})
-    exhibit_section = '\n'.join(exhibit_lines)
-
-    # ── 4. Footer ────────────────────────────────────────────────────────────
-    footer_lines = []
-    if has_wrong:
-        footer_lines.append(
-            "⚠️ **One or more exhibits may be mismatched** — please remove them before proceeding."
-        )
-    footer_lines.append(
-        "_Add any corrections or additional context in the chat, "
-        "then tap **▶️ Start matching** to begin identity & asset analysis._"
-    )
-    footer = '\n'.join(footer_lines)
-
+    # ── 3. Footer + quick-replies ─────────────────────────────────────────────
+    # Exhibit thumbnails are rendered by the frontend from m.attachments.
+    # The Remove button is in the carousel overlay — no per-exhibit buttons needed here.
+    footer = "_Add any corrections or context below, then tap **▶️ Start matching**._"
+    quick = [{'label': '▶️ Start matching', 'value': 'inbox start'}]
     qr_marker = f'<!--quickreplies:{json.dumps(quick)}-->'
-    parts = [header, summary_section, exhibit_section, footer]
+
+    parts = [header, summary_section, footer]
     return '\n\n'.join(parts) + qr_marker
 
 
