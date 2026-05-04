@@ -374,12 +374,17 @@ def _summarise_message(raw_text: str) -> str:
             "No interpretation — just what they wrote, clearly and naturally. "
             "Skip email headers, forwarding noise, and greetings.\n\n"
             "**Section 2 — What we deduce:**\n"
-            "One bullet per asset/account. For EACH property, bank account, insurance policy mentioned:\n"
-            "• **Property / Asset:** address or description\n"
-            "• **Ownership:** sole / joint (with whom, what share)\n"
-            "• **Beneficiary:** full name(s) and share\n"
-            "• ❓ Flag anything ambiguous (ownership unclear, beneficiary not named, etc.)\n"
-            "Group bank accounts and insurance together at the end if no specific property link.\n\n"
+            "One block per property. For each property:\n"
+            "  - Address: full street address (or 'unknown' if not mentioned)\n"
+            "  - PTD/Lot: lot number e.g. PTD 207922 or Lot 127082 (or 'unknown')\n"
+            "  - Title: Hakmilik / HS(D) / Geran number e.g. Hakmilik 504662 (or 'unknown')\n"
+            "  - Mukim/Daerah: e.g. Mukim Plentong, Daerah Johor Bahru\n"
+            "  - Ownership: sole / joint (with whom, share e.g. 1/2)\n"
+            "  - Beneficiary: full name(s) and share\n"
+            "  - ❓ Flag anything ambiguous\n"
+            "Then list bank accounts, insurance, vehicles each as a separate bullet.\n\n"
+            "IMPORTANT: always include the raw PTD/Lot number AND the Hakmilik/title number "
+            "exactly as they appear in the message — these are used to match documents.\n\n"
             "Format exactly:\n"
             "**What was communicated:**\n"
             "<prose>\n\n"
@@ -1225,11 +1230,30 @@ def _scan_text_for_property_fields(ex: Dict[str, Any], text: str,
             idx = text_l.find(needle.lower())
             if idx == -1:
                 continue
-            lo = max(0, idx - 500)
-            hi = min(len(text), idx + len(needle) + 500)
+            # 1500-char window: AI summary bullet blocks can span several lines
+            # with address appearing well before/after the lot number.
+            lo = max(0, idx - 1500)
+            hi = min(len(text), idx + len(needle) + 1500)
             windows.append(text[lo:hi])
         if not windows:
-            return ex  # needles not found in this text at all
+            # Lot/title numbers not found — the AI summary may have omitted them.
+            # Try a tighter pass: look for both mukim AND lot/title digits together
+            # within a very small window so we don't cross-contaminate properties.
+            lot_digits = set()
+            for k in ('title_number', 'lot_number'):
+                for m in re.findall(r'\d{4,}', ex.get(k) or ''):
+                    lot_digits.add(m)
+            mukim_val = (ex.get('mukim') or '').strip().lower()
+            if lot_digits and mukim_val and len(mukim_val) >= 3:
+                mukim_idx = text_l.find(mukim_val)
+                if mukim_idx != -1:
+                    # 300 chars around mukim mention — tight enough to avoid
+                    # cross-contaminating multiple properties in same mukim.
+                    lo = max(0, mukim_idx - 300)
+                    hi = min(len(text), mukim_idx + 300)
+                    windows.append(text[lo:hi])
+            if not windows:
+                return ex  # no anchors found in this text at all
 
     for window in windows:
         win_l = window.lower()

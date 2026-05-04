@@ -4263,13 +4263,19 @@ def api_chat_reject(client_id, message_id):
 
 # -- Directed chat helpers --------------------------------------------------
 
-def _gather_recent_chat_text(client_id: str, max_chars: int = 8000) -> str:
+def _gather_recent_chat_text(client_id: str, max_chars: int = 20000) -> str:
     """Concat recent chat content for this client — user messages (all) plus
     recent assistant AI-summary messages (address/lot lookups).
 
     AI summaries contain the AI-extracted address↔PTD mappings that were
     parsed from the WhatsApp forward. Including them lets _enrich_from_chat_text
     link a lot number on a geran to the street address mentioned in the summary.
+
+    max_chars is intentionally large (20 000) because a 15-property email body
+    can easily exceed 8 000 chars. Truncating or skipping the email body means
+    lot numbers for later properties (e.g. Property 9 of 15) are never found.
+    Individual messages that exceed the remaining budget are TRUNCATED (not
+    skipped) so we always get at least the start of every message.
     """
     cs = (ChatSession.query.filter_by(client_id=client_id)
           .order_by(ChatSession.created_at.desc()).first())
@@ -4294,8 +4300,15 @@ def _gather_recent_chat_text(client_id: str, max_chars: int = 8000) -> str:
             c = re.sub(r'#{1,4}\s+', '', c)
         else:
             continue
-        if total + len(c) > max_chars:
+        if not c:
+            continue
+        remaining = max_chars - total
+        if remaining <= 0:
             break
+        # Truncate oversized messages rather than skipping them entirely —
+        # a 15-property email body should never be dropped just because it's long.
+        if len(c) > remaining:
+            c = c[:remaining]
         out.append(c)
         total += len(c)
     return '\n\n'.join(out)
@@ -4340,6 +4353,9 @@ def _extract_whatsapp_context_for_file(body: str, filename: str) -> str:
     # ── Look BEFORE the attachment reference ──────────────────────────────
     before_lines = body[:idx].split('\n')
     before_ctx = []
+    # Use a large lookback (20 non-empty lines) so that a multi-property
+    # WhatsApp forward list (e.g. "1. No. 18 Jln … PTD 207922 …\n2. …\n3. …")
+    # sent as a single message before all images is fully captured.
     for line in reversed(before_lines):
         stripped = line.strip()
         if not stripped:
@@ -4349,7 +4365,7 @@ def _extract_whatsapp_context_for_file(body: str, filename: str) -> str:
             # may be interspersed with other image sends (Pattern C).
             continue
         before_ctx.insert(0, stripped)
-        if len(before_ctx) >= 4:
+        if len(before_ctx) >= 20:
             break
 
     # ── Look AFTER the attachment reference ───────────────────────────────
