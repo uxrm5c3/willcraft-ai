@@ -5727,6 +5727,52 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
 
     action = 'skipped' if t.startswith('inventory skip') else 'reviewed'
 
+    # ── Placeholder in step5_data ─────────────────────────────────────────
+    # Insert a "pending beneficiary" placeholder into step5_data immediately
+    # when a property is accepted so it shows up in the wizard right-pane
+    # snapshot. Phase B of _try_save_property_gift will upsert (replace) it
+    # with the full gift entry once beneficiary + substitute are assigned.
+    # Skip placeholder if the property is explicitly skipped or non-property.
+    if target_kind == 'property' and not t.startswith('inventory skip'):
+        will_for_ph = (Will.query.filter_by(client_id=client_id, status='draft')
+                       .filter(Will.deleted_at.is_(None))
+                       .order_by(Will.updated_at.desc()).first())
+        if will_for_ph:
+            try:
+                gifts_ph = json.loads(will_for_ph.step5_data or '[]')
+                if not isinstance(gifts_ph, list):
+                    gifts_ph = []
+            except (json.JSONDecodeError, TypeError):
+                gifts_ph = []
+            # Only add if not already present (avoid duplicate on re-confirm)
+            existing_ids = {g.get('document_id') for g in gifts_ph}
+            if doc.id not in existing_ids:
+                placeholder = {
+                    'document_id':      doc.id,
+                    'kind':             'property',
+                    'gift_type':        'property',
+                    '_pending_beneficiary': True,   # Phase B will replace this
+                    'property_address': ex.get('property_address', ''),
+                    'title_number':     ex.get('title_number', ''),
+                    'lot_number':       ex.get('lot_number', ''),
+                    'property_details': {
+                        'property_address': ex.get('property_address', ''),
+                        'title_number':     ex.get('title_number', ''),
+                        'lot_number':       ex.get('lot_number', ''),
+                        'mukim':            ex.get('mukim', ''),
+                        'daerah':           ex.get('daerah', ''),
+                        'negeri':           ex.get('negeri', ''),
+                    },
+                    'allocations':   [],
+                    'beneficiaries': [],
+                }
+                gifts_ph.append(placeholder)
+                will_for_ph.step5_data = json.dumps(gifts_ph)
+                try:
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
     # Auto-stamp `assets_confirmed` if this was the LAST un-reviewed asset.
     # Saves the writer from having to type "confirm assets" at the end —
     # walk-through completion IS the confirmation.
@@ -6372,7 +6418,17 @@ def _try_save_property_gift(client_id: str, user_text: str):
                     for s in substitute_specific
                 ]
 
-        gifts.append(gift_entry)
+        # Upsert: replace existing placeholder/entry for this doc_id if present,
+        # otherwise append. This ensures the inventory placeholder (added when
+        # the property was accepted in Layer 1) is replaced — not duplicated.
+        _existing_idx = next(
+            (i for i, g in enumerate(gifts) if g.get('document_id') == doc_id),
+            None
+        )
+        if _existing_idx is not None:
+            gifts[_existing_idx] = gift_entry
+        else:
+            gifts.append(gift_entry)
         will.step5_data = json.dumps(gifts)
 
         # Clear the phase flag in extracted_data
@@ -6407,12 +6463,18 @@ def _try_save_property_gift(client_id: str, user_text: str):
 
     # "skip" on Phase A → skip the whole gift (sentinel entry)
     if txt in ('skip', 'next', 'pass'):
-        gifts.append({
+        _skip_entry = {
             'document_id': doc_id,
             'kind': 'property',
             'skipped': True,
             'beneficiaries': [],
-        })
+        }
+        # Upsert: replace placeholder if already present
+        _si = next((i for i, g in enumerate(gifts) if g.get('document_id') == doc_id), None)
+        if _si is not None:
+            gifts[_si] = _skip_entry
+        else:
+            gifts.append(_skip_entry)
         will.step5_data = json.dumps(gifts)
         try:
             db.session.commit()

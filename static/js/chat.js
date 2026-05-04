@@ -737,7 +737,8 @@
           }
           let label = ident ? `${prefix} — ${ident}` : prefix;
           if (benList.length) label += ' → ' + benList.slice(0, 2).join(', ') + (benList.length > 2 ? '…' : '');
-          return [null, label.slice(0, 80)];
+          else if (g._pending_beneficiary) label += ' · ⏳ awaiting beneficiary';
+          return [null, label.slice(0, 90)];
         }) : null },
       { n: '7', name: 'Residuary Estate', link: '/wizard/step/7', optional: false,
         fields: will.step6 && Object.keys(will.step6).length ? [[null, 'Configured']] : null },
