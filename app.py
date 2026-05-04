@@ -4264,18 +4264,36 @@ def api_chat_reject(client_id, message_id):
 # -- Directed chat helpers --------------------------------------------------
 
 def _gather_recent_chat_text(client_id: str, max_chars: int = 8000) -> str:
-    """Concat user-message content for this client's chat (oldest → newest).
-    Used as context for role deduction (forwarded email bodies live here)."""
+    """Concat recent chat content for this client — user messages (all) plus
+    recent assistant AI-summary messages (address/lot lookups).
+
+    AI summaries contain the AI-extracted address↔PTD mappings that were
+    parsed from the WhatsApp forward. Including them lets _enrich_from_chat_text
+    link a lot number on a geran to the street address mentioned in the summary.
+    """
     cs = (ChatSession.query.filter_by(client_id=client_id)
           .order_by(ChatSession.created_at.desc()).first())
     if not cs:
         return ''
-    msgs = (ChatMessage.query.filter_by(session_id=cs.id, role='user')
+    msgs = (ChatMessage.query.filter_by(session_id=cs.id)
             .order_by(ChatMessage.created_at.asc()).all())
     out = []
     total = 0
     for m in msgs:
-        c = m.content or ''
+        if m.role == 'user':
+            c = m.content or ''
+        elif m.role == 'assistant':
+            # Only include assistant messages that look like AI property summaries
+            # (they contain lot/PTD numbers + street addresses from the WhatsApp text).
+            # Skip short acks, gate prompts, etc.
+            c = m.content or ''
+            if len(c) < 200:
+                continue
+            # Strip quick-reply markers and markdown decorations to plain text
+            c = re.sub(r'<!--quickreplies:.*?-->', '', c)
+            c = re.sub(r'#{1,4}\s+', '', c)
+        else:
+            continue
         if total + len(c) > max_chars:
             break
         out.append(c)

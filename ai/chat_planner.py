@@ -1680,29 +1680,14 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     if ben_hint:
         parts.append(f"🎁 **Client wants to give to:** _{ben_hint}_")
 
-    # ── Ownership: one-line summary (guided confirm handles the questions) ──
-    num_owners   = ex.get('num_owners') or 1
-    try:
-        num_owners = int(num_owners)
-    except (TypeError, ValueError):
-        num_owners = 1
-    owner_names      = ex.get('owner_names') or []
-    ownership_shares = (ex.get('ownership_shares') or '').strip()
-    ownership_type   = (ex.get('ownership_type') or '').strip().lower()
-    ownership_share  = (ex.get('ownership_share')  or '').strip()
-
-    if not ownership_type:
-        ownership_type = 'joint' if (num_owners > 1 or ownership_shares) else 'sole'
-
-    if ownership_type == 'joint':
-        share_display = ownership_share or ownership_shares or 'TBC'
-        parts.append(f"**🤝 Joint ownership** — {share_display} undivided share")
-    # Ownership and encumbrance are confirmed via Accept gates — don't show
-    # them upfront on the card. Only show if already confirmed (from a
-    # previous Accept + gate flow) so returning to this card shows status.
+    # ── Ownership & encumbrance status — ONLY show after gates are confirmed ──
+    # Gate 1 (ownership) and Gate 2 (encumbrance) run sequentially when the
+    # writer taps Accept. `encumbrance_confirmed is not None` means BOTH gates
+    # have been answered — safe to display the confirmed status on the card.
+    # Before that, we show nothing (the gates will ask in sequence on Accept).
     enc_confirmed = ex.get('encumbrance_confirmed')
-    ow_type       = (ex.get('ownership_type') or '').strip().lower()
-    if ow_type or enc_confirmed is not None:
+    if enc_confirmed is not None:
+        ow_type = (ex.get('ownership_type') or '').strip().lower()
         status_parts = []
         if ow_type == 'joint':
             share = (ex.get('ownership_share') or '').strip()
