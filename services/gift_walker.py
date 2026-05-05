@@ -337,6 +337,15 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
     referenced_doc_ids = set()
     referenced_group_keys = set()       # legacy dedup by group key
     referenced_lot_addr_sigs = set()    # new dedup by (lot, address)
+    # ╔══════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN — STRATA-AWARE DEDUP (CLAUDE.md §10hd) 🔥              ║
+    # ║  Same lot + empty addr is the strata-collision case. Two units in ║
+    # ║  one building share lot 207922 but have different titles          ║
+    # ║  (564662/M1C/30/710 vs 504662). The (lot, addr) key alone wrongly ║
+    # ║  filters the second unit. Track the title signature alongside so  ║
+    # ║  the dedup site can let strata pass when titles differ.           ║
+    # ╚══════════════════════════════════════════════════════════════════╝
+    referenced_sig_titles: Dict[tuple, set] = {}  # (lot, addr) → set of title sigs
     for g in gifts:
         if isinstance(g, dict) and g.get('document_id'):
             referenced_doc_ids.add(g['document_id'])
@@ -356,6 +365,19 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                                      or g.get('property_address') or '')[:60]
             if g_lot_digits or g_addr_sig:
                 referenced_lot_addr_sigs.add((g_lot_digits, g_addr_sig))
+                # Track title signature for strata-aware dedup
+                g_title_ex = {
+                    'title_number': pi.get('title_number') or g.get('title_number') or '',
+                    'title_type':   pi.get('title_type')   or g.get('title_type')   or '',
+                    'property_description': pi.get('property_description')
+                                            or g.get('property_description') or '',
+                    'document_type': pi.get('document_type')
+                                     or g.get('document_type') or '',
+                }
+                ts = _title_signature(g_title_ex)
+                if ts:
+                    referenced_sig_titles.setdefault(
+                        (g_lot_digits, g_addr_sig), set()).add(ts)
 
     # Pull title docs + supporting docs + unclassified (chat_inbox/other) in
     # one pass. Unclassified docs are needed so we can attach them to the
@@ -816,9 +838,23 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         # ── Drop if this property is ALREADY in step5_data ──────────────
         # Different OCR title than the accepted one would slip past the
         # group_key check above; the (lot, addr) sig catches it.
+        # 🔥 STRATA EXCEPTION (§10hd): same lot + empty addr is the
+        # collision case for two units in one building. If the pending
+        # group is strata AND its title signature differs from any
+        # accepted gift at the same (lot, addr) → KEEP IT, do NOT filter.
         if (lot_sig, addr_sig) in referenced_lot_addr_sigs:
-            del prop_groups[gk]
-            continue
+            td_ex = (grp.get('title_doc') or {}).get('extracted') or {}
+            grp_strata = _is_strata(td_ex)
+            grp_title_sig = _title_signature(td_ex)
+            ref_title_sigs = referenced_sig_titles.get((lot_sig, addr_sig)) or set()
+            # If pending group is strata with a readable title, and that title
+            # is NOT one of the accepted titles at this (lot, addr) → it's a
+            # different unit. Keep it.
+            if grp_strata and grp_title_sig and grp_title_sig not in ref_title_sigs:
+                pass  # keep the group, fall through to sig grouping
+            else:
+                del prop_groups[gk]
+                continue
         sig = (lot_sig, addr_sig)
         sig_to_keys.setdefault(sig, []).append(gk)
 

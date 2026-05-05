@@ -6214,13 +6214,16 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
             # ║  property (OCR title drift: 564662 vs 504662) cannot       ║
             # ║  produce two gift entries. See CLAUDE.md §10f.             ║
             # ╚══════════════════════════════════════════════════════════╝
-            from services.gift_walker import _clean_id_value, _looks_like_garbage, _norm_addr
+            from services.gift_walker import (_clean_id_value, _looks_like_garbage,
+                                              _norm_addr, _is_strata, _title_signature)
             existing_ids = {g.get('document_id') for g in gifts_ph}
             new_lot = _clean_id_value(ex.get('lot_number', '') or '')
             if _looks_like_garbage(new_lot):
                 new_lot = ''
             new_lot_digits = re.sub(r'\D', '', new_lot)
             new_addr_sig = _norm_addr(ex.get('property_address', '') or '')[:60]
+            new_strata = _is_strata(ex)
+            new_title_sig = _title_signature(ex)
             duplicate = doc.id in existing_ids
             if not duplicate:
                 for g in gifts_ph:
@@ -6231,6 +6234,27 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                     g_lot_digits = re.sub(r'\D', '', g_lot)
                     g_addr_sig = _norm_addr((g.get('property_info') or {}).get('property_address')
                                              or g.get('property_address') or '')[:60]
+                    # 🔥 STRATA EXCEPTION (§10hd): same lot+addr but different
+                    # title signature → different unit in same building. Not a dup.
+                    g_ex = {'title_number': (g.get('property_info') or {}).get('title_number')
+                                            or g.get('title_number') or '',
+                            'title_type': (g.get('property_info') or {}).get('title_type')
+                                          or g.get('title_type') or '',
+                            'property_description':
+                                (g.get('property_info') or {}).get('property_description')
+                                or g.get('property_description') or '',
+                            'document_type':
+                                (g.get('property_info') or {}).get('document_type')
+                                or g.get('document_type') or ''}
+                    g_strata = _is_strata(g_ex)
+                    g_title_sig = _title_signature(g_ex)
+                    strata_diff_units = (
+                        (new_strata or g_strata)
+                        and new_title_sig and g_title_sig
+                        and new_title_sig != g_title_sig
+                    )
+                    if strata_diff_units:
+                        continue   # different strata unit — not a duplicate
                     # Match on lot+address (both non-empty and equal)
                     if (new_lot_digits and g_lot_digits and new_lot_digits == g_lot_digits
                         and new_addr_sig and g_addr_sig and new_addr_sig == g_addr_sig):
@@ -6952,12 +6976,15 @@ def _try_save_property_gift(client_id: str, user_text: str):
         # ║  sibling doc with OCR-drifted title still upserts onto    ║
         # ║  the same gift. See CLAUDE.md §10f.                       ║
         # ╚══════════════════════════════════════════════════════════╝
-        from services.gift_walker import _clean_id_value, _looks_like_garbage, _norm_addr
+        from services.gift_walker import (_clean_id_value, _looks_like_garbage,
+                                          _norm_addr, _is_strata, _title_signature)
         new_lot = _clean_id_value(ex_t.get('lot_number', '') or '')
         if _looks_like_garbage(new_lot):
             new_lot = ''
         new_lot_digits = re.sub(r'\D', '', new_lot)
         new_addr_sig = _norm_addr(ex_t.get('property_address', '') or '')[:60]
+        new_strata = _is_strata(ex_t)
+        new_title_sig = _title_signature(ex_t)
         _existing_idx = None
         for i, g in enumerate(gifts):
             if g.get('document_id') == doc_id:
@@ -6970,6 +6997,20 @@ def _try_save_property_gift(client_id: str, user_text: str):
             g_lot_digits = re.sub(r'\D', '', g_lot)
             g_addr_sig = _norm_addr(pi.get('property_address')
                                      or g.get('property_address') or '')[:60]
+            # 🔥 STRATA EXCEPTION (§10hd): different unit in same building
+            # → same lot+addr but different title signature → DON'T upsert.
+            g_ex_for_title = {
+                'title_number': pi.get('title_number') or g.get('title_number') or '',
+                'title_type': pi.get('title_type') or g.get('title_type') or '',
+                'property_description': pi.get('property_description')
+                                       or g.get('property_description') or '',
+                'document_type': pi.get('document_type') or g.get('document_type') or '',
+            }
+            g_strata = _is_strata(g_ex_for_title)
+            g_title_sig = _title_signature(g_ex_for_title)
+            if ((new_strata or g_strata) and new_title_sig and g_title_sig
+                and new_title_sig != g_title_sig):
+                continue   # different strata unit — not the same gift
             if (new_lot_digits and g_lot_digits and new_lot_digits == g_lot_digits
                 and new_addr_sig and g_addr_sig and new_addr_sig == g_addr_sig):
                 _existing_idx = i
