@@ -4359,6 +4359,15 @@ def _get_layer2_pending_props(client_id: str) -> list:
                 if not has_nlc:
                     continue
                 result.append({'document_id': d.id, 'extracted': ex})
+        # Sort by confidence: high-confidence properties first.
+        # This ensures they are inventoried first AND claim their addresses
+        # first in the enrichment pass.
+        try:
+            from services.gift_walker import _score_property_confidence
+            result.sort(key=lambda p: _score_property_confidence(p.get('extracted') or {}),
+                        reverse=True)
+        except Exception:
+            pass  # sort failure is non-critical
         return result
     except Exception:
         return []
@@ -4388,6 +4397,17 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
         _ENRICH_FIELDS = ('property_address', 'negeri', 'daerah',
                           'mukim', 'ownership_type', 'ownership_share',
                           '_beneficiary_hint')
+
+        # Sort by confidence so high-confidence properties are enriched first.
+        # This ensures they claim their real addresses before low-confidence
+        # properties can accidentally steal them.
+        try:
+            from services.gift_walker import _score_property_confidence
+            props = sorted(props,
+                           key=lambda p: _score_property_confidence(p.get('extracted') or {}),
+                           reverse=True)
+        except Exception:
+            pass  # non-critical
 
         # Build the set of addresses ALREADY claimed by other properties
         # (both those with pre-existing addresses AND those we'll match below).

@@ -8,7 +8,71 @@ share assignments.
 import json
 import re
 from typing import List, Dict, Any
-from database import ChatMessage, Document, Will
+from database import ChatMessage, ChatSession, Document, Will
+
+
+def _score_property_confidence(ex: Dict[str, Any]) -> int:
+    """Numeric confidence score 0-13 for a property document's extracted data.
+
+    Higher = more certain about property identity → show first in walkthrough.
+
+    Scoring:
+      +3  title_type_confidence == "high"
+      +1  title_type_confidence == "medium"
+      +1  has title_number
+      +1  has lot_number
+      +1  bonus: has BOTH title_number and lot_number
+      +2  has a real (non-NLC) street address already
+      +1  has non-empty owner_names
+      +3  _message_context contains this doc's NLC identifier (user explicitly said it)
+      +1  _message_context exists at all (some user intent context present)
+    """
+    try:
+        from ai.chat_planner import _NLC_ADDR_RE
+    except ImportError:
+        _NLC_ADDR_RE = None
+
+    score = 0
+    conf = (ex.get('title_type_confidence') or '').lower()
+    if conf == 'high':
+        score += 3
+    elif conf == 'medium':
+        score += 1
+
+    has_title = bool((ex.get('title_number') or '').strip())
+    has_lot = bool((ex.get('lot_number') or '').strip())
+    if has_title:
+        score += 1
+    if has_lot:
+        score += 1
+    if has_title and has_lot:
+        score += 1  # bonus for having both identifiers
+
+    # Real (non-NLC) street address already known
+    addr = (ex.get('property_address') or '').strip()
+    if addr:
+        if _NLC_ADDR_RE is None or not _NLC_ADDR_RE.match(addr):
+            score += 2
+
+    # Owner names extracted
+    owners = [o for o in (ex.get('owner_names') or []) if (o or '').strip()]
+    if owners:
+        score += 1
+
+    # Message context: user explicitly mentioned this property in WhatsApp/chat
+    ctx = (ex.get('_message_context') or '').strip()
+    if ctx:
+        ctx_lower = ctx.lower()
+        lot = (ex.get('lot_number') or '').strip().lower()
+        title = (ex.get('title_number') or '').strip().lower()
+        # Primary signal: NLC identifier appears in the message the user typed
+        if (lot and len(lot) >= 3 and lot in ctx_lower) or \
+           (title and len(title) >= 3 and title in ctx_lower):
+            score += 3
+        else:
+            score += 1  # some context present but no explicit NLC reference
+
+    return score
 
 
 # Only `property_title` proves OWNERSHIP and triggers a "who inherits this?"
@@ -165,6 +229,48 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         except Exception:
             pass  # non-fatal — retroactive context is best-effort
 
+    # ── NLC-based retroactive message context ──────────────────────────────
+    # Pre-fetch ALL user messages for the client's active session so we can
+    # link messages to images using NLC identifiers (HSD/PTD/lot/title numbers)
+    # as the primary criterion — stronger than chat_message_id proximity alone.
+    #
+    # Example: "Lot 127082 at Phase 2D Seri Alam, give to Joshua" sent as a
+    # separate message from the image upload. We match the message to the doc
+    # by lot_number = "127082" found in both.
+    #
+    # Results: nlc_key (lowercase) → best matching user message text
+    _nlc_to_message: Dict[str, str] = {}  # e.g. "127082" → "Lot 127082, give to Joshua"
+    try:
+        cs = (ChatSession.query.filter_by(client_id=client_id)
+              .order_by(ChatSession.created_at.desc()).first())
+        if cs:
+            _user_msgs = (ChatMessage.query
+                          .filter_by(session_id=cs.id, role='user')
+                          .order_by(ChatMessage.created_at.asc()).all())
+            for um in _user_msgs:
+                txt = (um.content or '').strip()
+                if not txt or len(txt) < 4:
+                    continue
+                txt_lower = txt.lower()
+                # Extract NLC patterns from this message
+                # Matches: PTD 127082, HSD 251041, Lot 207922, H.S.(D) 251041, Title 504662…
+                import re as _re_
+                nlc_hits = _re_.findall(
+                    r'\b(?:ptd|hsd|lot|title|geran|hs\(d\)|h\.s\.\(d\))\s*[\.:\-]?\s*(\d{3,8})\b',
+                    txt_lower
+                )
+                for hit in nlc_hits:
+                    # Use the shorter number as key (lot/PTD numbers are usually 5-7 digits)
+                    if hit not in _nlc_to_message:
+                        _nlc_to_message[hit] = txt
+                # Also check for bare numbers that look like lot numbers (5-7 digits)
+                bare_nums = _re_.findall(r'\b(\d{5,7})\b', txt)
+                for num in bare_nums:
+                    if num not in _nlc_to_message:
+                        _nlc_to_message[num] = txt
+    except Exception:
+        pass  # non-critical — best-effort
+
     # First pass: index property-related docs (title + support) by group key.
     # Also track chat_message_id → best group key so we can later absorb
     # sibling docs (same email batch, unclassified pages) into the group.
@@ -187,8 +293,13 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
 
         # Retroactively inject _message_context for documents that don't
         # already have it stored (old uploads processed before the feature).
-        if d.chat_message_id and not ex.get('_message_context'):
-            raw_ctx = _chat_msg_content.get(str(d.chat_message_id), '')
+        # Priority order:
+        #   1. chat_message_id-based lookup (text sent WITH this specific image)
+        #   2. NLC-based lookup (user message mentioning this doc's lot/title number)
+        if not ex.get('_message_context'):
+            raw_ctx = ''
+            if d.chat_message_id:
+                raw_ctx = _chat_msg_content.get(str(d.chat_message_id), '')
             if raw_ctx:
                 # Strip pure attachment lines (they're noise, not intent text)
                 clean_lines = [
@@ -200,6 +311,25 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                 if clean:
                     ex = dict(ex)  # shallow copy — don't mutate the parsed JSON
                     ex['_message_context'] = clean
+            else:
+                # Pass 2: NLC-identifier-based lookup — check if any user message
+                # explicitly mentions this document's lot/title number.
+                # This handles: message in one turn, image upload in another.
+                lot_n = (ex.get('lot_number') or '').strip().lower()
+                title_n = (ex.get('title_number') or '').strip().lower()
+                # Strip non-digits to get the bare number for lookup
+                import re as _re2_
+                lot_bare = _re2_.sub(r'\D', '', lot_n)
+                title_bare = _re2_.sub(r'\D', '', title_n)
+                nlc_msg = None
+                for key in [lot_bare, title_bare, lot_n, title_n]:
+                    if key and len(key) >= 4 and key in _nlc_to_message:
+                        nlc_msg = _nlc_to_message[key]
+                        break
+                if nlc_msg:
+                    ex = dict(ex)
+                    ex['_message_context'] = nlc_msg
+                    ex['_context_source'] = 'nlc_message_match'
 
         doc_summary = {
             'document_id': d.id,
@@ -482,10 +612,23 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                         known_ids.add(ds['document_id'])
                 del prop_groups[doc_gk]
 
+    # ── Sort groups by confidence before emitting ─────────────────────────
+    # High-confidence groups (good NLC extraction + real address + user mentioned)
+    # are shown first so the most certain properties are inventoried first.
+    # This also ensures high-confidence properties claim their addresses first
+    # in the enrichment pass, preventing low-confidence docs from stealing them.
+    def _group_confidence(gk_grp_pair):
+        _, grp = gk_grp_pair
+        td = grp.get('title_doc') or {}
+        ex_ = (td.get('extracted') or {}) if isinstance(td, dict) else {}
+        return _score_property_confidence(ex_)
+
+    sorted_groups = sorted(prop_groups.items(), key=_group_confidence, reverse=True)
+
     # ── Emit one card per group ────────────────────────────────────────────
     # Only emit if a property_title is present (ownership evidence required).
     # Groups with only SPA/cukai tanah are orphaned — skip for now.
-    for gk, grp in prop_groups.items():
+    for gk, grp in sorted_groups:
         primary = grp['title_doc']
         if primary:
             # Deduplicate support docs by BOTH document_id AND original_filename.
