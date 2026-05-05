@@ -3338,10 +3338,9 @@ def chat_page(client_id):
     if not client:
         flash('Client not found.', 'error')
         return redirect(url_for('clients_list'))
-    # Derive the inbox host from the request host. Production: will.alantanjb.com → inbox.will.alantanjb.com
+    # Use the request host directly — MX record is on will.alantanjb.com, no subdomain needed
     host = request.host.split(':')[0] if request else 'localhost'
-    inbox_host = f"inbox.{host}"
-    inbox_address = address_for_client(client, inbox_host)
+    inbox_address = address_for_client(client, host)
     inbox_enabled = bool(os.environ.get('POSTMARK_INBOUND_USER') and os.environ.get('POSTMARK_INBOUND_PASS'))
     return render_template('chat.html', client=client,
                            inbox_address=inbox_address,
@@ -7012,10 +7011,9 @@ def _strip_reply_quotes(text: str) -> str:
 
 def _extract_inbox_to(payload: dict):
     """Find the inbox-formatted recipient in a Postmark inbound payload.
-    Accepts both legacy '<slug>-<8hex>@inbox.…' and new '<initials>@inbox.…' formats.
+    Accepts both legacy '<slug>-<8hex>@…' and new '<name><ic4>@…' formats.
     """
-    from services.inbound_address import short_id_from_address, find_client_by_address
-    inbox_domain = os.environ.get('INBOUND_DOMAIN', 'inbox.')
+    from services.inbound_address import short_id_from_address, NEW_ADDR_RE
 
     def _is_inbox_addr(addr: str) -> bool:
         """True if the address looks like one of our inbox addresses."""
@@ -7023,12 +7021,9 @@ def _extract_inbox_to(payload: dict):
         # Legacy format: ends in '-<8hex>@…'
         if short_id_from_address(a):
             return True
-        # New initials format: local part is 2-6 letters + optional digit,
-        # and the domain contains 'inbox'
+        # New format: local part is 2-5 letters + 4 digits (e.g. koid5008)
         local = a.split('@')[0] if '@' in a else ''
-        domain = a.split('@')[1] if '@' in a else ''
-        import re as _re
-        if _re.match(r'^[a-z]{2,6}\d*$', local) and 'inbox' in domain:
+        if NEW_ADDR_RE.match(local):
             return True
         return False
 
