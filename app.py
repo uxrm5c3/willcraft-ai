@@ -10803,6 +10803,58 @@ def admin_debug_property_groups(client_id):
         return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
+@app.route('/admin/debug/dedupe_property_docs/<client_id>', methods=['POST'])
+@login_required
+def admin_dedupe_property_docs(client_id):
+    """Soft-delete duplicate property_title docs for a client.
+
+    Keeps the EARLIEST document for each (filename, lot, title) combination.
+    Marks later duplicates as category='deleted'.
+    Safe to call multiple times (idempotent).
+    """
+    try:
+        docs = Document.query.filter(
+            Document.client_id == client_id,
+            Document.category == 'property_title'
+        ).order_by(Document.created_at.asc()).all()
+
+        seen = {}   # key → first doc id
+        deleted_ids = []
+        kept_ids = []
+
+        for d in docs:
+            try:
+                ex = json.loads(d.extracted_data) if d.extracted_data else {}
+            except Exception:
+                ex = {}
+            # Dedupe key: filename + lot + title (ignores mukim/address OCR variance)
+            key = (
+                (d.original_filename or '').strip().lower(),
+                (ex.get('lot_number') or '').strip().lower(),
+                (ex.get('title_number') or '').strip().lower(),
+            )
+            if key in seen:
+                # Already have an earlier copy — soft-delete this one
+                d.category = 'deleted'
+                d.description = f'(duplicate of {seen[key][:8]} — auto-deduped)'
+                deleted_ids.append(d.id)
+            else:
+                seen[key] = d.id
+                kept_ids.append(d.id)
+
+        db.session.commit()
+        return jsonify({
+            'kept': len(kept_ids),
+            'deleted': len(deleted_ids),
+            'kept_ids': kept_ids,
+            'deleted_ids': deleted_ids,
+        })
+    except Exception as e:
+        import traceback
+        db.session.rollback()
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
+
+
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
