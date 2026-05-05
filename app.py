@@ -3792,6 +3792,11 @@ def _api_chat_message_impl(client_id):
     pending_gifts = get_pending_gift_documents(client_id)
     recent_text = _gather_recent_chat_text(client_id)
 
+    # Persist any address/field enrichment found by reverse-lookup so that
+    # matched addresses survive page refreshes and appear in the wizard.
+    # Runs async-safe (best-effort, never raises).
+    _persist_property_enrichment(client_id, recent_text)
+
     # 6. Plan the assistant turn against the current Will state
     active_will = (Will.query
                    .filter_by(client_id=client_id, status='draft')
@@ -4312,6 +4317,110 @@ def _gather_recent_chat_text(client_id: str, max_chars: int = 20000) -> str:
         out.append(c)
         total += len(c)
     return '\n\n'.join(out)
+
+
+def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
+    """For every pending property document that is missing a street address
+    (or other NLC fields), run the chat-text enrichment and persist any
+    newly filled fields back to extracted_data in the DB.
+
+    Addresses that have already been matched and persisted to one property are
+    excluded from the candidate pool for subsequent properties — preventing
+    two properties from being assigned the same street address.
+
+    Runs best-effort; never raises (non-critical path).
+    """
+    try:
+        from ai.chat_planner import (
+            _enrich_property_from_siblings,
+            _enrich_from_chat_text,
+        )
+        from services.gift_walker import get_pending_gift_documents
+
+        pend = get_pending_gift_documents(client_id)
+        props = pend.get('property') or []
+
+        _ENRICH_FIELDS = ('property_address', 'negeri', 'daerah',
+                          'mukim', 'ownership_type', 'ownership_share',
+                          '_beneficiary_hint')
+
+        # Build the set of addresses ALREADY claimed by other properties
+        # (both those with pre-existing addresses AND those we'll match below).
+        # This exclusion set grows as we process each property in sequence.
+        claimed_addresses: set = set()
+        for p in props:
+            addr = ((p.get('extracted') or {}).get('property_address') or '').strip().lower()
+            if addr:
+                claimed_addresses.add(addr)
+
+        changed = False
+        for p in props:
+            doc_id = p.get('document_id')
+            if not doc_id:
+                continue
+            ex_orig = p.get('extracted') or {}
+
+            # Already has address — add to claimed set and skip
+            existing_addr = (ex_orig.get('property_address') or '').strip()
+            if existing_addr:
+                claimed_addresses.add(existing_addr.lower())
+                continue
+
+            # Build a modified recent_text with claimed addresses removed
+            # so the reverse-lookup can't pick them for this property.
+            filtered_text = recent_text
+            for claimed in claimed_addresses:
+                if claimed and len(claimed) > 8:
+                    # Replace matched address with a placeholder so regex skips it
+                    filtered_text = re.sub(
+                        re.escape(claimed), '___CLAIMED___', filtered_text, flags=re.IGNORECASE
+                    )
+
+            # Run enrichment (sibling cross-ref + chat-text scan)
+            enriched = _enrich_property_from_siblings(p)
+            enriched = _enrich_from_chat_text(enriched, filtered_text)
+
+            # Check which fields actually changed
+            newly_filled = {
+                f: enriched.get(f)
+                for f in _ENRICH_FIELDS
+                if enriched.get(f) and not ex_orig.get(f)
+            }
+            if not newly_filled:
+                continue
+
+            # Mark this address as claimed so subsequent properties can't reuse it
+            new_addr = (enriched.get('property_address') or '').strip()
+            if new_addr:
+                claimed_addresses.add(new_addr.lower())
+
+            # Persist back to DB — reload from DB to avoid overwriting concurrent writes
+            doc = db.session.get(Document, doc_id)
+            if not doc:
+                continue
+            try:
+                stored = json.loads(doc.extracted_data) if doc.extracted_data else {}
+            except (json.JSONDecodeError, TypeError):
+                stored = {}
+
+            for f, v in newly_filled.items():
+                stored[f] = v
+            # Track enrichment source for debugging
+            stored.setdefault('_enriched_from', [])
+            for tag in (enriched.get('_enriched_from') or []):
+                if tag not in stored['_enriched_from']:
+                    stored['_enriched_from'].append(tag)
+
+            doc.extracted_data = json.dumps(stored)
+            changed = True
+
+        if changed:
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+    except Exception:
+        pass  # never block the main chat flow
 
 
 def _extract_whatsapp_context_for_file(body: str, filename: str) -> str:
