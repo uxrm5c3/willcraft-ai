@@ -2409,6 +2409,68 @@ def _walkthrough_property_card(p: Dict[str, Any], seq_num: int,
     if nlc_lines:
         parts.append("📋 **Land Registry Details:**\n" + '\n'.join(nlc_lines))
 
+    # ── 🔥 BURN-IN — TWO-HINT EVIDENCE BLOCK (§10hb) ─────────────────────
+    # When the matcher used the two-hint test (same mukim + close timing)
+    # to bind this image to its AI-Summary property, surface BOTH hints
+    # so the user can verify. Source citations come from
+    # `validate_matches_with_web_clues` which writes `_resolved_mukim`,
+    # `_hint1_mukim_ok`, `_clue_status`, `_clue_sources` onto extracted.
+    _resolved_mukim = (ex.get('_resolved_mukim') or '').strip()
+    _hint1_ok = ex.get('_hint1_mukim_ok')
+    _clue_status = (ex.get('_clue_status') or '').strip()
+    _clue_sources = ex.get('_clue_sources') or []
+    _msg_ts = (ex.get('_msg_timestamp') or '').strip()
+    _addr_ts = (ex.get('_address_msg_timestamp') or '').strip()
+    has_hint_evidence = bool(_resolved_mukim or _hint1_ok is not None
+                             or _clue_status or _msg_ts)
+    if has_hint_evidence:
+        hint_lines = ["🔗 **Match evidence:**"]
+        # Hint 1 — mukim
+        doc_mukim = (ex.get('mukim') or '').strip()
+        if _hint1_ok is True:
+            hint_lines.append(
+                f"  • 🌍 **Hint 1 — mukim:** ✅ `{doc_mukim}` matches resolved "
+                f"`{_resolved_mukim}`"
+            )
+        elif _hint1_ok is False:
+            hint_lines.append(
+                f"  • 🌍 **Hint 1 — mukim:** ⚠️ doc says `{doc_mukim}`, "
+                f"resolved `{_resolved_mukim}` — please verify"
+            )
+        elif _resolved_mukim:
+            hint_lines.append(
+                f"  • 🌍 **Hint 1 — mukim:** ℹ️ resolved to `{_resolved_mukim}` "
+                f"(no doc-side mukim to compare)"
+            )
+        # Hint 2 — timing
+        if _msg_ts and _addr_ts:
+            hint_lines.append(
+                f"  • ⏱  **Hint 2 — timing:**\n"
+                f"      📎 Image  `[{_msg_ts}]`\n"
+                f"      💬 Msg   `[{_addr_ts}]`"
+            )
+        elif _msg_ts:
+            hint_lines.append(f"  • ⏱  **Hint 2 — image timestamp:** `[{_msg_ts}]`")
+        # Clue validation status
+        if _clue_status == 'compatible':
+            hint_lines.append("  • ✅ **Web-search clues:** type/tenure compatible")
+        elif _clue_status == 'incompatible':
+            hint_lines.append(
+                "  • ⚠️ **Web-search clues:** doc looks INCOMPATIBLE with "
+                "what the address resolves to — please verify"
+            )
+        elif _clue_status == 'address_not_found':
+            hint_lines.append(
+                "  • ℹ️ **Web-search clues:** address could not be resolved online"
+            )
+        if _clue_sources:
+            srcs = [s for s in _clue_sources[:3] if s]
+            if srcs:
+                hint_lines.append(
+                    "  • 🔎 _Sources:_ " + ", ".join(f"<{s}>" for s in srcs)
+                )
+        parts.append("\n".join(hint_lines))
+
     # Supporting docs — brief list of types only
     support = p.get('support_docs') or []
     _unrelated_warnings = []
