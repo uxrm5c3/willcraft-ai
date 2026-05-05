@@ -248,7 +248,7 @@ def plan_turn(
     s4 = current_will_data.get('step4')
     n_benef = len(s4) if isinstance(s4, list) else 0
     if n_benef == 0:
-        reply_parts.append(_step5_beneficiaries_question(current_will_data))
+        reply_parts.append(_step5_beneficiaries_question(current_will_data, recent_text))
         return _wrap(reply_parts, questions, patch, advice)
 
     # ── 5. STEP 6: Specific Gifts (properties, then banks generic) ──────
@@ -796,6 +796,13 @@ def _step3_executor_question(will_data: Dict[str, Any], recent_text: str = '') -
             "**Pick a substitute (backup) executor:**"
         )
 
+    # ── Surface text evidence from AI Summary / forwarded message ──────
+    if candidate and candidate.get('evidence'):
+        parts.append(
+            f"📨 **Suggested:** **{candidate['name']}**\n"
+            f"_from your message:_ \"{candidate['evidence'][:160]}\""
+        )
+
     # Build button row — eligible identity names + Skip (substitute only)
     quick: List[Dict[str, str]] = []
     if candidate:
@@ -821,10 +828,15 @@ def _step3_executor_question(will_data: Dict[str, Any], recent_text: str = '') -
             'focus_doc_id': candidate.get('document_id') if candidate else None}
 
 
-def _step5_beneficiaries_question(will_data):
+def _step5_beneficiaries_question(will_data, recent_text: str = ''):
     """Confirm the universe of beneficiaries (people who'll inherit anything).
     Filters identities: drops testator + witnesses; auto-suggests spouse +
-    children + anyone explicitly tagged Beneficiary."""
+    children + anyone explicitly tagged Beneficiary.
+
+    Also cross-references the AI Summary / forwarded WhatsApp text so each
+    suggested beneficiary shows the SPECIFIC text snippet that names them
+    (e.g. "Joshua Koid Teck Seng — 25% of Unit B-05-11, my message says…").
+    """
     identities = will_data.get('identities') or []
     likely = []
     BENEFICIARY_RELS = {
@@ -843,14 +855,53 @@ def _step5_beneficiaries_question(will_data):
         elif 'in-law' in rel:
             likely.append(i)
 
+    # ── Cross-reference text/AI summary for each candidate ──────────
+    # Surface the specific snippet from the WhatsApp/email that names them
+    # so the user sees WHY each person is suggested.
+    text_evidence: Dict[str, str] = {}
+    if recent_text and likely:
+        try:
+            from ai.role_deducer import deduce_roles
+            names = [i['full_name'] for i in likely if i.get('full_name')]
+            ded = deduce_roles(recent_text, names)
+            for n, info in ded.items():
+                ev = (info.get('evidence') or '').strip()
+                if ev:
+                    text_evidence[n] = ev[:120]
+        except Exception:
+            pass
+        # Heuristic fallback: search recent_text for each name to grab a snippet
+        import re as _re
+        for i in likely:
+            n = i.get('full_name') or ''
+            if not n or n in text_evidence:
+                continue
+            # Find first occurrence and grab ~80 chars around it
+            try:
+                pat = _re.escape(n.split()[0])  # first word of name
+                m = _re.search(pat, recent_text, _re.IGNORECASE)
+                if m:
+                    s = max(0, m.start() - 30)
+                    e = min(len(recent_text), m.end() + 80)
+                    snippet = recent_text[s:e].strip().replace('\n', ' ')
+                    text_evidence[n] = '…' + snippet[:120] + '…'
+            except Exception:
+                pass
+
     parts = [
         "### 👨‍👩‍👧 Step 5: Beneficiaries",
-        "Proposed beneficiary list:",
+        "_Suggested from your AI Summary / forwarded message:_",
     ]
     quick: List[Dict[str, str]] = []
     if likely:
         for i in likely:
-            parts.append(f"- **{i['full_name']}** ({i.get('relationship') or 'unknown'})")
+            n = i['full_name']
+            rel = i.get('relationship') or 'unknown'
+            line = f"- **{n}** ({rel})"
+            ev = text_evidence.get(n)
+            if ev:
+                line += f"\n  📨 _from message:_ \"{ev}\""
+            parts.append(line)
         parts.append("**Confirm this list?**")
         quick = [{'label': '✓ Yes, all of these', 'value': 'yes'}]
         # Quick-remove buttons for each so user can drop in one tap
