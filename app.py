@@ -6828,13 +6828,34 @@ def _try_save_property_gift(client_id: str, user_text: str):
                     for s in substitute_specific
                 ]
 
-        # Upsert: replace existing placeholder/entry for this doc_id if present,
-        # otherwise append. This ensures the inventory placeholder (added when
-        # the property was accepted in Layer 1) is replaced — not duplicated.
-        _existing_idx = next(
-            (i for i, g in enumerate(gifts) if g.get('document_id') == doc_id),
-            None
-        )
+        # ╔══════════════════════════════════════════════════════════╗
+        # ║  🔥 BURN-IN — NO DUPLICATE GIFTS (upsert path) 🔥          ║
+        # ║  Match by document_id OR by (lot_digits, addr_sig) so a   ║
+        # ║  sibling doc with OCR-drifted title still upserts onto    ║
+        # ║  the same gift. See CLAUDE.md §10f.                       ║
+        # ╚══════════════════════════════════════════════════════════╝
+        from services.gift_walker import _clean_id_value, _looks_like_garbage, _norm_addr
+        new_lot = _clean_id_value(ex_t.get('lot_number', '') or '')
+        if _looks_like_garbage(new_lot):
+            new_lot = ''
+        new_lot_digits = re.sub(r'\D', '', new_lot)
+        new_addr_sig = _norm_addr(ex_t.get('property_address', '') or '')[:60]
+        _existing_idx = None
+        for i, g in enumerate(gifts):
+            if g.get('document_id') == doc_id:
+                _existing_idx = i
+                break
+            pi = g.get('property_info') or g
+            g_lot = _clean_id_value(pi.get('lot_number') or g.get('lot_number') or '')
+            if _looks_like_garbage(g_lot):
+                g_lot = ''
+            g_lot_digits = re.sub(r'\D', '', g_lot)
+            g_addr_sig = _norm_addr(pi.get('property_address')
+                                     or g.get('property_address') or '')[:60]
+            if (new_lot_digits and g_lot_digits and new_lot_digits == g_lot_digits
+                and new_addr_sig and g_addr_sig and new_addr_sig == g_addr_sig):
+                _existing_idx = i
+                break
         if _existing_idx is not None:
             gifts[_existing_idx] = gift_entry
         else:
