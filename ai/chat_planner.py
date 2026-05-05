@@ -1584,9 +1584,10 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
 
     Returns {text, focus_doc_ids} or None if everything's reviewed.
     """
-    props = [p for p in (pending_gifts.get('property') or []) if not _is_inventoried(p)]
-    banks = [b for b in (pending_gifts.get('bank') or []) if not _is_inventoried(b)]
-    vehicles = [v for v in (pending_gifts.get('vehicle') or []) if not _is_inventoried(v)]
+    all_props = pending_gifts.get('property') or []
+    props     = [p for p in all_props if not _is_inventoried(p)]
+    banks     = [b for b in (pending_gifts.get('bank') or []) if not _is_inventoried(b)]
+    vehicles  = [v for v in (pending_gifts.get('vehicle') or []) if not _is_inventoried(v)]
 
     # Silently drop properties with NOTHING worth asking about (no
     # address, no title, no lot, no support docs). Soft-marks them
@@ -1608,8 +1609,14 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         enriched = _enrich_from_chat_text(enriched, recent_text)
         target = dict(target)
         target['extracted'] = enriched
-        return _walkthrough_property_card(target, len(props), recent_text,
-                                           total_remaining=len(props) + len(banks) + len(vehicles))
+        # Sequence: "Property 1 of 5" = (reviewed+1) of total property groups.
+        # Uses all_props (inventoried + pending) for total; props is pending only.
+        # This gives an honest progress counter independent of banks/vehicles.
+        n_reviewed = len(all_props) - len(props)
+        seq_num    = n_reviewed + 1
+        return _walkthrough_property_card(target, seq_num, recent_text,
+                                           total_props=len(all_props),
+                                           n_props_left=len(props))
     if banks:
         return _walkthrough_bank_card(banks[0], len(banks))
     if vehicles:
@@ -1617,9 +1624,10 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
     return None
 
 
-def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
+def _walkthrough_property_card(p: Dict[str, Any], seq_num: int,
                                 recent_text: str,
-                                total_remaining: int) -> Dict[str, Any]:
+                                total_props: int,
+                                n_props_left: int = 0) -> Dict[str, Any]:
     ex = p.get('extracted') or {}
     formatted = _format_property_description(ex)
     doc_kind = p.get('category', 'property_title')
@@ -1637,7 +1645,7 @@ def _walkthrough_property_card(p: Dict[str, Any], n_left: int,
     _title_wrong_reason = (ex.get('_wrong_reason') or '').strip()
 
     parts = [
-        f"### 🏠 Property {n_left} of {total_remaining}",
+        f"### 🏠 Property {seq_num} of {total_props}",
         formatted,
     ]
 
