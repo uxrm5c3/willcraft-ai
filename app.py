@@ -6215,7 +6215,8 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
             # ║  produce two gift entries. See CLAUDE.md §10f.             ║
             # ╚══════════════════════════════════════════════════════════╝
             from services.gift_walker import (_clean_id_value, _looks_like_garbage,
-                                              _norm_addr, _is_strata, _title_signature)
+                                              _norm_addr, _is_strata, _title_signature,
+                                              _is_genuinely_different_unit)
             existing_ids = {g.get('document_id') for g in gifts_ph}
             new_lot = _clean_id_value(ex.get('lot_number', '') or '')
             if _looks_like_garbage(new_lot):
@@ -6234,8 +6235,9 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                     g_lot_digits = re.sub(r'\D', '', g_lot)
                     g_addr_sig = _norm_addr((g.get('property_info') or {}).get('property_address')
                                              or g.get('property_address') or '')[:60]
-                    # 🔥 STRATA EXCEPTION (§10hd): same lot+addr but different
-                    # title signature → different unit in same building. Not a dup.
+                    # 🔥 STRATA EXCEPTION (§10hd): same lot+addr but genuinely
+                    # different title signature (not OCR truncation) → different
+                    # unit in same building. Not a duplicate.
                     g_ex = {'title_number': (g.get('property_info') or {}).get('title_number')
                                             or g.get('title_number') or '',
                             'title_type': (g.get('property_info') or {}).get('title_type')
@@ -6250,8 +6252,7 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                     g_title_sig = _title_signature(g_ex)
                     strata_diff_units = (
                         (new_strata or g_strata)
-                        and new_title_sig and g_title_sig
-                        and new_title_sig != g_title_sig
+                        and _is_genuinely_different_unit(new_title_sig, g_title_sig)
                     )
                     if strata_diff_units:
                         continue   # different strata unit — not a duplicate
@@ -6977,7 +6978,8 @@ def _try_save_property_gift(client_id: str, user_text: str):
         # ║  the same gift. See CLAUDE.md §10f.                       ║
         # ╚══════════════════════════════════════════════════════════╝
         from services.gift_walker import (_clean_id_value, _looks_like_garbage,
-                                          _norm_addr, _is_strata, _title_signature)
+                                          _norm_addr, _is_strata, _title_signature,
+                                          _is_genuinely_different_unit)
         new_lot = _clean_id_value(ex_t.get('lot_number', '') or '')
         if _looks_like_garbage(new_lot):
             new_lot = ''
@@ -6997,8 +6999,8 @@ def _try_save_property_gift(client_id: str, user_text: str):
             g_lot_digits = re.sub(r'\D', '', g_lot)
             g_addr_sig = _norm_addr(pi.get('property_address')
                                      or g.get('property_address') or '')[:60]
-            # 🔥 STRATA EXCEPTION (§10hd): different unit in same building
-            # → same lot+addr but different title signature → DON'T upsert.
+            # 🔥 STRATA EXCEPTION (§10hd): genuinely different unit in same
+            # building → don't upsert. Not OCR truncation of same unit.
             g_ex_for_title = {
                 'title_number': pi.get('title_number') or g.get('title_number') or '',
                 'title_type': pi.get('title_type') or g.get('title_type') or '',
@@ -7008,8 +7010,8 @@ def _try_save_property_gift(client_id: str, user_text: str):
             }
             g_strata = _is_strata(g_ex_for_title)
             g_title_sig = _title_signature(g_ex_for_title)
-            if ((new_strata or g_strata) and new_title_sig and g_title_sig
-                and new_title_sig != g_title_sig):
+            if ((new_strata or g_strata)
+                and _is_genuinely_different_unit(new_title_sig, g_title_sig)):
                 continue   # different strata unit — not the same gift
             if (new_lot_digits and g_lot_digits and new_lot_digits == g_lot_digits
                 and new_addr_sig and g_addr_sig and new_addr_sig == g_addr_sig):

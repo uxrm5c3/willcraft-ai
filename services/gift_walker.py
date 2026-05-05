@@ -85,12 +85,39 @@ def _title_signature(extracted: Dict[str, Any]) -> str:
     return sig
 
 
+def _master_title(sig: str) -> str:
+    """Extract just the master title number (digits before first slash) from
+    a title signature. Used to distinguish OCR truncation (master only) from
+    genuine different parcels (full /block/storey/parcel encoding).
+
+    e.g. "564662/M1C/30/710" → "564662"
+         "564662"            → "564662"
+         "GMS564662"         → "564662"
+    """
+    if not sig:
+        return ''
+    head = sig.split('/')[0]
+    digits = re.sub(r'\D', '', head)
+    return digits
+
+
 def _safe_to_merge(grp_a: Dict[str, Any], grp_b: Dict[str, Any]) -> bool:
     """Return True if two property groups can be safely merged into one.
 
     The hard rule (§10hd): if either group is strata, the title
     signatures must match. Same lot + different title = different units
     in the same building → DO NOT MERGE.
+
+    BUT — distinguish OCR-truncation from genuine different units:
+      • full-encoded "564662/M1C/30/710" vs master-only "564662"
+        → master matches, only one side has parcel encoding → likely the
+        same unit (front-page vs back-page of same geran). MERGE.
+      • full-encoded "564662/M1C/30/710" vs full-encoded "564662/M1C/05/100"
+        → both have parcel encoding, suffixes differ → different units. SPLIT.
+      • master "564662" vs master "504662"
+        → different master numbers → different units. SPLIT (per §10hd: "OCR
+        drift" 504662 vs 564662 should be treated as different until user
+        confirms).
 
     For landed properties (neither is strata), lot equality is enough.
     """
@@ -106,8 +133,44 @@ def _safe_to_merge(grp_a: Dict[str, Any], grp_b: Dict[str, Any]) -> bool:
         # One side has no readable title. Can't prove they're the same
         # unit; refuse to merge and let the user decide.
         return False
-    # Strict equality on the title signature (which keeps /block/storey/parcel)
-    return sig_a == sig_b
+    if sig_a == sig_b:
+        return True
+    # Distinguish OCR truncation (one side master-only) from genuine split
+    has_parcel_a = '/' in sig_a
+    has_parcel_b = '/' in sig_b
+    master_a = _master_title(sig_a)
+    master_b = _master_title(sig_b)
+    if has_parcel_a != has_parcel_b:
+        # Only one side has parcel encoding → likely OCR truncation.
+        # Treat as same unit IFF master matches.
+        return bool(master_a) and master_a == master_b
+    # Both have parcel encoding (or neither, but sig_a != sig_b means they
+    # both lack and differ) → genuine different units.
+    return False
+
+
+def _is_genuinely_different_unit(sig_a: str, sig_b: str) -> bool:
+    """Are these two title signatures from genuinely different strata
+    units (NOT OCR truncation of the same unit)?
+
+    Returns False when one side is master-only and shares the master with
+    the other side (likely OCR truncation, same unit). Returns True when
+    sigs differ in master OR both have parcel encoding with different
+    suffixes. See §10hd.
+    """
+    if not sig_a or not sig_b:
+        return False
+    if sig_a == sig_b:
+        return False
+    a_parcel = '/' in sig_a
+    b_parcel = '/' in sig_b
+    master_a = _master_title(sig_a)
+    master_b = _master_title(sig_b)
+    if a_parcel != b_parcel:
+        # OCR truncation case: same master ⇒ same unit
+        return not (master_a and master_a == master_b)
+    # Both encoded or neither → distinct sigs = distinct units
+    return True
 
 
 def _safe_to_inherit_address(src_extracted: Dict[str, Any],
@@ -840,17 +903,20 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         # group_key check above; the (lot, addr) sig catches it.
         # 🔥 STRATA EXCEPTION (§10hd): same lot + empty addr is the
         # collision case for two units in one building. If the pending
-        # group is strata AND its title signature differs from any
-        # accepted gift at the same (lot, addr) → KEEP IT, do NOT filter.
+        # group is strata AND its title signature is genuinely different
+        # (not OCR truncation) from EVERY accepted title at this (lot,
+        # addr) → KEEP IT, do NOT filter.
         if (lot_sig, addr_sig) in referenced_lot_addr_sigs:
             td_ex = (grp.get('title_doc') or {}).get('extracted') or {}
             grp_strata = _is_strata(td_ex)
             grp_title_sig = _title_signature(td_ex)
             ref_title_sigs = referenced_sig_titles.get((lot_sig, addr_sig)) or set()
-            # If pending group is strata with a readable title, and that title
-            # is NOT one of the accepted titles at this (lot, addr) → it's a
-            # different unit. Keep it.
-            if grp_strata and grp_title_sig and grp_title_sig not in ref_title_sigs:
+            different_unit = (
+                grp_strata and grp_title_sig and bool(ref_title_sigs)
+                and all(_is_genuinely_different_unit(grp_title_sig, rs)
+                        for rs in ref_title_sigs)
+            )
+            if different_unit:
                 pass  # keep the group, fall through to sig grouping
             else:
                 del prop_groups[gk]
