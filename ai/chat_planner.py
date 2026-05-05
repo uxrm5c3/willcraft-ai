@@ -179,6 +179,18 @@ def plan_turn(
         if not has_any_assets:
             reply_parts.append(_assets_prompt_for_uploads())
             return _wrap(reply_parts, questions, patch, advice)
+        # Interleave Layer 2: if any inventoried property still needs beneficiary
+        # assignment, handle that BEFORE showing the next Layer 1 card so we
+        # complete both layers per property before moving to the next property.
+        layer2_pending = current_will_data.get('layer2_pending_props') or []
+        if layer2_pending:
+            s4 = current_will_data.get('step4') or []
+            if s4:  # need beneficiaries defined first
+                q = _step6_property_question(layer2_pending, recent_text, current_will_data)
+                reply_parts.append(q['text'])
+                focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
+                return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
+
         # Walk one un-reviewed property at a time. When all properties
         # are reviewed, walk banks, then vehicles. _asset_walkthrough_*
         # picks the FIRST item where extracted._inventoried is not True.
@@ -1362,6 +1374,105 @@ def _scan_text_for_property_fields(ex: Dict[str, Any], text: str,
     return ex
 
 
+def ai_match_property_addresses(
+    props: list,          # list of {extracted: {lot_number, title_number, mukim, daerah, negeri, ...}}
+    raw_text: str,        # WhatsApp/email body that lists the addresses
+    already_claimed: set  # addresses already matched to other properties — exclude these
+) -> dict:
+    """Use Claude Haiku to match each property's NLC identifiers to a street
+    address mentioned in the client's forwarded message.
+
+    The WhatsApp text lists addresses WITHOUT lot numbers; the geran documents
+    have lot numbers WITHOUT addresses. This call bridges the gap by asking
+    the AI to make the association using any available context clues
+    (mukim, daerah, ownership share, order in list, etc.).
+
+    Returns: {document_id: matched_address_string}  (only for confident matches)
+    """
+    if not props or not raw_text or len(raw_text.strip()) < 20:
+        return {}
+
+    # Build a compact property table for the prompt
+    prop_lines = []
+    for i, p in enumerate(props, 1):
+        ex = p.get('extracted') or {}
+        parts = []
+        if ex.get('lot_number'):
+            parts.append(f"Lot/PTD {ex['lot_number']}")
+        if ex.get('title_number'):
+            parts.append(f"Hakmilik/Title {ex['title_number']}")
+        if ex.get('mukim'):
+            parts.append(f"Mukim {ex['mukim']}")
+        if ex.get('daerah'):
+            parts.append(f"Daerah {ex['daerah']}")
+        if ex.get('negeri'):
+            parts.append(f"Negeri {ex['negeri']}")
+        if ex.get('ownership_type'):
+            share = ex.get('ownership_share', '')
+            parts.append(f"{'Joint ' + share if share else 'Joint'}" if ex['ownership_type'] == 'joint' else 'Sole')
+        prop_lines.append(f"  Property {i} (doc_id={p.get('document_id','')}): {', '.join(parts) or 'no identifiers'}")
+
+    # Exclude already-claimed addresses from the candidate pool
+    exclusion_note = ''
+    if already_claimed:
+        excl = [a for a in already_claimed if a and len(a) > 5]
+        if excl:
+            exclusion_note = (
+                f"\n\nIMPORTANT: these addresses are already matched to other properties — "
+                f"do NOT use them: {'; '.join(excl[:10])}"
+            )
+
+    prompt = (
+        "You are a Malaysian will-writing assistant. "
+        "Below are scanned property documents with their NLC (National Land Code) identifiers "
+        "extracted by OCR, and a forwarded client message listing property addresses.\n\n"
+        "Task: for each property document, find the best matching street address from the client's message. "
+        "Use any available clues: location (mukim/daerah maps to a neighbourhood), ownership type, "
+        "order of mention, or any other contextual hint. "
+        "If you are NOT confident (no clear match), output 'no_match' for that property.\n\n"
+        "Properties (from scanned documents):\n"
+        + '\n'.join(prop_lines)
+        + exclusion_note
+        + "\n\nClient's message:\n"
+        + raw_text[:3000]
+        + "\n\nOutput ONLY a JSON object mapping doc_id to matched address string (or 'no_match'). "
+        "Example: {\"abc123\": \"No. 18, Jalan Rimbun, Taman Molek, 81300 Skudai, Johor\", "
+        "\"def456\": \"no_match\"}"
+    )
+
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_CHEAP
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model=CLAUDE_MODEL_CHEAP,
+            max_tokens=600,
+            timeout=15.0,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='ai.chat_planner.ai_match_property_addresses')
+        except Exception:
+            pass
+        raw = (msg.content[0].text or '').strip() if msg.content else ''
+        # Extract JSON from response (may be wrapped in ```json ... ```)
+        import re as _re
+        json_m = _re.search(r'\{.*\}', raw, _re.DOTALL)
+        if not json_m:
+            return {}
+        import json as _json
+        result = _json.loads(json_m.group(0))
+        # Filter out no_match entries and empty values
+        return {
+            k: v for k, v in result.items()
+            if v and v.lower() not in ('no_match', 'no match', 'none', 'unknown', '')
+            and len(v) >= 8
+        }
+    except Exception:
+        return {}
+
+
 def _enrich_from_chat_text(ex: Dict[str, Any], recent_text: str) -> Dict[str, Any]:
     """Back-fill missing address/negeri/daerah from the client's chat messages.
 
@@ -1657,13 +1768,20 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         enriched = _enrich_from_chat_text(enriched, recent_text)
         target = dict(target)
         target['extracted'] = enriched
-        # Sequence: "Property 1 of 5" = (reviewed+1) of total property groups.
-        # Uses all_props (inventoried + pending) for total; props is pending only.
-        # This gives an honest progress counter independent of banks/vehicles.
-        n_reviewed = len(all_props) - len(props)
-        seq_num    = n_reviewed + 1
+        # Accurate sequence counter across two accepted-property paths:
+        #   Path A: accepted before placeholder fix → _inventoried=True, not in step5
+        #           → still in all_props, filtered from props → counted via (all-pending)
+        #   Path B: accepted after placeholder fix → document_id in step5_data
+        #           → excluded from all_props entirely → counted via step5_props
+        step5_props = [g for g in (will_data.get('step5') or [])
+                       if (g.get('kind') == 'property' or g.get('gift_type') == 'property')
+                       and g.get('document_id')]
+        n_in_step5  = len(step5_props)
+        n_reviewed  = n_in_step5 + (len(all_props) - len(props))
+        seq_num     = n_reviewed + 1
+        total_props = n_in_step5 + len(all_props)
         return _walkthrough_property_card(target, seq_num, recent_text,
-                                           total_props=len(all_props),
+                                           total_props=total_props,
                                            n_props_left=len(props))
     if banks:
         return _walkthrough_bank_card(banks[0], len(banks))

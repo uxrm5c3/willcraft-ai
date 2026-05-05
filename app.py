@@ -3810,6 +3810,7 @@ def _api_chat_message_impl(client_id):
             or just_inventory or just_guardian or just_trust
             or just_others or just_residuary_skip)
     will_snapshot['pending_gifts'] = pending_gifts
+    will_snapshot['layer2_pending_props'] = _get_layer2_pending_props(client_id)
     # If a property_fill action produced a reply_override (e.g. the "how to
     # type missing fields" prompt), inject it into the plan instead of running
     # the normal planner — it's a simple instructional message, not a full turn.
@@ -4319,6 +4320,26 @@ def _gather_recent_chat_text(client_id: str, max_chars: int = 20000) -> str:
     return '\n\n'.join(out)
 
 
+def _get_layer2_pending_props(client_id: str) -> list:
+    """Properties that completed Layer 1 (inventoried) but not Layer 2 (beneficiary assigned)."""
+    try:
+        docs = Document.query.filter(
+            Document.client_id == client_id,
+            Document.category == 'property_title',
+        ).all()
+        result = []
+        for d in docs:
+            try:
+                ex = json.loads(d.extracted_data) if d.extracted_data else {}
+            except (json.JSONDecodeError, TypeError):
+                ex = {}
+            if ex.get('_inventoried') and not ex.get('_substitute_assigned') and not ex.get('_skipped'):
+                result.append({'document_id': d.id, 'extracted': ex})
+        return result
+    except Exception:
+        return []
+
+
 def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
     """For every pending property document that is missing a street address
     (or other NLC fields), run the chat-text enrichment and persist any
@@ -4419,6 +4440,54 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                 db.session.commit()
             except Exception:
                 db.session.rollback()
+
+        # ── AI address matching pass ───────────────────────────────────────
+        # For properties still missing an address after the regex scan,
+        # call Claude Haiku to match them to the addresses in the WhatsApp
+        # text using NLC context clues (mukim/daerah/ownership).
+        # Re-fetch props from DB so we use the just-persisted addresses.
+        try:
+            from ai.chat_planner import ai_match_property_addresses
+            # Reload to pick up any addresses persisted in the regex pass above
+            pend2 = get_pending_gift_documents(client_id)
+            props2 = pend2.get('property') or []
+            unmatched = [p for p in props2
+                         if not (p.get('extracted') or {}).get('property_address')]
+            if unmatched:
+                ai_matches = ai_match_property_addresses(
+                    unmatched, recent_text, claimed_addresses
+                )
+                if ai_matches:
+                    ai_changed = False
+                    for p in unmatched:
+                        doc_id2 = p.get('document_id')
+                        matched_addr = ai_matches.get(doc_id2, '').strip()
+                        if not matched_addr or len(matched_addr) < 8:
+                            continue
+                        doc2 = db.session.get(Document, doc_id2)
+                        if not doc2:
+                            continue
+                        try:
+                            stored2 = json.loads(doc2.extracted_data) if doc2.extracted_data else {}
+                        except (json.JSONDecodeError, TypeError):
+                            stored2 = {}
+                        if stored2.get('property_address'):
+                            continue  # already set by regex pass or another round
+                        stored2['property_address'] = matched_addr[:200]
+                        stored2.setdefault('_enriched_from', [])
+                        if 'ai_address_match' not in stored2['_enriched_from']:
+                            stored2['_enriched_from'].append('ai_address_match')
+                        doc2.extracted_data = json.dumps(stored2)
+                        claimed_addresses.add(matched_addr.lower())
+                        ai_changed = True
+                    if ai_changed:
+                        try:
+                            db.session.commit()
+                        except Exception:
+                            db.session.rollback()
+        except Exception:
+            pass  # AI pass is best-effort
+
     except Exception:
         pass  # never block the main chat flow
 
@@ -10695,6 +10764,37 @@ def probate_template_replace(form_code):
     tpl.updated_at = datetime.utcnow()
     db.session.commit()
     return jsonify(ok=True, message=f'Template for {tpl.form_name} updated.')
+
+
+@app.route('/admin/debug/property_groups/<client_id>')
+@login_required
+def admin_debug_property_groups(client_id):
+    """Debug endpoint: show all property_title docs and their NLC data for a client."""
+    if not current_user.is_authenticated:
+        return jsonify({'error': 'unauthorized'}), 401
+    docs = Document.query.filter(
+        Document.client_id == client_id,
+        Document.category == 'property_title'
+    ).order_by(Document.created_at.asc()).all()
+    result = []
+    for d in docs:
+        try:
+            ex = json.loads(d.extracted_data) if d.extracted_data else {}
+        except Exception:
+            ex = {}
+        result.append({
+            'id': d.id,
+            'filename': d.original_filename,
+            'lot': ex.get('lot_number', ''),
+            'title': ex.get('title_number', ''),
+            'mukim': ex.get('mukim', ''),
+            'address': ex.get('property_address', ''),
+            'inventoried': ex.get('_inventoried', False),
+            'skipped': ex.get('_skipped', False),
+            'substitute_assigned': ex.get('_substitute_assigned', False),
+            'created_at': d.created_at.isoformat() if d.created_at else '',
+        })
+    return jsonify({'count': len(result), 'docs': result})
 
 
 # ---------------------------------------------------------------------------
