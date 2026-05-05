@@ -871,7 +871,7 @@ def api_health():
     """Lightweight smoke test — checks DB and returns git hash + model config."""
     try:
         from config import CLAUDE_MODEL, CLAUDE_MODEL_CHEAP
-        client_count = db.session.execute(db.text('SELECT COUNT(*) FROM client')).scalar()
+        client_count = db.session.execute(db.text('SELECT COUNT(*) FROM clients')).scalar()
         return jsonify({
             'ok': True,
             'db_clients': client_count,
