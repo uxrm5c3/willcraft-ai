@@ -355,6 +355,59 @@ Beneficiary + share assignment is a SEPARATE step that runs AFTER all
 properties are identified, and it MUST cross-reference the AI Summary
 that the user already confirmed.
 
+## 10aa. AI-Extractor Noise — ALWAYS Clean Before Comparing
+
+The vision/OCR extractor regularly dumps noise into structured fields.
+Every dedup, group-key, or comparison MUST clean the value first. **NEVER
+compare raw `extracted_data` strings.**
+
+### Noise patterns observed in production (the "burn list")
+
+| Field | Real value | Noise the extractor emits |
+|-------|------------|---------------------------|
+| `nric_number` | `650629-04-5308` | `"VALUE: 650629-04-5308-02-01"`, `"This appears to be a longer reference number…650629-04-5308"` |
+| `title_number` | `564662` | `"VALUE: GRN56662"`, `"VALUE: GM35662"`, `"VALUE: (unreadable)"`, `"H.S.(D) 251041"` |
+| `lot_number` | `207922` | `"VALUE: LOT 207922"`, `"LOT 207922"`, `"20792"` (OCR typo) |
+| `full_name` | `LIM LAY CHENG` | `"KETUA PENGARAH PENDAFTARAN NEGARA"`, `"JABATAN PENDAFTARAN NEGARA"`, `"MyKad"`, empty + NRIC dumped here |
+| `property_address` | (real address) | `"10 Marsiling Lane Singapore"` (hallucinated), `"(address not visible)"` |
+
+### Hard rules
+
+1. **Strip prefixes:** `VALUE:`, `LOT`, `TITLE`, `GERAN`, `TITLE NO.` —
+   leading occurrences are extractor artefacts, not part of the ID.
+2. **Drop parenthetical commentary:** `(unreadable)`, `(blurred)`,
+   `(not visible)`, `(cannot read)` — never keep these as values.
+3. **Reject AI-noise tokens entirely:** values containing
+   `UNREADABLE`, `CANNOT READ`, `NOT VISIBLE` are GARBAGE — treat as empty.
+4. **Issuing-authority text is NOT a person name:** `KETUA PENGARAH`,
+   `JABATAN PENDAFTARAN`, `MYKAD`, `KAD PENGENALAN`, `WARGANEGARA`,
+   `IDENTITY CARD`. If `full_name` contains any of these, treat as empty.
+5. **Extract canonical NRIC** with regex `\d{6}[-\s]?\d{2}[-\s]?\d{4}`
+   from anywhere in the field — the digits may be embedded in a sentence.
+6. **OCR typos in lot numbers** (`20792` vs `207922`) are NOT a reason to
+   create a new property card. Same address + same neighbourhood + similar
+   lot digits = same property. Use lot+address signature, not raw equality.
+
+### Where this is enforced (touch these, not memory)
+
+| File | Function | What it does |
+|------|----------|--------------|
+| `services/identity_walker.py` | `_canonical_nric()` | regex-extract `NNNNNN-NN-NNNN` from any string |
+| `services/identity_walker.py` | `_clean_person_name()` | reject issuing-authority names |
+| `services/gift_walker.py` | `_clean_id_value()` | strip `VALUE:`, `LOT`, `TITLE`, `(…)` |
+| `services/gift_walker.py` | `_looks_like_garbage()` | reject `UNREADABLE`, `CANNOT READ`, etc |
+
+If a NEW noise pattern appears in production:
+1. Add it to the cleaner function (one of the four above).
+2. Add the example to the table in this section.
+3. Re-run `get_pending_ic_documents()` / `get_pending_gift_documents()`
+   against the affected client and verify the count drops.
+
+**Do not patch a one-off case in chat-planner code.** Cleaners live in the
+service layer so every consumer benefits.
+
+---
+
 ## 10b. Property Count = AI Summary Count
 
 The AI Summary deduces N distinct properties from the WhatsApp text.
