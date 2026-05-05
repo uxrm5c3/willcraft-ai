@@ -6480,22 +6480,23 @@ def _try_save_property_gift(client_id: str, user_text: str):
             return None
 
     from services.gift_walker import get_pending_gift_documents, parse_beneficiary_shares
-    pend = get_pending_gift_documents(client_id)
-    pending_props = pend.get('property') or []
 
-    # Fallback: during Layer 1 interleaving, inventoried properties are already
-    # in step5 as placeholders (_pending_beneficiary: True), so
-    # get_pending_gift_documents excludes them. Check _get_layer2_pending_props
-    # to find the first property that still needs beneficiary assignment.
+    # Priority: if _get_layer2_pending_props has items, we're in Layer 1/Layer 2
+    # interleaving mode and the chat card is showing a property from that queue.
+    # _try_save_property_gift MUST target the same doc the card displayed, so
+    # we check _get_layer2_pending_props FIRST.
+    # Fallback to get_pending_gift_documents only when no Layer 2 queue exists
+    # (i.e. normal post-assets_confirmed Step 6 flow).
     _using_layer2_fallback = False
-    if not pending_props:
-        layer2_pend = _get_layer2_pending_props(client_id)
-        if layer2_pend:
-            target = layer2_pend[0]
-            _using_layer2_fallback = True
-        else:
-            return None
+    layer2_pend = _get_layer2_pending_props(client_id)
+    if layer2_pend:
+        target = layer2_pend[0]
+        _using_layer2_fallback = True
     else:
+        pend = get_pending_gift_documents(client_id)
+        pending_props = pend.get('property') or []
+        if not pending_props:
+            return None
         target = pending_props[0]
 
     doc_id = target['document_id']
