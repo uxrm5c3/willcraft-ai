@@ -6225,29 +6225,25 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
             new_addr_sig = _norm_addr(ex.get('property_address', '') or '')[:60]
             new_strata = _is_strata(ex)
             new_title_sig = _title_signature(ex)
+            def _gift_field(g, key):
+                return ((g.get('property_info') or {}).get(key)
+                        or (g.get('property_details') or {}).get(key)
+                        or g.get(key) or '')
             duplicate = doc.id in existing_ids
             if not duplicate:
                 for g in gifts_ph:
-                    g_lot = _clean_id_value((g.get('property_info') or {}).get('lot_number')
-                                             or g.get('lot_number') or '')
+                    g_lot = _clean_id_value(_gift_field(g, 'lot_number'))
                     if _looks_like_garbage(g_lot):
                         g_lot = ''
                     g_lot_digits = re.sub(r'\D', '', g_lot)
-                    g_addr_sig = _norm_addr((g.get('property_info') or {}).get('property_address')
-                                             or g.get('property_address') or '')[:60]
+                    g_addr_sig = _norm_addr(_gift_field(g, 'property_address'))[:60]
                     # 🔥 STRATA EXCEPTION (§10hd): same lot+addr but genuinely
                     # different title signature (not OCR truncation) → different
                     # unit in same building. Not a duplicate.
-                    g_ex = {'title_number': (g.get('property_info') or {}).get('title_number')
-                                            or g.get('title_number') or '',
-                            'title_type': (g.get('property_info') or {}).get('title_type')
-                                          or g.get('title_type') or '',
-                            'property_description':
-                                (g.get('property_info') or {}).get('property_description')
-                                or g.get('property_description') or '',
-                            'document_type':
-                                (g.get('property_info') or {}).get('document_type')
-                                or g.get('document_type') or ''}
+                    g_ex = {'title_number': _gift_field(g, 'title_number'),
+                            'title_type':   _gift_field(g, 'title_type'),
+                            'property_description': _gift_field(g, 'property_description'),
+                            'document_type': _gift_field(g, 'document_type')}
                     g_strata = _is_strata(g_ex)
                     g_title_sig = _title_signature(g_ex)
                     strata_diff_units = (
@@ -6987,26 +6983,27 @@ def _try_save_property_gift(client_id: str, user_text: str):
         new_addr_sig = _norm_addr(ex_t.get('property_address', '') or '')[:60]
         new_strata = _is_strata(ex_t)
         new_title_sig = _title_signature(ex_t)
+        def _gift_field2(g, key):
+            return ((g.get('property_info') or {}).get(key)
+                    or (g.get('property_details') or {}).get(key)
+                    or g.get(key) or '')
         _existing_idx = None
         for i, g in enumerate(gifts):
             if g.get('document_id') == doc_id:
                 _existing_idx = i
                 break
-            pi = g.get('property_info') or g
-            g_lot = _clean_id_value(pi.get('lot_number') or g.get('lot_number') or '')
+            g_lot = _clean_id_value(_gift_field2(g, 'lot_number'))
             if _looks_like_garbage(g_lot):
                 g_lot = ''
             g_lot_digits = re.sub(r'\D', '', g_lot)
-            g_addr_sig = _norm_addr(pi.get('property_address')
-                                     or g.get('property_address') or '')[:60]
+            g_addr_sig = _norm_addr(_gift_field2(g, 'property_address'))[:60]
             # 🔥 STRATA EXCEPTION (§10hd): genuinely different unit in same
             # building → don't upsert. Not OCR truncation of same unit.
             g_ex_for_title = {
-                'title_number': pi.get('title_number') or g.get('title_number') or '',
-                'title_type': pi.get('title_type') or g.get('title_type') or '',
-                'property_description': pi.get('property_description')
-                                       or g.get('property_description') or '',
-                'document_type': pi.get('document_type') or g.get('document_type') or '',
+                'title_number': _gift_field2(g, 'title_number'),
+                'title_type': _gift_field2(g, 'title_type'),
+                'property_description': _gift_field2(g, 'property_description'),
+                'document_type': _gift_field2(g, 'document_type'),
             }
             g_strata = _is_strata(g_ex_for_title)
             g_title_sig = _title_signature(g_ex_for_title)

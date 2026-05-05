@@ -415,27 +415,31 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         # If a gift was saved with the property identifier, remember it so
         # later-uploaded SPA/tax for the same lot don't resurface as new.
         if isinstance(g, dict):
-            pi = g.get('property_info') or g
+            # Wizard gifts can save under property_info OR property_details
+            # (the legacy upsert path uses property_details). Read both.
+            pi = g.get('property_info') or g.get('property_details') or g
             gk = _property_group_key(pi)
             if gk:
                 referenced_group_keys.add(gk)
             # Lot+address signature — survives OCR title drift
-            g_lot = _clean_id_value(pi.get('lot_number') or g.get('lot_number') or '')
+            def _pi_get(key):
+                return (pi.get(key)
+                        or (g.get('property_details') or {}).get(key)
+                        or (g.get('property_info') or {}).get(key)
+                        or g.get(key) or '')
+            g_lot = _clean_id_value(_pi_get('lot_number'))
             if _looks_like_garbage(g_lot):
                 g_lot = ''
             g_lot_digits = re.sub(r'\D', '', g_lot)
-            g_addr_sig = _norm_addr(pi.get('property_address')
-                                     or g.get('property_address') or '')[:60]
+            g_addr_sig = _norm_addr(_pi_get('property_address'))[:60]
             if g_lot_digits or g_addr_sig:
                 referenced_lot_addr_sigs.add((g_lot_digits, g_addr_sig))
                 # Track title signature for strata-aware dedup
                 g_title_ex = {
-                    'title_number': pi.get('title_number') or g.get('title_number') or '',
-                    'title_type':   pi.get('title_type')   or g.get('title_type')   or '',
-                    'property_description': pi.get('property_description')
-                                            or g.get('property_description') or '',
-                    'document_type': pi.get('document_type')
-                                     or g.get('document_type') or '',
+                    'title_number': _pi_get('title_number'),
+                    'title_type':   _pi_get('title_type'),
+                    'property_description': _pi_get('property_description'),
+                    'document_type': _pi_get('document_type'),
                 }
                 ts = _title_signature(g_title_ex)
                 if ts:
