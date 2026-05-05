@@ -10770,31 +10770,37 @@ def probate_template_replace(form_code):
 @login_required
 def admin_debug_property_groups(client_id):
     """Debug endpoint: show all property_title docs and their NLC data for a client."""
-    if not current_user.is_authenticated:
-        return jsonify({'error': 'unauthorized'}), 401
-    docs = Document.query.filter(
-        Document.client_id == client_id,
-        Document.category == 'property_title'
-    ).order_by(Document.created_at.asc()).all()
-    result = []
-    for d in docs:
-        try:
-            ex = json.loads(d.extracted_data) if d.extracted_data else {}
-        except Exception:
-            ex = {}
-        result.append({
-            'id': d.id,
-            'filename': d.original_filename,
-            'lot': ex.get('lot_number', ''),
-            'title': ex.get('title_number', ''),
-            'mukim': ex.get('mukim', ''),
-            'address': ex.get('property_address', ''),
-            'inventoried': ex.get('_inventoried', False),
-            'skipped': ex.get('_skipped', False),
-            'substitute_assigned': ex.get('_substitute_assigned', False),
-            'created_at': d.created_at.isoformat() if d.created_at else '',
-        })
-    return jsonify({'count': len(result), 'docs': result})
+    try:
+        docs = Document.query.filter(
+            Document.client_id == client_id,
+            Document.category == 'property_title'
+        ).order_by(Document.created_at.asc()).all()
+        result = []
+        for d in docs:
+            try:
+                ex = json.loads(d.extracted_data) if d.extracted_data else {}
+            except Exception:
+                ex = {}
+            result.append({
+                'id': d.id,
+                'filename': d.original_filename,
+                'lot': ex.get('lot_number', ''),
+                'title': ex.get('title_number', ''),
+                'mukim': ex.get('mukim', ''),
+                'daerah': ex.get('daerah', ''),
+                'negeri': ex.get('negeri', ''),
+                'address': ex.get('property_address', ''),
+                'inventoried': ex.get('_inventoried', False),
+                'skipped': ex.get('_skipped', False),
+                'substitute_assigned': ex.get('_substitute_assigned', False),
+                'pending_beneficiary': ex.get('_pending_beneficiary', False),
+                'enriched_from': ex.get('_enriched_from', []),
+                'created_at': d.created_at.isoformat() if d.created_at else '',
+            })
+        return jsonify({'count': len(result), 'docs': result})
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'trace': traceback.format_exc()}), 500
 
 
 # ---------------------------------------------------------------------------
