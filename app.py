@@ -6089,9 +6089,41 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                     gifts_ph = []
             except (json.JSONDecodeError, TypeError):
                 gifts_ph = []
-            # Only add if not already present (avoid duplicate on re-confirm)
+            # ╔══════════════════════════════════════════════════════════╗
+            # ║  🔥 BURN-IN — NO DUPLICATE GIFTS IN step5_data 🔥          ║
+            # ║  Dedup on document_id AND on (lot, address) signature so   ║
+            # ║  two different Document rows for the SAME physical         ║
+            # ║  property (OCR title drift: 564662 vs 504662) cannot       ║
+            # ║  produce two gift entries. See CLAUDE.md §10f.             ║
+            # ╚══════════════════════════════════════════════════════════╝
+            from services.gift_walker import _clean_id_value, _looks_like_garbage, _norm_addr
             existing_ids = {g.get('document_id') for g in gifts_ph}
-            if doc.id not in existing_ids:
+            new_lot = _clean_id_value(ex.get('lot_number', '') or '')
+            if _looks_like_garbage(new_lot):
+                new_lot = ''
+            new_lot_digits = re.sub(r'\D', '', new_lot)
+            new_addr_sig = _norm_addr(ex.get('property_address', '') or '')[:60]
+            duplicate = doc.id in existing_ids
+            if not duplicate:
+                for g in gifts_ph:
+                    g_lot = _clean_id_value((g.get('property_info') or {}).get('lot_number')
+                                             or g.get('lot_number') or '')
+                    if _looks_like_garbage(g_lot):
+                        g_lot = ''
+                    g_lot_digits = re.sub(r'\D', '', g_lot)
+                    g_addr_sig = _norm_addr((g.get('property_info') or {}).get('property_address')
+                                             or g.get('property_address') or '')[:60]
+                    # Match on lot+address (both non-empty and equal)
+                    if (new_lot_digits and g_lot_digits and new_lot_digits == g_lot_digits
+                        and new_addr_sig and g_addr_sig and new_addr_sig == g_addr_sig):
+                        duplicate = True
+                        break
+                    # Or just identical addresses if both lots are empty/garbage
+                    if (not new_lot_digits and not g_lot_digits
+                        and new_addr_sig and g_addr_sig and new_addr_sig == g_addr_sig):
+                        duplicate = True
+                        break
+            if not duplicate:
                 placeholder = {
                     'document_id':      doc.id,
                     'kind':             'property',

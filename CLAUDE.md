@@ -584,6 +584,50 @@ elsewhere.
 
 ---
 
+## 10f. 🔥 BURN-IN — NO DUPLICATE GIFTS, EVER 🔥
+
+**Same physical property = ONE gift. Different OCR readings of the same
+title number do NOT make it two properties. NO DUPLICATES IN step5_data.
+NO DUPLICATE CARDS IN THE WALKTHROUGH.**
+
+### Where duplicates were appearing (all fixed)
+
+1. **Pending walkthrough** — same lot, two different OCR titles → two cards.
+   Fixed in `services/gift_walker.py` at the `(lot_signature, addr_signature)`
+   merge step. Marked with BURN-IN banner.
+
+2. **Pending vs accepted** — once a property is in step5_data, its sibling
+   (different OCR title) was still appearing as a new pending card.
+   Fixed by also building `referenced_lot_addr_sigs` from step5_data and
+   filtering pending groups against it.
+
+3. **step5_data placeholder insert** — `_try_save_property_gift` only
+   deduped on `document_id`. Two Document rows for the same property
+   produced two placeholder gifts. Fixed in `app.py` placeholder-insert
+   block: dedup on (lot_digits, addr_signature) too. Marked with BURN-IN
+   banner.
+
+### Dedup signature (the canonical key)
+
+```python
+new_lot_digits = re.sub(r'\D', '', _clean_id_value(lot_number))
+new_addr_sig   = _norm_addr(property_address)[:60]
+sig = (new_lot_digits, new_addr_sig)
+```
+
+If `(lot_digits, addr_sig)` matches an existing gift → it's the SAME
+property, regardless of title number drift. Do not insert. Do not show.
+
+### What to do if a duplicate ever appears again
+
+1. Run the cleanup script for the affected client (template in §10c).
+2. Find the insert site that bypassed the dedup — it's missing the
+   `(lot_digits, addr_sig)` check.
+3. Add the BURN-IN banner above it. Do NOT fix it without the banner —
+   the banner is the trail of evidence that proves the rule was applied.
+
+---
+
 ## 11. Things NOT To Do
 
 These are direct quotes / paraphrases of user feedback. Do not repeat these mistakes.

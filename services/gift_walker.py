@@ -206,17 +206,36 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
     if not isinstance(gifts, list):
         gifts = []
 
+    # ╔══════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN — NO DUPLICATE PROPERTY CARDS 🔥                          ║
+    # ║  When a gift is already in step5_data, ANY pending property doc      ║
+    # ║  that refers to the SAME physical property must be filtered out —    ║
+    # ║  even when its OCR'd title number differs (564662 vs 504662). Match  ║
+    # ║  by (lot_digits, normalised_address) signature, not just title.      ║
+    # ║  See CLAUDE.md §10f.                                                 ║
+    # ╚══════════════════════════════════════════════════════════════════════╝
     referenced_doc_ids = set()
-    referenced_group_keys = set()  # so SPA for an already-gifted property is hidden too
+    referenced_group_keys = set()       # legacy dedup by group key
+    referenced_lot_addr_sigs = set()    # new dedup by (lot, address)
     for g in gifts:
         if isinstance(g, dict) and g.get('document_id'):
             referenced_doc_ids.add(g['document_id'])
         # If a gift was saved with the property identifier, remember it so
         # later-uploaded SPA/tax for the same lot don't resurface as new.
         if isinstance(g, dict):
-            gk = _property_group_key(g.get('property_info') or g)
+            pi = g.get('property_info') or g
+            gk = _property_group_key(pi)
             if gk:
                 referenced_group_keys.add(gk)
+            # Lot+address signature — survives OCR title drift
+            g_lot = _clean_id_value(pi.get('lot_number') or g.get('lot_number') or '')
+            if _looks_like_garbage(g_lot):
+                g_lot = ''
+            g_lot_digits = re.sub(r'\D', '', g_lot)
+            g_addr_sig = _norm_addr(pi.get('property_address')
+                                     or g.get('property_address') or '')[:60]
+            if g_lot_digits or g_addr_sig:
+                referenced_lot_addr_sigs.add((g_lot_digits, g_addr_sig))
 
     # Pull title docs + supporting docs + unclassified (chat_inbox/other) in
     # one pass. Unclassified docs are needed so we can attach them to the
@@ -669,6 +688,12 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         addr_sig = _addr_signature(grp)
         if not lot_sig and not addr_sig:
             continue  # nothing to dedupe by
+        # ── Drop if this property is ALREADY in step5_data ──────────────
+        # Different OCR title than the accepted one would slip past the
+        # group_key check above; the (lot, addr) sig catches it.
+        if (lot_sig, addr_sig) in referenced_lot_addr_sigs:
+            del prop_groups[gk]
+            continue
         sig = (lot_sig, addr_sig)
         sig_to_keys.setdefault(sig, []).append(gk)
 
