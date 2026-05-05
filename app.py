@@ -4222,8 +4222,17 @@ def api_chat_backfill_extractions(client_id):
 @app.route('/api/chat/<client_id>/clear', methods=['POST'])
 @login_required
 def api_chat_clear(client_id):
-    """Delete every message in this client's chat (Documents are kept —
-    they're owned by the Client, just unlinked from the gone messages)."""
+    """Delete conversational messages in this client's chat.
+
+    CRITICAL: Source messages — those that contain the original WhatsApp /
+    email body with addresses and beneficiary hints typed by the client —
+    are NEVER deleted. These are identified by:
+      1. Having document attachments (attachments_json is a non-empty list)
+      2. Containing '(forwarded via email' in the body (Postmark inbound)
+
+    Only bot replies and pure conversational user messages are deleted.
+    Documents are kept and remain linked to their source messages.
+    """
     client = db.session.get(Client, client_id)
     if not client:
         return jsonify({'ok': False, 'error': 'Client not found'}), 404
@@ -4233,13 +4242,36 @@ def api_chat_clear(client_id):
           .first())
     if not cs:
         return jsonify({'ok': True, 'deleted': 0})
-    msg_ids = [m.id for m in ChatMessage.query.filter_by(session_id=cs.id).all()]
-    if msg_ids:
-        Document.query.filter(Document.chat_message_id.in_(msg_ids)).update(
+
+    all_msgs = ChatMessage.query.filter_by(session_id=cs.id).all()
+    source_msg_ids: set = set()   # preserve — original WhatsApp/email source
+    clearable_ids: list = []
+
+    for m in all_msgs:
+        # Keep messages that have document attachments (original upload messages)
+        try:
+            atts = json.loads(m.attachments_json or '[]')
+        except (json.JSONDecodeError, TypeError):
+            atts = []
+        is_source = bool(atts and isinstance(atts, list) and len(atts) > 0)
+        # Also keep messages that are clearly the forwarded WhatsApp email body
+        if not is_source and '(forwarded via email' in (m.content or ''):
+            is_source = True
+        if is_source:
+            source_msg_ids.add(m.id)
+        else:
+            clearable_ids.append(m.id)
+
+    n = 0
+    if clearable_ids:
+        # Only unlink docs from messages we're actually deleting
+        Document.query.filter(Document.chat_message_id.in_(clearable_ids)).update(
             {Document.chat_message_id: None}, synchronize_session=False)
-    n = ChatMessage.query.filter_by(session_id=cs.id).delete()
+        n = ChatMessage.query.filter(ChatMessage.id.in_(clearable_ids)).delete(
+            synchronize_session=False)
+
     db.session.commit()
-    return jsonify({'ok': True, 'deleted': n})
+    return jsonify({'ok': True, 'deleted': n, 'preserved': len(source_msg_ids)})
 
 
 @app.route('/api/chat/<client_id>/message/<message_id>', methods=['DELETE'])
@@ -4335,6 +4367,26 @@ def _gather_recent_chat_text(client_id: str, max_chars: int = 20000) -> str:
             c = c[:remaining]
         out.append(c)
         total += len(c)
+
+    # ── Fallback: _raw_forward_text from Will step6_data ────────────────────
+    # If chat messages were cleared (api_chat_clear) the WhatsApp body is
+    # preserved in the Will record under step6_data['_raw_forward_text'].
+    # Include it so enrichment can still work even after a chat clear.
+    if total < max_chars // 2:  # only pull in if we don't have much already
+        try:
+            _will = (Will.query.filter_by(client_id=client_id, status='draft')
+                     .filter(Will.deleted_at.is_(None))
+                     .order_by(Will.updated_at.desc()).first())
+            if _will and _will.step6_data:
+                _s6 = json.loads(_will.step6_data)
+                raw_fwd = (_s6.get('_raw_forward_text') or '').strip()
+                if raw_fwd and raw_fwd not in '\n\n'.join(out):
+                    remaining = max_chars - total
+                    if remaining > 0:
+                        out.insert(0, raw_fwd[:remaining])  # prepend — it's the source
+        except Exception:
+            pass
+
     return '\n\n'.join(out)
 
 
@@ -7065,6 +7117,33 @@ def _api_inbound_email_impl():
     )
     db.session.add(user_msg)
     db.session.flush()
+
+    # ── Persist WhatsApp/email body permanently in the Will record ──────────
+    # The ChatMessage can theoretically be cleared by api_chat_clear. As a
+    # belt-and-suspenders safeguard, also append the raw text body to the
+    # Will's step6_data under '_raw_forward_text'. This field is never cleared
+    # by the chat-clear operation and can be used by enrichment even if the
+    # ChatMessage is gone.
+    try:
+        _will = (Will.query
+                 .filter_by(client_id=client.id, status='draft')
+                 .filter(Will.deleted_at.is_(None))
+                 .order_by(Will.updated_at.desc())
+                 .first())
+        if _will and text_body:
+            try:
+                _s6 = json.loads(_will.step6_data) if _will.step6_data else {}
+            except (json.JSONDecodeError, TypeError):
+                _s6 = {}
+            if not isinstance(_s6, dict):
+                _s6 = {}
+            # Append to existing raw context (multiple forwards accumulate)
+            existing = _s6.get('_raw_forward_text', '')
+            separator = '\n\n---\n\n' if existing else ''
+            _s6['_raw_forward_text'] = (existing + separator + body_with_meta)[:50000]
+            _will.step6_data = json.dumps(_s6)
+    except Exception:
+        pass  # non-critical — ChatMessage is the primary store
 
     # SYNC: write each attachment to disk + create Document row.
     # Skip vision classify / IC extract / Whisper here — the background
