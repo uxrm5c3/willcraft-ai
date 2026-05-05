@@ -706,11 +706,17 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                     known_ids.add(ds['document_id'])
             del prop_groups[gk]
 
-    # ── Sort groups by confidence before emitting ─────────────────────────
-    # High-confidence groups (good NLC extraction + real address + user mentioned)
-    # are shown first so the most certain properties are inventoried first.
-    # This also ensures high-confidence properties claim their addresses first
-    # in the enrichment pass, preventing low-confidence docs from stealing them.
+    # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN RULE — ASSET WALKTHROUGH ORDER 🔥                       ║
+    # ║  ALWAYS start with the asset that has HIGHEST confidence.          ║
+    # ║  LOWEST confidence comes LAST. No exceptions, no random order,     ║
+    # ║  no "first uploaded." High → Low. See CLAUDE.md §10e.              ║
+    # ║                                                                    ║
+    # ║  Confidence = _score_property_confidence(extracted) — multi-image  ║
+    # ║  groups with NLC ids cross-referenced to the user's WhatsApp text  ║
+    # ║  score highest. Isolated single images with no chat match score    ║
+    # ║  lowest and are inventoried LAST.                                  ║
+    # ╚════════════════════════════════════════════════════════════════════╝
     def _group_confidence(gk_grp_pair):
         _, grp = gk_grp_pair
         td = grp.get('title_doc') or {}

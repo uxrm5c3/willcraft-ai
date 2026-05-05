@@ -485,7 +485,7 @@ with app.app_context():
 
 ---
 
-## 10d. Isolated Property — Ask, Don't Assume
+## 10d. 🔥 BURN-IN — Isolated Property: ASK, Don't Assume 🔥
 
 When a single image carries NLC identifiers (HSD/PTD/title/lot) but
 cannot be cross-referenced to anything else, the chat MUST ASK the
@@ -528,6 +528,59 @@ Render the **unverified card** (not the normal property card):
 
 The normal card is for properties WITH evidence — multiple images, or
 identifiers cross-referenced to AI Summary text. Isolated → ask first.
+
+---
+
+## 10e. 🔥 BURN-IN — Asset Walkthrough Order: HIGH → LOW Confidence 🔥
+
+**ALWAYS start with the asset that has HIGHEST confidence. LOWEST
+confidence comes LAST. No exceptions, no random order, no "first
+uploaded." This is a hard, non-negotiable rule.**
+
+### Why
+Resolving high-confidence assets first lets them claim their addresses,
+beneficiaries, and supporting docs before low-confidence ones can steal
+them. It also gives the user momentum — easy/clear cases get done fast,
+ambiguous ones come later when context is built up.
+
+### Confidence scoring (`services/gift_walker.py::_score_property_confidence`)
+
+| Signal | Points |
+|---|---|
+| `title_type_confidence == "high"` | +3 |
+| `title_type_confidence == "medium"` | +1 |
+| Has `title_number` | +1 |
+| Has `lot_number` | +1 |
+| Has BOTH title + lot | +1 bonus |
+| Real (non-NLC) street address | +2 |
+| Owner names extracted | +1 |
+| User explicitly mentioned this NLC id in chat/AI Summary | +3 |
+| Some message context exists | +1 |
+
+Max ≈ 13. Higher = inventoried first.
+
+### Where it's enforced (TWO layers — both with burn-in comment blocks)
+
+1. `services/gift_walker.py` — final `sorted(prop_groups.items(),
+   key=_group_confidence, reverse=True)`. Marked with the "🔥 BURN-IN
+   RULE" banner.
+2. `ai/chat_planner.py::_asset_walkthrough_question()` — defensive
+   re-sort of `props` by `_score_property_confidence` after filtering.
+   Marked with the same banner.
+
+### What this guarantees
+
+- The first asset card the user sees in any walkthrough is the one
+  with the strongest evidence (multi-image group + NLC ids matched
+  to AI Summary).
+- Isolated/unverified single-image docs (CLAUDE.md §10d) score low
+  and surface LAST, after all the easy ones are confirmed.
+- If you find a future feature that needs to skip / reorder assets,
+  the new logic MUST preserve high-to-low order on what remains.
+
+If a low-confidence card is ever shown before a high-confidence one,
+**the bug is in this sort path** — fix it there, do not patch it
+elsewhere.
 
 ---
 

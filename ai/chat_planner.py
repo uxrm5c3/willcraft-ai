@@ -1855,6 +1855,23 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
     banks     = [b for b in (pending_gifts.get('bank') or []) if not _is_inventoried(b)]
     vehicles  = [v for v in (pending_gifts.get('vehicle') or []) if not _is_inventoried(v)]
 
+    # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN RULE — HIGH CONFIDENCE FIRST 🔥                         ║
+    # ║  gift_walker.py already sorts by confidence (high → low) when it   ║
+    # ║  builds prop_groups. We re-sort here defensively so any future     ║
+    # ║  filter (e.g. _autoskip_empty_properties) cannot accidentally      ║
+    # ║  promote a low-confidence card to position 0. Highest-confidence   ║
+    # ║  asset MUST be inventoried first. Lowest confidence LAST.          ║
+    # ║  See CLAUDE.md §10e.                                               ║
+    # ╚════════════════════════════════════════════════════════════════════╝
+    def _conf(p):
+        try:
+            from services.gift_walker import _score_property_confidence
+            return _score_property_confidence(p.get('extracted') or {})
+        except Exception:
+            return 0
+    props = sorted(props, key=_conf, reverse=True)
+
     # Silently drop properties with NOTHING worth asking about (no
     # address, no title, no lot, no support docs). Soft-marks them
     # `_inventoried` in the DB so they don't reappear next turn.
@@ -1905,6 +1922,26 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
     return None
 
 
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║  🔥 BURN-IN RULE — ISOLATED PROPERTY MUST BE VERIFIED, NOT GUESSED 🔥   ║
+# ║                                                                        ║
+# ║  When a single image carries NLC identifiers (HSD/PTD/title/lot) but   ║
+# ║  the digits don't appear anywhere in the WhatsApp text / AI Summary,   ║
+# ║  AND no sibling image shares the same lot/title — the chat MUST ASK    ║
+# ║  the client. NEVER silently render a confirmed property card. NEVER    ║
+# ║  fabricate an address or beneficiary. See CLAUDE.md §10d.              ║
+# ║                                                                        ║
+# ║  Detection:  _is_property_isolated()                                   ║
+# ║  Card:       _walkthrough_property_unverified_card()                   ║
+# ║  Hook:       _asset_walkthrough_question() before normal card          ║
+# ║                                                                        ║
+# ║  The Unverified card MUST give the client these three buttons:         ║
+# ║    ✅ Yes — it is a real property of mine                              ║
+# ║    🗑 Wrong upload — remove it                                         ║
+# ║    ⏭ Skip for now                                                     ║
+# ║                                                                        ║
+# ║  No auto-create gift. No hallucinated beneficiary. Ask first.          ║
+# ╚════════════════════════════════════════════════════════════════════════╝
 def _is_property_isolated(target: Dict[str, Any],
                            recent_text: str,
                            all_props: List[Dict[str, Any]]) -> bool:
