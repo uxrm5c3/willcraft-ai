@@ -182,10 +182,13 @@ def plan_turn(
         # Interleave Layer 2: if any inventoried property still needs beneficiary
         # assignment, handle that BEFORE showing the next Layer 1 card so we
         # complete both layers per property before moving to the next property.
+        # Gate: require known identities (scanned ICs) so we have names to offer
+        # as beneficiary candidates — no longer gated on step4 (beneficiaries)
+        # because those are only collected AFTER assets_confirmed.
         layer2_pending = current_will_data.get('layer2_pending_props') or []
         if layer2_pending:
-            s4 = current_will_data.get('step4') or []
-            if s4:  # need beneficiaries defined first
+            identities = current_will_data.get('identities') or []
+            if identities:
                 q = _step6_property_question(layer2_pending, recent_text, current_will_data)
                 reply_parts.append(q['text'])
                 focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
@@ -194,7 +197,7 @@ def plan_turn(
         # Walk one un-reviewed property at a time. When all properties
         # are reviewed, walk banks, then vehicles. _asset_walkthrough_*
         # picks the FIRST item where extracted._inventoried is not True.
-        wt = _asset_walkthrough_question(pending_gifts, recent_text)
+        wt = _asset_walkthrough_question(pending_gifts, recent_text, current_will_data)
         if wt is None:
             # Everything reviewed — auto-stamp assets_confirmed via the
             # app handler on next turn. For now just nudge the user.
@@ -1066,14 +1069,34 @@ def _enrich_property_from_siblings(p: Dict[str, Any]) -> Dict[str, Any]:
             # Match if ANY needle appears in the sibling's haystack
             if not any(n in haystack for n in needles):
                 continue
-            # Back-fill blank fields from the matching sibling
+            # Back-fill blank fields from the matching sibling.
+            # For address fields: also overwrite NLC-style entries (e.g.
+            # "LOT 207922, Mukim Plentong…") with a real street address
+            # from a sibling — the OCR often stuffs NLC refs into
+            # property_address which blocks real addresses from being set.
+            _NLC_ADDR_RE = re.compile(
+                r'^\s*(?:LOT\s+\d|PTD\s+\d|H\.?S\.?\s*\(|HSD\s+\d|HSM\s+\d|'
+                r'Geran\s+No|GERAN\b|Mukim\s+\w)',
+                re.IGNORECASE,
+            )
             for k in ('property_address', 'address', 'title_number',
                       'lot_number', 'mukim', 'daerah', 'negeri',
                       'title_type', 'area'):
-                if not (ex.get(k) or '').strip() and (sex.get(k) or '').strip():
-                    ex[k] = sex[k]
-                    ex.setdefault('_enriched_from', []).append(
-                        f"{sib.original_filename or sib.id[:8]}.{k}")
+                current_val = (ex.get(k) or '').strip()
+                sibling_val = (sex.get(k) or '').strip()
+                if not sibling_val:
+                    continue
+                if current_val:
+                    # Address fields: allow overwrite if current is NLC-style
+                    if k in ('property_address', 'address'):
+                        if not _NLC_ADDR_RE.match(current_val):
+                            continue  # real street address — don't overwrite
+                        # NLC-style — fall through to overwrite with sibling value
+                    else:
+                        continue  # non-address already has a value
+                ex[k] = sex[k]
+                ex.setdefault('_enriched_from', []).append(
+                    f"{sib.original_filename or sib.id[:8]}.{k}")
     except Exception:
         pass
     return ex
@@ -1728,7 +1751,8 @@ def _validate_property_format(ex: Dict[str, Any],
 
 
 def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
-                                 recent_text: str) -> Optional[Dict[str, Any]]:
+                                 recent_text: str,
+                                 will_data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """One-asset-at-a-time review for the will-writer. Picks the first
     un-reviewed property → bank → vehicle and renders a clean card with:
 
@@ -1773,7 +1797,7 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         #           → still in all_props, filtered from props → counted via (all-pending)
         #   Path B: accepted after placeholder fix → document_id in step5_data
         #           → excluded from all_props entirely → counted via step5_props
-        step5_props = [g for g in (will_data.get('step5') or [])
+        step5_props = [g for g in ((will_data or {}).get('step5') or [])
                        if (g.get('kind') == 'property' or g.get('gift_type') == 'property')
                        and g.get('document_id')]
         n_in_step5  = len(step5_props)
