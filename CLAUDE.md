@@ -342,6 +342,49 @@ The intake card already shows exhibits. The summary message uses
 
 ---
 
+## 10a. Property Identity Card — Asset ONLY
+
+The property card shown during the asset walkthrough IDENTIFIES THE ASSET.
+That is its only job. It must NOT include:
+
+- ❌ Beneficiary hints / "Client wants to give to X"
+- ❌ Ownership share assignments
+- ❌ Anything from Step 5 (Beneficiaries) or Step 6 (Specific Gifts)
+
+Beneficiary + share assignment is a SEPARATE step that runs AFTER all
+properties are identified, and it MUST cross-reference the AI Summary
+that the user already confirmed.
+
+## 10b. Property Count = AI Summary Count
+
+The AI Summary deduces N distinct properties from the WhatsApp text.
+The chat walkthrough MUST surface the SAME N properties — not 14, not 31,
+not "one card per uploaded image." OCR will misread title numbers
+(`564662` ↔ `504662`), the AI extractor will dump rambling text into
+structured fields (`VALUE: (unreadable)`, `VALUE: GRN35662`). None of
+that creates a new property.
+
+### Hard rules for property grouping
+
+1. **Same `lot_number` (cleaned) + same normalised `property_address`
+   = same property.** Always merge, regardless of `title_number`
+   variation. Different OCR readings of the same title (`564662`,
+   `504662`, `VALUE:GRN56662`, `VALUE:(unreadable)`) all collapse.
+
+2. **Strip AI-noise from identifiers before comparing.** `VALUE:`,
+   `LOT `, `TITLE `, `(unreadable)`, `(blurred)` etc. are extractor
+   prefixes/commentary, not part of the identifier. See
+   `_clean_id_value()` in `services/gift_walker.py`.
+
+3. **The count shown to the user is the count after dedup.** If you're
+   about to render `Property X of N`, N must equal the number of
+   physical properties — not the number of upload events or OCR groups.
+
+4. **If the AI Summary lists 5 properties and the walkthrough shows
+   14, the grouping is broken.** Fix the grouping; do not ship.
+
+---
+
 ## 11. Things NOT To Do
 
 These are direct quotes / paraphrases of user feedback. Do not repeat these mistakes.
@@ -356,3 +399,8 @@ These are direct quotes / paraphrases of user feedback. Do not repeat these mist
 - ❌ Skipping the **address-to-asset matching** during property review
 - ❌ Suggesting Executor/Beneficiary **without** showing the text evidence
 - ❌ Bypassing the test pipeline — every deploy ends with a real email test
+- ❌ Showing **beneficiary** ("Client wants to give to X") on the property identity card
+- ❌ Property count > AI Summary count — duplicate cards from OCR title-number drift
+- ❌ Treating `VALUE: GRN56662` or `VALUE: (unreadable)` as a real title number
+- ❌ Trusting raw extracted_data without cleaning AI-noise prefixes first
+- ❌ Saying "this is fixed" without running `get_pending_gift_documents()` against the actual client and counting properties

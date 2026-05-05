@@ -98,6 +98,26 @@ def _norm_addr(s: str) -> str:
     return ' '.join(out.split())
 
 
+def _clean_id_value(value: str) -> str:
+    """Strip AI-extractor noise from a title/lot identifier.
+
+    The vision model occasionally dumps strings like 'VALUE: GRN35662',
+    'VALUE: LOT 207922', 'VALUE: (unreadable)' into structured fields.
+    Pull the actual identifier out: drop 'VALUE:' / 'LOT' / 'TITLE'
+    prefixes, kill bracketed commentary, collapse whitespace.
+    Returns uppercased identifier or '' if nothing usable remains.
+    """
+    if not value:
+        return ''
+    v = value.strip().upper()
+    # Drop leading prefixes the AI tends to emit
+    v = re.sub(r'^(VALUE\s*[:\-]\s*)+', '', v)
+    v = re.sub(r'^(LOT|TITLE|GERAN|TITLE\s*NO\.?)\s*[:\-]?\s*', '', v)
+    # Drop parenthetical commentary like '(UNREADABLE)' or '(BLURRED)'
+    v = re.sub(r'\([^)]*\)', '', v).strip()
+    return v
+
+
 def _looks_like_garbage(value: str) -> bool:
     """Return True for values that are clearly OCR hallucinations or
     placeholder text rather than real Malaysian lot/title identifiers.
@@ -105,20 +125,27 @@ def _looks_like_garbage(value: str) -> bool:
     Real lot numbers are digits (possibly with a slash for strata), real
     title numbers are digits or alphanumeric with standard prefixes.
     Rejects things like 'Blabla', 'Unknown', 'N/A', pure-letter strings
-    longer than 4 chars (no Malaysian lot is all letters), etc.
+    longer than 4 chars, AI-rambling like 'VALUE: (unreadable)', etc.
     """
     if not value:
         return True
     v = value.strip().upper()
+    # AI-emitted noise → garbage
+    if 'UNREADABLE' in v or 'NOT VISIBLE' in v or 'CANNOT READ' in v:
+        return True
     # Common placeholder strings
     _JUNK = {'N/A', 'NA', 'UNKNOWN', 'NONE', 'NIL', 'TBD', '-', '?', 'BLABLA',
-              'PLACEHOLDER', 'XXXX', 'XXXXX'}
+              'PLACEHOLDER', 'XXXX', 'XXXXX', 'VALUE:', 'VALUE'}
     if v in _JUNK:
+        return True
+    # After cleaning AI prefixes, if nothing's left it's garbage
+    cleaned = _clean_id_value(v)
+    if not cleaned:
         return True
     # If it's longer than 4 chars and contains ONLY letters (no digits,
     # no '/', no '-'), it's almost certainly garbled OCR output.
     # Real lot numbers have at least one digit. Title numbers too.
-    stripped = re.sub(r'[\s/\-()]', '', v)
+    stripped = re.sub(r'[\s/\-()]', '', cleaned)
     if len(stripped) > 4 and stripped.isalpha():
         return True
     return False
@@ -611,6 +638,73 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                         target['all_doc_ids'].append(ds['document_id'])
                         known_ids.add(ds['document_id'])
                 del prop_groups[doc_gk]
+
+    # ── FINAL PASS: address+lot merge (handles OCR title-number variation) ──
+    # Two groups with the SAME lot_number AND substantially the same address
+    # are the same physical property — even if their title_numbers differ
+    # (OCR misread 564662 ↔ 504662, or one says 'VALUE: GRN35662' and another
+    # '564662'). This catches the duplicate-property-card explosion where 6
+    # different titles all point to the same Menara C / Tepian Bayu unit.
+    def _addr_signature(grp: Dict[str, Any]) -> str:
+        td = grp.get('title_doc') or {}
+        ex_ = td.get('extracted') or {}
+        return _norm_addr(ex_.get('property_address') or ex_.get('description') or '')[:60]
+
+    def _lot_signature(grp: Dict[str, Any]) -> str:
+        td = grp.get('title_doc') or {}
+        ex_ = td.get('extracted') or {}
+        raw = (ex_.get('lot_number') or '').strip()
+        cleaned = _clean_id_value(raw)
+        if _looks_like_garbage(cleaned):
+            return ''
+        # Only keep digits + letters that matter — drop spaces, slashes, dashes
+        return re.sub(r'[\s/\-]', '', cleaned)
+
+    # Group keys by (lot_signature, addr_signature). Same signature → same property.
+    sig_to_keys: Dict[tuple, List[str]] = {}
+    for gk, grp in list(prop_groups.items()):
+        if not grp.get('title_doc'):
+            continue
+        lot_sig = _lot_signature(grp)
+        addr_sig = _addr_signature(grp)
+        if not lot_sig and not addr_sig:
+            continue  # nothing to dedupe by
+        sig = (lot_sig, addr_sig)
+        sig_to_keys.setdefault(sig, []).append(gk)
+
+    for sig, gks in sig_to_keys.items():
+        if len(gks) < 2:
+            continue
+        # Pick the group with the best title_number (non-garbage, has a real value)
+        # as the primary, fold the rest into it.
+        def _title_quality(gk: str) -> int:
+            grp = prop_groups.get(gk) or {}
+            td = grp.get('title_doc') or {}
+            ex_ = td.get('extracted') or {}
+            tn = (ex_.get('title_number') or '').strip()
+            if not tn or _looks_like_garbage(tn):
+                return 0
+            cleaned = _clean_id_value(tn)
+            # Pure digits = best (most likely correct OCR), then alnum, then everything else
+            if cleaned.isdigit():
+                return 3
+            if cleaned.replace('/', '').replace('-', '').replace('.', '').isalnum():
+                return 2
+            return 1
+        best_gk = max(gks, key=_title_quality)
+        target = prop_groups[best_gk]
+        known_ids = set(target['all_doc_ids'])
+        for gk in gks:
+            if gk == best_gk or gk not in prop_groups:
+                continue
+            grp = prop_groups[gk]
+            for ds in (([grp['title_doc']] if grp['title_doc'] else [])
+                       + grp['support_docs']):
+                if ds and ds['document_id'] not in known_ids:
+                    target['support_docs'].append(ds)
+                    target['all_doc_ids'].append(ds['document_id'])
+                    known_ids.add(ds['document_id'])
+            del prop_groups[gk]
 
     # ── Sort groups by confidence before emitting ─────────────────────────
     # High-confidence groups (good NLC extraction + real address + user mentioned)

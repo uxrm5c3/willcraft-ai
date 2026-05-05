@@ -2003,10 +2003,10 @@ def _walkthrough_property_card(p: Dict[str, Any], seq_num: int,
     if _unrelated_warnings:
         parts.append(f"⚠️ Some attached docs may not belong here: {', '.join(_unrelated_warnings)}")
 
-    # Beneficiary hint — surface if client said "give to X" in their message
-    ben_hint = (ex.get('_beneficiary_hint') or '').strip()
-    if ben_hint:
-        parts.append(f"🎁 **Client wants to give to:** _{ben_hint}_")
+    # NOTE: Beneficiary hint deliberately NOT shown here.
+    # Property identity step is for IDENTIFYING THE ASSET ONLY.
+    # Beneficiary assignment happens later in Step 5/6 (gifts walkthrough),
+    # cross-referenced against the AI Summary at that stage. See CLAUDE.md.
 
     # ── Ownership & encumbrance status — ONLY show after gates are confirmed ──
     # Gate 1 (ownership) and Gate 2 (encumbrance) run sequentially when the
