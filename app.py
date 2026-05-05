@@ -6448,7 +6448,8 @@ def _pct_to_frac(share_str: str) -> str:
             if n == 0:
                 return s
             f = Fraction(n / 100).limit_denominator(20)
-            return str(f)
+            # Fraction(1,1) str() → "1" not "1/1"; always use numerator/denominator form
+            return f'{f.numerator}/{f.denominator}'
         except Exception:
             return s
     return s  # already fraction or other string

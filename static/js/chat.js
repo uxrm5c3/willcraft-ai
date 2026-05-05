@@ -697,10 +697,13 @@
           const bankName  = g.bank_name         || fd.institution       || '';
           const acctRaw   = g.account_number    || fd.account_number    || '';
           const regNum    = g.reg_number        || '';
-          // Beneficiaries from either list
-          const benList = (g.beneficiaries || []).map(b => b.name || b)
-            .concat((g.allocations || []).map(a => a.beneficiary_name || a.name || ''))
-            .filter(Boolean);
+          // Prefer allocations (wizard format) when present; fall back to
+          // legacy beneficiaries array. Never concat both — the gift entry
+          // has both arrays with the same names which causes duplicates.
+          const benList = ((g.allocations && g.allocations.length)
+            ? g.allocations.map(a => a.beneficiary_name || a.name || '')
+            : (g.beneficiaries || []).map(b => b.name || b)
+          ).filter(Boolean);
 
           let prefix = '', ident = '';
           if (kind === 'property' || propAddr || titleNo || lotNo) {
