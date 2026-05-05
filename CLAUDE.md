@@ -438,6 +438,53 @@ that creates a new property.
 
 ---
 
+## 10c. Document Row Dedup at Upload Time
+
+Same physical file uploaded twice = ONE row, not two. The user forwards
+WhatsApp emails repeatedly during testing; without dedup the Document
+table explodes (observed: 7 distinct files → 214 rows).
+
+### Hard rule
+At every upload site (especially `/api/inbound-email`):
+
+```python
+existing = Document.query.filter_by(
+    client_id=client.id,
+    original_filename=name,
+    file_size=len(data),
+).order_by(Document.created_at.asc()).first()
+if existing:
+    attachment_ids.append(existing.id)
+    continue   # do NOT insert a duplicate row
+```
+
+Enforced in `app.py` inbound-email handler (search for "DEDUP: same physical file").
+
+If a NEW upload site is added (`/api/upload`, drag-drop, etc.), it MUST
+include this check — otherwise the dedup invariant breaks.
+
+### One-time cleanup script (re-runnable)
+
+```python
+from app import app
+from database import db, Document, Person
+with app.app_context():
+    docs = Document.query.filter_by(client_id=CID).order_by(Document.created_at.asc()).all()
+    seen = {}
+    for d in docs:
+        key = (d.original_filename or '', d.file_size or 0)
+        if key in seen:
+            # Reassign Person.document_id to canonical, then delete dup
+            for p in Person.query.filter_by(document_id=d.id).all():
+                p.document_id = seen[key]
+            db.session.delete(d)
+        else:
+            seen[key] = d.id
+    db.session.commit()
+```
+
+---
+
 ## 11. Things NOT To Do
 
 These are direct quotes / paraphrases of user feedback. Do not repeat these mistakes.
