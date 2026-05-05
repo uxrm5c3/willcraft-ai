@@ -1451,15 +1451,22 @@ def ai_match_property_addresses(
         "extracted by OCR, and a forwarded client message listing property addresses.\n\n"
         "Task: for each property document, find the best matching street address from the client's message. "
         "Use any available clues: location (mukim/daerah maps to a neighbourhood), ownership type, "
-        "order of mention, or any other contextual hint. "
-        "If you are NOT confident (no clear match), output 'no_match' for that property.\n\n"
+        "order of mention, or any other contextual hint.\n\n"
+        "Confidence levels:\n"
+        "  'high'   — strong direct match (lot/title number explicitly mentioned, or single address in text)\n"
+        "  'medium' — reasonable inference from mukim/daerah/area or order of mention\n"
+        "  'low'    — weak guess, multiple possibilities or very little context\n"
+        "  'no_match' — cannot determine\n\n"
         "Properties (from scanned documents):\n"
         + '\n'.join(prop_lines)
         + exclusion_note
         + "\n\nClient's message:\n"
         + raw_text[:3000]
-        + "\n\nOutput ONLY a JSON object mapping doc_id to matched address string (or 'no_match'). "
-        "Example: {\"abc123\": \"No. 18, Jalan Rimbun, Taman Molek, 81300 Skudai, Johor\", "
+        + "\n\nOutput ONLY a JSON object. Each key is a doc_id. "
+        "Each value is either 'no_match' OR an object {\"address\": \"...\", \"confidence\": \"high|medium|low\", "
+        "\"reason\": \"one sentence why\"}. "
+        "Example: {\"abc123\": {\"address\": \"No. 18, Jalan Rimbun, 81300 Skudai, Johor\", "
+        "\"confidence\": \"high\", \"reason\": \"only one address in text\"}, "
         "\"def456\": \"no_match\"}"
     )
 
@@ -1469,7 +1476,7 @@ def ai_match_property_addresses(
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         msg = client.messages.create(
             model=CLAUDE_MODEL_CHEAP,
-            max_tokens=600,
+            max_tokens=800,
             timeout=15.0,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -1486,12 +1493,24 @@ def ai_match_property_addresses(
             return {}
         import json as _json
         result = _json.loads(json_m.group(0))
-        # Filter out no_match entries and empty values
-        return {
-            k: v for k, v in result.items()
-            if v and v.lower() not in ('no_match', 'no match', 'none', 'unknown', '')
-            and len(v) >= 8
-        }
+        # Filter out no_match entries and normalise to {address, confidence, reason} dicts
+        out = {}
+        for k, v in result.items():
+            if not v:
+                continue
+            if isinstance(v, str):
+                # Legacy plain-string format — treat as high confidence
+                if v.lower() in ('no_match', 'no match', 'none', 'unknown', ''):
+                    continue
+                if len(v) >= 8:
+                    out[k] = {'address': v, 'confidence': 'high', 'reason': ''}
+            elif isinstance(v, dict):
+                addr = (v.get('address') or '').strip()
+                conf = (v.get('confidence') or 'high').lower()
+                reason = (v.get('reason') or '').strip()
+                if addr and len(addr) >= 8 and addr.lower() not in ('no_match', 'no match'):
+                    out[k] = {'address': addr, 'confidence': conf, 'reason': reason}
+        return out
     except Exception:
         return {}
 
@@ -1841,6 +1860,29 @@ def _walkthrough_property_card(p: Dict[str, Any], seq_num: int,
 
     if _title_wrong and _title_wrong_reason:
         parts.append(f"⚠️ _{_title_wrong_reason}_ — tap 🗑 Remove if wrong upload.")
+
+    # ── Address deduction confidence notice ──────────────────────────────
+    # When the AI matched an address to this title (rather than reading it
+    # directly from the document), surface the reasoning and confidence so
+    # the writer can confirm or reject it.
+    _addr_conf = (ex.get('_address_confidence') or '').lower()
+    _addr_needs_confirm = ex.get('_address_needs_confirm')
+    _enriched_from = ex.get('_enriched_from') or []
+    if 'ai_address_match' in _enriched_from and _addr_conf:
+        addr_display = (ex.get('property_address') or '').strip()
+        if _addr_conf == 'high':
+            parts.append(
+                f"✅ **Address deduced from chat/documents** (high confidence): "
+                f"_{addr_display}_ — auto-accepted."
+            )
+        elif _addr_conf in ('medium', 'low'):
+            conf_emoji = '🟡' if _addr_conf == 'medium' else '🔴'
+            parts.append(
+                f"{conf_emoji} **Address deduced** ({_addr_conf} confidence): "
+                f"_{addr_display}_\n\n"
+                f"_Please confirm this address is correct before accepting. "
+                f"If wrong, tap ✏️ Edit to correct it._"
+            )
 
     # Full NLC identifiers — required by National Land Code for will description
     nlc_lines = []

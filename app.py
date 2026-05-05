@@ -4471,12 +4471,18 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
         # text using NLC context clues (mukim/daerah/ownership).
         # Re-fetch props from DB so we use the just-persisted addresses.
         try:
-            from ai.chat_planner import ai_match_property_addresses
+            from ai.chat_planner import ai_match_property_addresses, _NLC_ADDR_RE
             # Reload to pick up any addresses persisted in the regex pass above
             pend2 = get_pending_gift_documents(client_id)
             props2 = pend2.get('property') or []
-            unmatched = [p for p in props2
-                         if not (p.get('extracted') or {}).get('property_address')]
+            # Include properties with NLC-format addresses (e.g. "H.S.(D) 251041 P.T.D …")
+            # alongside those with no address at all — both need real street address matching.
+            def _needs_real_addr(p):
+                addr = (p.get('extracted') or {}).get('property_address', '').strip()
+                if not addr:
+                    return True
+                return bool(_NLC_ADDR_RE.match(addr))
+            unmatched = [p for p in props2 if _needs_real_addr(p)]
             if unmatched:
                 ai_matches = ai_match_property_addresses(
                     unmatched, recent_text, claimed_addresses
@@ -4485,7 +4491,16 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                     ai_changed = False
                     for p in unmatched:
                         doc_id2 = p.get('document_id')
-                        matched_addr = ai_matches.get(doc_id2, '').strip()
+                        match_val = ai_matches.get(doc_id2)
+                        if not match_val:
+                            continue
+                        # Support both plain string and {address, confidence} dict
+                        if isinstance(match_val, dict):
+                            matched_addr = (match_val.get('address') or '').strip()
+                            confidence = match_val.get('confidence', 'high')
+                        else:
+                            matched_addr = match_val.strip()
+                            confidence = 'high'
                         if not matched_addr or len(matched_addr) < 8:
                             continue
                         doc2 = db.session.get(Document, doc_id2)
@@ -4495,12 +4510,21 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                             stored2 = json.loads(doc2.extracted_data) if doc2.extracted_data else {}
                         except (json.JSONDecodeError, TypeError):
                             stored2 = {}
-                        if stored2.get('property_address'):
-                            continue  # already set by regex pass or another round
+                        # For high confidence: overwrite any NLC address. For low confidence:
+                        # only overwrite if currently NLC or empty; store as pending confirmation.
+                        cur_addr = stored2.get('property_address', '').strip()
+                        if cur_addr and not _NLC_ADDR_RE.match(cur_addr):
+                            continue  # real address already set — don't touch it
                         stored2['property_address'] = matched_addr[:200]
+                        stored2['_address_confidence'] = confidence
                         stored2.setdefault('_enriched_from', [])
                         if 'ai_address_match' not in stored2['_enriched_from']:
                             stored2['_enriched_from'].append('ai_address_match')
+                        # For low-confidence matches: flag for user confirmation
+                        if confidence in ('low', 'medium'):
+                            stored2['_address_needs_confirm'] = True
+                        else:
+                            stored2.pop('_address_needs_confirm', None)
                         doc2.extracted_data = json.dumps(stored2)
                         claimed_addresses.add(matched_addr.lower())
                         ai_changed = True
