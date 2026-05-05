@@ -1077,11 +1077,6 @@ def _enrich_property_from_siblings(p: Dict[str, Any]) -> Dict[str, Any]:
             # "LOT 207922, Mukim Plentong…") with a real street address
             # from a sibling — the OCR often stuffs NLC refs into
             # property_address which blocks real addresses from being set.
-            _NLC_ADDR_RE = re.compile(
-                r'^\s*(?:LOT\s+\d|PTD\s+\d|H\.?S\.?\s*\(|HSD\s+\d|HSM\s+\d|'
-                r'Geran\s+No|GERAN\b|Mukim\s+\w)',
-                re.IGNORECASE,
-            )
             for k in ('property_address', 'address', 'title_number',
                       'lot_number', 'mukim', 'daerah', 'negeri',
                       'title_type', 'area'):
@@ -1104,6 +1099,17 @@ def _enrich_property_from_siblings(p: Dict[str, Any]) -> Dict[str, Any]:
         pass
     return ex
 
+
+# NLC-format address detector — matches strings that are land registry
+# references rather than real street addresses. Used to decide whether a
+# property_address field can be overwritten with a better value.
+# Also exported so app.py can import it directly.
+_NLC_ADDR_RE = re.compile(
+    r'^\s*(?:LOT\s+\d|LOT\s+PTD|LOT\s+HSD|LOT\s+HSM|LOT\s+NO'
+    r'|PTD\s+\d|H\.?S\.?\s*\(|HSD\s+\d|HSM\s+\d'
+    r'|Geran\s+No|GERAN\b|Mukim\s+\w)',
+    re.IGNORECASE,
+)
 
 _MY_ADDRESS_RE = re.compile(
     r'(?:'
