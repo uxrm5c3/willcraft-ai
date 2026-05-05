@@ -972,6 +972,86 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             del prop_groups[gk]
 
     # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN — CROSS-SIG OCR-TRUNCATION MERGE 🔥                     ║
+    # ║  CLAUDE.md §10hd. Two groups with the SAME lot AND the SAME        ║
+    # ║  master title number but at DIFFERENT (lot,addr) sig keys —        ║
+    # ║  typically because one side has the full strata title              ║
+    # ║  encoding ("564662/M1C/30/710") + a real street address, and       ║
+    # ║  the other side has only the master ("564662") and no address —    ║
+    # ║  are the same unit (front page vs back page of the same geran,    ║
+    # ║  or title-doc vs SPA). The (lot,addr) pass above can't merge      ║
+    # ║  them because their addresses differ. Run a pairwise pass that    ║
+    # ║  uses _safe_to_merge to fold OCR-truncation pairs together.       ║
+    # ║                                                                    ║
+    # ║  IMPORTANT: only fold when _safe_to_merge returns True (which     ║
+    # ║  enforces same master + only one side has parcel encoding —      ║
+    # ║  the OCR truncation case). Two genuine strata parcels in the     ║
+    # ║  same building with different suffixes are NOT merged.           ║
+    # ╚════════════════════════════════════════════════════════════════════╝
+    def _has_lot_master(grp: Dict[str, Any]) -> tuple:
+        """Return (lot_digits, master_title_digits) for grouping."""
+        td = grp.get('title_doc') or {}
+        ex_ = td.get('extracted') or {}
+        lot_raw = (ex_.get('lot_number') or '').strip()
+        lot_clean = _clean_id_value(lot_raw)
+        lot_digits = re.sub(r'\D', '', lot_clean)
+        if _looks_like_garbage(lot_clean):
+            lot_digits = ''
+        title_sig = _title_signature(ex_)
+        master = _master_title(title_sig)
+        return (lot_digits, master)
+
+    # Build (lot, master) → [gk, ...] map; merge any group with len > 1.
+    lot_master_map: Dict[tuple, List[str]] = {}
+    for gk, grp in list(prop_groups.items()):
+        if not grp.get('title_doc'):
+            continue
+        lm = _has_lot_master(grp)
+        if not lm[0] or not lm[1]:
+            continue   # need both lot AND master to risk OCR-truncation merge
+        lot_master_map.setdefault(lm, []).append(gk)
+
+    for lm, gks in lot_master_map.items():
+        if len(gks) < 2:
+            continue
+        # Pick the highest-quality group as target (most extracted fields,
+        # plus prefer ones with a real address).
+        def _gq(gk):
+            grp_ = prop_groups.get(gk) or {}
+            td_ = grp_.get('title_doc') or {}
+            ex_ = td_.get('extracted') or {}
+            filled = sum(1 for k in ('title_number', 'lot_number', 'mukim',
+                                      'daerah', 'negeri', 'property_address')
+                         if (ex_.get(k) or '').strip())
+            has_addr = 1 if (ex_.get('property_address') or '').strip() else 0
+            # Prefer FULL strata encoding ("564662/M1C/30/710") over master-only
+            # ("564662") — the full encoding came off a real title page.
+            sig_ = _title_signature(ex_)
+            has_parcel = 1 if '/' in sig_ else 0
+            return filled * 10 + has_addr * 5 + has_parcel * 3
+        best = max(gks, key=_gq)
+        target = prop_groups[best]
+        known_ids = set(target['all_doc_ids'])
+        for gk in gks:
+            if gk == best or gk not in prop_groups:
+                continue
+            grp = prop_groups[gk]
+            # _safe_to_merge ensures: same master + at most one side has
+            # parcel encoding (i.e. OCR-truncation case). Two distinct
+            # parcels at (564662/M1C/30/710) vs (564662/M1C/05/100) would
+            # have already split by sig_to_keys above and BOTH sides have
+            # parcel encoding → _safe_to_merge returns False.
+            if not _safe_to_merge(target, grp):
+                continue
+            for ds in (([grp['title_doc']] if grp['title_doc'] else [])
+                       + grp['support_docs']):
+                if ds and ds['document_id'] not in known_ids:
+                    target['support_docs'].append(ds)
+                    target['all_doc_ids'].append(ds['document_id'])
+                    known_ids.add(ds['document_id'])
+            del prop_groups[gk]
+
+    # ╔════════════════════════════════════════════════════════════════════╗
     # ║  🔥 BURN-IN RULE — ASSET WALKTHROUGH ORDER 🔥                       ║
     # ║  ALWAYS start with the asset that has HIGHEST confidence.          ║
     # ║  LOWEST confidence comes LAST. No exceptions, no random order,     ║
