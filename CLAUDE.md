@@ -138,6 +138,57 @@ Implemented in `services/inbound_address.py`.
 
 ---
 
+## 4a. ⚠️ ALWAYS REFER TO THE WIZARD FIRST ⚠️
+
+**THE WIZARD IS THE SOURCE OF TRUTH. CHECK IT BEFORE ASKING THE USER ANYTHING.**
+
+This rule is repeated because it has been violated repeatedly. Before any
+chat question — IC identity, executor, beneficiary, gift, address, anything —
+the code MUST first query the wizard tables (`Person`, `Document`,
+`Step1`, `Step2`, … `WillData`) and skip if the data is already there.
+
+### Hard rules
+
+1. **Never ask about an IC if the NRIC already exists on a `Person` row.**
+   The chat must extract the canonical 12-digit `NNNNNN-NN-NNNN` pattern
+   from the document's `extracted_data` (it may be embedded in a longer
+   sentence, prefixed with `VALUE:`, etc.) and compare against
+   `Person.nric_passport` — not raw string equality.
+
+2. **Never ask about a person if the name already exists on a `Person` row.**
+   Match on `full_name` case-insensitively. Issuing-authority strings
+   (`KETUA PENGARAH PENDAFTARAN NEGARA`, `JABATAN PENDAFTARAN NEGARA`,
+   `MyKad`, `KAD PENGENALAN`) are NOT person names — treat as empty.
+
+3. **Never ask about a document already linked to a Person**
+   (`Person.document_id == Document.id`).
+
+4. **Never re-ask after Skip.** `_chat_skipped=True` in `extracted_data`
+   means the user said skip — respect it.
+
+5. **Step 2+ data**: before asking testator/executor/guardian/beneficiary
+   questions, check the corresponding `step1`/`step2`/… JSON. If it's
+   already populated, advance to the next step.
+
+6. **Garbage-in-extracted-data is a wizard problem, not a chat problem.**
+   When AI extraction returns rambling text in `nric_number` (e.g.
+   `"This appears to be a longer reference number…"`), the dedup logic
+   must still extract the 12-digit pattern and match. Don't push noise
+   onto the user.
+
+### The litmus test before posting any walkthrough question
+
+```
+Q: Is the answer already in the wizard?
+   - YES → skip, advance, don't ask
+   - NO  → ask, but show the evidence/snippet that prompts the question
+```
+
+If you find yourself writing code that asks the user something the wizard
+already knows, STOP and add a dedup check first.
+
+---
+
 ## 5. Architecture Overview
 
 ```

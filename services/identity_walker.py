@@ -6,7 +6,65 @@ replies like "she's the spouse" into a canonical relationship label.
 """
 from typing import List, Dict, Any, Optional
 import json
+import re
 from database import Document, Person
+
+
+# Malaysian NRIC: 6 digits - 2 digits - 4 digits (may have extra trailing digits
+# like "-02-01" from raw card text — we only want the canonical 12-digit form).
+_NRIC_RE = re.compile(r'(\d{6}[-\s]?\d{2}[-\s]?\d{4})')
+
+# Strings that occasionally land in extracted full_name but are NOT a person's
+# name — they're issuing-authority / card-header text. Treat as empty.
+_NON_PERSON_NAME_FRAGMENTS = (
+    'KETUA PENGARAH',
+    'PENDAFTARAN NEGARA',
+    'JABATAN PENDAFTARAN',
+    'MYKAD',
+    'KAD PENGENALAN',
+    'IDENTITY CARD',
+    'WARGANEGARA',
+    'MALAYSIA',
+)
+
+
+def _canonical_nric(value: str) -> str:
+    """Pull the canonical 12-digit NRIC out of any string. Handles values
+    like 'VALUE: 650629-04-5308-02-01', 'This appears to be ... 650629-04-5308',
+    or '650629045308'. Returns 'NNNNNN-NN-NNNN' uppercased, or '' if no match.
+    """
+    if not value:
+        return ''
+    m = _NRIC_RE.search(value)
+    if not m:
+        # Try bare 12 digits
+        digits = re.sub(r'\D', '', value)
+        if len(digits) >= 12:
+            d = digits[:12]
+            return f"{d[:6]}-{d[6:8]}-{d[8:12]}"
+        return ''
+    raw = re.sub(r'\s+', '', m.group(1))
+    digits = re.sub(r'\D', '', raw)
+    if len(digits) < 12:
+        return ''
+    d = digits[:12]
+    return f"{d[:6]}-{d[6:8]}-{d[8:12]}"
+
+
+def _clean_person_name(value: str) -> str:
+    """Return uppercased name, or '' if it looks like issuing-authority text."""
+    if not value:
+        return ''
+    nm = value.strip().upper()
+    if not nm:
+        return ''
+    for frag in _NON_PERSON_NAME_FRAGMENTS:
+        if frag in nm:
+            return ''
+    # Reject if it has no alphabetic chars (e.g. "VALUE: 650629-...")
+    if not re.search(r'[A-Z]', nm):
+        return ''
+    return nm
 
 
 # Keywords → canonical relationship label. Longer phrases are matched
@@ -73,10 +131,14 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
     if not docs:
         return []
 
-    # All Persons for this client — used to dedupe by name AND nric
+    # All Persons for this client — used to dedupe by name AND nric.
+    # NRICs are normalised to canonical 12-digit form so embedded/garbage
+    # extractions still match (see CLAUDE.md §4a).
     persons = Person.query.filter_by(client_id=client_id).all()
-    known_names = {(p.full_name or '').strip().upper() for p in persons if p.full_name}
-    known_nrics = {(p.nric_passport or '').strip().upper() for p in persons if p.nric_passport}
+    known_names = {_clean_person_name(p.full_name) for p in persons if p.full_name}
+    known_names.discard('')
+    known_nrics = {_canonical_nric(p.nric_passport) for p in persons if p.nric_passport}
+    known_nrics.discard('')
     linked_doc_ids = {p.document_id for p in persons if p.document_id}
 
     pending = []
@@ -92,8 +154,12 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
         # Skip if user explicitly skipped this document in chat
         if ex.get('_chat_skipped'):
             continue
-        name_key = ((ex.get('full_name') or '').strip().upper())
-        nric_key = ((ex.get('nric_number') or '').strip().upper())
+        name_key = _clean_person_name(ex.get('full_name') or '')
+        nric_key = _canonical_nric(ex.get('nric_number') or '')
+        # Also try to recover NRIC from full_name field if the extractor
+        # accidentally dumped it there, and vice versa.
+        if not nric_key:
+            nric_key = _canonical_nric(ex.get('full_name') or '')
         if name_key:
             if name_key in known_names:
                 continue  # a Person already exists for this name
