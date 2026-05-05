@@ -429,6 +429,130 @@ def _summarise_message(raw_text: str) -> str:
         return ''
 
 
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║  🔥 BURN-IN — AI Summary is the canonical property list 🔥               ║
+# ║                                                                        ║
+# ║  CLAUDE.md §10h. Walkthrough count = AI Summary count. NEVER invent a  ║
+# ║  property whose address isn't in the summary. This parser reads the    ║
+# ║  latest "📨 AI Summary of your message" assistant message and returns  ║
+# ║  the canonical list of {name, address, lot, title, mukim, daerah,      ║
+# ║  beneficiary} per property. Downstream walkthrough code filters       ║
+# ║  pending property cards against this list.                             ║
+# ╚════════════════════════════════════════════════════════════════════════╝
+def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
+    """Parse the most recent assistant '📨 AI Summary' chat message for
+    this client and return the property list as the source of truth.
+
+    Returns: list of dicts, each with keys:
+      name, address, lot, title, mukim, daerah, ownership, beneficiary
+    Empty values are '' (never None). Returns [] if no summary message
+    exists or it has no property bullets.
+
+    Per CLAUDE.md §10h, callers MUST use this list as the canonical N.
+    The walkthrough renders exactly len(returned_list) property cards.
+    """
+    if not client_id:
+        return []
+    try:
+        from database import db, ChatMessage, ChatSession
+    except Exception:
+        return []
+    try:
+        # Find the latest assistant message starting with the AI Summary header
+        sess_ids_subq = (db.session.query(ChatSession.id)
+                          .filter(ChatSession.client_id == client_id)
+                          .subquery())
+        msg = (ChatMessage.query
+               .filter(ChatMessage.session_id.in_(sess_ids_subq))
+               .filter(ChatMessage.role == 'assistant')
+               .filter(ChatMessage.content.ilike('%📨 AI Summary of your message%'))
+               .order_by(ChatMessage.created_at.desc())
+               .first())
+        if not msg or not msg.content:
+            return []
+        return _parse_ai_summary_text(msg.content)
+    except Exception:
+        return []
+
+
+_AI_SUMMARY_FIELD_RE = {
+    'address':     re.compile(r'(?:^|[\-\s])Address\s*[:\-]\s*(.+?)(?=\n|$)', re.IGNORECASE),
+    'lot':         re.compile(r'(?:^|[\-\s])(?:PTD\s*/\s*Lot|Lot\s*/\s*PTD|Lot|PTD)\s*[:\-]\s*(.+?)(?=\n|$)', re.IGNORECASE),
+    'title':       re.compile(r'(?:^|[\-\s])(?:Title|Hakmilik|HSD|HS\(D\)|Geran)\s*[:\-]\s*(.+?)(?=\n|$)', re.IGNORECASE),
+    'mukim':       re.compile(r'(?:^|[\-\s])Mukim(?:\s*/\s*Daerah)?\s*[:\-]\s*(.+?)(?=\n|$)', re.IGNORECASE),
+    'ownership':   re.compile(r'(?:^|[\-\s])Ownership\s*[:\-]\s*(.+?)(?=\n|$)', re.IGNORECASE),
+    'beneficiary': re.compile(r'(?:^|[\-\s])Beneficiary\s*[:\-]\s*(.+?)(?=\n|$)', re.IGNORECASE),
+}
+
+
+def _parse_ai_summary_text(text: str) -> List[Dict[str, Any]]:
+    """Pure-function parser. Splits the 'What we deduce' section into
+    per-property blocks (each starts with •) and pulls fields out.
+    Tolerant of formatting drift — missing fields just become ''.
+    """
+    if not text:
+        return []
+    # Isolate the deduce section if present (everything after that header)
+    body = text
+    m = re.search(r'\*\*\s*What we deduce[^\n]*\*\*', text, re.IGNORECASE)
+    if m:
+        body = text[m.end():]
+
+    # Split on bullets: '•' (preferred) or '- ' at line start.
+    # Each bullet block describes ONE asset (property/bank/vehicle).
+    blocks = re.split(r'(?:\n\s*[•\-]\s+|\n\s*\*\s+)', '\n' + body)
+    out: List[Dict[str, Any]] = []
+    for blk in blocks:
+        blk = (blk or '').strip()
+        if not blk:
+            continue
+        # Skip non-property bullets — only keep ones that look property-ish
+        addr_m = _AI_SUMMARY_FIELD_RE['address'].search(blk)
+        lot_m  = _AI_SUMMARY_FIELD_RE['lot'].search(blk)
+        title_m = _AI_SUMMARY_FIELD_RE['title'].search(blk)
+        # Heuristic: if no address AND no lot AND no title → not a property
+        if not (addr_m or lot_m or title_m):
+            continue
+        mukim_raw = ''
+        if _AI_SUMMARY_FIELD_RE['mukim'].search(blk):
+            mukim_raw = _AI_SUMMARY_FIELD_RE['mukim'].search(blk).group(1).strip()
+        # Split mukim/daerah if combined
+        mukim, daerah = mukim_raw, ''
+        if ',' in mukim_raw:
+            parts = [p.strip() for p in mukim_raw.split(',', 1)]
+            mukim, daerah = parts[0], parts[1] if len(parts) > 1 else ''
+        elif '/' in mukim_raw:
+            parts = [p.strip() for p in mukim_raw.split('/', 1)]
+            mukim, daerah = parts[0], parts[1] if len(parts) > 1 else ''
+        # Strip leading "Mukim "/"Daerah " keywords
+        mukim  = re.sub(r'^Mukim\s+', '', mukim, flags=re.IGNORECASE).strip()
+        daerah = re.sub(r'^Daerah\s+', '', daerah, flags=re.IGNORECASE).strip()
+        # First non-field line of the bullet is the property name (if present)
+        first_line = blk.splitlines()[0].strip()
+        # Drop name if it IS a field line ("Address: …")
+        if any(rx.match(first_line) for rx in _AI_SUMMARY_FIELD_RE.values()):
+            first_line = ''
+
+        prop = {
+            'name':        first_line[:120],
+            'address':     (addr_m.group(1).strip() if addr_m else '')[:200],
+            'lot':         (lot_m.group(1).strip() if lot_m else '')[:80],
+            'title':       (title_m.group(1).strip() if title_m else '')[:80],
+            'mukim':       mukim[:60],
+            'daerah':      daerah[:60],
+            'ownership':   (_AI_SUMMARY_FIELD_RE['ownership'].search(blk).group(1).strip()
+                            if _AI_SUMMARY_FIELD_RE['ownership'].search(blk) else '')[:120],
+            'beneficiary': (_AI_SUMMARY_FIELD_RE['beneficiary'].search(blk).group(1).strip()
+                            if _AI_SUMMARY_FIELD_RE['beneficiary'].search(blk) else '')[:200],
+        }
+        # Drop "unknown" placeholders so caller sees empty string, not literal 'unknown'
+        for k, v in list(prop.items()):
+            if v.lower() == 'unknown':
+                prop[k] = ''
+        out.append(prop)
+    return out
+
+
 def _next_step_cta(will_data: dict) -> dict:
     """Return {'label': str, 'value': str} for the ▶️ next-step button.
 
@@ -1127,6 +1251,21 @@ def _enrich_property_from_siblings(p: Dict[str, Any]) -> Dict[str, Any]:
             # Match if ANY needle appears in the sibling's haystack
             if not any(n in haystack for n in needles):
                 continue
+            # ╔════════════════════════════════════════════════════════════╗
+            # ║  🔥 BURN-IN — STRATA: NO CROSS-TITLE ADDRESS INHERITANCE 🔥 ║
+            # ║  CLAUDE.md §10hd. Two strata parcels in the same building   ║
+            # ║  share the same lot but have DIFFERENT addresses (unit      ║
+            # ║  numbers). Copying an address sibling-→-self by lot match   ║
+            # ║  hides the destination's real unit. Block address copy     ║
+            # ║  whenever either side is strata AND title sigs differ.     ║
+            # ║  Non-address fields (title_number, mukim, etc.) are still  ║
+            # ║  safe to copy — they don't carry the unit-level confusion. ║
+            # ╚════════════════════════════════════════════════════════════╝
+            try:
+                from services.gift_walker import _safe_to_inherit_address
+                _addr_inherit_ok = _safe_to_inherit_address(sex, ex)
+            except Exception:
+                _addr_inherit_ok = True  # service helper missing → permissive
             # Back-fill blank fields from the matching sibling.
             # For address fields: also overwrite NLC-style entries (e.g.
             # "LOT 207922, Mukim Plentong…") with a real street address
@@ -1135,6 +1274,9 @@ def _enrich_property_from_siblings(p: Dict[str, Any]) -> Dict[str, Any]:
             for k in ('property_address', 'address', 'title_number',
                       'lot_number', 'mukim', 'daerah', 'negeri',
                       'title_type', 'area'):
+                # Strata gate: address fields are blocked if title sigs differ.
+                if k in ('property_address', 'address') and not _addr_inherit_ok:
+                    continue
                 current_val = (ex.get(k) or '').strip()
                 sibling_val = (sex.get(k) or '').strip()
                 if not sibling_val:
@@ -1577,6 +1719,176 @@ def ai_match_property_addresses(
         return out
     except Exception:
         return {}
+
+
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║  🔥 BURN-IN — WEB-SEARCH-VALIDATE EVERY ADDRESS MATCH 🔥                 ║
+# ║                                                                        ║
+# ║  Per CLAUDE.md §10hf: when we have a candidate (doc, address) pair,    ║
+# ║  we MUST web-search the address before committing the match. The      ║
+# ║  search returns property-type clues (type / tenure / mukim / building)║
+# ║  that we use to VALIDATE the doc is compatible with the address.      ║
+# ║                                                                        ║
+# ║  If the web clues say "apartment_condo at Bandar Medini" and the doc  ║
+# ║  is a clearly-landed Geran in mukim Plentong → INCOMPATIBLE. The      ║
+# ║  match is downgraded to 'low' confidence and flagged for user review. ║
+# ║                                                                        ║
+# ║  This is the ONE LINE between auto-binding and hallucination. Don't   ║
+# ║  remove it. Don't bypass it for "speed". The user said:               ║
+# ║      "Web search gives PROPERTY-TYPE CLUES that filter the image      ║
+# ║       search. BURN THIS BLOODY THING IN THE CODE"                     ║
+# ╚════════════════════════════════════════════════════════════════════════╝
+def validate_matches_with_web_clues(
+    props: list,
+    matches: dict,
+) -> dict:
+    """Run each (doc, matched_address) through web-search clues validation.
+
+    For every match returned by `ai_match_property_addresses`:
+      1. Web-search the matched address → PropertyClues (type / tenure / mukim).
+      2. Check is_compatible(doc.extracted, clues).
+      3. If incompatible → downgrade confidence to 'low' and set
+         `_address_needs_confirm=True`, attach `_clue_reject_reason`.
+      4. If compatible AND clues found → bump 'medium' to 'high', attach
+         `_clue_sources` so the card can show the citations.
+      5. If web search returned None (address not found, no sources) →
+         leave the match alone (we don't penalise un-searchable addresses).
+
+    Returns: a new dict with the same shape as `matches` but with
+    confidence/flags adjusted by web-clue evidence.
+    """
+    if not props or not matches:
+        return matches or {}
+
+    try:
+        from services.web_property_clues import (
+            search_property_clues, is_compatible, PropertyClues,
+        )
+    except Exception:
+        return matches  # web_property_clues unavailable → pass through
+
+    # ── Geo resolver (CLAUDE.md §10hc — NEVER from memory) ─────────────────
+    # Hint 1 of the two-hint test: same mukim. Wire resolve_mukim() in as
+    # the FIRST authoritative source (title doc → address doc → AI Summary
+    # → curated cache → web search). It raises GeoUnknown rather than
+    # guessing — the caller (here) catches and falls through to web clues.
+    try:
+        from services.geo_resolver import (
+            resolve_mukim, make_web_resolver, GeoUnknown,
+        )
+        _geo_available = True
+    except Exception:
+        _geo_available = False
+        GeoUnknown = Exception  # type: ignore  # placeholder for except clause
+
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    except Exception:
+        return matches  # no API client → pass through
+
+    # Build a web resolver bound to this client. Cached per-call so a
+    # single resolve_mukim retry pass doesn't spawn a new resolver per doc.
+    _web_resolver_fn = None
+    if _geo_available:
+        try:
+            _web_resolver_fn = make_web_resolver(client)
+        except Exception:
+            _web_resolver_fn = None
+
+    # Cache: avoid duplicate web searches when two docs match the same address
+    clue_cache: Dict[str, Optional[Any]] = {}
+    geo_cache: Dict[str, Optional[Any]] = {}
+
+    out: Dict[str, Any] = {}
+    docs_by_id = {p.get('document_id'): p for p in props if p.get('document_id')}
+
+    for doc_id, match_val in matches.items():
+        if not isinstance(match_val, dict):
+            out[doc_id] = match_val
+            continue
+
+        addr = (match_val.get('address') or '').strip()
+        if not addr:
+            out[doc_id] = match_val
+            continue
+
+        cache_key = addr.lower()
+        if cache_key not in clue_cache:
+            try:
+                clue_cache[cache_key] = search_property_clues(addr, client)
+            except Exception:
+                clue_cache[cache_key] = None
+        clues = clue_cache[cache_key]
+
+        new_match = dict(match_val)
+
+        # ── HINT 1: same-mukim check via geo resolver (no memory) ──────────
+        # Per CLAUDE.md §10hc, mukim claims must come from a citable
+        # source. Try title-doc → address-doc → AI-Summary → curated
+        # cache → web search, in that order. GeoUnknown means none
+        # resolved — we leave the hint blank rather than guessing.
+        doc = docs_by_id.get(doc_id)
+        ex = (doc.get('extracted') if doc else None) or {}
+        if _geo_available and cache_key not in geo_cache:
+            try:
+                geo = resolve_mukim(
+                    addr,
+                    title_doc_mukim=(ex.get('mukim') or '').strip() or None,
+                    title_doc_id=(doc.get('document_id') if doc else None),
+                    client_id=(doc.get('client_id') if doc else None),
+                    web_search_fn=_web_resolver_fn,
+                )
+                geo_cache[cache_key] = geo
+            except GeoUnknown:
+                geo_cache[cache_key] = None
+            except Exception:
+                geo_cache[cache_key] = None
+        geo = geo_cache.get(cache_key)
+        if geo is not None:
+            new_match['_resolved_mukim'] = geo.mukim
+            new_match['_mukim_source'] = geo.source
+            # Hint 1 verdict: does the doc's mukim match the resolved one?
+            doc_mukim = (ex.get('mukim') or '').strip().lower()
+            res_mukim = (geo.mukim or '').strip().lower()
+            if doc_mukim and res_mukim:
+                new_match['_hint1_mukim_ok'] = (doc_mukim == res_mukim)
+            else:
+                new_match['_hint1_mukim_ok'] = None  # unknown / one side missing
+
+        if clues is None:
+            # No web evidence available — leave match unchanged but mark
+            # that the validation step ran without a verdict.
+            new_match.setdefault('_clue_status', 'address_not_found')
+            out[doc_id] = new_match
+            continue
+
+        # `doc` and `ex` were resolved above (Hint 1 block). Re-use here.
+        ok, reason = is_compatible(ex, clues)
+
+        if not ok:
+            # Incompatible → downgrade. Do NOT silently drop the match —
+            # let the user see what the web said vs what the doc says.
+            new_match['confidence'] = 'low'
+            new_match['_clue_status'] = 'incompatible'
+            new_match['_clue_reject_reason'] = reason
+            new_match['_clue_type'] = clues.type
+            new_match['_clue_mukim'] = clues.mukim
+            new_match['_clue_sources'] = list(clues.sources[:3])
+        else:
+            # Compatible. Promote medium→high if we got real clues.
+            cur = (new_match.get('confidence') or 'high').lower()
+            if cur == 'medium' and clues.sources:
+                new_match['confidence'] = 'high'
+            new_match['_clue_status'] = 'compatible'
+            new_match['_clue_type'] = clues.type
+            new_match['_clue_mukim'] = clues.mukim
+            new_match['_clue_sources'] = list(clues.sources[:3])
+
+        out[doc_id] = new_match
+
+    return out
 
 
 def _enrich_from_chat_text(ex: Dict[str, Any], recent_text: str) -> Dict[str, Any]:

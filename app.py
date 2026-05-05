@@ -3626,6 +3626,12 @@ def _api_chat_message_impl(client_id):
                         msg_context_parts.append(txt)
                 if msg_context_parts:
                     extracted['_message_context'] = '\n'.join(msg_context_parts)[:800]
+            # WhatsApp timestamp for this image (CLAUDE.md §10i)
+            wa_ts = _extract_whatsapp_timestamp_for_file(
+                user_text or '', doc.original_filename or ''
+            )
+            if wa_ts:
+                extracted['_msg_timestamp'] = wa_ts
         except Exception:
             pass
         # For low-confidence 'other' docs: cross-check recent chat messages
@@ -4586,17 +4592,62 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                     return True
                 return bool(_NLC_ADDR_RE.match(addr))
             unmatched = [p for p in props2 if _needs_real_addr(p)]
+            # ╔══════════════════════════════════════════════════════════════╗
+            # ║  🔥 BURN-IN — HIGH CONFIDENCE FIRST + ONE-CLAIM-ONLY 🔥        ║
+            # ║  Sort props by confidence DESC, process matches in the same   ║
+            # ║  order, claim each address greedily. Once an address is       ║
+            # ║  claimed by a high-confidence match, no later doc can reuse   ║
+            # ║  it — even if the AI suggests the same address for a second   ║
+            # ║  doc. NO DUPLICATE address assignments. See CLAUDE.md §10g.   ║
+            # ╚══════════════════════════════════════════════════════════════╝
+            from services.gift_walker import _score_property_confidence
+            unmatched.sort(
+                key=lambda p: _score_property_confidence(p.get('extracted') or {}),
+                reverse=True,
+            )
             if unmatched:
                 ai_matches = ai_match_property_addresses(
                     unmatched, recent_text, claimed_addresses
                 )
+                # ╔══════════════════════════════════════════════════════════╗
+                # ║  🔥 BURN-IN — WEB-SEARCH VALIDATES EVERY MATCH 🔥          ║
+                # ║  CLAUDE.md §10hf — we have the address from the AI       ║
+                # ║  matcher → we MUST web-search it for property-type      ║
+                # ║  clues, then verify the doc is compatible with those    ║
+                # ║  clues. Incompatible matches are downgraded to 'low'    ║
+                # ║  + _address_needs_confirm so the user is asked before   ║
+                # ║  the binding goes into step5_data.                      ║
+                # ╚══════════════════════════════════════════════════════════╝
+                try:
+                    from ai.chat_planner import validate_matches_with_web_clues
+                    ai_matches = validate_matches_with_web_clues(
+                        unmatched, ai_matches
+                    )
+                except Exception:
+                    pass  # non-critical — fall through with un-validated matches
                 if ai_matches:
                     ai_changed = False
+                    # Build (doc_id, match_dict, conf_rank) tuples and process
+                    # in CONFIDENCE DESC order so high-conf claims first.
+                    _conf_rank = {'high': 3, 'medium': 2, 'low': 1}
+                    pairs = []
                     for p in unmatched:
-                        doc_id2 = p.get('document_id')
-                        match_val = ai_matches.get(doc_id2)
-                        if not match_val:
+                        did = p.get('document_id')
+                        mv = ai_matches.get(did)
+                        if not mv:
                             continue
+                        if isinstance(mv, dict):
+                            conf = (mv.get('confidence') or 'high').lower()
+                        else:
+                            conf = 'high'
+                        # Bonus: combine doc-confidence + match-confidence so
+                        # a high-conf doc with high match goes first
+                        doc_score = _score_property_confidence(p.get('extracted') or {})
+                        rank = doc_score * 10 + _conf_rank.get(conf, 0)
+                        pairs.append((rank, p, mv))
+                    pairs.sort(key=lambda t: t[0], reverse=True)
+                    for _rank, p, match_val in pairs:
+                        doc_id2 = p.get('document_id')
                         # Support both plain string and {address, confidence} dict
                         if isinstance(match_val, dict):
                             matched_addr = (match_val.get('address') or '').strip()
@@ -4605,6 +4656,9 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                             matched_addr = match_val.strip()
                             confidence = 'high'
                         if not matched_addr or len(matched_addr) < 8:
+                            continue
+                        # ── ONE-CLAIM-ONLY: skip if already taken ──────────
+                        if matched_addr.lower() in claimed_addresses:
                             continue
                         doc2 = db.session.get(Document, doc_id2)
                         if not doc2:
@@ -4623,6 +4677,33 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                         stored2.setdefault('_enriched_from', [])
                         if 'ai_address_match' not in stored2['_enriched_from']:
                             stored2['_enriched_from'].append('ai_address_match')
+                        # ── Web-clue validation flags (CLAUDE.md §10hf) ────
+                        # When validate_matches_with_web_clues attached web
+                        # evidence to this match, persist it so the
+                        # walkthrough card can show "🔗 sources: …" and the
+                        # type/mukim hints, and so a future re-render can
+                        # tell whether this was clue-validated or not.
+                        if isinstance(match_val, dict):
+                            cs = match_val.get('_clue_status')
+                            if cs:
+                                stored2['_clue_status'] = cs
+                                if 'web_clues' not in stored2['_enriched_from']:
+                                    stored2['_enriched_from'].append('web_clues')
+                            for k_src, k_dst in (
+                                ('_clue_type', '_web_property_type'),
+                                ('_clue_mukim', '_web_mukim'),
+                                ('_clue_sources', '_web_sources'),
+                                ('_clue_reject_reason', '_web_reject_reason'),
+                                ('_resolved_mukim', '_resolved_mukim'),
+                                ('_mukim_source', '_mukim_source'),
+                            ):
+                                v_src = match_val.get(k_src)
+                                if v_src:
+                                    stored2[k_dst] = v_src
+                            # Hint-1 verdict (boolean) — persist with explicit None
+                            # support so a card can render "unknown" vs True/False.
+                            if '_hint1_mukim_ok' in match_val:
+                                stored2['_hint1_mukim_ok'] = match_val.get('_hint1_mukim_ok')
                         # For low-confidence matches: flag for user confirmation
                         if confidence in ('low', 'medium'):
                             stored2['_address_needs_confirm'] = True
@@ -4719,6 +4800,43 @@ def _extract_whatsapp_context_for_file(body: str, filename: str) -> str:
         combined = before_ctx + after_ctx
         return '\n'.join(combined)
     return '\n'.join(before_ctx or after_ctx)
+
+
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║  🔥 BURN-IN — WhatsApp timestamp per attachment 🔥                       ║
+# ║  CLAUDE.md §10i + §10hb: the property card MUST display the WhatsApp    ║
+# ║  timestamp of the image and of the adjacent message that's binding it. ║
+# ║  We extract the timestamp at INGEST time (this function runs from the   ║
+# ║  /api/inbound-email handler) and persist it to extracted_data. Without ║
+# ║  this, a later-rendered card has no way to recover the timing — the    ║
+# ║  message body may have been compacted or trimmed by then.              ║
+# ╚════════════════════════════════════════════════════════════════════════╝
+_WA_TIMESTAMP_RE = re.compile(
+    # iOS export:  [02/05/26, 13:52:35]   or  [02/05/26, 1:52:35 PM]
+    # Android:     [02/05/2026 13:52]      or  02/05/2026, 13:52 -
+    r'\[?(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})[,\s]+(\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AP]M)?)\]?'
+)
+
+
+def _extract_whatsapp_timestamp_for_file(body: str, filename: str) -> str:
+    """Return the WhatsApp timestamp (raw, as it appears in the export)
+    of the line that references `filename` as an attachment. Returns ''
+    if not found. Format examples: '02/05/26, 13:52:35', '02/05/2026 13:52'.
+
+    Used to populate `_msg_timestamp` on each attachment doc at ingest
+    time, so the §10i temporal-proximity matcher can compare image and
+    message timestamps even after the message body is rotated.
+    """
+    if not filename or not body:
+        return ''
+    fn_lower = filename.lower()
+    for line in body.splitlines():
+        if fn_lower not in line.lower():
+            continue
+        m = _WA_TIMESTAMP_RE.search(line)
+        if m:
+            return f"{m.group(1)} {m.group(2)}".strip()
+    return ''
 
 
 _CONFIRM_TOKENS = ('yes', 'confirm', 'correct', 'ok ', 'okay', 'yep', 'yeah', 'true', 'right')
@@ -7568,6 +7686,14 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                         # No WhatsApp format — store the whole email body
                         extracted['_message_context'] = msg_body[:800]
                         extracted['_context_source'] = 'email_body'
+                    # WhatsApp timestamp for this image (CLAUDE.md §10i).
+                    # Persisted at ingest because the message body may be
+                    # rotated / trimmed by the time the property card renders.
+                    wa_ts = _extract_whatsapp_timestamp_for_file(
+                        msg_body, doc.original_filename or ''
+                    )
+                    if wa_ts:
+                        extracted['_msg_timestamp'] = wa_ts
                 except Exception:
                     pass
                 if kind == 'other' and not will_relevant:

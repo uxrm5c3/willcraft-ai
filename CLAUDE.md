@@ -628,6 +628,752 @@ property, regardless of title number drift. Do not insert. Do not show.
 
 ---
 
+## 10g. 🔥 BURN-IN — Address Matching Order: GROUP → HIGH-CONF → RESIDUAL 🔥
+
+**The 3-step algorithm (user's exact words, do not deviate):**
+
+> **Step 1**: Grouping of images that have relationship together as one group.
+> Images that are isolated are standalone.
+>
+> **Step 2**: Images with strong relationship with the message to piece together —
+> address + PTD + HSD known → high confidence match FIRST.
+>
+> **Step 3**: After all the known properties have been matched, the remaining
+> images (group or isolated) — check whether this is relevant or ignore.
+
+### Concrete behaviour
+
+- **Image A** = title document, has PTD/HSD + matches an address in the message
+  → HIGH confidence → matched **FIRST** → claims that address.
+- **Image B** = non-title (SPA / photo / loan), shares group with A OR matches
+  the SAME address → LOW confidence → address already claimed → **IGNORED**
+  for matching. B is auto-linked to A's group via `(lot_digits, addr_sig)`,
+  it does NOT become a second property.
+- **Residual** = images with no group and no message match → ASK the client
+  via the unverified-property card (§10d). Never auto-render as a property.
+
+### Implementation sites (all carry the BURN-IN banner)
+
+| Step | File | Function | Mechanism |
+|------|------|----------|-----------|
+| 1 | `services/gift_walker.py` | `_group_property_documents` + `(lot_sig,addr_sig)` merge | Cluster docs sharing lot/title/addr |
+| 2 | `app.py::_persist_property_enrichment` (~L4588) | sort by `_score_property_confidence` DESC, then re-rank `doc_score*10 + match_conf_rank` DESC, greedy-claim via `claimed_addresses` set | HIGH FIRST, ONE-CLAIM-ONLY |
+| 3 | `ai/chat_planner.py::_is_property_isolated` + `_walkthrough_property_unverified_card` | Residual → unverified card (§10d) | ASK don't assume |
+
+### The ONE-CLAIM-ONLY invariant
+
+```python
+if matched_addr.lower() in claimed_addresses:
+    continue   # someone with higher confidence already took it
+# … apply match …
+claimed_addresses.add(matched_addr.lower())
+```
+
+If you ever see the same street address on two property cards, this check
+was bypassed. Add the BURN-IN banner above the offending insert and fix.
+
+---
+
+## 10h0. 🔥🔥🔥 MASTER CHECKLIST — Property Identification 🔥🔥🔥
+
+**Run these 10 steps in order. Every property card must be traceable to
+this exact sequence.**
+
+```
+1. READ AI SUMMARY FIRST → canonical N properties (§10h)
+2. EXTRACT title-doc fields  (no address — title docs don't have one) (§10ha)
+3. EXTRACT non-title doc fields  (address there is not authoritative)
+4. DIRECT IDENTIFIER MATCH  (lot/title in AI Summary == image lot/title) (§10g)
+5. TWO-HINT TEST for unmatched AI-Summary properties:
+     5a. Hint 1: SAME MUKIM via verification chain — never from memory (§10hc)
+     5b. Hint 2: CLOSE TIMING in WhatsApp/email thread (§10i)
+6. APPLY CONFIDENCE GRID — both hints HIGH; one MEDIUM; none residual (§10hb)
+7. GREEDY CLAIM — first match wins; no slot re-bound (§10g)
+8. RENDER CARD with: probate-format legal description (geran/lot/mukim/
+   daerah/negeri), AI-Summary postal address, two-hint evidence with
+   WhatsApp timestamps, confidence label
+9. RESIDUAL IMAGES → §10d unverified-card; never invent a property
+10. AI-SUMMARY PROPERTIES WITHOUT IMAGE → summary-only card; ask for doc
+```
+
+The worked example for KOID Property 1 (Paradisonuava → Paradiso Nuova
+@ Medini → Mukim Pulai → MEDIUM-confidence bind to title image with
+"Merak Kayangan" building-name flag for user confirmation) is the
+reference trace. Any deviation from steps 1-10 is a bug — fix the step,
+do not patch the symptom.
+
+---
+
+## 10h. 🔥🔥🔥 BURN-IN — ALWAYS REFER TO AI SUMMARY FIRST 🔥🔥🔥
+
+**The AI Summary IS the canonical asset list. Match images TO the AI Summary,
+never the other way around. NEVER identify an asset that isn't in the
+AI Summary. NEVER show a property count that differs from the AI Summary.**
+
+### The mandatory order
+
+```
+1. READ the AI Summary (the assistant's "📨 AI Summary of your message" card).
+2. EXTRACT the canonical property list from it (Property 1, Property 2, …).
+3. The number of properties = N (from AI Summary).
+4. For each of the N properties, find the image(s) that match it
+   (by address, lot, title, mukim — in that order of preference).
+5. Anything left over (image with no match in AI Summary) is RESIDUAL —
+   send it to the §10d unverified-card. NEVER auto-create a property
+   from an image whose address is not in the AI Summary.
+```
+
+### Hard rules
+
+1. **AI Summary count = walkthrough count.** If summary says 5 properties,
+   walkthrough shows 5. Not 3, not 14, not "one card per uploaded image."
+2. **OCR'd "addresses" that don't appear in the AI Summary are NOT real.**
+   The vision extractor will hallucinate `"10 Marsiling Lane Singapore"` or
+   `"Lot Blabla, Mukim Seberang Selatan"`. If the address is not cited in
+   the AI Summary text, treat it as garbage and route the doc to residual.
+3. **An image without an AI-Summary match never becomes a property card.**
+   It goes to the §10d unverified-property card or is ignored. The chat
+   asks the client; the chat does NOT invent a 6th property.
+4. **The AI Summary is read at the START of every walkthrough turn.** Don't
+   cache stale group counts from before the summary was generated.
+
+### Where this is enforced (touch these, not memory)
+
+| File | Function | What it does |
+|------|----------|--------------|
+| `ai/chat_planner.py` | `_extract_ai_summary_properties(client_id)` | Parse the latest "📨 AI Summary" assistant message, return list of `{name, address, lot, title}` |
+| `ai/chat_planner.py` | `_asset_walkthrough_question` | Filter pending props to only those matching an AI-Summary entry; rest → residual |
+| `services/gift_walker.py` | `get_pending_gift_documents` | Tag each group with `_summary_match` (which AI-Summary property it maps to) or `None` |
+| `app.py::_persist_property_enrichment` | address matcher | Use AI-Summary addresses as the candidate pool, not raw message text |
+
+### The litmus test (run before shipping any asset-walkthrough change)
+
+```
+Q: How many properties does the AI Summary deduce?  → N
+Q: How many property cards does the walkthrough render?  → must be N
+Q: For each card, can I cite the matching "Property X" line in the AI Summary?
+   - YES → ship
+   - NO  → bug. The card is hallucinated. Fix the matcher, not the card.
+```
+
+If you ever render a property card whose address is NOT in the AI Summary,
+the bug is in the filter step. **Do not patch the symptom in the card
+template — fix the filter.**
+
+---
+
+## 10ha. 🔥🔥 BURN-IN — Title Documents DO NOT Show Street Addresses 🔥🔥
+
+**A Malaysian title document (Geran / Hakmilik / HSD / PTD) NEVER contains
+a street address. It contains: Title No., Lot/PTD No., Mukim, Daerah,
+Negeri, owner names, share fractions. The STREET ADDRESS lives in the
+message (WhatsApp/email text), NOT in the title image.**
+
+### Why this matters
+
+If the matcher looks for "property_address" inside a title image's
+extracted fields, it will be EMPTY (or hallucinated). The street address
+MUST come from outside the image — specifically:
+
+1. The **AI Summary** ("Property 2: Unit C-30-08, Marina Cove…")
+2. The **message body** (the WhatsApp/email text that names the address)
+3. Adjacent message context (§10i temporal proximity)
+
+The title image's job is to provide the **legal identifier** (lot+title+
+mukim+daerah). The message's job is to name the **street address**. The
+matcher's job is to bind them together.
+
+### What's in each source — DO NOT confuse them
+
+| Source | Has | Does NOT have |
+|--------|-----|---------------|
+| Title doc image (Geran/HSD/PTD) | Title No., Lot No., Mukim, Daerah, Negeri, owners, share | Street address |
+| WhatsApp/email message | Street address, beneficiary intent, ownership share | Lot/title No. (usually) |
+| AI Summary card | Both — the canonical mapping is built here | — |
+| SPA / loan / tax doc image | Sometimes street address, sometimes lot No. | Often missing one or the other |
+
+### The matching rule (corrected)
+
+```
+For each AI-Summary property P (which has BOTH address and any lot/title hint):
+  1. Find title image(s) whose Lot No. or Title No. matches P's hint
+     → CONTENT match by IDENTIFIER (highest confidence).
+  2. If no lot/title hint in P, match by GEOGRAPHIC bridge:
+       - Image's Mukim + Daerah  ↔  P's address (street → mukim mapping)
+       - e.g. "Seri Alam Masai" → Mukim Plentong, Daerah JB
+              "Taman Laguna"    → Mukim Plentong, Daerah JB
+              "Medini Iskandar" → Mukim Pulai,    Daerah JB
+              "Iskandar Puteri" → Mukim Pulai,    Daerah JB
+              "Marina Cove"     → Mukim Plentong, Daerah JB
+  3. Bind that image to P. The image's "address" comes from P, not from OCR.
+  4. If still no match, fall back to temporal proximity (§10i).
+```
+
+### Geographic bridge: known street → mukim mappings (Johor)
+
+The matcher should consult this table (or query Claude with the text:
+"Which mukim is `<street>` in?") when the title doc's mukim and the
+AI-Summary address need to be reconciled. Cache results per session.
+
+| Street / Township in address      | Mukim          | Daerah        | Negeri |
+|-----------------------------------|----------------|---------------|--------|
+| Seri Alam Masai / Bandar Seri Alam| **Plentong**   | Johor Bahru   | Johor  |
+| Taman Laguna                       | **Plentong**   | Johor Bahru   | Johor  |
+| Marina Cove / Pangsapuri Tepian Bayu | **Plentong** | Johor Bahru   | Johor  |
+| Permas Jaya                        | **Plentong**   | Johor Bahru   | Johor  |
+| Medini Iskandar / Iskandar Puteri  | **Pulai**      | Johor Bahru   | Johor  |
+| Bandar Medini                      | **Pulai**      | Johor Bahru   | Johor  |
+| Bandar Medini Iskandar / Medini Iskandar | **Pulai**| Johor Bahru   | Johor  |
+| Iskandar Puteri (formerly Nusajaya)| **Pulai**      | Johor Bahru   | Johor  |
+| Mount Austin / Taman Austin        | **Tebrau**     | Johor Bahru   | Johor  |
+| Paradiso Nuova (@ Medini, NOT Mount Austin) | **Pulai** | Johor Bahru | Johor  |
+| Merak Kayangan (@ Medini)          | **Pulai**      | Johor Bahru   | Johor  |
+| Plot A56 / PTD 170703 / HSD 478949 = Paradiso Nuova | **Pulai** | Johor Bahru | Johor |
+| Mount Austin                       | **Tebrau**     | Johor Bahru   | Johor  |
+| Pasir Gudang town                  | **Plentong**   | Johor Bahru   | Johor  |
+| Senai                              | **Senai**      | Kulai         | Johor  |
+
+(Extend as new clients send addresses. Patch this table, don't add per-case
+hacks. New entries should also go into a code-side dict in
+`ai/chat_planner.py::_GEO_BRIDGE`.)
+
+### The burn-in mistake to never repeat
+
+> "The title image extracted address `Phase 2D SERI ALAM, Mukim Plentong`
+>  so it's a real address." — **WRONG.** That field on a title doc is
+> either empty or extractor noise. The real address is in the message.
+> Match the title's LOT/HSD/PTD against the AI Summary's lot/title hint,
+> and read the address FROM the AI Summary.
+
+### Where this is enforced
+
+| File | What changes |
+|------|--------------|
+| `services/gift_walker.py` | Title-doc grouping uses `lot_number + title_number + (mukim,daerah)` — NOT `property_address` — as the dedup key |
+| `ai/chat_planner.py::_extract_ai_summary_properties` | Returns `{name, address, lot, title, mukim, daerah}` — address is canonical here |
+| `app.py::_persist_property_enrichment` | Match title images by IDENTIFIER to AI-Summary entries; copy the AI-Summary address INTO the doc, do not trust OCR'd address fields |
+
+---
+
+## 10hb. 🔥🔥 BURN-IN — The Two-Hint Match: Same Mukim + Close Timing 🔥🔥
+
+**When the AI Summary doesn't give a direct lot/title hint, an image
+matches a summary property when BOTH of these are true:**
+
+> **Hint 1 (geography):** The AI-Summary address is in the SAME MUKIM
+>   as the title doc's extracted mukim.
+> **Hint 2 (timing):** The image's WhatsApp/email timestamp is CLOSE
+>   to the message line that names the AI-Summary address.
+
+**Both hints = HIGH confidence match. Either alone = MEDIUM. Neither = residual.**
+
+### Confidence grid
+
+| Same mukim? | Close timing? | Verdict |
+|-------------|---------------|---------|
+| ✅           | ✅             | **HIGH** — bind, render confirmed card |
+| ✅           | ❌             | **MEDIUM** — bind, ask user to confirm |
+| ❌           | ✅             | **MEDIUM** — bind, ask user to confirm (mukim mismatch is a yellow flag) |
+| ❌           | ❌             | **NO MATCH** — residual / unverified card (§10d) |
+
+### "Close timing" defined
+
+- Same WhatsApp message line as the address: ✅ closest
+- Within 4 lines before / 3 lines after the address line: ✅
+- Within 5 minutes (300s) by timestamp: ✅
+- More than 30 minutes apart OR another property mentioned in between: ❌
+
+### "Same mukim" defined
+
+- Title doc says `Mukim Plentong` AND the AI-Summary address resolves
+  to Plentong via §10ha geographic bridge table → ✅ match
+- Title doc says `Mukim Pulai`, AI-Summary address is "Seri Alam Masai"
+  (Plentong) → ❌ mismatch — flag as suspicious
+
+### What the property card MUST display
+
+```
+### 🏠 Property 5 of 5 — No. 03 Jalan Gunung 4, Seri Alam Masai
+
+🏛  Geran / Title : HSD(D) 251041
+🪪 Lot / PTD     : LOT 127082
+🏘  Mukim         : Plentong
+🏛  Daerah        : Johor Bahru
+🌍 Negeri        : Johor
+
+🌍 Hint 1 — same mukim:
+    Seri Alam Masai is in Mukim Plentong ✅
+    (matches the title doc's mukim)
+
+⏱  Hint 2 — close timing:
+    Image  PHOTO-2026-05-02-13-52-35.jpg  [02/05/26 13:52:35]
+    Msg    [02/05/26 13:52:10]  "Phase 2D Seri Alam Mukim Plentong, Lot 127082…"
+    Gap: 25 seconds ✅
+
+🔗 Confidence: HIGH (both hints satisfied)
+```
+
+This is the card the user reads to verify. The two hints are the
+evidence — both must be visible.
+
+### Where this is enforced
+
+| File | Function | Role |
+|------|----------|------|
+| `ai/chat_planner.py` | `_GEO_BRIDGE` dict | Street → mukim mapping (mirrors §10ha table) |
+| `ai/chat_planner.py` | `_match_image_to_summary(p, ai_summary, msg_thread)` | Returns (matched_property, confidence, hint1_ok, hint2_ok) |
+| `ai/chat_planner.py` | `_walkthrough_property_card(p)` | Renders the two-hint evidence block |
+| `app.py` | `/api/inbound-email` storage | Persist `_msg_timestamp` per attachment so the timing hint survives |
+
+---
+
+## 10hc. 🔥🔥🔥 BURN-IN — NEVER Assert Mukim/Location From Memory 🔥🔥🔥
+
+**Real example of the bug to never repeat:** Claude said "Paradiso Nuova is
+at Mount Austin → Mukim Tebrau". Wrong. Paradiso Nuova is at Medini
+(Mukim Pulai). The error came from training-memory guessing instead of
+verifying. This caused a false mukim mismatch flag and would have asked
+the user the wrong question.
+
+### The mandatory verification chain (in order)
+
+```
+For ANY claim about "Building X is in Mukim Y":
+
+  ① Title-document mukim       — title image's cleaned `mukim` field
+  ② Address-document mukim     — SPA / tax / loan
+  ③ AI-Summary text mukim      — user explicitly named it
+  ④ Curated _GEO_BRIDGE cache  — every entry has a URL or doc citation
+  ⑤ ⚡ LIVE WEB SEARCH ⚡        — Claude API w/ web_search tool, MANDATORY
+                                  before any "I think it's in X" answer.
+  ❌                             — out of options. Caller asks user.
+```
+
+### ⚡ THE CRITICAL RULE — WEB SEARCH IS MANDATORY ⚡
+
+**If sources ①–④ don't resolve the mukim, the resolver MUST call
+the web-search tool BEFORE returning an answer or flagging the user.
+"I'll guess from what I know" is a forbidden answer path. There is no
+fallback to training memory — only forward to web search, and from web
+search only forward to GeoUnknown.**
+
+The web-search prompt MUST contain these clauses verbatim:
+
+```
+HARD RULES — VIOLATING ANY OF THESE INVALIDATES YOUR ANSWER:
+ 1. DO NOT use general knowledge or training-data memory. If the
+    web-search results don't explicitly state the mukim, return UNKNOWN.
+ 2. The answer MUST come from a search result you actually saw in this
+    conversation. Cite the URL.
+ 3. If multiple sources disagree, return UNKNOWN with the conflicting URLs.
+ 4. If the building name has duplicates in different mukim, return UNKNOWN.
+ 5. Return JSON only: {"mukim","daerah","negeri","source_url"} or
+    {"unknown": true, "reason", "sources_consulted"}.
+A confident wrong answer is worse than UNKNOWN.
+```
+
+This prompt is implemented in `services/geo_resolver.py` as
+`WEB_RESOLVER_SYSTEM_PROMPT`. Do not water it down. Do not allow the
+LLM to "be helpful" by guessing.
+
+### Why this rule is the HARDEST
+
+The Paradiso Nuova bug happened because Claude said "I know this — Mount
+Austin" without verifying. **Memory feels confident. The resolver must
+make memory IMPOSSIBLE to use as a source.** That's why:
+
+  • The cache (`_GEO_BRIDGE`) self-checks at import — every entry must
+    have a citation, no exceptions.
+  • The web-search prompt is hostile to guessing — UNKNOWN is preferred
+    over a plausible-sounding answer.
+  • The resolver function has NO `default = "Pulai"` fallback. Bypassing
+    it means raising `GeoUnknown` and asking the user.
+
+If you ever find a code path that returns a mukim WITHOUT a citation,
+that path is the bug — fix it by routing through `resolve_mukim()`.
+
+### Hard rules
+
+1. **No mukim claim from training memory.** Even "common knowledge"
+   townships (Mount Austin, Medini, Iskandar Puteri) must be cited.
+2. **The §10ha geographic bridge table is curated, not invented.**
+   New entries require a web-search citation OR a real title document.
+   Commits that add to the table without a citation must be rejected.
+3. **When AI Summary names a building Claude doesn't recognise, the
+   ONLY safe responses are:** (a) web-search the name; (b) trust the
+   title document's mukim if available; (c) ask the user. Never
+   fabricate a mukim.
+4. **Spelling drift is a clue, not a fact.** "Paradisonuava" was a
+   transcription of "Paradiso Nuova" — but Claude must search BOTH
+   spellings before claiming the canonical name; the chat must show
+   the user the original spelling alongside the canonical one.
+5. **Title-doc mukim trumps Claude's geography.** If the title doc says
+   Mukim Pulai and Claude's memory says "this area is Tebrau", the
+   title wins. The doc is the source of truth.
+
+### Anti-patterns to never repeat
+
+| Bad | Good |
+|-----|------|
+| "Mount Austin is Mukim Tebrau" *(memory)* | Title doc says `Mukim Tebrau` ✓ — match |
+| "Paradiso Nuova is in Mount Austin" *(wrong memory)* | WebSearch → Paradiso Nuova @ Medini, Mukim Pulai. Cite source. |
+| "Seri Alam is Plentong, I'm sure" *(no source)* | Title doc OR web search OR ask user |
+| Adding 5 mukim mappings to the bridge table from memory | Add 1, with the URL, after verifying |
+
+### Where this is enforced
+
+| File | Mechanism |
+|------|-----------|
+| `ai/chat_planner.py::_GEO_BRIDGE` | Comment header: "DO NOT add entries from memory. Each entry MUST cite source (title doc client_id OR URL)." |
+| `ai/chat_planner.py::_resolve_mukim_for_address` | Function order: (1) title doc, (2) address doc, (3) AI Summary, (4) `_GEO_BRIDGE`, (5) live web search via Claude tool, (6) ask user. NEVER hard-code geography. |
+| Code review checklist | Any PR touching `_GEO_BRIDGE` or mukim logic must include a citation per added entry. |
+
+If a future bug report says "the chat claimed wrong mukim and confused
+the user", the trace must lead back to a missing source 1-4 step. Fix
+there, not by adding more memory entries.
+
+---
+
+## 10hd. 🔥🔥 BURN-IN — Strata: Same Lot ≠ Same Property 🔥🔥
+
+**For stratified properties (apartment / condo / shop-lot in a strata
+scheme), the LOT NUMBER is the building's master lot — shared by every
+unit in the development. The TITLE NUMBER (strata title / parcel No.)
+is what distinguishes one unit from another.**
+
+### The bug this rule prevents
+
+Real example from KOID:
+- C-30-08 title: `564662/M1C/30/710`, lot **207922**, joint 1/2
+- C-05-01 title: `504662` *(different title, OCR may show drift)*, lot **207922**, sole
+- Sibling-enrichment copied C-30-08's address ("#30-08, Menara C…")
+  onto C-05-01's record because lot numbers matched. **WRONG.**
+- The C-05-01 title's real address got hidden, P3 was reported as
+  "no doc found" when actually a strong doc exists.
+
+### Hard rules
+
+1. **Strata grouping key is `(lot_number, title_number)` — NEVER `lot_number` alone.**
+   Two docs with same lot but different title numbers are DIFFERENT
+   properties in the same building.
+
+2. **Sibling enrichment for strata is forbidden across different
+   title numbers.** Address copied from doc A to doc B is only valid
+   if A.title == B.title (or one is empty). Different titles = different
+   units = no address transfer.
+
+3. **OCR drift on title numbers (e.g. 504662 vs 564662)** is NOT proof
+   of duplicates. If both extractions are confident (`title_type_confidence
+   == 'high'`), treat as DIFFERENT until the user confirms. The cost of
+   wrongly merging two units is a missing property; the cost of wrongly
+   splitting one unit is a duplicate card. Asking the user is cheap;
+   a missing C-05-01 walks straight into a missing probate asset.
+
+4. **For non-stratified (landed) titles, lot equality is fine** — a
+   landed lot has one title. The strata-only rule applies when:
+   - title_type contains "strata" / "hakmilik strata" / "geran mukim strata"
+   - title_number contains slashes (e.g. `564662/M1C/30/710`) indicating
+     strata sub-component encoding
+   - property_description mentions "Level", "Storey", "Parcel No.", "Block"
+
+### Where this is enforced
+
+| File | Function | Change |
+|------|----------|--------|
+| `services/gift_walker.py` | `_group_property_documents` | Group key = `(lot, title)` for strata; was `(lot,)` |
+| `services/gift_walker.py` | sibling enrichment loop | Skip if `(A.title != B.title) and (A or B is strata)` |
+| `app.py::_persist_property_enrichment` | `_enriched_from='sibling_lot_*'` | Add title check; reject cross-title copies for strata |
+| `ai/chat_planner.py` | strata detection | Helper `_is_strata(extracted)` returns True if any of: title_type contains "strata", title_number has `/`, description mentions Level/Storey/Parcel |
+
+### The litmus test
+
+```
+Two docs share lot 207922 but title numbers differ.
+Q: Should they be merged into one property card?
+   - If either is strata → NO. Render as separate cards (or ASK user).
+   - If both are landed → YES (same lot, same property).
+```
+
+Apply this BEFORE rendering, not after.
+
+---
+
+## 10hf. 🔥🔥🔥 BURN-IN — WEB-SEARCH THE ADDRESS: GET PROPERTY-TYPE CLUES 🔥🔥🔥
+
+**When the AI Summary gives you an address, you MUST web-search it
+BEFORE saying "no image matches." The search returns clues — property
+type, tenure, locality, mukim — that filter the image candidates.**
+
+### The user's exact words (do not deviate)
+
+> "YOU MUST SEARCH THE WEB, YOU HAVE THE FUCKING ADDRESS"
+>
+> "which mukim, is this a landed residential, apartment, shoplot,
+>  factory. all these are clues to find in the image and also the
+>  timing of the image"
+
+### What every web-searched address yields
+
+| Clue from web | How it filters images |
+|---|---|
+| **Property type**: landed / apartment / shoplot / factory | Excludes wrong category — landed Taman Laguna ≠ any strata doc |
+| **Tenure**: freehold / leasehold | Cross-check against title doc tenure field |
+| **Locality / mukim**: e.g. Tampoi (Pulai), Marina Cove (Plentong) | Hint 1 of two-hint test (§10hb) |
+| **Postcode region** | Maps postcode → mukim (e.g. 81200 → Tampoi → Pulai) |
+| **Building / development name** (for strata) | Match against doc's property_description |
+| **Existence**: does the address even exist? | Catches AI-Summary hallucinations |
+
+### The mandatory web-search call (before ANY summary-only card)
+
+```
+For each AI-Summary property with no direct identifier match:
+  1. Web-search the address  ← MANDATORY, not optional.
+       - Extract: type, tenure, locality, mukim, building name
+       - Cite the source URLs in the card
+  2. Use those clues to filter unmatched images:
+       - Type clue: landed → exclude strata docs; strata → exclude landed
+       - Owner clue: AI Summary "joint with wife" → look for image with
+         owner_names containing the wife's name
+       - Mukim clue: feeds Hint 1 of §10hb
+  3. Run the temporal proximity check (§10i) on the FILTERED candidates.
+  4. Only THEN, if zero candidates remain, render summary-only card.
+```
+
+### Code skeleton (services/web_property_clues.py)
+
+```python
+def search_property_clues(address: str, client) -> dict:
+    """Web-search an address and extract property-type clues.
+    Returns {type, tenure, locality, mukim, building_name, sources}.
+    Returns None if web search yields no useful info."""
+    msg = client.messages.create(
+        model="claude-haiku-4-5",
+        max_tokens=600,
+        system=PROPERTY_CLUES_SYSTEM_PROMPT,   # see below
+        tools=[{"type": "web_search_20250305", "name": "web_search"}],
+        messages=[{"role": "user", "content": f"Address: {address}"}],
+    )
+    return _parse_clues_json(msg)
+
+
+PROPERTY_CLUES_SYSTEM_PROMPT = '''
+For the given Malaysian address, search the web and extract:
+  - type: one of [landed_residential, apartment_condo, shoplot, factory,
+                  agricultural, mixed_use, unknown]
+  - tenure: one of [freehold, leasehold, unknown]
+  - locality: the township/neighbourhood name
+  - mukim: the official Mukim (NLC), if findable
+  - building_name: for strata only
+  - sources: list of URLs you actually saw in this conversation
+
+HARD RULES — VIOLATION INVALIDATES YOUR ANSWER:
+1. Do NOT use general knowledge or memory. Cite URLs only.
+2. If sources disagree, return type="unknown" with the conflict.
+3. If the address doesn't exist in any search result, return null.
+4. Output JSON only.
+'''
+
+
+def filter_images_by_clues(unclaimed_images, clues) -> list:
+    """Given web-search clues for an AI-Summary property, narrow down
+    the image candidates to those whose extracted fields are CONSISTENT
+    with the clues. Inconsistent images are removed from contention."""
+    out = []
+    for img in unclaimed_images:
+        ex = img.get('extracted') or {}
+        # Type compatibility
+        if clues.get('type') == 'landed_residential' and _is_strata(ex):
+            continue
+        if clues.get('type') == 'apartment_condo' and not _is_strata(ex):
+            continue
+        # Mukim compatibility (if both sides have it)
+        img_mukim = (ex.get('mukim') or '').lower()
+        clue_mukim = (clues.get('mukim') or '').lower()
+        if img_mukim and clue_mukim and img_mukim != clue_mukim:
+            continue
+        out.append(img)
+    return out
+```
+
+### The order of operations (re-stated, with web search inserted)
+
+For an AI-Summary property:
+
+```
+1. Direct identifier match (lot/title in summary == image's)         → bind
+2. WEB-SEARCH THE ADDRESS  ← NEW MANDATORY STEP
+   • Get type, tenure, mukim, building_name. Cite sources.
+3. Filter unmatched images by web-search clues (drop incompatible)
+4. Temporal proximity (§10i) on the filtered set
+5. Two-hint verify (§10hb) on the candidate
+6. If still no candidate → summary-only card + ASK
+```
+
+If you ever skip step 2 and jump to "no match", that is the bug §10hf
+exists to prevent. The address is information; not searching it is
+throwing away free signal.
+
+### Where this is enforced
+
+| File | Function | Role |
+|------|----------|------|
+| `services/web_property_clues.py` (NEW) | `search_property_clues(addr)` | Web-search + clue extraction |
+| `services/web_property_clues.py` (NEW) | `filter_images_by_clues(imgs, clues)` | Eliminate incompatible candidates |
+| `ai/chat_planner.py::_match_image_to_summary` | call sequence | Insert step 2 + 3 between direct-match and timing |
+
+---
+
+## 10he. 🔥🔥 BURN-IN — When No Image Matches: TIMING FIRST, THEN ASK 🔥🔥
+
+**For an AI-Summary property with no content-matching image, the EXACT
+fallback order is:**
+
+```
+STEP 1 — TIMING.
+  Find the message line that names the address. Look at attachments
+  in the §10i adjacency window (4 lines before / 3 after / 5 min).
+  - 1 unclaimed candidate in window → proceed to STEP 2
+  - 0 or 2+ candidates → SKIP to STEP 4
+
+STEP 2 — TWO-HINT VERIFY (§10hb).
+  Hint 1 (mukim): resolve_mukim() with citation (NEVER memory)
+  Hint 2 (timing): already passed
+  Both ✅ → bind, MEDIUM-to-HIGH confidence
+  Mukim ❌ → still bind but flag yellow ASK USER
+
+STEP 3 — RENDER CARD with timestamps + adjacent message snippet.
+
+STEP 4 (no candidate) — RENDER SUMMARY-ONLY CARD.
+  Tell the user: "I found this property in your message but no
+  matching title doc and no image close to it in the thread."
+  Show 3 buttons: [Upload title] [Type details] [Skip — address only]
+
+STEP 5 (NEVER) — guess.
+  ❌ Picking a random unclaimed image to fill the slot.
+  ❌ Using "this looks similar geographically" reasoning.
+  ❌ Assuming an isolated image is for this property.
+```
+
+### Why TIMING is step 1 and not step 2
+
+The user's exact words (do not deviate):
+> "if there is no matching image, then the timing is key.
+>  the message before or after the image can be a strong link"
+
+Content match runs first only when AI Summary explicitly gives a lot/title
+hint AND an image extracts the same lot/title. In real exports that's rare —
+clients usually attach photos without re-typing the title number. Timing
+covers the common case.
+
+### Anti-pattern: "fill the slot at all costs"
+
+A property with no image is OK. Render a summary-only card. Asking the
+user is cheap. **Inventing a binding is expensive** — it pollutes the
+will, hides a missing asset, or assigns the wrong doc to probate.
+
+The only "filler" rules allowed are:
+1. Direct identifier match (deterministic, near-zero FP rate)
+2. Temporal adjacency with two-hint verify (citable evidence)
+
+Anything else → summary-only card → ASK.
+
+### The code invariant
+
+In `ai/chat_planner.py::_match_image_to_summary()`:
+
+```python
+# After all real matching paths above:
+if no candidate:
+    return None, "no_match", "ask_user"   # ← MUST exist as the bottom branch
+
+# There MUST NOT be:
+#   else: return random.choice(unclaimed_images)   # ← FORBIDDEN
+#   else: return unclaimed_images[0]                # ← FORBIDDEN
+#   else: return _best_geographic_guess(...)        # ← FORBIDDEN
+```
+
+A code-review check should grep for any return inside the matcher that
+isn't gated by `direct_match` OR `two_hint_pass`. If found → bug.
+
+---
+
+## 10i. 🔥 BURN-IN — Temporal Proximity is a Strong Link 🔥
+
+**When an image cannot be matched to an AI-Summary property by content
+(no lot/title/address overlap), the chat message immediately BEFORE or
+AFTER the image in the WhatsApp/email thread is a strong link.**
+
+### Why
+WhatsApp/email exports interleave text and attachments in time order.
+Clients describe a property and then send the photo (or photo first,
+then describe it). The adjacency itself carries signal — even when
+the image's OCR is junk and the message has no NLC ids.
+
+### The mandatory fallback chain (when content match fails)
+
+```
+For each AI-Summary property P that still has no matching image:
+  1. Try content match: lot / title / mukim / address overlap.  → MISS
+  2. Try TEMPORAL match:
+       - Find the message in the thread that names P (by address/lot).
+       - Look at attachments in the SAME message, the message BEFORE
+         (up to 4 lines back) and the message AFTER (up to 3 lines fwd).
+       - If exactly ONE attachment falls in that window AND is not
+         already claimed by another P → bind it to P.
+  3. Multiple candidates in the window → ask the user (don't guess).
+  4. No candidate in the window → render P as summary-only card
+     ("no document attached yet").
+```
+
+### Hard rules
+
+1. **Temporal match runs AFTER content match, not instead of.** Content
+   evidence (matching lot/title/address) always wins. Adjacency is a
+   tie-breaker / fallback, not a primary signal.
+2. **Adjacency window is bounded:** 4 lines before, 3 lines after the
+   text that names the property. Don't reach across other properties'
+   text — stop at the previous/next property mention.
+3. **One-claim-only still applies (§10g):** an image already claimed
+   by P1 cannot be re-bound to P2 by adjacency. The greedy claim
+   set carries through.
+4. **An image bound by adjacency is marked `_address_confidence='medium'`
+   and `_match_via='temporal'`** — the property card MUST show the
+   surrounding message snippet so the user can verify.
+5. **The property card MUST display the WhatsApp timestamps.** Show the
+   image's `[02/05/26, 13:52]` line AND the timestamp of the adjacent
+   message that's binding it. The user verifies by reading the timing,
+   not just the snippet. Format:
+   ```
+   📎 Image  [02/05/26, 13:52:35]  PHOTO-2026-05-02-13-52-35.jpg
+   💬 Message [02/05/26, 13:52:10]  "Property 2: Phase 2D Seri Alam…"
+   ```
+   The 25-second gap is the evidence — show it.
+
+### Where this is enforced
+
+| File | Function | Mechanism |
+|------|----------|-----------|
+| `app.py` | `_extract_whatsapp_context_for_file(body, filename)` | Already exists — returns adjacent text per filename |
+| `ai/chat_planner.py` | `_match_image_to_summary_by_adjacency` (NEW) | Wraps the above with the AI-Summary-property loop |
+| `ai/chat_planner.py` | `_asset_walkthrough_question` | Calls content match first, adjacency match second |
+
+### The litmus test
+
+```
+Q: AI Summary names Property 4 = "10 Jalan Sri Laguna" but no image
+   has matching lot/title/address. Is there an attachment near the
+   message line that names it?
+   - YES → bind, show the adjacent text as evidence.
+   - NO  → summary-only card; ask the user to attach a doc.
+```
+
+If the matcher ever skips adjacency and silently leaves a summary
+property unmatched while there IS an adjacent unclaimed image, the
+bug is in this fallback chain — fix it here, do not add per-case
+hacks elsewhere.
+
+---
+
 ## 11. Things NOT To Do
 
 These are direct quotes / paraphrases of user feedback. Do not repeat these mistakes.
@@ -644,6 +1390,15 @@ These are direct quotes / paraphrases of user feedback. Do not repeat these mist
 - ❌ Bypassing the test pipeline — every deploy ends with a real email test
 - ❌ Showing **beneficiary** ("Client wants to give to X") on the property identity card
 - ❌ Property count > AI Summary count — duplicate cards from OCR title-number drift
+- ❌ Matching addresses without ordering — must be HIGH confidence FIRST, claim greedily, never reuse a claimed address (see §10g)
+- ❌ Letting a non-title image (Image B) get its own property card when it shares an address with a title image (Image A) that already claimed it
+- ❌ **Identifying assets without first reading the AI Summary.** AI Summary is the canonical list — N properties in summary = N cards in walkthrough. NEVER invent a property whose address isn't in the summary. See §10h.
+- ❌ **Reasoning from "recent_text" / message body when an AI Summary exists.** The summary has already canonicalised the property list — use it. Don't go back to the raw text and re-deduce.
+- ❌ **Ignoring temporal proximity when content match fails.** If an AI-Summary property has no content-matching image, check the messages BEFORE/AFTER each unclaimed image. Adjacency is a strong link. See §10i.
+- ❌ **Treating an OCR'd "address" on a title doc as real.** Title docs (Geran/HSD/PTD) do NOT show street addresses. The address always comes from the message / AI Summary. See §10ha.
+- ❌ **Ignoring the mukim/daerah on the title doc when matching.** Mukim is the geographic bridge: e.g. Mukim Plentong contains Seri Alam Masai, Marina Cove, Taman Laguna, Permas Jaya. A title doc with Mukim=Plentong matches AI-Summary properties in any of those townships. See §10ha geographic bridge table.
+- ❌ **Merging two strata titles by lot number alone.** Same lot + different title number = different units in the same building. Group by `(lot, title)` for strata, never just lot. Sibling enrichment must check title equality. See §10hd.
+- ❌ **Hiding the WhatsApp timing on property cards.** When an image is bound to a property by adjacency, the card MUST show the timestamp of the image and the adjacent message so the user can verify the temporal link. See §10i.
 - ❌ Treating `VALUE: GRN56662` or `VALUE: (unreadable)` as a real title number
 - ❌ Trusting raw extracted_data without cleaning AI-noise prefixes first
 - ❌ Saying "this is fixed" without running `get_pending_gift_documents()` against the actual client and counting properties

@@ -11,6 +11,126 @@ from typing import List, Dict, Any
 from database import ChatMessage, ChatSession, Document, Will
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  ANTI-ASSUMPTION HELPERS — see CLAUDE.md §10hd
+#  "Same lot ≠ same property" for stratified titles. NEVER merge two
+#  strata docs by lot number alone. The TITLE NUMBER is what
+#  distinguishes one unit from another in the same building.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STRATA_TITLE_TYPE_TOKENS = (
+    'STRATA', 'HAKMILIK STRATA', 'GERAN MUKIM STRATA', 'GMS',
+    'STRATA TITLE',
+)
+
+_STRATA_DESCRIPTION_TOKENS = (
+    'LEVEL ', 'STOREY', 'TINGKAT', 'PARCEL NO', 'PARCEL ',
+    'PETAK', 'BLOCK ', 'BLOK ', 'BUILDING M', 'BUILDING ',
+    'BUILT UP AREA', 'STRATA',
+)
+
+
+def _is_strata(extracted: Dict[str, Any]) -> bool:
+    """True if this title doc represents a strata parcel (apartment / condo
+    / shop-lot in a strata scheme), not a landed lot.
+
+    A doc is strata if ANY of:
+      - title_type contains a strata token
+      - title_number has slashes (e.g. '564662/M1C/30/710' encodes
+        master/block/storey/parcel)
+      - property_description mentions Level / Storey / Parcel / Block
+      - document_type explicitly = 'strata_title'
+
+    This is the HARD predicate. Never widen it without updating §10hd —
+    a false-positive is safer (forces title check) than a false-negative
+    (allows wrong merge).
+    """
+    if not extracted:
+        return False
+    tt = (extracted.get('title_type') or '').upper()
+    if any(tok in tt for tok in _STRATA_TITLE_TYPE_TOKENS):
+        return True
+    tn = (extracted.get('title_number') or '').strip()
+    if '/' in tn and any(c.isdigit() for c in tn):
+        # Strata title encoding: '<master>/<block>/<storey>/<parcel>'
+        return True
+    desc = (extracted.get('property_description') or '').upper()
+    if any(tok in desc for tok in _STRATA_DESCRIPTION_TOKENS):
+        return True
+    if (extracted.get('document_type') or '').lower() == 'strata_title':
+        return True
+    return False
+
+
+def _title_signature(extracted: Dict[str, Any]) -> str:
+    """Canonical title-number signature for grouping. For strata, the
+    FULL title is used (including /Block/Storey/Parcel suffix). For
+    landed, just the cleaned digits.
+
+    Returns '' if the title number is missing or garbage — caller must
+    handle that case (typically: don't merge by title alone).
+    """
+    raw = (extracted.get('title_number') or '').strip()
+    if not raw:
+        return ''
+    cleaned = _clean_id_value(raw)
+    if _looks_like_garbage(cleaned):
+        return ''
+    # Keep slashes for strata (they encode block/storey/parcel) but drop
+    # whitespace and punctuation noise.
+    sig = re.sub(r'[\s\-.]', '', cleaned).upper()
+    # If strata, also collapse any 'M1C' style block prefix to 'M*C' to
+    # tolerate OCR drift in the block letter — but DO NOT collapse the
+    # storey/parcel digits.
+    return sig
+
+
+def _safe_to_merge(grp_a: Dict[str, Any], grp_b: Dict[str, Any]) -> bool:
+    """Return True if two property groups can be safely merged into one.
+
+    The hard rule (§10hd): if either group is strata, the title
+    signatures must match. Same lot + different title = different units
+    in the same building → DO NOT MERGE.
+
+    For landed properties (neither is strata), lot equality is enough.
+    """
+    ex_a = (grp_a.get('title_doc') or {}).get('extracted') or {}
+    ex_b = (grp_b.get('title_doc') or {}).get('extracted') or {}
+    a_strata = _is_strata(ex_a)
+    b_strata = _is_strata(ex_b)
+    if not (a_strata or b_strata):
+        return True   # both landed — lot equality is sufficient
+    sig_a = _title_signature(ex_a)
+    sig_b = _title_signature(ex_b)
+    if not sig_a or not sig_b:
+        # One side has no readable title. Can't prove they're the same
+        # unit; refuse to merge and let the user decide.
+        return False
+    # Strict equality on the title signature (which keeps /block/storey/parcel)
+    return sig_a == sig_b
+
+
+def _safe_to_inherit_address(src_extracted: Dict[str, Any],
+                             dst_extracted: Dict[str, Any]) -> bool:
+    """Return True if the source doc's address can be safely copied to
+    the destination doc as a sibling enrichment.
+
+    The rule (§10hd #2): cross-title address inheritance is forbidden
+    when either side is strata. Two strata parcels in the same building
+    have the SAME lot but DIFFERENT addresses — copying address by lot
+    match would hide the destination's real unit.
+    """
+    src_strata = _is_strata(src_extracted)
+    dst_strata = _is_strata(dst_extracted)
+    if not (src_strata or dst_strata):
+        return True   # landed — lot match implies same address
+    sig_src = _title_signature(src_extracted)
+    sig_dst = _title_signature(dst_extracted)
+    if not sig_src or not sig_dst:
+        return False  # can't prove — refuse
+    return sig_src == sig_dst
+
+
 def _score_property_confidence(ex: Dict[str, Any]) -> int:
     """Numeric confidence score 0-13 for a property document's extracted data.
 
@@ -581,6 +701,11 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             if _groups_conflict(best_gk, gk):
                 continue  # keep as a separate property card
             grp = prop_groups[gk]
+            # ── STRATA SAFETY (CLAUDE.md §10hd) ─────────────────────────
+            # Same email can carry two strata parcels in the same building
+            # (lot shared, titles different). Refuse to merge them.
+            if not _safe_to_merge(target, grp):
+                continue
             for ds in (([grp['title_doc']] if grp['title_doc'] else [])
                        + grp['support_docs']):
                 if ds and ds['document_id'] not in known_ids:
@@ -723,6 +848,15 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             if gk == best_gk or gk not in prop_groups:
                 continue
             grp = prop_groups[gk]
+            # ╔══════════════════════════════════════════════════════════════╗
+            # ║  🔥 BURN-IN — STRATA: same lot ≠ same property 🔥              ║
+            # ║  CLAUDE.md §10hd. Two strata parcels in one building share   ║
+            # ║  the lot but have DIFFERENT title numbers (and addresses).   ║
+            # ║  Refuse to merge if either side is strata and title          ║
+            # ║  signatures don't match.                                     ║
+            # ╚══════════════════════════════════════════════════════════════╝
+            if not _safe_to_merge(target, grp):
+                continue
             for ds in (([grp['title_doc']] if grp['title_doc'] else [])
                        + grp['support_docs']):
                 if ds and ds['document_id'] not in known_ids:
