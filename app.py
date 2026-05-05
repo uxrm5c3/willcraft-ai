@@ -7011,18 +7011,37 @@ def _strip_reply_quotes(text: str) -> str:
 
 
 def _extract_inbox_to(payload: dict):
-    """Find the inbox-formatted recipient in a Postmark inbound payload."""
-    from services.inbound_address import short_id_from_address
+    """Find the inbox-formatted recipient in a Postmark inbound payload.
+    Accepts both legacy '<slug>-<8hex>@inbox.…' and new '<initials>@inbox.…' formats.
+    """
+    from services.inbound_address import short_id_from_address, find_client_by_address
+    inbox_domain = os.environ.get('INBOUND_DOMAIN', 'inbox.')
+
+    def _is_inbox_addr(addr: str) -> bool:
+        """True if the address looks like one of our inbox addresses."""
+        a = addr.strip().lower()
+        # Legacy format: ends in '-<8hex>@…'
+        if short_id_from_address(a):
+            return True
+        # New initials format: local part is 2-6 letters + optional digit,
+        # and the domain contains 'inbox'
+        local = a.split('@')[0] if '@' in a else ''
+        domain = a.split('@')[1] if '@' in a else ''
+        import re as _re
+        if _re.match(r'^[a-z]{2,6}\d*$', local) and 'inbox' in domain:
+            return True
+        return False
+
     for t in payload.get('ToFull') or []:
         addr = (t.get('Email') or '').strip()
-        if short_id_from_address(addr):
+        if _is_inbox_addr(addr):
             return addr
     raw = payload.get('To') or ''
     for part in raw.split(','):
         part = part.strip()
         if '<' in part and '>' in part:
             part = part[part.index('<') + 1: part.index('>')]
-        if short_id_from_address(part):
+        if _is_inbox_addr(part):
             return part
     return None
 
