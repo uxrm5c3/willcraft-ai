@@ -1311,6 +1311,54 @@ def _scan_text_for_property_fields(ex: Dict[str, Any], text: str,
         if not (need_addr or need_negeri or need_daerah):
             break
 
+    # ── Reverse-address lookup (last resort for needle-less match) ────────
+    # If address is still missing after all needle-window passes, scan the
+    # FULL text for every street address, then check each address's surrounding
+    # context (±600 chars) for the property's known identifiers:
+    #   mukim, daerah, negeri, title_number digits, lot_number digits.
+    # If exactly ONE address's context matches, assign it.
+    # This handles the case where the AI summary lists addresses and property
+    # details in separate lines/bullets without the lot number inline.
+    if need_addr:
+        _prop_clues = set()
+        for k in ('mukim', 'daerah'):
+            v = (ex.get(k) or '').strip().lower()
+            if v and len(v) >= 4:
+                _prop_clues.add(v)
+        for k in ('title_number', 'lot_number'):
+            for _d in re.findall(r'\d{4,}', ex.get(k) or ''):
+                _prop_clues.add(_d.lower())
+        negeri_val = (ex.get('negeri') or '').strip().lower()
+
+        if _prop_clues:
+            _all_addr_matches = list(_MY_ADDRESS_RE.finditer(text))
+            _matched_addr = None
+            _match_count = 0
+            for _am in _all_addr_matches:
+                _ctx_lo = max(0, _am.start() - 600)
+                _ctx_hi = min(len(text), _am.end() + 600)
+                _ctx = text[_ctx_lo:_ctx_hi].lower()
+                # Count how many clues appear in this address's context
+                _hits = sum(1 for c in _prop_clues if c in _ctx)
+                # Also count negeri as an extra signal (but not required)
+                if negeri_val and negeri_val in _ctx:
+                    _hits += 1
+                # Require at least 2 distinct clues to avoid false positives
+                if _hits >= 2:
+                    _match_count += 1
+                    _matched_addr = _am.group(0).strip()
+            if _match_count == 1 and _matched_addr:
+                # Single unambiguous match — clean and assign
+                _matched_addr = re.split(
+                    r'[.!?]|\bPlease\b|\bKindly\b|\bAttached\b',
+                    _matched_addr, maxsplit=1
+                )[0].strip().rstrip(',').rstrip('.')
+                if len(_matched_addr) >= 10:
+                    ex['property_address'] = _matched_addr[:200]
+                    ex.setdefault('_enriched_from', []).append(
+                        f'{source_tag}.property_address_reverse')
+                    need_addr = False
+
     return ex
 
 
