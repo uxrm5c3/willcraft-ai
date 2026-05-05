@@ -404,3 +404,4 @@ These are direct quotes / paraphrases of user feedback. Do not repeat these mist
 - ❌ Treating `VALUE: GRN56662` or `VALUE: (unreadable)` as a real title number
 - ❌ Trusting raw extracted_data without cleaning AI-noise prefixes first
 - ❌ Saying "this is fixed" without running `get_pending_gift_documents()` against the actual client and counting properties
+- ❌ **HALLUCINATING assets or beneficiaries when a document is isolated / unreadable / cannot be identified.** If the title number is unreadable, the address is missing, the lot is garbage, or the document cannot be tied to any property in the AI Summary — **STOP**. Do NOT invent a property. Do NOT invent a beneficiary. Do NOT fabricate an address (no "10 Marsiling Lane Singapore" pulled from thin air). Mark the document as **isolated / needs human review** and SKIP it from the walkthrough. The chat must say "couldn't identify this — review manually" rather than create a fictitious asset card.
