@@ -4405,9 +4405,12 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                 continue
             ex_orig = p.get('extracted') or {}
 
-            # Already has address — add to claimed set and skip
+            # Already has a REAL (non-NLC) address — add to claimed set and skip.
+            # NLC-format addresses (e.g. "H.S.(D) 251041 P.T.D …") are treated
+            # the same as missing — we try to find a real street address to replace them.
+            from ai.chat_planner import _NLC_ADDR_RE as _nlc_re
             existing_addr = (ex_orig.get('property_address') or '').strip()
-            if existing_addr:
+            if existing_addr and not _nlc_re.match(existing_addr):
                 claimed_addresses.add(existing_addr.lower())
                 continue
 
@@ -4425,12 +4428,19 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
             enriched = _enrich_property_from_siblings(p)
             enriched = _enrich_from_chat_text(enriched, filtered_text)
 
-            # Check which fields actually changed
-            newly_filled = {
-                f: enriched.get(f)
-                for f in _ENRICH_FIELDS
-                if enriched.get(f) and not ex_orig.get(f)
-            }
+            # Check which fields actually changed or improved.
+            # For property_address: also count as "newly filled" if the old
+            # value was NLC-format and the new value is a real street address.
+            newly_filled = {}
+            for f in _ENRICH_FIELDS:
+                new_val = enriched.get(f)
+                old_val = ex_orig.get(f)
+                if not new_val:
+                    continue
+                if not old_val:
+                    newly_filled[f] = new_val
+                elif f == 'property_address' and _nlc_re.match(old_val) and not _nlc_re.match(new_val):
+                    newly_filled[f] = new_val  # NLC → real street address upgrade
             if not newly_filled:
                 continue
 
