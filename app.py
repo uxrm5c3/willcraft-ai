@@ -862,6 +862,26 @@ def build_will_data():
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Health / smoke-test endpoint (no auth required)
+# ---------------------------------------------------------------------------
+
+@app.route('/api/health')
+def api_health():
+    """Lightweight smoke test — checks DB and returns git hash + model config."""
+    try:
+        from config import CLAUDE_MODEL, CLAUDE_MODEL_CHEAP
+        client_count = db.session.execute(db.text('SELECT COUNT(*) FROM client')).scalar()
+        return jsonify({
+            'ok': True,
+            'db_clients': client_count,
+            'model': CLAUDE_MODEL,
+            'model_cheap': CLAUDE_MODEL_CHEAP,
+        })
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # Authentication Routes
 # ---------------------------------------------------------------------------
 
