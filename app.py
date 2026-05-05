@@ -2746,6 +2746,24 @@ def api_ocr_property():
         saved_name, rel_path, file_size = save_uploaded_file(file, client_id, 'property', folder_name=folder_name)
     except ValueError as e:
         return jsonify({'ok': False, 'error': str(e)}), 400
+
+    # ── Deduplication: skip if identical filename+size already exists for client ──
+    existing_dup = Document.query.filter_by(
+        client_id=client_id,
+        original_filename=file.filename,
+        file_size=file_size,
+    ).filter(Document.category != 'deleted').first()
+    if existing_dup:
+        app.logger.info('Skipping duplicate upload: %s (size %s) for client %s',
+                        file.filename, file_size, client_id)
+        return jsonify({
+            'ok': True,
+            'document_id': existing_dup.id,
+            'document_url': f'/api/documents/{existing_dup.id}',
+            'duplicate': True,
+            'extracted': json.loads(existing_dup.extracted_data) if existing_dup.extracted_data else None,
+        })
+
     abs_path = os.path.join(UPLOAD_DIR, rel_path)
     extracted = None
     ocr_warning = None
