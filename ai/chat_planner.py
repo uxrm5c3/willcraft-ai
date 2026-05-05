@@ -625,7 +625,7 @@ def _identity_question(pending_ics: List[Dict[str, Any]], recent_text: str) -> s
             {'label': 'Delete', 'value': 'delete'},
         ]
     else:
-        parts.append("**Relationship to testator?**")
+        parts.append("**Relationship to testator?**\n_(Executor / Trustee / Guardian roles are set in later steps)_")
         quick = [
             {'label': 'Spouse', 'value': 'spouse'},
             {'label': 'Son', 'value': 'son'},
@@ -634,8 +634,8 @@ def _identity_question(pending_ics: List[Dict[str, Any]], recent_text: str) -> s
             {'label': 'Mother', 'value': 'mother'},
             {'label': 'Brother', 'value': 'brother'},
             {'label': 'Sister', 'value': 'sister'},
-            {'label': 'Executor', 'value': 'executor'},
-            {'label': 'Witness', 'value': 'witness'},
+            {'label': 'Son-in-law', 'value': 'son in law'},
+            {'label': 'Daughter-in-law', 'value': 'daughter in law'},
             {'label': 'Skip', 'value': 'skip'},
             {'label': 'Delete', 'value': 'delete'},
         ]
