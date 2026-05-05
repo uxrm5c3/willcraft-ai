@@ -485,6 +485,52 @@ with app.app_context():
 
 ---
 
+## 10d. Isolated Property — Ask, Don't Assume
+
+When a single image carries NLC identifiers (HSD/PTD/title/lot) but
+cannot be cross-referenced to anything else, the chat MUST ASK the
+client where it came from instead of silently rendering a confirmed
+property card.
+
+### Definition of "isolated"
+
+A property group is isolated when ALL of these are true:
+1. Only **one image** (no support_docs in the group)
+2. Has at least one NLC identifier extracted (`title_number` or `lot_number`)
+3. The digit-stripped identifiers do **not** appear in any recent
+   chat message or the AI Summary
+4. No other property group shares the same lot/title digits
+
+### Required behaviour
+
+Render the **unverified card** (not the normal property card):
+
+> ### ❓ Unverified property — need your help
+> I found an image (`PHOTO-…jpg`) that looks like a property document,
+> but I **cannot match it** to anything you mentioned in your
+> WhatsApp/email or to any other image you sent.
+>
+> **What I extracted from it:**
+>   • Title No.: …
+>   • Lot No.: …
+>   • Address: …
+>
+> ⚠️ Because it's an isolated image with no cross-reference, I won't
+> auto-create a gift card for it. Tell me what this is so I can handle
+> it correctly:
+>
+> [✅ Yes — it is a real property] [🗑 Wrong upload — remove] [⏭ Skip for now]
+
+### Where this is enforced
+- `ai/chat_planner.py::_is_property_isolated()` — detection
+- `ai/chat_planner.py::_walkthrough_property_unverified_card()` — render
+- Hook is in `_asset_walkthrough_question()` before the normal card path
+
+The normal card is for properties WITH evidence — multiple images, or
+identifiers cross-referenced to AI Summary text. Isolated → ask first.
+
+---
+
 ## 11. Things NOT To Do
 
 These are direct quotes / paraphrases of user feedback. Do not repeat these mistakes.

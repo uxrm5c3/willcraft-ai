@@ -1875,6 +1875,14 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         enriched = _enrich_from_chat_text(enriched, recent_text)
         target = dict(target)
         target['extracted'] = enriched
+        # ── ISOLATED-PROPERTY GUARD ─────────────────────────────────────────
+        # Single image, has NLC ids (HSD/PTD/title/lot), but the identifiers
+        # do NOT appear anywhere in the recent chat text or AI Summary, AND
+        # no sibling images share the same lot. We cannot silently render
+        # this as a confirmed property — the chat must ASK the client where
+        # this came from. See CLAUDE.md §10d.
+        if _is_property_isolated(target, recent_text, all_props):
+            return _walkthrough_property_unverified_card(target)
         # Accurate sequence counter across two accepted-property paths:
         #   Path A: accepted before placeholder fix → _inventoried=True, not in step5
         #           → still in all_props, filtered from props → counted via (all-pending)
@@ -1895,6 +1903,95 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
     if vehicles:
         return _walkthrough_vehicle_card(vehicles[0], len(vehicles))
     return None
+
+
+def _is_property_isolated(target: Dict[str, Any],
+                           recent_text: str,
+                           all_props: List[Dict[str, Any]]) -> bool:
+    """A property group is 'isolated' when:
+      - it has only ONE image (no support_docs),
+      - it claims NLC identifiers (HSD/PTD/title or lot number), AND
+      - none of those identifiers appear in the recent chat text / AI Summary,
+      - AND no other property group shares the same lot/title.
+
+    Such a card cannot be silently rendered as a real property — the chat
+    must ask the client to verify where the image came from. See CLAUDE.md §10d.
+    """
+    ex = (target.get('extracted') or {})
+    support = target.get('support_docs') or []
+    if support:  # multi-page property → trustworthy enough
+        return False
+
+    title = (ex.get('title_number') or '').strip()
+    lot   = (ex.get('lot_number') or '').strip()
+    # Need at least one identifier to even be a candidate for "isolated property"
+    if not title and not lot:
+        return False
+
+    # Build searchable haystack from chat text + AI Summary text.
+    haystack = (recent_text or '').lower()
+
+    def _digits_only(s: str) -> str:
+        return ''.join(c for c in s if c.isdigit())
+
+    title_digits = _digits_only(title)
+    lot_digits   = _digits_only(lot)
+
+    # If either identifier (digit form) appears in chat text → not isolated
+    if title_digits and len(title_digits) >= 4 and title_digits in _digits_only(haystack):
+        return False
+    if lot_digits and len(lot_digits) >= 3 and lot_digits in _digits_only(haystack):
+        return False
+
+    # If a sibling property in the same batch shares lot/title → not isolated
+    target_id = target.get('document_id')
+    for other in all_props:
+        if other.get('document_id') == target_id:
+            continue
+        ox = other.get('extracted') or {}
+        ot = (ox.get('title_number') or '').strip()
+        ol = (ox.get('lot_number') or '').strip()
+        if title_digits and _digits_only(ot) and title_digits == _digits_only(ot):
+            return False
+        if lot_digits and _digits_only(ol) and lot_digits == _digits_only(ol):
+            return False
+
+    return True
+
+
+def _walkthrough_property_unverified_card(p: Dict[str, Any]) -> Dict[str, Any]:
+    """Render a verification-needed card. The image has NLC identifiers
+    but cannot be tied to anything in the AI Summary or other images.
+    Ask the client where it came from rather than guessing.
+    """
+    ex = p.get('extracted') or {}
+    title = (ex.get('title_number') or '').strip() or '_(not extracted)_'
+    lot   = (ex.get('lot_number') or '').strip() or '_(not extracted)_'
+    addr  = (ex.get('property_address') or ex.get('description') or '').strip() or '_(not extracted)_'
+    fname = p.get('original_filename') or 'this image'
+
+    parts = [
+        "### ❓ Unverified property — need your help",
+        f"I found an image (`{fname}`) that looks like a property document, "
+        "but I **cannot match it** to anything you mentioned in your "
+        "WhatsApp/email or to any other image you sent.",
+        "**What I extracted from it:**",
+        f"  • **Title No.:** {title}",
+        f"  • **Lot No.:** {lot}",
+        f"  • **Address:** {addr}",
+        ("⚠️ Because it's an isolated image with no cross-reference, I won't "
+         "auto-create a gift card for it. Tell me what this is so I can "
+         "handle it correctly:"),
+    ]
+    quick = [
+        {'label': '✅ Yes — it is a real property of mine', 'value': 'inventory confirm'},
+        {'label': '🗑 Wrong upload — remove it',          'value': 'delete'},
+        {'label': '⏭ Skip for now',                       'value': 'inventory skip'},
+    ]
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': [p.get('document_id')] if p.get('document_id') else [],
+    }
 
 
 def _walkthrough_property_card(p: Dict[str, Any], seq_num: int,
