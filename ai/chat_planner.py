@@ -114,6 +114,10 @@ def plan_turn(
             reply_parts.append(
                 "✅ Kept all supporting docs as-is. Back to the property:"
             )
+        elif just_kind == 'identity_skipped':
+            reply_parts.append(
+                f"⏭ Skipped **{just_assigned.get('name','')}** — moving to next."
+            )
         else:
             reply_parts.append(
                 f"✅ Saved **{just_assigned.get('name','')}** as **{just_assigned.get('role','')}**."

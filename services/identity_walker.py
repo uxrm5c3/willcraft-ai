@@ -57,12 +57,14 @@ RELATIONSHIP_KEYWORDS = {
 
 def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
     """ICs that don't yet have a corresponding Person. Dedupes by extracted
-    name (case-insensitive), so re-uploading the same IC twice doesn't
-    cause the walk-through to ask about it twice.
+    name (case-insensitive) and NRIC number, so re-uploading the same IC
+    twice or having it already in the wizard doesn't repeat the question.
 
-    A Document is skipped if EITHER:
-      - it's already linked to a Person, OR
-      - any Person already exists with the same extracted name.
+    A Document is skipped if ANY of:
+      - it's already linked to a Person (document_id match), OR
+      - any Person already exists with the same extracted name, OR
+      - any Person already exists with the same extracted NRIC, OR
+      - user already skipped it this session (_chat_skipped flag in extracted_data).
     """
     docs = (Document.query
             .filter_by(client_id=client_id, category='nric')
@@ -71,13 +73,15 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
     if not docs:
         return []
 
-    # All Persons for this client — used to dedupe by name
+    # All Persons for this client — used to dedupe by name AND nric
     persons = Person.query.filter_by(client_id=client_id).all()
     known_names = {(p.full_name or '').strip().upper() for p in persons if p.full_name}
+    known_nrics = {(p.nric_passport or '').strip().upper() for p in persons if p.nric_passport}
     linked_doc_ids = {p.document_id for p in persons if p.document_id}
 
     pending = []
     seen_in_pending = set()  # names we've already queued in this batch
+    seen_nrics_in_pending = set()  # NRICs we've already queued
     for d in docs:
         if d.id in linked_doc_ids:
             continue
@@ -85,13 +89,25 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
             ex = json.loads(d.extracted_data) if d.extracted_data else {}
         except (json.JSONDecodeError, TypeError):
             ex = {}
+        # Skip if user explicitly skipped this document in chat
+        if ex.get('_chat_skipped'):
+            continue
         name_key = ((ex.get('full_name') or '').strip().upper())
+        nric_key = ((ex.get('nric_number') or '').strip().upper())
         if name_key:
             if name_key in known_names:
-                continue  # a Person already exists for this name elsewhere
+                continue  # a Person already exists for this name
             if name_key in seen_in_pending:
                 continue  # duplicate within this batch
+        if nric_key:
+            if nric_key in known_nrics:
+                continue  # a Person already exists with this NRIC
+            if nric_key in seen_nrics_in_pending:
+                continue  # duplicate NRIC within this batch
+        if name_key:
             seen_in_pending.add(name_key)
+        if nric_key:
+            seen_nrics_in_pending.add(nric_key)
         # Unreadable-name docs (name_key empty) all stay pending —
         # the user has to look at the thumbnail and identify them.
         pending.append({
@@ -101,6 +117,47 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
             'created_at': d.created_at.isoformat() if d.created_at else '',
         })
     return pending
+
+
+def skip_pending_ic_document(client_id: str) -> Optional[Dict[str, Any]]:
+    """Mark the next pending IC document as skipped so the walkthrough
+    moves past it. Sets extracted_data['_chat_skipped'] = True.
+    Returns {'name', 'action': 'skipped'} or None if nothing pending."""
+    pending = get_pending_ic_documents(client_id)
+    if not pending:
+        return None
+    target = pending[0]
+    from database import Document
+    import json as _json
+    doc = Document.query.get(target['document_id'])
+    if not doc:
+        return None
+    try:
+        ex = _json.loads(doc.extracted_data) if doc.extracted_data else {}
+    except (ValueError, TypeError):
+        ex = {}
+    ex['_chat_skipped'] = True
+    doc.extracted_data = _json.dumps(ex)
+    # Also mark any other nric docs with same name or nric as skipped
+    name_key = (ex.get('full_name') or '').strip().upper()
+    nric_key = (ex.get('nric_number') or '').strip().upper()
+    if name_key or nric_key:
+        all_nric = Document.query.filter_by(client_id=client_id, category='nric').all()
+        for d in all_nric:
+            if d.id == doc.id:
+                continue
+            try:
+                dex = _json.loads(d.extracted_data) if d.extracted_data else {}
+            except (ValueError, TypeError):
+                dex = {}
+            d_name = (dex.get('full_name') or '').strip().upper()
+            d_nric = (dex.get('nric_number') or '').strip().upper()
+            if (name_key and d_name and name_key == d_name) or \
+               (nric_key and d_nric and nric_key == d_nric):
+                dex['_chat_skipped'] = True
+                d.extracted_data = _json.dumps(dex)
+    label = (ex.get('full_name') or target.get('original_filename', 'this IC')).strip()
+    return {'name': label, 'action': 'skipped', 'document_id': target['document_id']}
 
 
 def link_duplicate_ic_documents(client_id: str, person):

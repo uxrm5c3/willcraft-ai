@@ -3772,6 +3772,8 @@ def _api_chat_message_impl(client_id):
                 })
 
     just_assigned = _try_assign_pending_identity(client_id, user_text)
+    if not just_assigned:
+        just_assigned = _try_skip_pending_identity(client_id, user_text)
     just_deleted = None if just_assigned else _try_delete_pending_identity(client_id, user_text)
     # If user replied "confirm assets" / "i have more to upload" at the
     # asset-inventory gate, stamp the marker (or clear it) so the planner
@@ -5468,7 +5470,7 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
                         msg = ChatMessage(
                             session_id=cs.id, role='assistant',
                             content=reply,
-                            attachments_json=json.dumps(focus_ids),
+                            attachments_json='[]',  # no repeat thumbnails in summary
                         )
                         db.session.add(msg)
                         db.session.commit()
@@ -7010,6 +7012,36 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
     return {'name': name, 'role': chosen_role, 'kind': 'identity'}
 
 
+def _try_skip_pending_identity(client_id: str, user_text: str):
+    """If the user typed/clicked 'skip', mark the pending IC as skipped
+    so the walkthrough advances to the next one. Returns a just_assigned-
+    style dict or None."""
+    if not user_text:
+        return None
+    text_lower = ' ' + user_text.lower().strip() + ' '
+    if not any((' ' + s + ' ') in text_lower for s in _SKIP_TOKENS):
+        return None
+    from services.identity_walker import (
+        get_pending_ic_documents, skip_pending_ic_document
+    )
+    pending = get_pending_ic_documents(client_id)
+    if not pending:
+        return None
+    result = skip_pending_ic_document(client_id)
+    if not result:
+        return None
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+    return {
+        'name': result['name'],
+        'role': 'skipped',
+        'kind': 'identity_skipped',
+    }
+
+
 # -- Inbound email → chat (Postmark webhook) --------------------------------
 
 _REPLY_QUOTE_RE = re.compile(
@@ -7541,6 +7573,37 @@ def _process_inbound_message_async(app_obj, user_msg_id):
             )
             db.session.add(asst_msg)
             db.session.commit()
+
+            # ── Post AI summary as a follow-up message ────────────────────
+            # The intake card says "summary will appear below in a moment" —
+            # deliver on that promise by generating the summary inline here
+            # (we're already in a background thread, no timeout risk).
+            if artifacts and text:
+                try:
+                    from ai.chat_planner import _summarise_message, _clean_email_body
+                    import json as _json
+                    cleaned = _clean_email_body(text)
+                    if cleaned:
+                        summary = _summarise_message(cleaned)
+                        if not summary:
+                            summary = '_Could not generate summary — review exhibits above._'
+                        _quick = _json.dumps([
+                            {'label': '▶️ Start — verify identities', 'value': 'inbox start'}
+                        ])
+                        reply = (
+                            "### 📨 AI Summary of your message\n\n"
+                            + summary
+                            + f"\n\n<!--quickreplies:{_quick}-->"
+                        )
+                        summary_msg = ChatMessage(
+                            session_id=cs.id, role='assistant',
+                            content=reply,
+                            attachments_json='[]',  # no exhibit thumbnails in summary
+                        )
+                        db.session.add(summary_msg)
+                        db.session.commit()
+                except Exception:
+                    pass  # non-critical — intake card is the primary response
         except Exception:
             traceback.print_exc()
             try:
