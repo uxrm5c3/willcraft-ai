@@ -3358,10 +3358,9 @@ def chat_page(client_id):
     if not client:
         flash('Client not found.', 'error')
         return redirect(url_for('clients_list'))
-    # inbox.will.alantanjb.com has the Postmark MX record — must keep inbox. prefix
+    # MX record is on will.alantanjb.com directly — no subdomain needed
     host = request.host.split(':')[0] if request else 'localhost'
-    inbox_host = f"inbox.{host}"
-    inbox_address = address_for_client(client, inbox_host)
+    inbox_address = address_for_client(client, host)
     inbox_enabled = bool(os.environ.get('POSTMARK_INBOUND_USER') and os.environ.get('POSTMARK_INBOUND_PASS'))
     return render_template('chat.html', client=client,
                            inbox_address=inbox_address,
