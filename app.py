@@ -4352,6 +4352,12 @@ def _get_layer2_pending_props(client_id: str) -> list:
             except (json.JSONDecodeError, TypeError):
                 ex = {}
             if ex.get('_inventoried') and not ex.get('_substitute_assigned') and not ex.get('_skipped'):
+                # Skip properties with no NLC identifiers (no lot/title) — these
+                # are ghost entries (e.g. address-only photos with no land title data)
+                # that cannot form a valid probate gift.
+                has_nlc = (ex.get('title_number') or '').strip() or (ex.get('lot_number') or '').strip()
+                if not has_nlc:
+                    continue
                 result.append({'document_id': d.id, 'extracted': ex})
         return result
     except Exception:
@@ -6447,20 +6453,51 @@ def _try_save_property_gift(client_id: str, user_text: str):
             .order_by(Will.updated_at.desc()).first())
     if not will:
         return None
-    # Must have at least one beneficiary saved (Step 5) before gifts make sense
+    # Load step4 beneficiaries; fall back to identities when step4 is not yet
+    # collected (Layer 1 / Layer 2 interleaving happens before step4 is filled).
     try:
         s4 = json.loads(will.step4_data or '[]')
     except (json.JSONDecodeError, TypeError):
         s4 = []
     if not s4:
-        return None
+        # During Layer 1, step4 may be empty — use scanned identities as candidate pool
+        try:
+            _idents = json.loads(will.identities_data or '[]')
+        except (json.JSONDecodeError, TypeError):
+            _idents = []
+        # Exclude the testator (step1 full_name) from candidate beneficiaries
+        try:
+            _s1_name = (json.loads(will.step1_data or '{}') or {}).get('full_name', '').upper()
+        except (json.JSONDecodeError, TypeError):
+            _s1_name = ''
+        s4 = [
+            {'full_name': i.get('full_name', ''), 'relationship': i.get('relationship', '')}
+            for i in _idents
+            if i.get('full_name', '').upper() != _s1_name
+        ]
+        # Still no candidates at all → cannot parse beneficiary names
+        if not s4:
+            return None
 
     from services.gift_walker import get_pending_gift_documents, parse_beneficiary_shares
     pend = get_pending_gift_documents(client_id)
     pending_props = pend.get('property') or []
+
+    # Fallback: during Layer 1 interleaving, inventoried properties are already
+    # in step5 as placeholders (_pending_beneficiary: True), so
+    # get_pending_gift_documents excludes them. Check _get_layer2_pending_props
+    # to find the first property that still needs beneficiary assignment.
+    _using_layer2_fallback = False
     if not pending_props:
-        return None
-    target = pending_props[0]
+        layer2_pend = _get_layer2_pending_props(client_id)
+        if layer2_pend:
+            target = layer2_pend[0]
+            _using_layer2_fallback = True
+        else:
+            return None
+    else:
+        target = pending_props[0]
+
     doc_id = target['document_id']
 
     # Load the document's extracted_data to check phase state
