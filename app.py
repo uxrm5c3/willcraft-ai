@@ -7559,6 +7559,12 @@ def _process_inbound_message_async(app_obj, user_msg_id):
             from services.identity_walker import get_pending_ic_documents
             pending_ics = get_pending_ic_documents(client.id)
             recent_text = _gather_recent_chat_text(client.id)
+
+            # Run address enrichment now (after classification) so property
+            # addresses from the WhatsApp text are matched to documents
+            # immediately — no need for the user to send a message first.
+            _persist_property_enrichment(client.id, recent_text)
+
             plan = plan_turn(text, artifacts, _will_data_snapshot(active_will),
                              pending_ics=pending_ics, recent_text=recent_text)
 
