@@ -409,6 +409,16 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
     # ║  the dedup site can let strata pass when titles differ.           ║
     # ╚══════════════════════════════════════════════════════════════════╝
     referenced_sig_titles: Dict[tuple, set] = {}  # (lot, addr) → set of title sigs
+    # ╔══════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN — OCR-TRUNCATION FILTER FOR ACCEPTED GIFTS 🔥          ║
+    # ║  When a gift was saved on the FULL strata title "564662/M1C/30/  ║
+    # ║  710" but a sibling doc still carries the master-only "564662"   ║
+    # ║  with a polluted/different address, the (lot,addr) sig won't     ║
+    # ║  match. Also track (lot_digits, master_title_digits) so the      ║
+    # ║  master-only sibling is recognised as a phantom of an accepted   ║
+    # ║  property and filtered.                                          ║
+    # ╚══════════════════════════════════════════════════════════════════╝
+    referenced_lot_master_titles: set = set()  # {(lot_digits, master_title_digits)}
     for g in gifts:
         if isinstance(g, dict) and g.get('document_id'):
             referenced_doc_ids.add(g['document_id'])
@@ -445,6 +455,14 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                 if ts:
                     referenced_sig_titles.setdefault(
                         (g_lot_digits, g_addr_sig), set()).add(ts)
+                    # Also remember the master-title (digits before first /)
+                    # so OCR-truncated siblings of this accepted gift get
+                    # filtered out, even if their address differs (because
+                    # the master-only sibling never had a real address).
+                    g_master = _master_title(ts)
+                    if g_lot_digits and g_master:
+                        referenced_lot_master_titles.add(
+                            (g_lot_digits, g_master))
 
     # Pull title docs + supporting docs + unclassified (chat_inbox/other) in
     # one pass. Unclassified docs are needed so we can attach them to the
@@ -923,6 +941,36 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             if different_unit:
                 pass  # keep the group, fall through to sig grouping
             else:
+                del prop_groups[gk]
+                continue
+        # ── 🔥 OCR-TRUNCATION FILTER ─────────────────────────────────────
+        # If this group's (lot, master_title) matches an accepted gift's
+        # (lot, master_title), it's a phantom of that accepted gift —
+        # the sibling carrying the master-only title number that didn't
+        # match by (lot, addr) because its address was missing or
+        # polluted by stale enrichment. Filter it out UNLESS the title
+        # signatures are genuinely different (different parcel suffix).
+        td_ex = (grp.get('title_doc') or {}).get('extracted') or {}
+        grp_title_sig = _title_signature(td_ex)
+        grp_master = _master_title(grp_title_sig)
+        if lot_sig and grp_master and (lot_sig, grp_master) in referenced_lot_master_titles:
+            # Check if any accepted title at this lot is genuinely a
+            # different unit. If ALL accepted titles share the master AND
+            # this group's title is OCR truncation of one of them, drop.
+            phantom = False
+            for ref_sigs in referenced_sig_titles.values():
+                for rs in ref_sigs:
+                    if _master_title(rs) == grp_master:
+                        # Same master. Is this group OCR-truncation
+                        # (master only, no parcel encoding) of that ref?
+                        # _is_genuinely_different_unit returns False in
+                        # that case → phantom.
+                        if not _is_genuinely_different_unit(grp_title_sig, rs):
+                            phantom = True
+                            break
+                if phantom:
+                    break
+            if phantom:
                 del prop_groups[gk]
                 continue
         sig = (lot_sig, addr_sig)
