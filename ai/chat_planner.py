@@ -1042,13 +1042,16 @@ def _enrich_property_from_siblings(p: Dict[str, Any]) -> Dict[str, Any]:
             client_id = own_doc.client_id
         if not client_id:
             return ex
-        # Pull every property-ish doc for this client
+        # Pull every property-ish doc for this client.
+        # Also include soft-deleted docs (category='deleted') — they were
+        # de-duped but their extracted field values are still valid and may
+        # contain address/mukim/daerah info absent from the surviving copy.
         sibs = (Document.query.filter(
                     Document.client_id == client_id,
                     Document.id != (p.get('document_id') or ''),
                     Document.category.in_([
                         'property_title', 'property_spa', 'property_tax',
-                        'utility_bill', 'bank_letter', 'other',
+                        'utility_bill', 'bank_letter', 'other', 'deleted',
                     ]),
                 ).all())
         for sib in sibs:
