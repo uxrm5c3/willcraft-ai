@@ -7237,6 +7237,20 @@ def _api_inbound_email_impl():
             continue
 
         ctype = (att.get('ContentType') or '').lower()
+
+        # ── DEDUP: same physical file re-forwarded? ──────────────────────────
+        # User often forwards the same WhatsApp email multiple times during
+        # testing. Each forward re-uploads the same attachments, exploding the
+        # Document table. Dedup by (client_id, original_filename, file_size)
+        # — if an existing row matches, reuse it instead of inserting a copy.
+        # See CLAUDE.md §10c.
+        existing = (Document.query
+                    .filter_by(client_id=client.id, original_filename=name, file_size=len(data))
+                    .order_by(Document.created_at.asc()).first())
+        if existing:
+            attachment_ids.append(existing.id)
+            continue
+
         # Provisional category — the async worker will retag based on classify
         # (or transcribe for audio). Save under chat_inbox/ for now.
         cat = 'chat_inbox'
