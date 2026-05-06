@@ -801,12 +801,16 @@ def _digits(s: str) -> str:
 
 # Stop-words excluded from token matching — every property has these.
 _ADDR_STOPWORDS = {
+    # Generic property-type words
     'unit', 'condominium', 'condo', 'apartment', 'house', 'shop', 'street',
     'jalan', 'lorong', 'taman', 'bandar', 'pangsapuri', 'kawasan',
     'no', 'block', 'level', 'floor', 'storey',
-    'johor', 'malaysia', 'singapore', 'selangor', 'kl', 'kuala',
-    'condominium', 'and', 'the', 'of', 'at', 'in', 'on', 'to',
-    'my', 'our', 'with', 'share',
+    # Country / state / district / city — too coarse for property matching
+    'johor', 'bahru', 'malaysia', 'singapore', 'selangor', 'kuala', 'lumpur',
+    'penang', 'sabah', 'sarawak', 'kelantan', 'pahang', 'perak', 'perlis',
+    'puteri', 'iskandar', 'mukim', 'daerah', 'negeri', 'wilayah',
+    # English filler
+    'and', 'the', 'of', 'at', 'in', 'on', 'to', 'with', 'my', 'our', 'share',
 }
 
 
