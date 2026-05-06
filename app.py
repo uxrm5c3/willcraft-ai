@@ -7164,27 +7164,42 @@ def _try_save_bank_gift(client_id: str, user_text: str):
                'walk-one-by-one', 'one by one'):
         return None
 
-    # Candidate beneficiary pool: identities + step4 (saved beneficiaries).
+    # Candidate beneficiary pool: ALWAYS merge step4 (saved beneficiaries) +
+    # identities + Person table, minus testator. The bank question's quick
+    # replies only show step4 names but the user can type anyone — e.g.
+    # "wife (Lim Lay Cheng)" who may be in identities but not yet in step4.
     try:
         s4 = json.loads(will.step4_data or '[]')
     except (json.JSONDecodeError, TypeError):
         s4 = []
+    try:
+        _idents = json.loads(will.identities_data or '[]')
+    except (json.JSONDecodeError, TypeError):
+        _idents = []
+    try:
+        _s1_name = (json.loads(will.step1_data or '{}') or {}).get('full_name', '').upper()
+    except (json.JSONDecodeError, TypeError):
+        _s1_name = ''
+    pool = list(s4)
+    seen_pool = {(p.get('full_name') or '').upper().strip() for p in pool}
+    seen_pool.discard('')
+    for i in _idents:
+        nm = (i.get('full_name') or '').strip()
+        nm_up = nm.upper()
+        if nm and nm_up != _s1_name and nm_up not in seen_pool:
+            pool.append({'full_name': nm, 'relationship': i.get('relationship', '')})
+            seen_pool.add(nm_up)
+    # Also pull Person rows so chat-only persons (no wizard identities row)
+    # are matchable.
+    for p in Person.query.filter_by(client_id=client_id).all():
+        nm = (p.full_name or '').strip()
+        nm_up = nm.upper()
+        if nm and nm_up != _s1_name and nm_up not in seen_pool:
+            pool.append({'full_name': nm, 'relationship': p.relationship or ''})
+            seen_pool.add(nm_up)
+    s4 = pool
     if not s4:
-        try:
-            _idents = json.loads(will.identities_data or '[]')
-        except (json.JSONDecodeError, TypeError):
-            _idents = []
-        try:
-            _s1_name = (json.loads(will.step1_data or '{}') or {}).get('full_name', '').upper()
-        except (json.JSONDecodeError, TypeError):
-            _s1_name = ''
-        s4 = [
-            {'full_name': i.get('full_name', ''), 'relationship': i.get('relationship', '')}
-            for i in _idents
-            if i.get('full_name', '').upper() != _s1_name
-        ]
-        if not s4:
-            return None
+        return None
     known_names = [p.get('full_name', '') for p in s4 if p.get('full_name')]
 
     parsed = parse_beneficiary_shares(user_text, known_names)
