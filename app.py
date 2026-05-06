@@ -3831,6 +3831,11 @@ def _api_chat_message_impl(client_id):
                                     just_gift_deleted = _try_delete_pending_gift(client_id, user_text)
                                     if not just_gift_deleted:
                                         just_gift = _try_save_property_gift(client_id, user_text)
+                                        if not just_gift:
+                                            # Bank-account question handler (FUCK-13).
+                                            # Property handler runs first because the bank
+                                            # question only fires when no pending props remain.
+                                            just_gift = _try_save_bank_gift(client_id, user_text)
     from services.identity_walker import get_pending_ic_documents
     from services.gift_walker import get_pending_gift_documents
     pending_ics = get_pending_ic_documents(client_id)
@@ -7091,6 +7096,200 @@ def _try_save_property_gift(client_id: str, user_text: str):
         'name': main_desc,
         'role': f'main beneficiary set for {addr[:40]}',
         'kind': 'gift_main',
+    }
+
+
+def _try_save_bank_gift(client_id: str, user_text: str):
+    """Step 6 (Bank gift) handler. Counterpart to _try_save_property_gift.
+
+    The bank question (`_step6_bank_question`) is single-shot:
+       "Who inherits all your bank accounts?"
+       quick replies: <beneficiary name> | "Walk through one by one"
+
+    Behaviour:
+      • If pending bank statements exist AND no bank gift saved yet:
+          - "walk one by one" → flip a per-bank walkthrough flag
+            (not yet implemented; falls through to None for now).
+          - Anything that parses as a beneficiary (or a known person
+            name) → save ONE gift entry per pending bank doc, all
+            assigned to that beneficiary 100%.
+
+    Returns {'name','role','kind':'gift_bank'} on save, else None.
+
+    🔥 BURN-IN: dedup at insert site by (document_id) + by
+    (institution, last4) so the same bank doc never produces two gifts.
+    """
+    if not user_text:
+        return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+
+    from services.gift_walker import (get_pending_gift_documents,
+                                      parse_beneficiary_shares)
+    pend = get_pending_gift_documents(client_id)
+    pending_banks = pend.get('bank') or []
+    if not pending_banks:
+        return None
+
+    # Already a bank gift saved? Then this question shouldn't fire and
+    # any text the user types isn't ours to consume.
+    try:
+        gifts = json.loads(will.step5_data or '[]')
+        if not isinstance(gifts, list):
+            gifts = []
+    except (json.JSONDecodeError, TypeError):
+        gifts = []
+    has_bank_gift = any(
+        isinstance(g, dict) and (
+            g.get('kind') == 'bank'
+            or g.get('asset_type') == 'bank'
+            or g.get('bank_name')
+            or (g.get('property_info') or {}).get('account_no')
+            or (g.get('property_details') or {}).get('account_no')
+            or (g.get('financial_details') or {}).get('account_number')
+        )
+        for g in gifts
+    )
+    if has_bank_gift:
+        return None
+
+    txt = user_text.strip().lower()
+
+    # "walk one by one" → not implemented yet; bail so the same prompt
+    # re-renders and the user can pick a single name.
+    if txt in ('walk one by one', 'walk through one by one',
+               'walk-one-by-one', 'one by one'):
+        return None
+
+    # Candidate beneficiary pool: identities + step4 (saved beneficiaries).
+    try:
+        s4 = json.loads(will.step4_data or '[]')
+    except (json.JSONDecodeError, TypeError):
+        s4 = []
+    if not s4:
+        try:
+            _idents = json.loads(will.identities_data or '[]')
+        except (json.JSONDecodeError, TypeError):
+            _idents = []
+        try:
+            _s1_name = (json.loads(will.step1_data or '{}') or {}).get('full_name', '').upper()
+        except (json.JSONDecodeError, TypeError):
+            _s1_name = ''
+        s4 = [
+            {'full_name': i.get('full_name', ''), 'relationship': i.get('relationship', '')}
+            for i in _idents
+            if i.get('full_name', '').upper() != _s1_name
+        ]
+        if not s4:
+            return None
+    known_names = [p.get('full_name', '') for p in s4 if p.get('full_name')]
+
+    parsed = parse_beneficiary_shares(user_text, known_names)
+    if not parsed:
+        # Fallback: relationship words (wife/spouse → spouse identity)
+        REL_MAP = {
+            'wife': 'spouse', 'husband': 'spouse', 'spouse': 'spouse',
+            'son': 'son', 'daughter': 'daughter',
+        }
+        words_lower = re.findall(r'\b[a-z\-]+\b', user_text.lower())
+        matched = []
+        for w in words_lower:
+            rel = REL_MAP.get(w, w)
+            for p in s4:
+                if (p.get('relationship') or '').lower() == rel:
+                    matched.append(p)
+        seen_n: set = set()
+        uniq = []
+        for p in matched:
+            n = (p.get('full_name') or '').upper()
+            if n and n not in seen_n:
+                seen_n.add(n); uniq.append(p)
+        if uniq:
+            share = '1/1' if len(uniq) == 1 else 'equal'
+            parsed = [{'name': p['full_name'], 'share': share} for p in uniq]
+    if not parsed:
+        return None
+    # Convert percentages → fractions
+    for entry in parsed:
+        entry['share'] = _pct_to_frac(entry.get('share') or '1/1')
+
+    # Build per-bank gift entries
+    saved = 0
+    seen_keys = set()
+    # Pre-seed seen_keys with already-present gift signatures so we never
+    # double-insert across already-saved banks (defense-in-depth).
+    for g in gifts:
+        if not isinstance(g, dict):
+            continue
+        ad = ((g.get('financial_details') or {}).get('account_number')
+              or g.get('account_number') or '')
+        inst = ((g.get('financial_details') or {}).get('institution')
+                or g.get('bank_name') or '')
+        last4 = re.sub(r'\D', '', str(ad))[-4:] if ad else ''
+        if inst or last4:
+            seen_keys.add((inst.strip().upper(), last4))
+
+    bank_descriptors = []
+    for b in pending_banks:
+        ex = b.get('extracted', {}) or {}
+        institution = (ex.get('bank_name') or ex.get('institution')
+                       or b.get('bank_name') or '').strip()
+        account_no = (ex.get('account_number') or ex.get('account_no')
+                      or b.get('account_number') or '').strip()
+        account_type = (ex.get('account_type') or 'savings').strip().lower()
+        last4 = re.sub(r'\D', '', str(account_no))[-4:]
+        sig = (institution.upper(), last4)
+        if sig in seen_keys:
+            continue
+        seen_keys.add(sig)
+        doc_id = b.get('document_id')
+        allocations = [
+            {'beneficiary_name': p.get('name', ''), 'share': p.get('share', '1/1'), 'role': 'MB'}
+            for p in parsed
+        ]
+        gift_entry = {
+            'document_id':    doc_id,
+            'kind':           'bank',
+            'gift_type':      'financial',
+            'asset_type':     'bank',
+            'bank_name':      institution,
+            'account_number': account_no,
+            'account_type':   account_type,
+            'financial_details': {
+                'institution':    institution,
+                'account_number': account_no,
+                'asset_type':     'bank',
+                'account_type':   account_type,
+            },
+            'allocations':       allocations,
+            'beneficiaries':     parsed,
+            'substitute_mode':   'none',
+            'substitute_specific': None,
+        }
+        gifts.append(gift_entry)
+        saved += 1
+        bank_descriptors.append(
+            f"{institution or 'Bank'} …{last4}" if last4 else (institution or 'Bank')
+        )
+
+    if not saved:
+        return None
+
+    will.step5_data = json.dumps(gifts)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+
+    benef_desc = ', '.join(f"{p.get('name','?')} {p.get('share','1/1')}" for p in parsed)
+    return {
+        'name': benef_desc,
+        'role': f'{saved} bank account{"s" if saved != 1 else ""} → ' + ', '.join(bank_descriptors),
+        'kind': 'gift_bank',
     }
 
 
