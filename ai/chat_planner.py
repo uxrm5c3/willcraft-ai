@@ -2782,7 +2782,10 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         # Only show the FIRST unresolved conflict per turn — user clarifies
         # via chat reply, then next turn re-checks.
         _resolved_marker = (will_data or {}).get('completed_steps') or []
-        _conflict_resolved = any(c.startswith('conflict_') for c in _resolved_marker)
+        _conflict_resolved = any(
+            isinstance(c, str) and c.startswith('conflict_')
+            for c in _resolved_marker
+        )
         if _conflicts and not _conflict_resolved:
             return _walkthrough_conflict_card(_conflicts[0])
 
