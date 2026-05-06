@@ -1071,10 +1071,10 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
         "Confirm to add it, then upload the title or type the details."
     )
     quick = [
-        {'label': '✅ Confirm — add this property to the will', 'value': 'inventory confirm'},
+        {'label': '✅ Confirm — add this property to the will', 'value': 'inventory h3 confirm'},
         {'label': '📎 Upload title document for this property', 'value': 'inbox start'},
         {'label': '✏️ Type the title/lot/mukim manually',       'value': 'other'},
-        {'label': '⏭ Skip for now',                              'value': 'inventory skip'},
+        {'label': '⏭ Skip for now',                              'value': 'inventory h3 skip'},
     ]
     return {
         'text': '\n\n'.join(parts) + _qr_marker(quick),

@@ -6365,22 +6365,12 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
     if not user_text:
         return None
     t = (user_text or '').strip().lower()
-    is_confirm = t.startswith('inventory confirm')
-    is_skip    = t.startswith('inventory skip')
+    is_confirm = t.startswith('inventory h3 confirm')
+    is_skip    = t.startswith('inventory h3 skip')
     if not (is_confirm or is_skip):
         return None
-
-    # Must NOT have a pending image-derived property — otherwise the regular
-    # inventory handler owns this turn.
-    try:
-        from services.gift_walker import get_pending_gift_documents
-        pend = get_pending_gift_documents(client_id)
-        for kind in ('property', 'bank', 'vehicle'):
-            for it in (pend.get(kind) or []):
-                if not (it.get('extracted') or {}).get('_inventoried'):
-                    return None  # regular handler will pick this up
-    except Exception:
-        pass
+    # Distinct h3-prefix quick-reply values mean the regular inventory
+    # handler doesn't intercept these — no kind-pending guard required.
 
     # Now find the AI-Summary list and identify the unhandled H3 slot
     try:
