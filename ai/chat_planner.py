@@ -886,10 +886,11 @@ def _classify_property_match(ai_prop: Dict[str, Any],
             hits = [t for t in ai_tokens if t in g_blob]
             # Strong: at least one unit-like token (e.g. "c-30-08") OR two
             # generic tokens (e.g. "marina" + "cove").
-            unit_hit = any(re.match(r'^[a-z]?-?\d+-\d+$', h) for h in hits)
-            if unit_hit:
+            unit_re = re.compile(r'^[a-z]?-?\d+-\d+$')
+            unit_hits = [h for h in hits if unit_re.match(h)]
+            if unit_hits:
                 return {'variant': 'h1', 'group': g,
-                        'reason': f'Unit token match: "{[h for h in hits if re.match(r"^[a-z]?-?\\d+-\\d+$", h)][0]}"'}
+                        'reason': f'Unit token match: "{unit_hits[0]}"'}
             if len(hits) >= 2:
                 return {'variant': 'h1', 'group': g,
                         'reason': f'Tokens match: {hits[:3]}'}
