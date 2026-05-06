@@ -483,9 +483,28 @@ def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
                .filter(ChatMessage.content.ilike('%📨 AI Summary of your message%'))
                .order_by(ChatMessage.created_at.desc())
                .first())
-        if not msg or not msg.content:
-            return []
-        return _parse_ai_summary_text(msg.content)
+        if msg and msg.content:
+            parsed = _parse_ai_summary_text(msg.content)
+            if parsed:
+                return parsed
+        # ── Fallback: parse raw forward text from step6_data ──────────────
+        # Per CLAUDE.md §10hg: the canonical N must survive a chat reset.
+        # When the AI Summary card is missing (or yielded zero properties),
+        # re-derive the canonical list from `step6_data._raw_forward_text`
+        # via a line-heuristic parser. This is the durable fallback.
+        try:
+            from database import Will
+            _will = (Will.query.filter_by(client_id=client_id, status='draft')
+                     .filter(Will.deleted_at.is_(None))
+                     .order_by(Will.updated_at.desc()).first())
+            if _will and _will.step6_data:
+                _s6 = _json.loads(_will.step6_data)
+                raw_fwd = (_s6.get('_raw_forward_text') or '').strip()
+                if raw_fwd:
+                    return _parse_raw_forward_properties(raw_fwd)
+        except Exception:
+            pass
+        return []
     except Exception:
         return []
 
@@ -564,6 +583,152 @@ def _parse_ai_summary_text(text: str) -> List[Dict[str, Any]]:
         for k, v in list(prop.items()):
             if v.lower() == 'unknown':
                 prop[k] = ''
+        out.append(prop)
+    return out
+
+
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║  🔥 BURN-IN §10hg — RAW-FORWARD-TEXT FALLBACK PARSER                    ║
+# ║  When the AI Summary chat card is missing (chat reset, fresh client),   ║
+# ║  re-derive the canonical property list from the raw WhatsApp/email      ║
+# ║  body persisted in step6_data._raw_forward_text. The canonical N must  ║
+# ║  survive a chat reset.                                                  ║
+# ║                                                                          ║
+# ║  Heuristics (line-based):                                                ║
+# ║    • Property cue words: condominium, unit, jalan, taman, house, shop,   ║
+# ║      apartment, lot, plot, land at, geran, ptd, hsd                     ║
+# ║    • Skip cues: bank, insurance, policy, account no, executor, witness  ║
+# ║    • Postcode regex (\d{5}) is strong evidence of a street address      ║
+# ║    • Beneficiary phrases: "X percent to NAME", "go to NAME", etc.       ║
+# ║    • Ownership: "I share with NAME 50/50"                               ║
+# ╚════════════════════════════════════════════════════════════════════════╝
+
+_RAW_PROP_HINTS = (
+    'condominium', 'unit ', 'unit,', 'unit-', 'apartment',
+    'house', ' shop ', 'shoplot', 'shop-lot',
+    'jalan', 'taman ', 'plot ', 'land at',
+    'geran ', 'ptd ', 'hsd ', 'hs(d)',
+)
+_RAW_SKIP_HINTS = (
+    'bank ', 'bank,', 'banking', 'insurance', 'policy', 'account no',
+    'account number', 'savings account',
+    'executor', 'witness', 'guardian', 'trustee',
+)
+
+_POSTCODE_RE   = re.compile(r'\b\d{5}\b')
+_RAW_LOT_RE    = re.compile(r'\b(?:PTD|Lot)\s*(?:No\.?\s*)?([0-9]{3,})', re.IGNORECASE)
+_RAW_HSD_RE    = re.compile(r'\b(?:HSD|HS\s*\(D\)|H\.S\.\s*\(D\))\s*(?:No\.?\s*)?([0-9]{3,})', re.IGNORECASE)
+_RAW_GERAN_RE  = re.compile(r'\b(?:Geran|Hakmilik|Title)\s*(?:Mukim\s*)?(?:No\.?\s*)?([0-9]{3,})', re.IGNORECASE)
+_RAW_MUKIM_RE  = re.compile(r'\bMukim\s+([A-Za-z][A-Za-z\s\-]{2,40})', re.IGNORECASE)
+_RAW_DAERAH_RE = re.compile(r'\bDaerah\s+([A-Za-z][A-Za-z\s\-]{2,40})', re.IGNORECASE)
+
+
+def _parse_raw_forward_properties(raw_text: str) -> List[Dict[str, Any]]:
+    """Line-heuristic parser. Reads raw WhatsApp/email forward text and
+    returns the same shape as `_parse_ai_summary_text` so downstream code
+    sees a uniform canonical list.
+
+    Each property is typically one line in the raw forward (clients write
+    asset-per-line in WhatsApp). Lines that look like banks/insurance/
+    metadata are skipped. Returns [] if no property-ish line found.
+    """
+    if not raw_text:
+        return []
+    out: List[Dict[str, Any]] = []
+    for raw_line in raw_text.split('\n'):
+        line = raw_line.strip()
+        if not line or len(line) < 15:
+            continue
+        low = line.lower()
+
+        # Skip banks / insurance / executor lines unless they ALSO carry a
+        # strong property cue (rare overlap).
+        if any(h in low for h in _RAW_SKIP_HINTS):
+            if not any(h in low for h in _RAW_PROP_HINTS):
+                continue
+
+        # Must look property-ish: at least one cue OR a postcode.
+        has_hint     = any(h in low for h in _RAW_PROP_HINTS)
+        has_postcode = bool(_POSTCODE_RE.search(line))
+        if not (has_hint or has_postcode):
+            continue
+
+        # Address = portion before beneficiary/ownership phrasing.
+        # Trim at the EARLIEST phrasing marker (across all patterns), not
+        # the first pattern that happens to match — otherwise "100percent"
+        # at the tail wins over "will go to" near the start.
+        addr = line
+        _trim_pats = (
+            r'(?:[\.,]|\s)+\s*I\s+share\s+with',
+            r'(?:[\.,]|\s)+\s*(?:my\s+\w+\s+)?\d+\s*percent',
+            r'(?:[\.,]|\s)+\s*\d+%',
+            r'(?:[\.,]|\s)+\s*(?:my\s+\w+\s+)?(?:will\s+)?go\s+to',
+            r'(?:[\.,]|\s)+\s*(?:my\s+condominium\s+)?will\s+go\s+to',
+            r'(?:[\.,]|\s)+\s*all\s+my\b',
+        )
+        _earliest = None
+        for pat in _trim_pats:
+            m = re.search(pat, addr, re.IGNORECASE)
+            if m and (_earliest is None or m.start() < _earliest):
+                _earliest = m.start()
+        if _earliest is not None:
+            addr = addr[:_earliest].rstrip(' ,.;')
+
+        # Strip leading "Unit," / "Our house" / "My shop No," etc.
+        addr_clean = re.sub(
+            r'^(?:Unit[,\s]+|Our\s+house\s*[,\s]*|My\s+(?:shop\s+No[,\s]*|house\s*[,\s]*)?)\s*',
+            '', addr, flags=re.IGNORECASE
+        ).strip(' ,.')
+        if not addr_clean:
+            addr_clean = addr.strip(' ,.')
+
+        lot_m    = _RAW_LOT_RE.search(line)
+        hsd_m    = _RAW_HSD_RE.search(line)
+        ger_m    = _RAW_GERAN_RE.search(line)
+        mukim_m  = _RAW_MUKIM_RE.search(line)
+        daerah_m = _RAW_DAERAH_RE.search(line)
+
+        # Beneficiary chunk — everything from "X percent" / "go to" onward.
+        bene_chunk = ''
+        m = re.search(
+            r'(?:my\s+\w+\s+)?(?:\d+\s*(?:percent|%)|go\s+to|will\s+go\s+to|all\s+my\b).*$',
+            line, re.IGNORECASE,
+        )
+        if m:
+            bene_chunk = m.group(0).strip()[:200]
+
+        # Ownership chunk — "I share with NAME 50/50".
+        own_chunk = ''
+        m = re.search(
+            r'(?:I\s+share\s+with|joint(?:ly)?\s+with|share\s+with)\s+[^\.,]+(?:\s+(?:50/50|\d+/\d+|\d+%|\d+\s*percent))?',
+            line, re.IGNORECASE,
+        )
+        if m:
+            own_chunk = m.group(0).strip()[:120]
+
+        # Name = address up to first comma (compact label). If that's just
+        # a house number, include the next comma segment so "10, Jalan Sri
+        # Laguna" beats "10".
+        if addr_clean:
+            segs = [s.strip() for s in addr_clean.split(',') if s.strip()]
+            if segs and re.fullmatch(r'\d{1,4}', segs[0]) and len(segs) > 1:
+                name = (segs[0] + ', ' + segs[1])[:120]
+            else:
+                name = (segs[0] if segs else addr_clean)[:120]
+        else:
+            name = line[:80]
+
+        prop = {
+            'name':        name,
+            'address':     addr_clean[:200],
+            'lot':         (lot_m.group(1).strip() if lot_m else '')[:80],
+            'title':       ((hsd_m.group(1).strip() if hsd_m else '')
+                            or (ger_m.group(1).strip() if ger_m else ''))[:80],
+            'mukim':       (mukim_m.group(1).strip() if mukim_m else '')[:60],
+            'daerah':      (daerah_m.group(1).strip() if daerah_m else '')[:60],
+            'ownership':   own_chunk,
+            'beneficiary': bene_chunk,
+        }
         out.append(prop)
     return out
 
