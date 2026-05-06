@@ -1374,6 +1374,168 @@ hacks elsewhere.
 
 ---
 
+## 10hg. 🔥🔥🔥 BURN-IN — Message-Stated = HIGH Always; Image Determines Completeness 🔥🔥🔥
+
+**If the user states an asset in the message, it is HIGH confidence by
+definition — regardless of image evidence. Image presence determines
+how COMPLETE the card is, not whether it's shown. Layer 1 commits to
+step5_data only after explicit user confirmation. NEVER auto-save.**
+
+### Confidence Grid — User's Word is the Anchor
+
+| Tier | Source | Image evidence | Confidence | Card variant |
+|------|--------|----------------|------------|--------------|
+| H1 | Stated in message | Title image (Geran/Hakmilik) — lot/title or mukim+daerah binds | **HIGH** | Confirm (full) |
+| H2 | Stated in message | Non-title image with HSD/PTD where mukim+daerah matches message address | **HIGH** | Confirm (full, with provisional title) |
+| H3 | Stated in message | **No image found** | **HIGH** | Confirm (placeholder) → upload/type after |
+| L  | Image only — no message reference | any | **LOW** | §10d unverified — ASK |
+
+### H1/H2 card — image found, confirm to add
+
+```
+### 🏠 Property X of N — <address from AI Summary / message>
+
+held under <legal description: title/lot/mukim/daerah/negeri>
+
+🔗 Evidence (HIGH):
+   ✅ Title image binds to this property   (or)
+   ✅ HSD/PTD doc with mukim+daerah matching the message address
+   ⏱  Image timestamp within Ns of the message line
+
+[ ✅ Confirm — add to specific gifts ]
+[ ✏️ Edit details ]
+[ 🗑 Wrong — remove ]
+```
+
+User clicks **Confirm** → `_layer1_confirmed=True` is written → advance
+to Layer 2 (beneficiary main → substitute). The beneficiary handlers
+(`_try_save_property_gift` Phase A/B) ONLY accept input AFTER Layer 1
+confirmation. Typing a beneficiary name on a HIGH card is rejected.
+
+### H3 card — message-stated but no image found, confirm-then-complete
+
+```
+### 🏠 Property X of N — <address from message>
+
+You mentioned this in your message:
+> "<verbatim quote from user's text>"
+
+⚠️ I couldn't find a matching title document among your uploads.
+   This property is HIGH confidence (you stated it), but the
+   identification details are incomplete.
+
+Confirm to add this property — then upload the title or type the
+details manually:
+
+[ ✅ Confirm — yes, add this property ]
+[ 🗑 Wrong — remove from list ]
+```
+
+User clicks **Confirm** → save Tier-H3 placeholder to step5_data with
+`needs_title_doc=true` and a one-line `_note` describing what's missing
+→ render the **complete-details** card next:
+
+```
+### 📎 Complete details for <address>
+
+Provide the title document so the will can be probated:
+
+[ 📎 Upload title document now ]
+[ ✏️ Type the title/lot/mukim/daerah/negeri manually ]
+[ 🤝 Match to an existing image I already sent ]
+[ ⏭ Skip for now — I'll provide later ]
+```
+
+The complete-details card may be answered later (asynchronously). The
+property gift remains in step5_data with `needs_title_doc=true` until
+provided. Probate generation flags any gift with this flag for the
+lawyer to chase.
+
+User clicks **Remove** on the H3 confirm card → log `_user_rejected=true`
+in chat session state, drop from this run's N.
+
+### Hard rules
+
+1. **N (walkthrough property count) = N (AI Summary property count).**
+   H3 cards (no image) count toward N. They are visible — never silently
+   filtered out because no title image was found.
+2. **Message-stated assets are NEVER demoted to "low confidence" because
+   the image is missing.** The user's word is the anchor. Image evidence
+   only changes the card variant (H1/H2 full vs H3 placeholder), not
+   the confidence tier.
+3. **A property reaches step5_data via exactly one path:** an explicit
+   user click on the **Confirm** button. H1/H2 confirm → full Layer 1
+   save → Layer 2. H3 confirm → placeholder with `needs_title_doc=true`
+   → optional complete-details card next.
+4. **No auto-save without a click.** Typing a beneficiary name into a
+   card that has not yet been confirmed is REJECTED — Layer 2 is gated
+   behind Layer 1 confirmation.
+5. **Persisted enrichment is NOT trusted.** Every walkthrough turn
+   re-derives the address from the AI Summary. Stale `_enriched_from`
+   on a Document row that no longer matches any AI-Summary property is
+   ignored.
+6. **AI Summary fallback:** if no `📨 AI Summary` chat card exists,
+   parse `step6_data._raw_forward_text` for property mentions (line-based
+   heuristic extractor). The canonical N must survive a chat reset.
+7. **Conflicting information in the message → STOP and ask the user
+   to clarify.** Never auto-resolve a contradiction. Examples that
+   trigger a clarification card:
+     - Same property named twice with different beneficiaries.
+     - Allocations sum to >100% (or <100% with no residuary intent).
+     - Address spelled two different ways but lot/title suggests one
+       physical property.
+     - Title number changes between mentions for what looks like the
+       same address.
+     - Beneficiary name spelled inconsistently (Esther / Eshter / etc.)
+       for the same person.
+   The clarification card surfaces both readings verbatim and lets the
+   user pick / correct, e.g.:
+     ```
+     ⚠️ Conflicting information about <thing>
+     Reading 1: <quote A>
+     Reading 2: <quote B>
+     [ Use reading 1 ] [ Use reading 2 ] [ ✏️ Type the correct version ]
+     ```
+   The walkthrough does NOT proceed past a conflicting property until
+   the user picks. NO silent merging, NO best-guess resolution.
+
+### Where this is enforced
+
+| File | Function | Role |
+|------|----------|------|
+| `ai/chat_planner.py` | `_extract_ai_summary_properties` | Returns N items. Falls back to `_raw_forward_text` parser. |
+| `ai/chat_planner.py` | `_parse_raw_forward_properties` | Line-heuristic parser for raw WhatsApp/email forward text. |
+| `ai/chat_planner.py` | `_classify_property_match(ai_prop, doc_groups)` | Returns variant 'h1' / 'h2' / 'h3' (all HIGH tier). |
+| `ai/chat_planner.py` | `_walkthrough_property_card_h1h2` | Confirm card with image evidence. |
+| `ai/chat_planner.py` | `_walkthrough_property_card_h3` | Confirm-then-complete card (no image). |
+| `ai/chat_planner.py` | `_walkthrough_conflict_card` | Conflicting-info clarification card. |
+| `ai/chat_planner.py` | `_detect_message_conflicts(ai_props)` | Surface contradictions before walkthrough renders. |
+| `services/gift_walker.py` | `get_pending_gift_documents` | Tags each group with `_variant`, `_ai_summary_match`. |
+| `app.py` | `_try_handle_property_confirm` | Handles Confirm/Edit/Remove. Sets `_layer1_confirmed`. |
+| `app.py` | `_try_handle_property_complete_details` | Handles Upload/Type/Match/Skip on H3 complete-details card. |
+| `app.py` | `_try_handle_message_conflict` | Handles "Use reading 1/2/Type correct version" picks. |
+| `app.py` | `_try_save_property_gift` | Now requires `_layer1_confirmed=True` before Phase A. |
+
+### The litmus test
+
+```
+Q: AI Summary names 5 properties. How many cards does the walkthrough render?
+   - 5 cards (mix of H1/H2/H3) → ✅ ship
+   - Less than 5 → ❌ H3 (no-image) properties are being silently dropped
+   - More than 5 → ❌ residual images are being treated as new properties
+
+Q: Does any property land in step5_data without an explicit user click?
+   - NO → ✅ ship
+   - YES → ❌ auto-save bug, fix the handler
+
+Q: When the message contradicts itself (same property, two beneficiaries),
+   does the walkthrough proceed silently?
+   - NO (a clarification card blocks until user picks) → ✅ ship
+   - YES (best-guess resolution) → ❌ violates rule 7
+```
+
+---
+
 ## 11. Things NOT To Do
 
 These are direct quotes / paraphrases of user feedback. Do not repeat these mistakes.
