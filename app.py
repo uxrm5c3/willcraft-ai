@@ -3259,6 +3259,7 @@ def _will_data_snapshot(will_record):
         completed = []
     return {
         'will_id': will_record.id,
+        'client_id': will_record.client_id,
         'title': will_record.title,
         'status': will_record.status,
         'step1': _j(will_record.step1_data, {}),
@@ -3796,6 +3797,10 @@ def _api_chat_message_impl(client_id):
                           or _try_handle_restart_gifts(client_id, user_text)
                           or _try_handle_unlink_action(client_id, user_text)
                           or _try_handle_inventory_action(client_id, user_text)
+                          # §10hg — H3 placeholder confirm/skip when no pending image
+                          or _try_handle_h3_property_action(client_id, user_text)
+                          # §10hg — conflict resolve replies
+                          or _try_handle_message_conflict(client_id, user_text)
                           or _try_handle_property_fill(client_id, user_text)
                           or _try_handle_ownership(client_id, user_text)
                           or _try_handle_encumbrance(client_id, user_text))
@@ -6339,6 +6344,169 @@ _ASSETS_MORE_TOKENS = (
     'i have more to upload', 'more to upload', 'add more',
     'upload more', 'not done', 'wait', 'one more',
 )
+
+
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║  🔥 BURN-IN §10hg — H3 + CONFLICT HANDLERS                              ║
+# ║                                                                          ║
+# ║  H3 = AI-Summary property with no image evidence. The placeholder card  ║
+# ║  emits 'inventory confirm' / 'inventory skip'. The normal inventory     ║
+# ║  handler skips H3 because it requires a Document target. This handler   ║
+# ║  catches it and records the AI-Summary slot into step5_data with a     ║
+# ║  _h3_placeholder flag (or _ai_summary_skipped flag).                    ║
+# ╚════════════════════════════════════════════════════════════════════════╝
+def _try_handle_h3_property_action(client_id: str, user_text: str):
+    """Handle 'inventory confirm' / 'inventory skip' when there is no
+    image-derived pending property — i.e. the card was an H3 placeholder
+    rendered from the AI Summary fallback.
+
+    Returns dict on success, None if not applicable.
+    """
+    if not user_text:
+        return None
+    t = (user_text or '').strip().lower()
+    is_confirm = t.startswith('inventory confirm')
+    is_skip    = t.startswith('inventory skip')
+    if not (is_confirm or is_skip):
+        return None
+
+    # Must NOT have a pending image-derived property — otherwise the regular
+    # inventory handler owns this turn.
+    try:
+        from services.gift_walker import get_pending_gift_documents
+        pend = get_pending_gift_documents(client_id)
+        for kind in ('property', 'bank', 'vehicle'):
+            for it in (pend.get(kind) or []):
+                if not (it.get('extracted') or {}).get('_inventoried'):
+                    return None  # regular handler will pick this up
+    except Exception:
+        pass
+
+    # Now find the AI-Summary list and identify the unhandled H3 slot
+    try:
+        from ai.chat_planner import (_extract_ai_summary_properties,
+                                      _ai_props_already_handled,
+                                      _classify_property_match)
+    except Exception:
+        return None
+
+    ai_props = _extract_ai_summary_properties(client_id)
+    if not ai_props:
+        return None
+
+    active_will = (Will.query.filter_by(client_id=client_id, status='draft')
+                   .filter(Will.deleted_at.is_(None))
+                   .order_by(Will.updated_at.desc()).first())
+    if not active_will:
+        return None
+    snap = {'step5': _normalise_gifts(json.loads(active_will.step5_data) if active_will.step5_data else [])}
+    handled = _ai_props_already_handled(client_id, ai_props, snap)
+
+    # Image groups (still pending = not inventoried)
+    try:
+        from services.gift_walker import get_pending_gift_documents
+        pend = get_pending_gift_documents(client_id)
+        all_props = pend.get('property') or []
+    except Exception:
+        all_props = []
+    matched = []
+    for ap in ai_props:
+        cls = _classify_property_match(ap, all_props)
+        matched.append(cls['variant'] in ('h1', 'h2'))
+
+    h3_idx = next((i for i, ap in enumerate(ai_props)
+                   if not handled[i] and not matched[i]), None)
+    if h3_idx is None:
+        return None
+
+    # Append placeholder/skip entry to step5_data
+    try:
+        s5 = json.loads(active_will.step5_data) if active_will.step5_data else []
+        if not isinstance(s5, list):
+            s5 = []
+    except Exception:
+        s5 = []
+
+    ap = ai_props[h3_idx]
+    entry = {
+        'kind': 'property',
+        'asset_type': 'property',
+        'property_info': {
+            'property_address': ap.get('address') or '',
+            'lot_number':       ap.get('lot') or '',
+            'title_number':     ap.get('title') or '',
+            'mukim':            ap.get('mukim') or '',
+            'daerah':           ap.get('daerah') or '',
+        },
+        'address':            ap.get('address') or '',
+        'beneficiaries':      [],   # not yet assigned — Layer 2 still pending
+        'ownership_intent':   ap.get('ownership') or '',
+        'beneficiary_intent': ap.get('beneficiary') or '',
+        '_ai_summary_idx':    h3_idx,
+        '_h3_placeholder':    True if is_confirm else False,
+        '_ai_summary_skipped': True if is_skip else False,
+        '_layer1_confirmed':  True,  # message-stated = HIGH; user just confirmed
+    }
+    s5.append(entry)
+    active_will.step5_data = json.dumps(s5)
+    db.session.commit()
+
+    return {
+        'name': (ap.get('name') or 'property')[:60],
+        'role': 'h3_placeholder' if is_confirm else 'h3_skipped',
+        'kind': 'inventory_reviewed_property' if is_confirm else 'inventory_skipped_property',
+    }
+
+
+def _try_handle_message_conflict(client_id: str, user_text: str):
+    """Handle the user's reply to a §10hg conflict-clarification card.
+
+    Quick-replies:
+      • 'conflict merge X Y' — treat properties X and Y as ONE
+      • 'conflict keep X Y'  — treat them as DIFFERENT
+      • free text (passes through to next handler)
+
+    On accept, marks the conflict resolved by appending 'conflict_resolved_<X>_<Y>'
+    to completed_steps so the planner stops gating.
+    """
+    if not user_text:
+        return None
+    t = (user_text or '').strip().lower()
+    if not t.startswith('conflict '):
+        return None
+
+    parts = t.split()
+    if len(parts) < 4:
+        return None
+    action = parts[1]   # 'merge' or 'keep'
+    try:
+        a = int(parts[2]); b = int(parts[3])
+    except (TypeError, ValueError):
+        return None
+
+    active_will = (Will.query.filter_by(client_id=client_id, status='draft')
+                   .filter(Will.deleted_at.is_(None))
+                   .order_by(Will.updated_at.desc()).first())
+    if not active_will:
+        return None
+
+    try:
+        completed = json.loads(active_will.completed_steps) if active_will.completed_steps else []
+        if not isinstance(completed, list):
+            completed = []
+    except Exception:
+        completed = []
+    marker = f'conflict_resolved_{action}_{a}_{b}'
+    if marker not in completed:
+        completed.append(marker)
+    active_will.completed_steps = json.dumps(completed)
+    db.session.commit()
+
+    return {
+        'name': f'conflict #{a}↔{b}',
+        'role': f'conflict_{action}',
+        'kind': 'inventory_reviewed_conflict',
+    }
 
 
 def _try_handle_assets_gate(client_id: str, user_text: str):

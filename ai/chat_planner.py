@@ -733,6 +733,275 @@ def _parse_raw_forward_properties(raw_text: str) -> List[Dict[str, Any]]:
     return out
 
 
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║  🔥 BURN-IN §10hg — CLASSIFIER + CONFLICT DETECTOR                      ║
+# ║                                                                          ║
+# ║  Per CLAUDE.md §10hg: every AI-Summary property is HIGH confidence       ║
+# ║  (the user told us about it). Image evidence only changes COMPLETENESS:  ║
+# ║                                                                          ║
+# ║    H1 — title image binds → confirm card with full identifiers           ║
+# ║    H2 — non-title doc with mukim/daerah match → confirm provisional      ║
+# ║    H3 — no image found → placeholder card asking upload/type             ║
+# ║                                                                          ║
+# ║  L is NOT a tier here — it's a separate path (image-only, no AI Summary  ║
+# ║  reference) → handled by §10d unverified card, see _is_property_isolated.║
+# ╚════════════════════════════════════════════════════════════════════════╝
+
+def _digits(s: str) -> str:
+    return ''.join(c for c in (s or '') if c.isdigit())
+
+
+def _classify_property_match(ai_prop: Dict[str, Any],
+                              image_groups: List[Dict[str, Any]]
+                              ) -> Dict[str, Any]:
+    """For one AI-Summary property, find the best image-group match.
+
+    Returns:
+      {'variant': 'h1'|'h2'|'h3',
+       'group':   <matched group dict> or None,
+       'reason':  short string for the card}
+
+    h1 = direct identifier match (lot OR title digits equal)
+    h2 = mukim+daerah match (when no identifier hint in summary)
+    h3 = no image group matches
+    """
+    ai_lot   = _digits(ai_prop.get('lot') or '')
+    ai_title = _digits(ai_prop.get('title') or '')
+    ai_mukim = (ai_prop.get('mukim') or '').strip().lower()
+    ai_daerah = (ai_prop.get('daerah') or '').strip().lower()
+    ai_addr_lc = (ai_prop.get('address') or '').strip().lower()
+
+    # ── H1: direct lot/title match ─────────────────────────────────────
+    for g in image_groups:
+        ex = g.get('extracted') or {}
+        g_lot   = _digits(ex.get('lot_number') or '')
+        g_title = _digits(ex.get('title_number') or '')
+        if ai_lot and g_lot and len(ai_lot) >= 3 and ai_lot == g_lot:
+            return {'variant': 'h1', 'group': g,
+                    'reason': f'Lot {ai_lot} matches'}
+        if ai_title and g_title and len(ai_title) >= 4 and ai_title == g_title:
+            return {'variant': 'h1', 'group': g,
+                    'reason': f'Title {ai_title} matches'}
+
+    # ── H1b: address-substring match (street name in OCR'd address) ────
+    # Some clients describe by street; the title doc has the same street
+    # in property_description (rare but real). Bind if a long token from
+    # the AI address appears in the doc's address.
+    if ai_addr_lc and len(ai_addr_lc) >= 12:
+        for g in image_groups:
+            ex = g.get('extracted') or {}
+            g_addr = (ex.get('property_address') or ex.get('description') or '').lower()
+            # Use first 25 chars of AI address (street + number typically)
+            probe = ai_addr_lc[:25].strip()
+            if probe and probe in g_addr:
+                return {'variant': 'h1', 'group': g,
+                        'reason': f'Address overlap: "{probe[:40]}"'}
+
+    # ── H2: mukim+daerah match (geographic, no direct id) ──────────────
+    if ai_mukim:
+        for g in image_groups:
+            ex = g.get('extracted') or {}
+            g_mukim  = (ex.get('mukim') or '').strip().lower()
+            g_daerah = (ex.get('daerah') or '').strip().lower()
+            if g_mukim and g_mukim == ai_mukim:
+                if not ai_daerah or not g_daerah or g_daerah == ai_daerah:
+                    return {'variant': 'h2', 'group': g,
+                            'reason': f'Same Mukim {ai_mukim.title()}'}
+
+    # ── H3: no image found ─────────────────────────────────────────────
+    return {'variant': 'h3', 'group': None,
+            'reason': 'No matching image — provide title doc or type details'}
+
+
+def _detect_message_conflicts(ai_props: List[Dict[str, Any]]
+                               ) -> List[Dict[str, Any]]:
+    """Surface contradictions in the user's message that need clarification
+    BEFORE the walkthrough proceeds. Per CLAUDE.md §10hg rule #7.
+
+    Returns list of conflict descriptors, each:
+      {'kind': 'duplicate_address' | 'allocation_overflow' | 'split_repeated',
+       'property_idx': int, 'detail': str, 'options': [{label,value}, ...]}
+    Empty list = no conflicts.
+    """
+    conflicts: List[Dict[str, Any]] = []
+    if not ai_props:
+        return conflicts
+
+    # 1. Duplicate address: two properties pointing to the SAME street/unit
+    seen: Dict[str, int] = {}
+    for i, p in enumerate(ai_props):
+        addr = (p.get('address') or '').strip().lower()
+        if not addr or len(addr) < 8:
+            continue
+        # Compact key — first 40 chars normalised
+        key = re.sub(r'[^a-z0-9]+', '', addr)[:40]
+        if not key:
+            continue
+        if key in seen:
+            conflicts.append({
+                'kind': 'duplicate_address',
+                'property_idx': i,
+                'detail': (f"Properties #{seen[key]+1} and #{i+1} look like "
+                           f"the same address: \"{(p.get('address') or '')[:80]}\"."),
+                'options': [
+                    {'label': f'They\'re the SAME property — keep #{seen[key]+1}',
+                     'value': f'conflict merge {seen[key]+1} {i+1}'},
+                    {'label': f'They\'re DIFFERENT — keep both',
+                     'value': f'conflict keep {seen[key]+1} {i+1}'},
+                    {'label': '✏️ Let me clarify in chat', 'value': 'other'},
+                ],
+            })
+            continue
+        seen[key] = i
+
+    # 2. Allocation overflow: beneficiary shares > 100% in one property
+    for i, p in enumerate(ai_props):
+        b = (p.get('beneficiary') or '').lower()
+        if not b:
+            continue
+        # Pull all "NN percent" / "NN%" tokens and sum them
+        nums = [int(x) for x in re.findall(r'(\d{1,3})\s*(?:percent|%)', b) if 0 < int(x) <= 100]
+        if nums and sum(nums) > 100:
+            conflicts.append({
+                'kind': 'allocation_overflow',
+                'property_idx': i,
+                'detail': (f"Property #{i+1} ({(p.get('name') or 'unknown')[:60]}): "
+                           f"shares add up to {sum(nums)}%, not 100%. "
+                           f"Original: \"{(p.get('beneficiary') or '')[:120]}\""),
+                'options': [
+                    {'label': '✏️ Restate the shares', 'value': 'other'},
+                ],
+            })
+
+    return conflicts
+
+
+def _walkthrough_conflict_card(conflict: Dict[str, Any]) -> Dict[str, Any]:
+    """Render a clarification card. The walkthrough does NOT advance until
+    the user answers — see CLAUDE.md §10hg rule #7.
+    """
+    kind = conflict.get('kind', 'unknown')
+    detail = conflict.get('detail', '')
+    icon = '⚠️' if kind == 'allocation_overflow' else '❓'
+    title = {
+        'duplicate_address':   'Possible duplicate property',
+        'allocation_overflow': 'Beneficiary shares don\'t add up',
+        'split_repeated':      'Conflicting allocation',
+    }.get(kind, 'Need clarification')
+
+    parts = [
+        f"### {icon} {title}",
+        detail,
+        ("Tell me which reading is correct so I can put the right entry "
+         "into your will."),
+    ]
+    quick = conflict.get('options') or [{'label': '✏️ Let me clarify', 'value': 'other'}]
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': [],
+    }
+
+
+def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
+                                    seq_num: int,
+                                    total: int) -> Dict[str, Any]:
+    """Render a placeholder card for an AI-Summary property that has NO
+    image evidence. Per CLAUDE.md §10hg, message-stated = HIGH always —
+    the only thing missing is the title doc. We confirm and ask the user
+    to upload OR type the missing legal-doc details after.
+    """
+    name = (ai_prop.get('name') or 'this property').strip()
+    addr = (ai_prop.get('address') or '').strip()
+    own  = (ai_prop.get('ownership') or '').strip()
+    bene = (ai_prop.get('beneficiary') or '').strip()
+    mukim = (ai_prop.get('mukim') or '').strip()
+    daerah = (ai_prop.get('daerah') or '').strip()
+    lot = (ai_prop.get('lot') or '').strip()
+    title = (ai_prop.get('title') or '').strip()
+
+    parts = [
+        f"### 🏠 Property {seq_num} of {total} — {name[:80]}",
+        ("📨 **From your message** — message-stated, no title document attached yet:"),
+    ]
+    bullets = []
+    if addr:   bullets.append(f"• **Address:** {addr}")
+    if lot:    bullets.append(f"• **Lot/PTD:** {lot}")
+    if title:  bullets.append(f"• **Title:** {title}")
+    if mukim:  bullets.append(f"• **Mukim:** {mukim}")
+    if daerah: bullets.append(f"• **Daerah:** {daerah}")
+    if own:    bullets.append(f"• **Ownership:** {own}")
+    if bene:   bullets.append(f"• **Beneficiary intent:** {bene}")
+    if bullets:
+        parts.append('\n'.join(bullets))
+
+    parts.append(
+        "🔎 **Confidence: HIGH** — you stated this property. I just need the "
+        "legal-doc details (lot/title/mukim) to finalise it for the will. "
+        "Confirm to add it, then upload the title or type the details."
+    )
+    quick = [
+        {'label': '✅ Confirm — add this property to the will', 'value': 'inventory confirm'},
+        {'label': '📎 Upload title document for this property', 'value': 'inbox start'},
+        {'label': '✏️ Type the title/lot/mukim manually',       'value': 'other'},
+        {'label': '⏭ Skip for now',                              'value': 'inventory skip'},
+    ]
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': [],
+        '_h3_ai_prop': ai_prop,   # carry through for handler tagging
+    }
+
+
+def _ai_props_already_handled(client_id: str,
+                                ai_props: List[Dict[str, Any]],
+                                will_data: Dict[str, Any]
+                                ) -> List[bool]:
+    """Mark which AI-Summary properties are already represented in the
+    wizard (step5_data gift, or matched to an inventoried Document).
+
+    Returns parallel-list of booleans len(ai_props).
+    """
+    out = [False] * len(ai_props)
+    if not ai_props:
+        return out
+    s5 = (will_data or {}).get('step5') or []
+    # Build set of handled signatures from accepted gifts
+    handled_sigs = set()
+    for g in s5:
+        if not isinstance(g, dict):
+            continue
+        if g.get('kind') == 'property' or g.get('asset_type') == 'property':
+            pi = g.get('property_info') or g.get('property_details') or {}
+            sig_lot = _digits(pi.get('lot_number') or '')
+            sig_title = _digits(pi.get('title_number') or '')
+            sig_addr = re.sub(r'[^a-z0-9]+', '',
+                              (pi.get('property_address') or
+                               g.get('address') or '').lower())[:40]
+            handled_sigs.add(('lot', sig_lot) if sig_lot else None)
+            handled_sigs.add(('title', sig_title) if sig_title else None)
+            handled_sigs.add(('addr', sig_addr) if sig_addr else None)
+        # gift skipped flag
+        if g.get('_ai_summary_skipped'):
+            sig = g.get('_ai_summary_idx')
+            if isinstance(sig, int) and 0 <= sig < len(out):
+                out[sig] = True
+    handled_sigs.discard(None)
+
+    for i, p in enumerate(ai_props):
+        if out[i]:
+            continue
+        plot = _digits(p.get('lot') or '')
+        ptit = _digits(p.get('title') or '')
+        paddr = re.sub(r'[^a-z0-9]+', '', (p.get('address') or '').lower())[:40]
+        if plot and ('lot', plot) in handled_sigs:
+            out[i] = True
+        elif ptit and ('title', ptit) in handled_sigs:
+            out[i] = True
+        elif paddr and ('addr', paddr) in handled_sigs:
+            out[i] = True
+    return out
+
+
 def _next_step_cta(will_data: dict) -> dict:
     """Return {'label': str, 'value': str} for the ▶️ next-step button.
 
@@ -2369,6 +2638,23 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
     # `_inventoried` in the DB so they don't reappear next turn.
     props = _autoskip_empty_properties(props)
 
+    # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN §10hg — CONFLICT CARD GATE                              ║
+    # ║  If the AI Summary contains contradictions (duplicate address,      ║
+    # ║  shares >100%, etc.), surface the clarification card BEFORE walking ║
+    # ║  any property. Walkthrough does not advance until clarified.        ║
+    # ╚════════════════════════════════════════════════════════════════════╝
+    _client_id = (will_data or {}).get('client_id') or ''
+    _ai_props = _extract_ai_summary_properties(_client_id) if _client_id else []
+    if _ai_props:
+        _conflicts = _detect_message_conflicts(_ai_props)
+        # Only show the FIRST unresolved conflict per turn — user clarifies
+        # via chat reply, then next turn re-checks.
+        _resolved_marker = (will_data or {}).get('completed_steps') or []
+        _conflict_resolved = any(c.startswith('conflict_') for c in _resolved_marker)
+        if _conflicts and not _conflict_resolved:
+            return _walkthrough_conflict_card(_conflicts[0])
+
     if props:
         target = props[0]
         # If the writer just pressed "Wrong supporting docs" on this
@@ -2407,6 +2693,31 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         return _walkthrough_property_card(target, seq_num, recent_text,
                                            total_props=total_props,
                                            n_props_left=len(props))
+    # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN §10hg — H3 PLACEHOLDER CARDS                            ║
+    # ║  After all image-derived property groups are reviewed, surface any  ║
+    # ║  AI-Summary properties that have NO matching image as H3 placeholder║
+    # ║  cards. The canonical N MUST be reached even if the user attached    ║
+    # ║  no title doc for some properties.                                   ║
+    # ╚════════════════════════════════════════════════════════════════════╝
+    if _ai_props:
+        _handled = _ai_props_already_handled(_client_id, _ai_props, will_data or {})
+        # Build set of AI-prop signatures already CONTENT-matched to a still-pending image
+        # — those are about to be walked through the normal path and shouldn't show as H3.
+        _matched_to_image: List[bool] = []
+        for ap in _ai_props:
+            cls = _classify_property_match(ap, all_props)
+            _matched_to_image.append(cls['variant'] in ('h1', 'h2'))
+        # H3 = AI-Summary entry, not handled, not matched to any image group
+        h3_idx = [i for i, ap in enumerate(_ai_props)
+                  if not _handled[i] and not _matched_to_image[i]]
+        if h3_idx:
+            i = h3_idx[0]
+            seq = sum(1 for h in _handled if h) + 1
+            total = len(_ai_props)
+            card = _walkthrough_property_card_h3(_ai_props[i], seq, total)
+            return card
+
     if banks:
         return _walkthrough_bank_card(banks[0], len(banks))
     if vehicles:
