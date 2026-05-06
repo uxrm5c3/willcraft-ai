@@ -908,14 +908,32 @@ def _classify_property_match(ai_prop: Dict[str, Any],
             eff_mukim  = bridged[0].lower()
             eff_daerah = bridged[1].lower()
     if eff_mukim:
+        # H2 requires mukim match AND at least one address-token overlap
+        # in the doc's blob — otherwise mukim-only match is too coarse:
+        # Mukim Plentong contains Marina Cove, Seri Alam, Taman Laguna…
+        # all distinct properties. Prevents prop A from stealing prop B's
+        # image just because they happen to share a mukim.
+        ai_tokens = _distinctive_address_tokens(ai_prop)
         for g in image_groups:
             ex = g.get('extracted') or {}
             g_mukim  = (ex.get('mukim') or '').strip().lower()
             g_daerah = (ex.get('daerah') or '').strip().lower()
-            if g_mukim and g_mukim == eff_mukim:
-                if not eff_daerah or not g_daerah or g_daerah == eff_daerah:
-                    return {'variant': 'h2', 'group': g,
-                            'reason': f'Same Mukim {eff_mukim.title()} (bridged from address)'}
+            if not (g_mukim and g_mukim == eff_mukim):
+                continue
+            if eff_daerah and g_daerah and g_daerah != eff_daerah:
+                continue
+            g_blob = ' '.join([
+                (ex.get('property_address') or ''),
+                (ex.get('description') or ''),
+                (ex.get('property_description') or ''),
+                (ex.get('building_name') or ''),
+                (ex.get('township') or ''),
+            ]).lower()
+            token_hits = [t for t in ai_tokens if t in g_blob]
+            if token_hits:
+                return {'variant': 'h2', 'group': g,
+                        'reason': (f'Mukim {eff_mukim.title()} + token '
+                                   f'{token_hits[0]!r}')}
 
     # ── H3: no image found ─────────────────────────────────────────────
     return {'variant': 'h3', 'group': None,
