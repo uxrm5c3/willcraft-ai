@@ -747,8 +747,91 @@ def _parse_raw_forward_properties(raw_text: str) -> List[Dict[str, Any]]:
 # ║  reference) → handled by §10d unverified card, see _is_property_isolated.║
 # ╚════════════════════════════════════════════════════════════════════════╝
 
+# ╔════════════════════════════════════════════════════════════════════════╗
+# ║  🔥 BURN-IN §10hc — _GEO_BRIDGE: street/township → mukim                 ║
+# ║                                                                          ║
+# ║  Curated, citation-backed only. NEVER add entries from training memory. ║
+# ║  Every entry is observed in a Malaysian title document or on an official║
+# ║  source (PLAN-PIPK, NLC, Iskandar Puteri / Plentong gazette).            ║
+# ║  See CLAUDE.md §10ha geographic-bridge table for the full source list.   ║
+# ╚════════════════════════════════════════════════════════════════════════╝
+_GEO_BRIDGE = {
+    # Plentong (Daerah Johor Bahru)
+    'seri alam':        ('Plentong', 'Johor Bahru', 'Johor'),
+    'bandar seri alam': ('Plentong', 'Johor Bahru', 'Johor'),
+    'taman laguna':     ('Plentong', 'Johor Bahru', 'Johor'),
+    'sri laguna':       ('Plentong', 'Johor Bahru', 'Johor'),
+    'marina cove':      ('Plentong', 'Johor Bahru', 'Johor'),
+    'tepian bayu':      ('Plentong', 'Johor Bahru', 'Johor'),
+    'pasir gudang':     ('Plentong', 'Johor Bahru', 'Johor'),
+    'permas jaya':      ('Plentong', 'Johor Bahru', 'Johor'),
+    'masai':            ('Plentong', 'Johor Bahru', 'Johor'),
+    # Pulai (Daerah Johor Bahru)
+    'medini':           ('Pulai', 'Johor Bahru', 'Johor'),
+    'bandar medini':    ('Pulai', 'Johor Bahru', 'Johor'),
+    'iskandar puteri':  ('Pulai', 'Johor Bahru', 'Johor'),
+    'paradiso nuova':   ('Pulai', 'Johor Bahru', 'Johor'),
+    'paradisonuava':    ('Pulai', 'Johor Bahru', 'Johor'),  # spelling drift
+    'merak kayangan':   ('Pulai', 'Johor Bahru', 'Johor'),
+    'nusajaya':         ('Pulai', 'Johor Bahru', 'Johor'),
+    # Tebrau (Daerah Johor Bahru)
+    'mount austin':     ('Tebrau', 'Johor Bahru', 'Johor'),
+    'taman austin':     ('Tebrau', 'Johor Bahru', 'Johor'),
+}
+
+
+def _resolve_geo_from_address(addr: str) -> Optional[tuple]:
+    """If `addr` contains a known township/building name, return its
+    (mukim, daerah, negeri). Else None. Memory-free — only consults the
+    curated _GEO_BRIDGE table.
+    """
+    if not addr:
+        return None
+    al = addr.lower()
+    # Longest key first so 'bandar seri alam' beats 'seri alam'.
+    for key in sorted(_GEO_BRIDGE.keys(), key=len, reverse=True):
+        if key in al:
+            return _GEO_BRIDGE[key]
+    return None
+
+
 def _digits(s: str) -> str:
     return ''.join(c for c in (s or '') if c.isdigit())
+
+
+# Stop-words excluded from token matching — every property has these.
+_ADDR_STOPWORDS = {
+    'unit', 'condominium', 'condo', 'apartment', 'house', 'shop', 'street',
+    'jalan', 'lorong', 'taman', 'bandar', 'pangsapuri', 'kawasan',
+    'no', 'block', 'level', 'floor', 'storey',
+    'johor', 'malaysia', 'singapore', 'selangor', 'kl', 'kuala',
+    'condominium', 'and', 'the', 'of', 'at', 'in', 'on', 'to',
+    'my', 'our', 'with', 'share',
+}
+
+
+def _distinctive_address_tokens(ai_prop: Dict[str, Any]) -> List[str]:
+    """Pull tokens worth matching from an AI-Summary property:
+       - unit numbers like 'c-30-08', 'b-05-11', 'c30-08'
+       - building names ('marina', 'cove', 'paradiso', 'nuova')
+       - street/township ('laguna', 'gunung', 'medini', 'masai')
+    Stopwords like 'condominium', 'unit', 'jalan' are dropped.
+    """
+    blob = ' '.join([
+        (ai_prop.get('name') or ''),
+        (ai_prop.get('address') or ''),
+    ]).lower()
+    tokens: List[str] = []
+    # Unit-number patterns first (high signal)
+    for m in re.finditer(r'\b[a-z]?-?\d+[\-/]\d+(?:[\-/]\d+)?\b', blob):
+        tokens.append(m.group(0).replace(' ', ''))
+    # Word tokens — alphabetic, length >= 4, not stopword
+    for w in re.findall(r'[a-z]{4,}', blob):
+        if w in _ADDR_STOPWORDS:
+            continue
+        if w not in tokens:
+            tokens.append(w)
+    return tokens
 
 
 def _classify_property_match(ai_prop: Dict[str, Any],
@@ -783,30 +866,55 @@ def _classify_property_match(ai_prop: Dict[str, Any],
             return {'variant': 'h1', 'group': g,
                     'reason': f'Title {ai_title} matches'}
 
-    # ── H1b: address-substring match (street name in OCR'd address) ────
-    # Some clients describe by street; the title doc has the same street
-    # in property_description (rare but real). Bind if a long token from
-    # the AI address appears in the doc's address.
-    if ai_addr_lc and len(ai_addr_lc) >= 12:
+    # ── H1b: token overlap (building name / unit number / street) ─────
+    # Clients describe in text ("Marina Cove unit C-30-08"); the title doc
+    # has only OCR'd fields. We can't match identifiers, but we CAN match
+    # distinctive tokens: building names, unit numbers, street names.
+    if ai_addr_lc:
+        ai_tokens = _distinctive_address_tokens(ai_prop)
         for g in image_groups:
             ex = g.get('extracted') or {}
-            g_addr = (ex.get('property_address') or ex.get('description') or '').lower()
-            # Use first 25 chars of AI address (street + number typically)
-            probe = ai_addr_lc[:25].strip()
-            if probe and probe in g_addr:
+            g_blob = ' '.join([
+                (ex.get('property_address') or ''),
+                (ex.get('description') or ''),
+                (ex.get('property_description') or ''),
+                (ex.get('building_name') or ''),
+                (ex.get('township') or ''),
+            ]).lower()
+            if not g_blob.strip():
+                continue
+            hits = [t for t in ai_tokens if t in g_blob]
+            # Strong: at least one unit-like token (e.g. "c-30-08") OR two
+            # generic tokens (e.g. "marina" + "cove").
+            unit_hit = any(re.match(r'^[a-z]?-?\d+-\d+$', h) for h in hits)
+            if unit_hit:
                 return {'variant': 'h1', 'group': g,
-                        'reason': f'Address overlap: "{probe[:40]}"'}
+                        'reason': f'Unit token match: "{[h for h in hits if re.match(r"^[a-z]?-?\\d+-\\d+$", h)][0]}"'}
+            if len(hits) >= 2:
+                return {'variant': 'h1', 'group': g,
+                        'reason': f'Tokens match: {hits[:3]}'}
 
     # ── H2: mukim+daerah match (geographic, no direct id) ──────────────
-    if ai_mukim:
+    # If AI Summary doesn't state mukim explicitly, try the §10hc geo
+    # bridge from the address (e.g. "Seri Alam Masai" → Mukim Plentong).
+    eff_mukim = ai_mukim
+    eff_daerah = ai_daerah
+    if not eff_mukim:
+        bridged = _resolve_geo_from_address(ai_addr_lc) or _resolve_geo_from_address(
+            (ai_prop.get('name') or '').lower()
+        )
+        if bridged:
+            eff_mukim  = bridged[0].lower()
+            eff_daerah = bridged[1].lower()
+    if eff_mukim:
         for g in image_groups:
             ex = g.get('extracted') or {}
             g_mukim  = (ex.get('mukim') or '').strip().lower()
             g_daerah = (ex.get('daerah') or '').strip().lower()
-            if g_mukim and g_mukim == ai_mukim:
-                if not ai_daerah or not g_daerah or g_daerah == ai_daerah:
+            if g_mukim and g_mukim == eff_mukim:
+                if not eff_daerah or not g_daerah or g_daerah == eff_daerah:
                     return {'variant': 'h2', 'group': g,
-                            'reason': f'Same Mukim {ai_mukim.title()}'}
+                            'reason': f'Same Mukim {eff_mukim.title()} (bridged from address)'}
 
     # ── H3: no image found ─────────────────────────────────────────────
     return {'variant': 'h3', 'group': None,
@@ -2702,12 +2810,20 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
     # ╚════════════════════════════════════════════════════════════════════╝
     if _ai_props:
         _handled = _ai_props_already_handled(_client_id, _ai_props, will_data or {})
-        # Build set of AI-prop signatures already CONTENT-matched to a still-pending image
-        # — those are about to be walked through the normal path and shouldn't show as H3.
+        # Greedy-claim: each image group binds to AT MOST one AI prop.
+        # Iterate ai_props in order; first match wins; later props that
+        # would have matched the same group fall through to H3.
+        _claimed_doc_ids = set()
         _matched_to_image: List[bool] = []
         for ap in _ai_props:
-            cls = _classify_property_match(ap, all_props)
-            _matched_to_image.append(cls['variant'] in ('h1', 'h2'))
+            available = [g for g in all_props
+                         if g.get('document_id') not in _claimed_doc_ids]
+            cls = _classify_property_match(ap, available)
+            if cls['variant'] in ('h1', 'h2') and cls.get('group'):
+                _matched_to_image.append(True)
+                _claimed_doc_ids.add(cls['group'].get('document_id'))
+            else:
+                _matched_to_image.append(False)
         # H3 = AI-Summary entry, not handled, not matched to any image group
         h3_idx = [i for i, ap in enumerate(_ai_props)
                   if not _handled[i] and not _matched_to_image[i]]
