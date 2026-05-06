@@ -262,7 +262,22 @@ def plan_turn(
         focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
         return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
 
-    if pending_banks and not (current_will_data.get('step5') or []):
+    # Check if a BANK gift has been saved in step5 (vs property gift / skip).
+    # The gate must fire while banks are pending AND no bank-specific gift is
+    # in step5 yet — previously this gated on "step5 empty" which wrongly
+    # skipped bank assignment as soon as the first property gift was saved.
+    _step5_list = current_will_data.get('step5') or []
+    _has_bank_gift = any(
+        isinstance(g, dict) and (
+            g.get('kind') == 'bank'
+            or g.get('asset_type') == 'bank'
+            or g.get('bank_name')
+            or (g.get('property_info') or {}).get('account_no')
+            or (g.get('property_details') or {}).get('account_no')
+        )
+        for g in _step5_list
+    )
+    if pending_banks and not _has_bank_gift:
         # No bank gift saved yet — ask the generic-clause question.
         # If user wants per-account, they can name specific accounts in reply.
         q = _step6_bank_question(pending_banks, current_will_data)
