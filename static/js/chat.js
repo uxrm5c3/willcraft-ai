@@ -708,8 +708,15 @@
           let prefix = '', ident = '';
           if (kind === 'property' || propAddr || titleNo || lotNo) {
             prefix = '🏠 Property';
-            // Prefer address (street segment) → title no → lot no → mukim
-            if (propAddr) ident = propAddr.split(',')[0].trim();
+            // Prefer address → title no → lot no → mukim.
+            // Show first 2 comma segments of the address (e.g. unit + building)
+            // so e.g. "#30-08, Menara C, Pangsapuri Tepian Bayu, …" renders as
+            // "#30-08, Menara C" instead of just "#30-08". The outer 120-char
+            // slice still caps total length.
+            if (propAddr) {
+              const segs = propAddr.split(',').map(s => s.trim()).filter(Boolean);
+              ident = segs.slice(0, 3).join(', ');
+            }
             else if (titleNo) ident = titleNo;
             else if (lotNo) ident = `Lot ${lotNo}`;
             else ident = (pd.mukim || pd.negeri || '').trim();
@@ -741,7 +748,7 @@
           let label = ident ? `${prefix} — ${ident}` : prefix;
           if (benList.length) label += ' → ' + benList.slice(0, 2).join(', ') + (benList.length > 2 ? '…' : '');
           else if (g._pending_beneficiary) label += ' · ⏳ awaiting beneficiary';
-          return [null, label.slice(0, 90)];
+          return [null, label.slice(0, 120)];
         }) : null },
       { n: '7', name: 'Residuary Estate', link: '/wizard/step/7', optional: false,
         fields: will.step6 && Object.keys(will.step6).length ? [[null, 'Configured']] : null },
