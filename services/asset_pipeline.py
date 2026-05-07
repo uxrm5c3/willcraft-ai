@@ -440,6 +440,131 @@ def group_documents(client_id: str) -> List[DocGroup]:
     return out
 
 
+def _claude_semantic_match(unbound_props: List[AssetItem],
+                            free_groups: List[DocGroup]) -> Dict[int, Optional[str]]:
+    """🔥 §10x.50 Tier C — Claude-semantic property matching.
+
+    Given remaining unbound AssetItems (property kind, after Tier A/B failed)
+    and remaining unclaimed DocGroups, ask Claude to pair them. Strict prompt:
+    must cite reasoning from doc content, ambiguous → null, training memory
+    forbidden.
+
+    Returns {ai_index: group_id_or_None}. Caller is responsible for honouring
+    one-claim-only — this function returns Claude's suggestion per AssetItem
+    but does NOT enforce uniqueness across results.
+    """
+    if not unbound_props or not free_groups:
+        return {}
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_CHEAP
+    except Exception:
+        return {}
+
+    # Build the prompt
+    prop_lines = []
+    for ai in unbound_props:
+        f = ai.fields
+        prop_lines.append(
+            f"[ai_index={ai.ai_index}] "
+            f"address={(f.get('address') or '')[:120]!r} | "
+            f"mukim={(f.get('mukim') or '')!r} | "
+            f"daerah={(f.get('daerah') or '')!r} | "
+            f"ownership={(f.get('ownership') or '')[:80]!r} | "
+            f"lot={(f.get('lot') or '')!r} | title={(f.get('title') or '')!r}"
+        )
+    grp_lines = []
+    for g in free_groups:
+        ge = g.merged_extracted
+        grp_lines.append(
+            f"[group_id={g.group_id[:8]}] "
+            f"ocr_address={(ge.get('property_address') or '')[:120]!r} | "
+            f"mukim={(ge.get('mukim') or '')!r} | "
+            f"daerah={(ge.get('daerah') or '')!r} | "
+            f"lot={(ge.get('lot_number') or '')!r} | "
+            f"title={(ge.get('title_number') or '')!r} | "
+            f"owner={(ge.get('owner_name') or '')!r} | "
+            f"description={(ge.get('description') or '')[:120]!r}"
+        )
+
+    prompt = (
+        "You are matching properties from a will-writing client's WhatsApp "
+        "message to OCR-extracted property documents they uploaded.\n\n"
+        "PROPERTIES from the client's message (each is a real property the "
+        "user described):\n" + '\n'.join(prop_lines) + "\n\n"
+        "OCR'd UPLOADED DOCUMENTS (each is a candidate match):\n"
+        + '\n'.join(grp_lines) + "\n\n"
+        "For each property [ai_index=N], pick the SINGLE best matching "
+        "[group_id] from the uploaded documents — or null if no doc clearly "
+        "matches.\n\n"
+        "HARD RULES — VIOLATING ANY INVALIDATES YOUR ANSWER:\n"
+        "1. Reasoning MUST come from doc content alone. Do NOT use training "
+        "data memory about Malaysian property names / locations.\n"
+        "2. Ambiguous = null. If two docs are equally plausible, return null "
+        "for that ai_index — better to skip than guess wrong.\n"
+        "3. Lot+title agreement (same lot OR same title between message and "
+        "OCR) is the strongest signal.\n"
+        "4. Same mukim + testator-as-owner is supportive but NOT sufficient "
+        "alone — multiple props may share both. Need additional distinctive "
+        "signal (lot, title, building name, unit number).\n"
+        "5. One group_id must NOT match two ai_indices. If two properties "
+        "compete for the same group, pick the better one and return null "
+        "for the other.\n"
+        "6. Strata exception: same lot but different title = different units, "
+        "OK to match different ai_indices to different groups with same lot.\n\n"
+        "Return JSON ONLY, no preamble:\n"
+        '{"matches": [{"ai_index": 2, "group_id": "abc12345" | null, '
+        '"reasoning": "<one sentence>"}]}\n'
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        msg = client.messages.create(
+            model=CLAUDE_MODEL_CHEAP,
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='services.asset_pipeline._claude_semantic_match')
+        except Exception:
+            pass
+    except Exception:
+        return {}
+
+    text = (msg.content[0].text or '').strip() if msg.content else ''
+    # Extract JSON
+    import re as _re
+    m = _re.search(r'\{[\s\S]*\}', text)
+    if not m:
+        return {}
+    try:
+        data = json.loads(m.group(0))
+    except Exception:
+        return {}
+
+    matches = data.get('matches') or []
+    by_id = {g.group_id[:8]: g.group_id for g in free_groups}
+    out: Dict[int, Optional[str]] = {}
+    for entry in matches:
+        try:
+            ai_idx = int(entry.get('ai_index'))
+            short_gid = entry.get('group_id')
+        except Exception:
+            continue
+        if not short_gid:
+            continue
+        # Resolve short id (8 chars) back to full
+        full_gid = by_id.get(short_gid) or next(
+            (g.group_id for g in free_groups if g.group_id == short_gid), None)
+        if full_gid:
+            # Enforce one-claim-only: skip if this group already assigned
+            if full_gid in out.values():
+                continue
+            out[ai_idx] = full_gid
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────
 # STAGE 2 — Bind AssetItem ↔ DocGroup
 # ─────────────────────────────────────────────────────────────────────
@@ -522,26 +647,36 @@ def bind_assets(asset_items: List[AssetItem],
                 claimed.add(g.group_id)
                 break
 
-    # ── Tier C: temporal proximity ────────────────────────────────────
-    # For each unbound AssetItem, find the unclaimed DocGroup whose msg_id
-    # matches the message line that names this asset (or whose timestamp
-    # is closest, when explicit linkage is missing). Skip if multiple
-    # AssetItems are equidistant — that's a guess, not a binding.
-    # NOTE: explicit message-line timestamps require the inbound parser
-    # to record them per-line. For now we use msg_id linkage only (the
-    # ChatMessage that delivered the doc). Refinement to per-line ts can
-    # come in a later commit without changing this stage's contract.
-    for ai in asset_items:
-        if ai.ai_index in bindings:
-            continue
-        # Pure temporal binding only fires for assets that have a clear
-        # message_line and exactly one free group from the same delivery.
-        # Without explicit per-line timestamps we cannot do better than
-        # "exactly one unclaimed group of the right kind" — and that
-        # would be guessing. Defer to Tier D unless we have stronger
-        # signal in a later iteration.
-        # Reserved for §10i full implementation.
-        pass
+    # ── Tier C: Claude-semantic match (§10x.50 — replaces lexical-only ceiling) ──
+    # For each unbound AssetItem of property kind, give Claude the
+    # AssetItem fields and the unclaimed property DocGroups, ask which
+    # one (if any) is the match. Strict prompt: must cite reasoning,
+    # ambiguous → null, lot+title agreement strongly preferred.
+    # This is the SEMANTIC bridge §10x.46 R4 demands — message uses
+    # street format, OCR uses land-registry format, lexical matchers
+    # can't bridge them.
+    unbound_props = [ai for ai in asset_items
+                      if ai.ai_index not in bindings and ai.kind == 'property']
+    free_property_groups = [g for g in doc_groups
+                             if g.group_id not in claimed and g.kind == 'property']
+    if unbound_props and free_property_groups:
+        try:
+            semantic_results = _claude_semantic_match(unbound_props, free_property_groups)
+        except Exception:
+            semantic_results = {}
+        for ai_idx, group_id in semantic_results.items():
+            if group_id and group_id not in claimed:
+                # Find the group + AssetItem to compose the binding
+                g = next((gg for gg in free_property_groups
+                          if gg.group_id == group_id), None)
+                if g:
+                    bindings[ai_idx] = Binding(
+                        ai_index=ai_idx, group_id=group_id,
+                        tier='C', match_via='claude_semantic',
+                        confidence='medium',
+                        evidence='Claude-inferred match (cite kept on gift)',
+                    )
+                    claimed.add(group_id)
 
     # ── Tier D: H3 (no binding) ───────────────────────────────────────
     for ai in asset_items:
