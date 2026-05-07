@@ -3340,6 +3340,105 @@ banned — every check must be explicit.
 
 ---
 
+### 10x.34  🔥🔥 BURN-IN — H3 IDENTITY placeholders (name+role in message, no IC) 🔥🔥
+
+**Family members named in the AI Summary / message text MUST appear as
+pending identities even when their IC photo wasn't uploaded.** Mirrors
+§10x.12 (assets) and §10x.15 (Image is verification only — text alone
+is sufficient).
+
+### The bug this rule prevents
+
+Real KOID example: message says **"All Insurance go to my wife (Lim Bee
+Yan) 100percent"**. Lim Bee Yan is named explicitly. Her IC was NOT
+uploaded. Without this rule, the identity walkthrough only iterates
+`Document.category='nric'` rows → misses her entirely → wizard shows
+3 identities (testator + 2 children + sister-in-law) but the wife is
+absent. The will then can't name her as bank/insurance beneficiary.
+
+### Implementation
+
+`services/identity_walker.py::get_pending_ic_documents` synthesises
+H3 placeholder entries AFTER its IC-doc enumeration:
+
+```python
+from_text = _extract_family_name_role_pairs(recent_text)
+for nm, role in from_text:
+    if nm.upper() in known_names:        # already a Person
+        continue
+    if nm.upper() in seen_in_pending:   # already queued
+        continue
+    pending.append({
+        'document_id': None,            # no IC uploaded
+        '_h3_placeholder': True,
+        '_h3_role': role,
+        'extracted': {'full_name': nm, 'nric_number': '', '_h3_source': 'ai_summary'},
+        '_deduction_score': 5,          # name+role in message = HIGH per §10x.30
+    })
+```
+
+`_extract_family_name_role_pairs` recognises four patterns:
+- `"my wife (Lim Bee Yan)"` → (Lim Bee Yan, Wife)
+- `"Joshua Koid Teck Seng (son)"` → (Joshua Koid Teck Seng, Son)
+- `"Joshua Koid Teck Seng(son)"` → (no space — KOID style)
+- `"my wife Lim Bee Yan"` → (Lim Bee Yan, Wife)
+
+### Chat card variant
+
+For an H3 placeholder, the IC card shows:
+
+```
+👤 Step 1: Identity (N left)
+
+Lim Bee Yan — _no IC uploaded yet_
+
+📨 Mentioned in your message as **Wife**.
+
+⚠️ Their IC photo can be uploaded later — for now, confirm the
+   relationship so the will can name them.
+
+[ ✓ Yes — Wife ]   [ 📎 Upload IC photo ]   [ 🗑 Delete ]
+```
+
+### Hard rules
+
+1. **Score = 5 (HIGH)** — name+role explicit in message is the same
+   confidence as a verbatim-name IC match per §10x.30.
+2. **Person row created without document_id**. `ensure_person` accepts
+   `document_id=None` cleanly.
+3. **Family-relation only** — never assign will-roles in Step 1
+   (§10x.32). The role comes directly from the message ("wife", "son",
+   etc.) which is naturally a family role.
+4. **Junk-name filter** — token must be 2-5 capitalised parts, no
+   stopwords (WITH, AND, OR, BANK, INSURANCE…). Otherwise we'd pull
+   "ALL BANK SAVINGS GO TO" as a name.
+5. **Dedup against existing Persons by name** — case-insensitive.
+   Re-running the walkthrough must NOT re-prompt the user about
+   already-confirmed identities.
+
+### Where this is enforced
+
+| File | Function | Role |
+|------|----------|------|
+| `services/identity_walker.py` | `_extract_family_name_role_pairs` | Pull (name, role) tuples from AI Summary text |
+| `services/identity_walker.py` | `get_pending_ic_documents` | Append H3 entries after IC-doc enumeration |
+| `ai/chat_planner.py` | `_identity_question` | H3 branch shows "no IC uploaded yet" card |
+| `app.py` | `_try_assign_pending_identity` | Handles `target['document_id'] is None` (no doc to link) |
+
+### Litmus test
+
+```
+Q: KOID forward; "my wife (Lim Bee Yan)" mentioned; no IC uploaded.
+   - Pending walkthrough surfaces Lim Bee Yan as Step 1 card     → ✓
+   - Pending only lists ICs from Document table                  → ✗ §10x.34 broke
+```
+
+If a named family member is missing from Step 1 even though they
+appear in the message text, the bug is in `_extract_family_name_role_pairs`
+or in the H3 append step. Fix THERE, not by manually adding Person rows.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

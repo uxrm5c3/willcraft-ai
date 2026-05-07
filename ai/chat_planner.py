@@ -1979,15 +1979,40 @@ def _intake_summary(artifacts: List[Dict[str, Any]]) -> str:
 
 def _identity_question(pending_ics: List[Dict[str, Any]], recent_text: str,
                         client_id: str = '') -> str:
-    """Ask about the next pending IC, with role pre-deduced from message
-    via TWO signal sources:
-      (a) ai.role_deducer.deduce_roles — name appears verbatim in text
-      (b) services.role_matcher.match_role_to_candidates — outsider
-          elimination (LIM LAY CHENG is the only IC name NOT in family
-          list → she's the sister-in-law mentioned generically in the
-          message)
-    Source (b) was missing earlier so generic-role mentions like
-    "My Sister in law Tel:+6016-..." weren't picked up at the IC walk.
+    """Ask about the next pending IC, with role pre-deduced from message.
+
+    🔥 §10x.34 — H3 identity placeholders (named in message, no IC uploaded)
+    take an explicit Confirm card with the family-role suggested directly
+    from the AI Summary parser. No IC photo to show.
+    """
+    next_ic = pending_ics[0]
+    # ── §10x.34 — H3 placeholder branch (no IC uploaded)
+    if next_ic.get('_h3_placeholder'):
+        ex = next_ic.get('extracted') or {}
+        name = (ex.get('full_name') or '').strip()
+        role = next_ic.get('_h3_role') or 'family member'
+        parts = [
+            f"### 👤 Step 1: Identity ({len(pending_ics)} left)",
+            f"**{name}** — _no IC uploaded yet_",
+            f"📨 _Mentioned in your message as_ **{role}**.",
+            f"⚠️ Their IC photo can be uploaded later — for now, "
+            f"confirm the relationship so the will can name them.",
+        ]
+        quick = [
+            {'label': f"✓ Yes — {role}", 'value': 'yes'},
+            {'label': '📎 Upload IC photo', 'value': 'upload-ic'},
+            {'label': '🗑 Delete', 'value': 'delete'},
+        ]
+        return '\n\n'.join(parts) + _qr_marker(quick)
+
+    return _identity_question_with_doc(pending_ics, recent_text, client_id)
+
+
+def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: str,
+                                  client_id: str = '') -> str:
+    """Original IC-doc walkthrough card. Signal sources:
+      (a) role_deducer (name verbatim in text)
+      (b) role_matcher outsider-elimination (§10x.21)
     """
     next_ic = pending_ics[0]
     ex = next_ic['extracted'] or {}

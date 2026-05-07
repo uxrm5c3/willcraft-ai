@@ -253,9 +253,126 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
         nm = (p['extracted'].get('full_name') or '').strip()
         p['_deduction_score'] = _score_ic_confidence(
             nm, recent_text, outsider_names)
+
+    # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 §10x.34 / §10hg — H3 IDENTITY PLACEHOLDERS                     ║
+    # ║  Family members named in AI Summary text but without an uploaded   ║
+    # ║  IC (e.g. "my wife (Lim Bee Yan)") MUST appear as pending          ║
+    # ║  identity cards. Same rule as §10x.12 for assets — text alone is   ║
+    # ║  sufficient. The user confirms with one click; Person row created  ║
+    # ║  with relationship + name (no document_id, no nric).               ║
+    # ╚════════════════════════════════════════════════════════════════════╝
+    from_text = _extract_family_name_role_pairs(recent_text)
+    for nm, role in from_text:
+        nm_upper = nm.strip().upper()
+        # Skip if already a Person (any case-form match)
+        if nm_upper in known_names:
+            continue
+        # Skip if already in pending (deduped name)
+        if nm_upper in seen_in_pending:
+            continue
+        seen_in_pending.add(nm_upper)
+        pending.append({
+            'document_id': None,    # no IC uploaded
+            '_h3_placeholder': True,
+            '_h3_role': role,
+            'extracted': {
+                'full_name': nm,
+                'nric_number': '',
+                '_h3_source': 'ai_summary',
+            },
+            'original_filename': '',
+            'created_at': '',
+            '_deduction_score': 5,  # name+role in message = HIGH per §10x.30
+        })
+
     # Stable sort: highest score first, then by upload time as tie-breaker
     pending.sort(key=lambda p: (-p['_deduction_score'], p.get('created_at', '')))
     return pending
+
+
+def _extract_family_name_role_pairs(text: str) -> List[tuple]:
+    """🔥 §10x.34 — Pull (full_name, family_role) pairs from message text.
+
+    Recognises patterns:
+        "my wife (Lim Bee Yan)" → (Lim Bee Yan, Wife)
+        "wife Lim Bee Yan"       → (Lim Bee Yan, Wife)
+        "Joshua Koid Teck Seng (son)" → (Joshua Koid Teck Seng, Son)
+        "(daughter) Esther Koid" → (Esther Koid, Daughter)
+
+    Returns list of (name, Title-Case role) tuples. Names are reasonable
+    multi-token capitalised strings (filtered against stopword/junk).
+    """
+    if not text:
+        return []
+    out: list = []
+    seen: set = set()
+    FAM_ROLES = ('wife', 'husband', 'spouse', 'son', 'daughter',
+                  'father', 'mother', 'brother', 'sister',
+                  'sister-in-law', 'brother-in-law',
+                  'mother-in-law', 'father-in-law',
+                  'son-in-law', 'daughter-in-law')
+    role_alt = '|'.join(re.escape(r) for r in FAM_ROLES)
+    name_pat = (r"[A-Z][A-Za-z\-\']{1,}"
+                r"(?:\s+[A-Z][A-Za-z\-\']{1,}){1,4}")
+
+    # Pattern 1: "my <role> (<NAME>)" / "<role> (<NAME>)"
+    for m in re.finditer(
+        rf'\bmy\s+(?P<role>{role_alt})\s*\(\s*(?P<name>{name_pat})\s*\)',
+        text, re.IGNORECASE):
+        nm  = m.group('name').strip()
+        role = m.group('role').strip().title()
+        if nm and (nm.upper() not in seen):
+            seen.add(nm.upper())
+            out.append((nm, role))
+
+    # Pattern 2: "<NAME> (<role>)" — name + role in parens
+    for m in re.finditer(
+        rf'\b(?P<name>{name_pat})\s*\(\s*(?P<role>{role_alt})\s*\)',
+        text, re.IGNORECASE):
+        nm  = m.group('name').strip()
+        role = m.group('role').strip().title()
+        if nm and (nm.upper() not in seen):
+            seen.add(nm.upper())
+            out.append((nm, role))
+
+    # Pattern 3: "<NAME>(<role>)" — no space (KOID style)
+    for m in re.finditer(
+        rf'\b(?P<name>{name_pat})\(\s*(?P<role>{role_alt})\s*\)',
+        text, re.IGNORECASE):
+        nm  = m.group('name').strip()
+        role = m.group('role').strip().title()
+        if nm and (nm.upper() not in seen):
+            seen.add(nm.upper())
+            out.append((nm, role))
+
+    # Pattern 4: "my <role> <NAME>" — bare name after role
+    for m in re.finditer(
+        rf'\bmy\s+(?P<role>{role_alt})\s+(?P<name>{name_pat})\b',
+        text, re.IGNORECASE):
+        nm  = m.group('name').strip()
+        role = m.group('role').strip().title()
+        if nm and (nm.upper() not in seen):
+            seen.add(nm.upper())
+            out.append((nm, role))
+
+    # Filter junk-name tokens (no stopwords, must be 2-5 capitalised parts)
+    JUNK = {'WITH', 'ALL', 'AND', 'OR', 'THE', 'TO', 'GO', 'OF',
+            'FROM', 'BY', 'IN', 'ON', 'FOR', 'BANK', 'INSURANCE',
+            'POLICY', 'ACCOUNT', 'NRIC', 'PROPERTY', 'SHARE',
+            'JOINT', 'CO', 'CONDOMINIUM', 'HOUSE', 'SHOP'}
+    cleaned: list = []
+    for nm, role in out:
+        toks = re.split(r'\s+', nm.strip())
+        if not (2 <= len(toks) <= 5):
+            continue
+        if any(t.upper() in JUNK for t in toks):
+            continue
+        # Each token must start with uppercase
+        if not all(re.match(r"^[A-Z][A-Za-z'\-]{1,}$", t) for t in toks):
+            continue
+        cleaned.append((nm, role))
+    return cleaned
 
 
 def _gather_message_text(client_id: str) -> str:
