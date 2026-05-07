@@ -172,6 +172,58 @@ def total_for_client(client_id: str) -> Decimal:
         return Decimal('0')
 
 
+# 🔥 §10x.59 — per-client cost ceiling. Defends against runaway loops
+# (e.g. watchdog re-firing or accidental retry storms) that would burn
+# the credit pool before any single client gets useful output.
+#
+# Default ceiling: $1.50/day per client (production target is $1/will
+# total but we leave 50% headroom for retries / edge cases).
+#
+# When the ceiling fires, callers should:
+#   • return None / empty for the requested AI call
+#   • surface a "manual review needed" status to the user
+#   • NEVER raise into Sentry-style noise — this is a defensive feature
+DEFAULT_CLIENT_DAILY_CEILING_USD = 1.50
+
+
+def cost_today_for_client(client_id: str) -> Decimal:
+    """Sum of cost_usd in the last 24 hours for this client."""
+    if not client_id:
+        return Decimal('0')
+    try:
+        from datetime import datetime, timedelta
+        from database import db, ApiCallLog
+        from sqlalchemy import func
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        total = (db.session.query(func.coalesce(func.sum(ApiCallLog.cost_usd), 0))
+                 .filter(ApiCallLog.client_id == client_id,
+                          ApiCallLog.created_at >= cutoff).scalar())
+        return Decimal(str(total or 0))
+    except Exception:
+        return Decimal('0')
+
+
+def is_over_ceiling(client_id: str,
+                    ceiling_usd: float = DEFAULT_CLIENT_DAILY_CEILING_USD
+                    ) -> bool:
+    """True if this client has spent ≥ ceiling_usd in the last 24 hours.
+
+    Caller pattern:
+        from ai.cost_tracker import is_over_ceiling
+        if is_over_ceiling(client_id):
+            # Skip expensive Claude call; fall back to manual flow
+            return None
+        result = expensive_claude_call(...)
+
+    NEVER raise. False on any error so a broken cost log doesn't break
+    the chat flow.
+    """
+    try:
+        return float(cost_today_for_client(client_id)) >= float(ceiling_usd)
+    except Exception:
+        return False
+
+
 def breakdown_for_will(will_id: str) -> list:
     """Per-call-site breakdown for a will. Returns [{call_site, calls,
     input_tokens, output_tokens, cost_usd}]."""

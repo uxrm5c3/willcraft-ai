@@ -957,23 +957,33 @@ _REOCR_TARGETS = {
 }
 
 
+_REOCR_CACHE: dict = {}   # 🔥 §10x.57 — per (image_path, field) cache
+
+
 def reocr_critical_field(image_path: str, field_name: str) -> str:
     """Re-run a tight vision extraction on a SINGLE critical field, reading
     each character one-by-one to catch OCR misreads.
 
     Returns the re-read value as a string, or '' on failure.
 
-    Use this when the primary extraction returned blank or a suspicious value
-    for a field that is blocking probate (title_number, lot_number, nric,
-    account_number).
+    🔥 §10x.57 — caps to ONE retry per (image, field). Today's runaway
+    burned $3.69 on 432 calls (NRIC + title + lot reocr) for ~30 docs.
+    Per-process cache prevents the watchdog from re-paying $0.009 each
+    time it polls. Even an empty result is cached to prevent retries.
     """
+    cache_key = (image_path, field_name)
+    if cache_key in _REOCR_CACHE:
+        return _REOCR_CACHE[cache_key]
+
     label, hint = _REOCR_TARGETS.get(field_name, (field_name, ''))
     if not label:
+        _REOCR_CACHE[cache_key] = ''
         return ''
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         content_block = _make_content_block(image_path)
     except Exception:
+        _REOCR_CACHE[cache_key] = ''
         return ''
     prompt = f"""Look very carefully at this document image.
 
@@ -1020,10 +1030,13 @@ Output ONLY the steps above. No other text."""
     # Parse "VALUE: <text>"
     m = re.search(r'VALUE\s*:\s*(.+)', raw, re.IGNORECASE)
     if not m:
+        _REOCR_CACHE[cache_key] = ''
         return ''
     val = m.group(1).strip()
     if val.lower() in ('(unreadable)', 'unreadable', 'n/a', 'none', ''):
+        _REOCR_CACHE[cache_key] = ''
         return ''
+    _REOCR_CACHE[cache_key] = val
     return val
 
 

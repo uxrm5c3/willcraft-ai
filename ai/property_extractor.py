@@ -1,8 +1,17 @@
 """Property document extraction using Claude Vision API."""
 import base64
 import json
+import os
 import anthropic
 from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_FAST
+
+
+# 🔥 §10x.56 — per-process cache so the watchdog re-firing doesn't pay
+# $0.011 × 30× per doc. Keyed by file_path; shared across callers in the
+# same process. DB-level idempotency lives at the callsite (Document.
+# extracted_data['_property_extracted_done']) — this in-memory cache
+# only protects against same-process duplicate calls.
+_EXTRACT_CACHE: dict = {}
 
 
 def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
@@ -15,6 +24,19 @@ def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
     Returns dict with keys: property_address, title_type, lot_number,
     title_number, bandar_pekan, mukim, daerah, negeri, property_description
     """
+    # 🔥 §10x.56 — per-process cache. The same file_path getting extracted
+    # 30× during a single chat session burned $0.30 alone for ONE doc.
+    # Cache key includes doc_type so re-extraction with a different doc_type
+    # hint still works. Cache lives until process restart.
+    cache_key = (file_path, doc_type)
+    if cache_key in _EXTRACT_CACHE:
+        cached = _EXTRACT_CACHE[cache_key]
+        cached['_from_cache'] = True
+        return cached
+
+    if not file_path or not os.path.isfile(file_path):
+        return {}
+
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     with open(file_path, 'rb') as f:
@@ -188,6 +210,12 @@ Return ONLY the JSON, no explanation."""
                 result['address_note']      = _vr.get('note', '')
             except Exception:
                 pass
+        # 🔥 §10x.56 — cache the result for this (file_path, doc_type) so
+        # the same upload doesn't get re-extracted by the watchdog.
+        _EXTRACT_CACHE[cache_key] = result
         return result
     except json.JSONDecodeError:
-        return {"error": "Could not parse extraction results", "raw": response_text}
+        err = {"error": "Could not parse extraction results", "raw": response_text}
+        # Cache the failure too so we don't retry forever
+        _EXTRACT_CACHE[cache_key] = err
+        return err

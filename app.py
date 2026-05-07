@@ -9844,6 +9844,23 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                 with app_obj.app_context(), _tc(
                     will_id=doc.will_id if hasattr(doc, 'will_id') else None,
                     client_id=doc.client_id):
+                    # 🔥 §10x.59 — cost ceiling guard. If this client has
+                    # already burned $1.50 in the last 24h, skip vision/AI
+                    # and fall back to a sentinel result. The chat will
+                    # surface "manual review needed" and stop further
+                    # spend until the user (or admin) clears the cap.
+                    try:
+                        from ai.cost_tracker import is_over_ceiling
+                        if is_over_ceiling(doc.client_id):
+                            return (
+                                {'kind': 'other', 'confidence': 'low',
+                                 'reason': 'cost ceiling hit — manual review',
+                                 'manual_review': True,
+                                 '_cost_capped': True},
+                                None,
+                            )
+                    except Exception:
+                        pass
                     try:
                         classification = classify_file(
                             abs_path, group_context=group_ctx,
@@ -9889,6 +9906,17 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
             } if client else None
             _ai_results = {}   # doc.id → (classification, extracted)
             _vision_jobs = []
+            # 🔥 §10x.58 — watchdog throttle. Docs that already have a real
+            # category (nric/property_title/etc) OR a terminal needs_review
+            # MUST NOT be re-classified. Re-firing every chat poll burned
+            # $10 today. Categorization is monotonic per §10x.2.
+            _SKIP_CATEGORIES = {
+                'nric', 'property_title', 'property_spa', 'property_tax',
+                'property_transfer', 'loan_agreement', 'bank_statement',
+                'bank_letter', 'utility_bill', 'insurance', 'epf_kwsp',
+                'vehicle', 'will', 'death_certificate', 'unrelated',
+                'needs_review', 'deleted', 'duplicate', 'voice',
+            }
             for _d in docs:
                 _ap = os.path.join(UPLOAD_DIR, _d.file_path)
                 if not os.path.isfile(_ap):
@@ -9896,6 +9924,20 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                 _ct = (_d.file_type or '').lower()
                 if is_audio(_ct) or is_audio(_d.original_filename or ''):
                     continue   # voice handled in main loop
+                # 🔥 §10x.58 — skip already-classified docs
+                if (_d.category or '') in _SKIP_CATEGORIES:
+                    # Reuse the already-persisted classification so the
+                    # downstream loop has data; no API call needed.
+                    try:
+                        _ex = json.loads(_d.extracted_data or '{}') or {}
+                    except Exception:
+                        _ex = {}
+                    _ai_results[_d.id] = (
+                        {'kind': _d.category, 'confidence': 'high',
+                         'reason': 'cached from prior pass', '_skipped_cost': True},
+                        _ex,
+                    )
+                    continue
                 _gc = batch_group_map.get(id(_d))
                 _vision_jobs.append((_d, _ap, _gc))
             if _vision_jobs:
