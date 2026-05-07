@@ -359,19 +359,36 @@
       if (_pendingCount > 0) {
         const _total = m.attachments.length;
         const _done = _total - _pendingCount;
-        // Roughly 4 s per image for vision classify + extract
-        const _eta = Math.max(10, Math.round(_pendingCount * 4));
-        const _etaLabel = _eta >= 60
+        // Empirical: ~25 s per image when classify+extract both fire on
+        // a busy backend (Vision Sonnet + Tesseract). Sequential — no
+        // parallelism yet. Bumped from 4 s after observing real runs.
+        const _perImageSec = 25;
+        const _eta = Math.max(15, Math.round(_pendingCount * _perImageSec));
+        const _etaLabel = _eta >= 120
           ? `~${Math.ceil(_eta / 60)} min`
-          : `~${_eta}s`;
+          : _eta >= 60
+            ? `~${Math.floor(_eta / 60)} min ${_eta % 60}s`
+            : `~${_eta}s`;
+        // Show progress bar so user has visual proof of forward motion
+        // even when an individual image stalls on a slow vision call.
+        const _pct = Math.round((_done / _total) * 100);
         html += `
-          <div class="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
-            <svg class="animate-spin h-4 w-4 text-amber-600 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-            </svg>
-            <span><strong>Analysing exhibits — ${_done} of ${_total} done.</strong>
-            Estimated wait: <strong>${_etaLabel}</strong>. This view auto-refreshes every 5 s — please don't close the tab.</span>
+          <div class="mt-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+            <div class="flex items-center gap-2">
+              <svg class="animate-spin h-4 w-4 text-amber-600 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+              <span><strong>Analysing exhibits — ${_done} of ${_total} done</strong> (${_pct}%).
+              Estimated wait: <strong>${_etaLabel}</strong>.</span>
+            </div>
+            <div class="mt-1.5 w-full h-1.5 bg-amber-100 rounded-full overflow-hidden">
+              <div class="h-full bg-amber-500 transition-all duration-500" style="width: ${_pct}%"></div>
+            </div>
+            <div class="mt-1 text-[10px] opacity-75">
+              Vision OCR is the slow step. Auto-refreshes every 5 s — keep this tab open.
+              Estimate is a rough guide; real time depends on image clarity.
+            </div>
           </div>`;
       }
       html += `<div class="mt-2 grid ${isMany ? 'grid-cols-4 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-4'} gap-1.5">`;

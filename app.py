@@ -8385,6 +8385,90 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                 except Exception:
                     pass   # batch analysis failed — fall through to individual classify
 
+            # ── Pre-compute slow vision calls in parallel ──────────────────
+            # Vision Sonnet extract takes ~20-30 s per image. Sequential
+            # processing of 30 images → ~10 minutes. Run them concurrently
+            # in a ThreadPoolExecutor. The classify_file / extract_*_data
+            # functions are pure API calls (no DB writes) so thread-safe.
+            # We then walk the results sequentially in the main thread to
+            # apply DB updates and commit.
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _classify_one(doc, abs_path, group_ctx, testator_profile):
+                """Worker: returns (classification_dict, extracted_dict).
+                Pure: no DB access, no shared mutable state."""
+                try:
+                    classification = classify_file(
+                        abs_path, group_context=group_ctx,
+                        testator_profile=testator_profile,
+                    )
+                except Exception as e:
+                    classification = {'kind': 'other', 'confidence': 'low',
+                                       'reason': f'classify error: {e}'}
+                kind = classification.get('kind', 'other')
+                # Trust batch verdict if individual said 'other'
+                if group_ctx and kind == 'other':
+                    bk = group_ctx.get('asset_kind', '')
+                    if bk and bk != 'other':
+                        kind = bk
+                        classification['kind'] = kind
+                        classification['confidence'] = 'medium'
+                extracted = None
+                try:
+                    if kind == 'nric':
+                        extracted = extract_nric_data(abs_path)
+                    elif kind in ('property_title', 'property_spa', 'property_tax',
+                                   'property_transfer'):
+                        from ai.property_extractor import extract_property_data
+                        extracted = extract_property_data(abs_path, doc_type='general')
+                    elif kind in ('utility_bill', 'bank_letter'):
+                        extracted = {}
+                    elif kind == 'bank_statement':
+                        from ai.ocr import extract_asset_document
+                        extracted = extract_asset_document(abs_path, asset_type='bank')
+                    elif kind == 'vehicle':
+                        from ai.ocr import extract_asset_document
+                        extracted = extract_asset_document(abs_path, asset_type='vehicle')
+                    elif kind in ('insurance', 'epf_kwsp'):
+                        from ai.ocr import extract_asset_document
+                        extracted = extract_asset_document(abs_path, asset_type='other')
+                except Exception as e:
+                    extracted = {'error': str(e)}
+                return classification, extracted
+
+            # Dispatch parallel work for non-voice docs.
+            _testator_profile = {
+                'name': (client.full_name or '').strip(),
+                'ic':   (client.nric_passport or '').strip(),
+            } if client else None
+            _ai_results = {}   # doc.id → (classification, extracted)
+            _vision_jobs = []
+            for _d in docs:
+                _ap = os.path.join(UPLOAD_DIR, _d.file_path)
+                if not os.path.isfile(_ap):
+                    continue
+                _ct = (_d.file_type or '').lower()
+                if is_audio(_ct) or is_audio(_d.original_filename or ''):
+                    continue   # voice handled in main loop
+                _gc = batch_group_map.get(id(_d))
+                _vision_jobs.append((_d, _ap, _gc))
+            if _vision_jobs:
+                with ThreadPoolExecutor(max_workers=5) as _pool:
+                    _futures = {
+                        _pool.submit(_classify_one, _d, _ap, _gc, _testator_profile): _d
+                        for (_d, _ap, _gc) in _vision_jobs
+                    }
+                    for _fut in _futures:
+                        _d = _futures[_fut]
+                        try:
+                            _ai_results[_d.id] = _fut.result(timeout=180)
+                        except Exception as _e:
+                            _ai_results[_d.id] = (
+                                {'kind': 'other', 'reason': f'timeout/err: {_e}',
+                                 'confidence': 'low'},
+                                {'error': str(_e)}
+                            )
+
             for doc in docs:
                 abs_path = os.path.join(UPLOAD_DIR, doc.file_path)
                 if not os.path.isfile(abs_path):
@@ -8415,55 +8499,17 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                     db.session.commit()
                     continue
 
-                # STEP 2: Classify this image individually, using the batch
-                # group verdict as strong context (if available).
+                # STEP 2: Use the parallel result computed above.
+                # All vision Sonnet / Haiku calls already finished; this loop
+                # only does DB updates (sequential to avoid session conflicts).
                 group_ctx = batch_group_map.get(id(doc))
-                testator_profile = {
-                    'name': (client.full_name or '').strip(),
-                    'ic':   (client.nric_passport or '').strip(),
-                } if client else None
-                classification = classify_file(
-                    abs_path,
-                    group_context=group_ctx,
-                    testator_profile=testator_profile,
-                )
-
-                # If batch analysis says this image is property but the
-                # individual classifier said 'other', trust the batch verdict —
-                # it had all images plus the WhatsApp text to reason from.
+                if doc.id in _ai_results:
+                    classification, extracted = _ai_results[doc.id]
+                else:
+                    classification = {'kind': 'other', 'confidence': 'low',
+                                       'reason': 'no result'}
+                    extracted = None
                 kind = classification.get('kind', 'other')
-                if group_ctx and kind == 'other':
-                    batch_kind = group_ctx.get('asset_kind', '')
-                    if batch_kind and batch_kind != 'other':
-                        kind = batch_kind
-                        classification['kind'] = kind
-                        classification['confidence'] = 'medium'
-                        classification['reason'] = (
-                            f'Reclassified from batch group analysis '
-                            f'({group_ctx.get("summary", "")})'
-                        )
-
-                extracted = None
-                try:
-                    if kind == 'nric':
-                        extracted = extract_nric_data(abs_path)
-                    elif kind in ('property_title', 'property_spa', 'property_tax',
-                                   'property_transfer'):
-                        from ai.property_extractor import extract_property_data
-                        extracted = extract_property_data(abs_path, doc_type='general')
-                    elif kind in ('utility_bill', 'bank_letter'):
-                        extracted = {}
-                    elif kind == 'bank_statement':
-                        from ai.ocr import extract_asset_document
-                        extracted = extract_asset_document(abs_path, asset_type='bank')
-                    elif kind == 'vehicle':
-                        from ai.ocr import extract_asset_document
-                        extracted = extract_asset_document(abs_path, asset_type='vehicle')
-                    elif kind in ('insurance', 'epf_kwsp'):
-                        from ai.ocr import extract_asset_document
-                        extracted = extract_asset_document(abs_path, asset_type='other')
-                except Exception as e:
-                    extracted = {'error': str(e)}
                 doc.category = kind if kind != 'other' else 'chat_inbox'
                 doc.description = (classification.get('reason') or '')[:500] or None
                 purpose = (classification.get('purpose') or '').strip()
