@@ -114,6 +114,11 @@ def plan_turn(
             reply_parts.append(
                 "✅ Kept all supporting docs as-is. Back to the property:"
             )
+        elif just_kind == 'testator_confirmed':
+            reply_parts.append(
+                f"✅ Testator confirmed: **{just_assigned.get('name','')}**.\n\n"
+                f"Now moving to **Step 3: Executor**."
+            )
         elif just_kind == 'identity_skipped':
             # 🔥 §10x.31 — Skip is a no-op. Same IC reappears below.
             # Phrase the ack so the user understands they need to either
@@ -181,9 +186,31 @@ def plan_turn(
         )
 
     # ── 3. STEP 2: confirm Testator details ─────────────────────────────
-    if s1.get('full_name') and not _is_confirmed(current_will_data, 'testator'):
-        reply_parts.append(_step2_question(s1))
-        return _wrap(reply_parts, questions, patch, advice)
+    # 🔥 §7 — must run BEFORE Step 6 (Specific Gifts) walkthrough.
+    # Source the testator details from EITHER:
+    #   (a) Will.step1_data.full_name (already populated by an earlier
+    #       wizard write), OR
+    #   (b) The Person row with relationship='Testator' (created during
+    #       Step 1 IC walk)
+    # Without (b) the chat skipped Step 2 whenever step1_data was empty
+    # — even though a Testator Person clearly existed — and jumped
+    # straight to Step 6 asset walkthrough.
+    if not _is_confirmed(current_will_data, 'testator'):
+        testator_info = dict(s1) if s1.get('full_name') else {}
+        if not testator_info.get('full_name'):
+            for ident in (current_will_data.get('identities') or []):
+                if (ident.get('relationship') or '').lower() == 'testator':
+                    testator_info = {
+                        'full_name': ident.get('full_name', ''),
+                        'nric_passport': ident.get('nric_passport', ''),
+                        'date_of_birth': ident.get('date_of_birth', ''),
+                        'residential_address': ident.get('address', ''),
+                        'nationality': ident.get('nationality', 'Malaysian'),
+                    }
+                    break
+        if testator_info.get('full_name'):
+            reply_parts.append(_step2_question(testator_info))
+            return _wrap(reply_parts, questions, patch, advice)
 
     # ── 3.5 ASSET INVENTORY — walk one cleaned-up property at a time ───
     # Job-to-be-done: the WILL WRITER (chat user) gets messy image+message

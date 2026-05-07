@@ -3907,10 +3907,16 @@ def _api_chat_message_impl(client_id):
     just_trust = None
     just_others = None
     just_residuary_skip = None
+    just_testator = None
     if not just_assigned and not just_deleted:
         from services.identity_walker import get_pending_ic_documents as _gpid
         if not _gpid(client_id):  # Step 1 done
-            just_executor = _try_save_executor(client_id, user_text)
+            # 🔥 §7 — Step 2 (Testator confirm) runs BEFORE Step 3 (Executor)
+            # and BEFORE Step 6 (Specific Gifts). Catch user's confirm
+            # click and save Will.step1_data with testator info from Person.
+            just_testator = _try_confirm_testator(client_id, user_text)
+            if not just_testator:
+                just_executor = _try_save_executor(client_id, user_text)
             if not just_executor:
                 just_guardian = _try_handle_guardian_action(client_id, user_text)
                 if not just_guardian:
@@ -3964,7 +3970,7 @@ def _api_chat_message_impl(client_id):
                    .first())
     will_snapshot = _will_data_snapshot(active_will)
     # Treat any save as "just_assigned" so the planner acknowledges + advances
-    just = (just_assigned or just_executor or just_benef
+    just = (just_assigned or just_testator or just_executor or just_benef
             or just_gift_deleted or just_gift or just_assets_gate
             or just_inventory or just_guardian or just_trust
             or just_others or just_residuary_skip)
@@ -8798,6 +8804,66 @@ def _try_save_bank_gift(client_id: str, user_text: str):
         'name': benef_desc,
         'role': f'{saved} bank account{"s" if saved != 1 else ""} → ' + ', '.join(bank_descriptors),
         'kind': 'gift_bank',
+    }
+
+
+def _try_confirm_testator(client_id: str, user_text: str):
+    """🔥 §7 — Step 2 confirm handler.
+
+    The chat planner shows a 'Confirm Testator' card after Step 1 is done.
+    When the user clicks ✓ Confirm, save the Testator Person row's data
+    into Will.step1_data so `_is_confirmed('testator')` returns True and
+    the planner advances to Step 3 (Executor) per §6 wizard order.
+
+    Returns {'name', 'role', 'kind': 'testator_confirmed'} or None.
+    """
+    if not user_text:
+        return None
+    text_lower = ' ' + user_text.lower().strip() + ' '
+    if not any((' ' + c + ' ') in text_lower for c in _CONFIRM_TOKENS):
+        return None
+    # Find active draft Will
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        s1 = json.loads(will.step1_data or '{}') or {}
+    except (json.JSONDecodeError, TypeError):
+        s1 = {}
+    # Already confirmed? Skip — let the next handler claim the click.
+    if s1.get('full_name') and s1.get('person_id'):
+        return None
+    # Pull Testator Person row
+    testator = Person.query.filter_by(client_id=client_id, relationship='Testator').first()
+    if not testator:
+        return None
+    s1.update({
+        'full_name':           testator.full_name or '',
+        'nric_passport':       testator.nric_passport or '',
+        'date_of_birth':       testator.date_of_birth or '',
+        'residential_address': testator.address or '',
+        'nationality':         testator.nationality or 'Malaysian',
+        'gender':              testator.gender or '',
+        'email':               testator.email or '',
+        'phone':               testator.phone or '',
+        'person_id':           testator.id,
+    })
+    will.step1_data = json.dumps(s1)
+    # Sync Client header
+    client = db.session.get(Client, client_id)
+    if client:
+        if testator.full_name:
+            client.full_name = testator.full_name
+        if testator.nric_passport:
+            client.nric_passport = testator.nric_passport
+        will.title = f"Will of {testator.full_name or 'Unknown'}"
+    db.session.commit()
+    return {
+        'name': testator.full_name,
+        'role': 'testator',
+        'kind': 'testator_confirmed',
     }
 
 
