@@ -864,17 +864,21 @@ def _score_pair(ai: 'AssetItem',
                         anchor_len = len(tok)
                         break
         if anchor_idx >= 0:
-            # Forward window ends at next "Unit", "Our house", "Property N:",
-            # or postcode boundary, max 250 chars
-            window_start = anchor_idx + anchor_len
-            window_end = min(len(rt_lc), window_start + 250)
-            # Find next property boundary marker
+            # Window includes the anchor (so unit numbers like 'b-05-11'
+            # which ARE the anchor still count) and extends forward 250
+            # chars, ending at the next property boundary marker.
+            window_start = anchor_idx
+            window_end = min(len(rt_lc), window_start + anchor_len + 250)
+            # Find next property boundary marker — but only AFTER the
+            # anchor probe ends (we don't want to truncate the anchor
+            # itself out of the window).
+            search_from = anchor_idx + anchor_len
             for m in re.finditer(
-                r'\b(?:unit\s+[a-z\d]|our\s+(?:house|shop|condo)|property\s+\d+\s*[:\-]|'
-                r'apartment\s+[a-z\d])',
-                rt_lc[window_start:window_end]
+                r'\b(?:unit\s+[a-z\d]|unit,\s*[a-z\d]|our\s+(?:house|shop|condo)|'
+                r'property\s+\d+\s*[:\-]|apartment\s+[a-z\d])',
+                rt_lc[search_from:window_end]
             ):
-                window_end = window_start + m.start()
+                window_end = search_from + m.start()
                 break
             window = rt_lc[window_start:window_end]
             for frag in re.findall(r'[a-z][a-z0-9\s/\-]{5,40}', g_blob.lower()):
