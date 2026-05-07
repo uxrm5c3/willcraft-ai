@@ -619,7 +619,15 @@ def _vision_classify_fallback(file_path: str, group_context: dict = None,
         except Exception:
             pass
         text = msg.content[0].text if msg.content else ''
-        parsed = _extract_json(text) or {}
+        # Don't use _extract_json — it filters for IC-specific keys
+        # (full_name/nric_number/doc_type) and would drop our {"kind":...}
+        # output. Parse directly.
+        import re as _re
+        m = _re.search(r'\{[^{}]*\}', text, _re.DOTALL)
+        try:
+            parsed = json.loads(m.group(0)) if m else {}
+        except Exception:
+            parsed = {}
         kind = (parsed.get('kind') or 'other').strip().lower()
         if kind not in KINDS:
             kind = 'other'
