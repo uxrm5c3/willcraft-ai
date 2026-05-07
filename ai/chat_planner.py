@@ -1755,11 +1755,22 @@ def _ai_props_already_handled(client_id: str,
 def _next_step_cta(will_data: dict) -> dict:
     """Return {'label': str, 'value': str} for the ▶️ next-step button.
 
-    Mirrors the step-gate logic in plan_turn so the button label tells the
-    user exactly what happens when they tap it.
+    🔥 §7 — STEP 1 IDENTITY ALWAYS COMES FIRST.
+    Per CLAUDE.md §7 the chat-flow order is:
+      Step 1: Receive WhatsApp
+      Step 2: AI Summary
+      Step 3: Decipher images
+      Step 4: Identity match  (THIS is where the user-facing walkthrough begins)
+      → then asset walkthrough → executor → beneficiaries → gifts → generate.
+
+    The intake-card CTA after AI Summary MUST therefore be "verify
+    identities" whenever ANY IC document is still unmatched. Earlier
+    we checked `identities` from will_data (which is populated after
+    Step 4, not before), so the CTA jumped straight to "describe your
+    assets" before Step 1 was even prompted.
     """
     if not will_data:
-        return {'label': '▶️ Start — verify testator identity', 'value': 'inbox start'}
+        return {'label': '▶️ Start — verify identities', 'value': 'inbox start'}
 
     s1         = will_data.get('step1') or {}
     s2         = will_data.get('step2') or {}
@@ -1767,13 +1778,28 @@ def _next_step_cta(will_data: dict) -> dict:
     completed  = will_data.get('completed_steps') or []
     pg         = will_data.get('pending_gifts') or {}
     identities = will_data.get('identities') or []
+    client_id  = will_data.get('client_id') or ''
 
     pending_ics = [i for i in identities
                    if i.get('kind') == 'nric' and not i.get('confirmed')]
 
+    # 🔒 Also check the REAL pending IC documents (Document.category='nric'
+    # not yet linked to a Person). The will_data.identities list is only
+    # populated AFTER the user confirms ICs in Step 1. Before that, it's
+    # empty — but actual pending IC docs still exist in the Document
+    # table. Without this check the CTA wrongly skips Step 1.
+    if not pending_ics and client_id:
+        try:
+            from services.identity_walker import get_pending_ic_documents
+            doc_pending = get_pending_ic_documents(client_id) or []
+            if doc_pending:
+                pending_ics = doc_pending   # treat as Step 1 still pending
+        except Exception:
+            pass
+
     # Step 1: identity documents to match
     if pending_ics:
-        return {'label': '▶️ Match identity documents', 'value': 'inbox start'}
+        return {'label': '▶️ Start — verify identities', 'value': 'inbox start'}
 
     # Step 2: testator details not yet confirmed
     if s1.get('full_name') and not _is_confirmed(will_data, 'testator'):
