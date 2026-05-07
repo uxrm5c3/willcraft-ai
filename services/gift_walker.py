@@ -1232,31 +1232,15 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         ai_tokens.update(_addr_tokens_local(ap.get('address', '')))
         ai_tokens.update(_addr_tokens_local(ap.get('name', '')))
 
-    # Filter image-bound property groups to those with at least one
-    # signal of AI-Summary linkage. Preserves §10h "match TO summary".
-    if ai_props:   # only filter when we HAVE a canonical list
-        kept = []
-        for grp in out['property']:
-            ex = (grp.get('extracted') or {}) if grp else {}
-            ld = _digits_only(_clean_id_value(ex.get('lot_number') or ''))
-            td = _digits_only(_clean_id_value(ex.get('title_number') or ''))
-            toks = _addr_tokens_local(ex.get('property_address') or '')
-            has_link = (
-                (ld and ld in ai_lot_digits) or
-                (td and td in ai_title_digits) or
-                bool(toks & ai_tokens)
-            )
-            # Strata-aware: an image with lot in ai_lot_digits links even
-            # if its OCR address is wrong. Lot+title strong signal beats
-            # weak token mismatch.
-            if has_link:
-                kept.append(grp)
-            else:
-                # No AI-Summary connection → residual (§10d unverified)
-                # Drop from pending. The chat may surface separately as
-                # §10d unverified card if it's an isolated single image.
-                pass
-        out['property'] = kept
+    # 🔥 §10h reconsidered (May 2026): NEVER drop image-bound property
+    # groups. AI Summary addresses ("Marina Cove") often DON'T token-
+    # overlap with OCR'd title-doc addresses ("Lot 207922, Mukim
+    # Plentong"), so a strict token-filter silently lost real titles.
+    # Instead we KEEP all image groups, and let the H3 synthesis below
+    # dedup AI-Summary entries that are already covered by an image.
+    # User instruction: "MESSAGE > IMAGE — but image is verification,
+    # never silently drop a real upload."
+    pass  # no filter — image groups preserved
 
     # ── Properties: add H3 for AI-Summary properties not already covered
     # 🔥 §10b — match by lot, title, normalised address, OR distinctive
@@ -1286,15 +1270,18 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             out_t.add(t)
         return out_t
 
+    covered_mukims: set = set()
     for grp in out['property']:
         ex = (grp.get('extracted') or {}) if grp else {}
         ld = _digits_only(_clean_id_value(ex.get('lot_number') or ''))
         td = _digits_only(_clean_id_value(ex.get('title_number') or ''))
         addr_raw = ex.get('property_address') or ''
         an = _norm_addr(addr_raw)[:60]
+        mk = (ex.get('mukim') or '').strip().upper()
         if ld:  covered_lot_digits.add(ld)
         if td:  covered_title_digits.add(td)
         if an:  covered_addr_norms.add(an)
+        if mk:  covered_mukims.add(mk)
         covered_tokens.update(_addr_tokens(addr_raw))
     # Also mark properties already saved to step5_data as covered
     for sig in referenced_lot_addr_sigs:
