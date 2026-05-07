@@ -1096,27 +1096,36 @@ def _ai_props_already_handled(client_id: str,
     if not ai_props:
         return out
     s5 = (will_data or {}).get('step5') or []
-    # Build set of handled signatures from accepted gifts
+    # ── Pass 1: explicit _ai_summary_idx from H3 placeholder saves ──────
+    for g in s5:
+        if not isinstance(g, dict):
+            continue
+        if g.get('_ai_summary_skipped') or g.get('_h3_placeholder') or (
+            g.get('kind') == 'property' or g.get('asset_type') == 'property'
+        ):
+            sig = g.get('_ai_summary_idx')
+            if isinstance(sig, int) and 0 <= sig < len(out):
+                out[sig] = True
+
+    # ── Pass 2: signature match (lot/title/address) ─────────────────────
     handled_sigs = set()
     for g in s5:
         if not isinstance(g, dict):
             continue
         if g.get('kind') == 'property' or g.get('asset_type') == 'property':
             pi = g.get('property_info') or g.get('property_details') or {}
-            sig_lot = _digits(pi.get('lot_number') or '')
-            sig_title = _digits(pi.get('title_number') or '')
+            sig_lot = _digits(pi.get('lot_number') or g.get('lot_number') or '')
+            sig_title = _digits(pi.get('title_number') or g.get('title_number') or '')
             sig_addr = re.sub(r'[^a-z0-9]+', '',
                               (pi.get('property_address') or
+                               g.get('property_address') or
                                g.get('address') or '').lower())[:40]
-            handled_sigs.add(('lot', sig_lot) if sig_lot else None)
-            handled_sigs.add(('title', sig_title) if sig_title else None)
-            handled_sigs.add(('addr', sig_addr) if sig_addr else None)
-        # gift skipped flag
-        if g.get('_ai_summary_skipped'):
-            sig = g.get('_ai_summary_idx')
-            if isinstance(sig, int) and 0 <= sig < len(out):
-                out[sig] = True
-    handled_sigs.discard(None)
+            if sig_lot:
+                handled_sigs.add(('lot', sig_lot))
+            if sig_title:
+                handled_sigs.add(('title', sig_title))
+            if sig_addr:
+                handled_sigs.add(('addr', sig_addr))
 
     for i, p in enumerate(ai_props):
         if out[i]:
@@ -1130,6 +1139,47 @@ def _ai_props_already_handled(client_id: str,
             out[i] = True
         elif paddr and ('addr', paddr) in handled_sigs:
             out[i] = True
+
+    # ── Pass 3: token / classify match against saved gifts ──────────────
+    # Reconstruct synthetic image_groups from saved property gifts and run
+    # _classify_property_match against each unhandled AI prop. This catches
+    # cases where the saved gift's lot/title/address doesn't strictly equal
+    # the AI prop's, but the distinctive tokens match (e.g. saved address is
+    # the full street form, AI prop is the building/unit form).
+    synth_groups = []
+    for g in s5:
+        if not isinstance(g, dict):
+            continue
+        if not (g.get('kind') == 'property' or g.get('asset_type') == 'property'):
+            continue
+        pi = g.get('property_info') or g.get('property_details') or {}
+        synth_groups.append({
+            'document_id': g.get('document_id') or f'_step5_synth_{id(g)}',
+            'extracted': {
+                'lot_number':       pi.get('lot_number') or g.get('lot_number') or '',
+                'title_number':     pi.get('title_number') or g.get('title_number') or '',
+                'property_address': pi.get('property_address') or g.get('property_address') or g.get('address') or '',
+                'description':      pi.get('description') or g.get('description') or '',
+                'property_description': pi.get('property_description') or '',
+                'building_name':    pi.get('building_name') or '',
+                'township':         pi.get('township') or '',
+                'mukim':            pi.get('mukim') or '',
+                'daerah':           pi.get('daerah') or '',
+                'negeri':           pi.get('negeri') or '',
+            },
+        })
+    claimed = set()
+    for i, p in enumerate(ai_props):
+        if out[i]:
+            continue
+        avail = [g for g in synth_groups if g['document_id'] not in claimed]
+        try:
+            cls = _classify_property_match(p, avail)
+        except Exception:
+            cls = {'variant': 'h3', 'group': None}
+        if cls.get('variant') in ('h1', 'h2') and cls.get('group'):
+            out[i] = True
+            claimed.add(cls['group']['document_id'])
     return out
 
 
