@@ -1233,6 +1233,15 @@ def _classify_property_match(ai_prop: Dict[str, Any],
     ai_daerah = (ai_prop.get('daerah') or '').strip().lower()
     ai_addr_lc = (ai_prop.get('address') or '').strip().lower()
 
+    # 🔥 BURN-IN §10x.46 R6 — H3 synthetic placeholders MUST be skipped here.
+    # The gift_walker synthesizes one h3_placeholder pending entry per
+    # AI-Summary property when there is no matching image. Those entries
+    # have property_address == ai_addr (so token overlap would falsely
+    # fire as h1). The classifier is for REAL image evidence — placeholders
+    # don't qualify.
+    image_groups = [g for g in (image_groups or [])
+                    if not g.get('_h3_placeholder')]
+
     # ── H1: direct lot/title match ─────────────────────────────────────
     for g in image_groups:
         ex = g.get('extracted') or {}
