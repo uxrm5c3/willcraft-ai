@@ -6777,13 +6777,65 @@ def _try_handle_others_action(client_id: str, user_text: str):
 
 def _try_handle_residuary_skip(client_id: str, user_text: str):
     """If user taps 'residuary skip', mark residuary_confirmed with no
-    beneficiaries so the planner advances past step 7."""
+    beneficiaries so the planner advances past step 7.
+
+    🔥 BURN-IN (CLAUDE.md §10hg + sleep directive #5):
+    BLOCK residuary advancement while ANY specific gift in step5_data
+    is incomplete (missing address, missing Layer 1 confirmation, or
+    missing beneficiaries). Both layers must be done for every gift
+    BEFORE the user can move on to residuary."""
     if not user_text:
         return None
     t = user_text.strip().lower()
     if t != 'residuary skip':
         return None
     will = _get_or_create_will(client_id)
+
+    # ── BURN-IN GATE: every specific gift must have both layers done ──
+    try:
+        s5 = json.loads(will.step5_data) if will.step5_data else []
+        if not isinstance(s5, list):
+            s5 = (s5.get('gifts') or []) if isinstance(s5, dict) else []
+    except Exception:
+        s5 = []
+    incomplete = []
+    for gi, g in enumerate(s5):
+        if not isinstance(g, dict):
+            continue
+        # Property/bank/vehicle gifts must have beneficiaries (Layer 2).
+        # Skipped entries (kind=skip, _ai_summary_skipped, or
+        # explicit skipped=True) are exempt — user said no.
+        if (g.get('kind') == 'skip'
+                or g.get('skipped')
+                or g.get('_ai_summary_skipped')):
+            continue
+        bens = g.get('beneficiaries') or []
+        addr = ((g.get('property_info') or {}).get('property_address')
+                or g.get('property_address') or '').strip()
+        is_property = (g.get('kind') == 'property'
+                       or g.get('asset_type') == 'property'
+                       or addr)
+        if is_property:
+            # Layer 1 check
+            if g.get('_h3_placeholder') and not g.get('_layer1_confirmed'):
+                incomplete.append((gi, 'layer1_not_confirmed'))
+                continue
+            if not addr:
+                incomplete.append((gi, 'missing_address'))
+                continue
+            if not bens:
+                incomplete.append((gi, 'missing_beneficiaries'))
+                continue
+        elif g.get('kind') == 'bank' or g.get('asset_type') == 'bank' or g.get('bank_name'):
+            if not bens:
+                incomplete.append((gi, 'bank_missing_beneficiaries'))
+                continue
+    if incomplete:
+        return {'name': 'residuary', 'role': 'blocked',
+                'kind': 'residuary_blocked',
+                'reason': f'{len(incomplete)} specific gifts incomplete: '
+                          + ', '.join(f'gift[{i}]={r}' for i, r in incomplete[:5])}
+
     # Write an empty step6 so the planner sees it as 'done'
     try:
         s6 = json.loads(will.step6_data or '{}') if will.step6_data else {}
