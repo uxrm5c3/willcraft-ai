@@ -540,7 +540,27 @@ def _inject_missing_discharge(will_text: str, will_data) -> str:
 
 
 def draft_will(will_data) -> str:
-    """Use Claude API to draft a complete will document."""
+    """🔒 LOCKED FORMAT — deterministic Phek-template fill.
+
+    Per CLAUDE.md §10x.24/§10x.25 + user instruction (May 2026):
+        "use the existing will as template. only fill in the blanks.
+         NO CREATIVITY"
+
+    Calls documents/template_filler.fill_will() which assembles the will
+    from approved firm clause templates with pure string substitution.
+    No Claude API call → no format drift → no hallucinations.
+
+    The legacy LLM path is preserved below as draft_will_llm_DEPRECATED for
+    debugging only. Do NOT call it from production paths.
+    """
+    from documents.template_filler import fill_will as _fill
+    return _fill(will_data)
+
+
+def draft_will_llm_DEPRECATED(will_data) -> str:
+    """⚠️ DEPRECATED — kept for debugging only. Do NOT call from production.
+    Use draft_will() which is now deterministic.
+    """
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
     user_prompt = f"""Please draft a complete Last Will and Testament based on the following information.

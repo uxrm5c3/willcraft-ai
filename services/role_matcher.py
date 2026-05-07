@@ -263,15 +263,84 @@ def _digits(s: str) -> str:
     return re.sub(r'\D', '', s or '')
 
 
+def _testator_family_names(client_id: str) -> set:
+    """🔥 §10x.21 elimination — names mentioned in the message that look like
+    immediate-family roles (spouse / son / daughter / parent / sibling).
+    Used to demote ICs that obviously match an immediate family member, so
+    the only IC LEFT (the 'outsider') gets boosted as the executor candidate.
+    """
+    if not client_id:
+        return set()
+    try:
+        from ai.chat_planner import (_extract_ai_summary_properties,
+                                       _gather_summary_source_text)
+    except Exception:
+        return set()
+    text = _gather_summary_source_text(client_id) or ''
+    if not text:
+        return set()
+    names: set = set()
+    # Regex hits like "to Joshua Koid Teck Seng (son)" / "Esther Koid En Hui (daughter)"
+    # / "with my wife Lim Bee Yan" / "spouse Lim Bee Yan"
+    family_role_re = re.compile(
+        r'(?P<name>[A-Z][A-Z\s\-/]{4,60}?[A-Z])\s*'
+        r'\(?\s*(?P<role>son|daughter|wife|husband|spouse|father|mother|'
+        r'parent|brother|sister)\b',
+        re.IGNORECASE)
+    for m in family_role_re.finditer(text):
+        nm = m.group('name').strip()
+        # Filter typos / phrases that grabbed too much
+        if 5 <= len(nm) <= 60 and nm.upper() == nm.upper():
+            names.add(nm.upper())
+    # Also: explicit role-tagged hints like "to my wife (Lim Bee Yan)"
+    for m in re.finditer(
+        r'\bmy\s+(son|daughter|wife|husband|spouse|brother|sister)\s+'
+        r'\(?(?P<name>[A-Z][A-Z\s\-/]{4,60}?[A-Z])\b',
+        text, re.IGNORECASE):
+        nm = m.group('name').strip()
+        if 5 <= len(nm) <= 60:
+            names.add(nm.upper())
+    return names
+
+
+def _name_matches_family(name: str, family_names: set) -> bool:
+    """Loose match: any family-name token appears in the candidate name."""
+    if not name or not family_names:
+        return False
+    cn = name.upper()
+    cn_tokens = set(t for t in re.split(r'\s+', cn) if len(t) > 2)
+    for fn in family_names:
+        fn_tokens = set(t for t in re.split(r'\s+', fn.upper()) if len(t) > 2)
+        if not fn_tokens:
+            continue
+        # If 2+ tokens overlap, treat as same person (e.g. "JOSHUA KOID TECK SENG"
+        # vs "JOSHUA KOID" both share "JOSHUA"+"KOID")
+        if len(cn_tokens & fn_tokens) >= 2:
+            return True
+        # Or if the full family name is a substring
+        if fn in cn:
+            return True
+    return False
+
+
 def match_role_to_candidates(
     role_mention: Dict[str, Any],
     candidates: List[Dict[str, Any]],
+    client_id: str = '',
 ) -> List[Tuple[Dict[str, Any], str, str]]:
     """Match the role mention against candidate ICs.
 
     Returns ranked list of (candidate, confidence_label, reason).
-    Confidence is 'high' (content match), 'medium' (timing proximity),
-    'low' (residual — needs user pick).
+    Confidence is 'high' (content match or sole-outsider), 'medium' (timing
+    proximity), 'low' (residual — needs user pick).
+
+    🔥 §10x.21 — when client_id is given, ICs whose names match testator's
+    immediate family (spouse / son / daughter, etc. extracted from the
+    message) are DEMOTED. The remaining 'outsider' IC is boosted as the
+    high-confidence executor candidate. This handles the common case
+    where the user uploads ALL family ICs in one email forward and the
+    sister-in-law's IC is the only one whose name doesn't appear in the
+    message family list.
     """
     if not candidates:
         return []
@@ -280,6 +349,7 @@ def match_role_to_candidates(
     phone = _digits(role_mention.get('phone', ''))
     fam_hint = role_mention.get('family_relation', '').strip().lower()
     partial = (role_mention.get('partial_name') or '').strip().lower()
+    family_names = _testator_family_names(client_id) if client_id else set()
 
     # ── Layer 1: content match (phone digits, partial name, family hint)
     # Stable identity key: person_id if present, else document_id (handles
@@ -311,6 +381,45 @@ def match_role_to_candidates(
             high_matched.add(_key(c))
             continue
 
+    # ── Layer 1.5: outsider elimination (§10x.21)
+    # An IC whose name does NOT match any immediate family member named in
+    # the message is the strongest candidate for executor (sister-in-law,
+    # brother-in-law, friend, etc.). If exactly ONE candidate is an outsider,
+    # promote it to HIGH confidence — this is the common-case shortcut.
+    outsiders: list = []
+    family_dups: dict = {}   # nric_digits → first candidate (dedup)
+    if family_names:
+        for c in candidates:
+            if _key(c) in high_matched:
+                continue
+            cname = (c.get('full_name') or '').strip()
+            cnric = _digits(c.get('nric', ''))
+            # Dedup by NRIC — multiple photos of same IC
+            if cnric and cnric in family_dups:
+                continue
+            if cnric:
+                family_dups[cnric] = c
+            if cname and _name_matches_family(cname, family_names):
+                # Demote — this IC IS a family member (spouse / son / daughter)
+                # and shouldn't be the executor unless explicitly named.
+                continue
+            outsiders.append(c)
+        if len(outsiders) == 1:
+            c = outsiders[0]
+            out.append((c, 'high',
+                        f'Only IC whose name is NOT in your family list — '
+                        f'likely the {fam_hint or "executor"}'))
+            high_matched.add(_key(c))
+        elif len(outsiders) >= 2:
+            # Multiple outsiders — surface as medium so the user picks
+            for c in outsiders:
+                if _key(c) in high_matched:
+                    continue
+                out.append((c, 'medium',
+                            f'Outsider IC — not in your family list, '
+                            f'one of {len(outsiders)} candidates'))
+                high_matched.add(_key(c))
+
     # ── Layer 2: temporal proximity (per §10i)
     # If we don't have content match, use the IC's upload time relative to
     # the message-line timestamp. Without timestamps, we fall through to L3.
@@ -319,6 +428,13 @@ def match_role_to_candidates(
     for c in candidates:
         if _key(c) in high_matched:
             continue
+        # Skip name-matched family duplicates (already represented above)
+        cnric = _digits(c.get('nric', ''))
+        cname = (c.get('full_name') or '').strip()
+        if family_names and cname and _name_matches_family(cname, family_names):
+            continue   # don't surface family ICs as executor candidates
+        if cnric and cnric in family_dups and family_dups[cnric] is not c:
+            continue   # duplicate photo of an outsider already surfaced
         out.append((c, 'low', 'Unassigned IC — please confirm if this person'))
 
     return out
@@ -328,5 +444,5 @@ def get_top_candidate(role_mention: Dict[str, Any],
                        client_id: str) -> Optional[Tuple[Dict[str, Any], str, str]]:
     """Convenience: return the single best candidate for this role, or None."""
     cands = find_unassigned_ic_candidates(client_id)
-    ranked = match_role_to_candidates(role_mention, cands)
+    ranked = match_role_to_candidates(role_mention, cands, client_id=client_id)
     return ranked[0] if ranked else None
