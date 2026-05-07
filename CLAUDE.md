@@ -2332,6 +2332,135 @@ blank if there's evidence in the uploads to populate it.**
 
 ---
 
+### 10x.21  ⚡ Identity matching uses the SAME logic as asset matching ⚡
+
+**Rule from the user:** binding a message-stated role (sister-in-law,
+brother, friend X) to an uploaded IC photo follows the **same
+matching algorithm** we use for properties — content first, then
+temporal proximity, then ask the user. This is the §10g/§10i logic
+applied to people instead of assets.
+
+### The trigger
+
+Message has at least one role-mention WITHOUT a full name:
+
+```
+"My 'Executor' My Sister in law Tel:+6016-7338764"
+"My friend Sarah will be a witness"
+"Give to my brother"
+```
+
+AND at least one unassigned IC exists in the Person table or
+Document table (i.e., an IC photo whose Person row has no
+relationship, OR an IC Document not yet linked to any Person).
+
+### Matching cascade (same shape as §10g)
+
+#### Layer 1 — content match (strongest)
+
+Compare the message's role-mention against IC fields:
+
+| Message clue | IC field | Match if |
+|--------------|----------|----------|
+| Phone number `+6016-7338764` | `extracted.phone` (if Vision returns it) | digits match |
+| Partial name "Sarah" | `extracted.full_name` | first-name token equal |
+| Address "lives at X" | `extracted.address` | normalised match |
+| IC serial digits | `extracted.nric_number` | digit-strip equal |
+
+If exactly one IC content-matches → bind that IC to the role with
+**HIGH confidence**. Surface a confirmation card "Is this Sarah BT
+ALI your sister-in-law?" — but pre-select.
+
+#### Layer 2 — temporal proximity (per §10i, applied to identities)
+
+If no content match, look at the timestamp of the message line that
+names the role and find unassigned ICs uploaded within the §10i
+adjacency window:
+
+- Same WhatsApp message line: ✅ closest
+- Within 4 lines before / 3 after: ✅
+- Within 5 minutes by attachment timestamp: ✅
+- More than 30 minutes apart OR another role mentioned in between: ❌
+
+Bind with **MEDIUM confidence**, show the timing as evidence:
+
+```
+### ⚖️ Sister-in-law candidate
+
+You wrote: *"My Executor — My Sister in law Tel:+6016-7338764"*  [09:15:12]
+
+Closest unassigned IC:
+  📎 PHOTO-...28.jpg uploaded at 09:15:18 (6 seconds later)
+  Extracted name: SARAH BT ALI (NRIC 700707-...)
+
+[ ✅ Confirm — this is my sister-in-law ]
+[ 👤 No, type a different name manually ]
+[ ⏭ Skip — assign later ]
+```
+
+#### Layer 3 — residual ask (per §10he)
+
+If no content match AND no temporal proximity match, list ALL
+unassigned ICs as candidates:
+
+```
+### ⚖️ Pick your sister-in-law
+
+You wrote: "My Executor — My Sister in law Tel:+6016-7338764"
+
+Which IC photo is hers?
+
+[ 👤 SARAH BT ALI ]
+[ 👤 NORHAYATI BTE ABU ]
+[ ✏️ Type her name (not in uploads) ]
+[ ⏭ Skip — assign later ]
+```
+
+NEVER pick at random. NEVER leave executor.full_name = "" if any
+unassigned IC exists.
+
+### Hard rules (the same gates as §10g/§10i)
+
+1. **Content match wins over timing.** A phone-number match beats
+   a temporal-adjacency guess.
+2. **One-claim-only.** An IC bound to "sister-in-law" can't also
+   be bound to "brother". Once claimed, it's out of the candidate
+   pool for other roles.
+3. **High → low confidence order.** Process role-mentions with the
+   strongest evidence first (e.g., phone-number match first), so
+   weaker matches don't accidentally claim that IC.
+4. **Residual = ASK.** No silent guessing. The clarification card
+   takes precedence over the standard executor-assignment card.
+
+### Implementation contract
+
+| File | Function | Role |
+|------|----------|------|
+| `services/role_matcher.py` (NEW) | `match_unassigned_ic_to_role(client_id, role_mentions)` | Returns `[(role, ic_doc, confidence, evidence)]` |
+| `ai/chat_planner.py` | `_walkthrough_role_match_card(role, candidates)` | Render the clarification card |
+| `ai/chat_planner.py::_step3_executor_question` | Pre-card hook | Surface role-match card before generic executor card |
+| `app.py::_try_save_executor` | On confirm | Promote selected IC's Person row to relationship='executor' |
+
+### Same pattern for witnesses and other named-by-role people
+
+The same matching applies to:
+- Witnesses ("my friend Sarah will be a witness")
+- Trustees ("my brother as trustee")
+- Guardians ("my sister to look after the children")
+
+Wherever the message names a role + (phone | partial name | address)
+but no full name, the chat MUST run the matching cascade against
+unassigned ICs before falling back to manual entry.
+
+### Symptom of regression
+
+Walking through executor card shows "Sister-in-law (full name TBC)"
+and asks the user to type her name — even though there's an
+unassigned IC in the upload set. **That's the §10x.21 path failing.**
+Fix the matcher, don't paper over the symptom.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
