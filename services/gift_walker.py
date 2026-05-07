@@ -653,7 +653,25 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             continue
 
         # ── Bank / vehicle ─────────────────────────────────────────────────
+        # 🔥 BURN-IN — JMB/BPB receipts mis-classified as bank statements
+        # JMB / Badan Pengurusan Bersama / Joint Management Body docs are
+        # property maintenance fee receipts, NOT bank accounts. Filter out
+        # before they pollute the bank list.
         if d.category == 'bank_statement':
+            _bn_upper = (ex.get('bank_name') or '').upper()
+            _NON_BANK_TOKENS = (
+                'BADAN PENGURUSAN BERSAMA',
+                'JOINT MANAGEMENT BODY',
+                'PERBADANAN PENGURUSAN',
+                'MANAGEMENT CORPORATION',
+                ' JMB',  # leading space avoids matching 'KMBANK' etc
+                ' BPB',
+                'STRATA MANAGEMENT',
+                'MAINTENANCE FEE',
+                'SERVICE CHARGE',
+            )
+            if any(tok in _bn_upper for tok in _NON_BANK_TOKENS):
+                continue   # not a real bank — skip
             key = ('bank', (ex.get('account_number') or '').strip())
         else:
             key = ('vehicle', (ex.get('reg_number') or '').strip().upper())
