@@ -479,6 +479,13 @@ def _clean_email_body(raw: str) -> str:
     return cleaned
 
 
+# 🔥 §10x.60 — per-process AI Summary cache by sha256(input).
+# Keeps re-summarisations of unchanged text from costing $0.05 each.
+# Process restart drops the cache; that's fine since the AI Summary
+# message is also persisted in chat history.
+_SUMMARY_CACHE: Dict[str, str] = {}
+
+
 def _summarise_message(raw_text: str) -> str:
     """Use Claude Haiku to produce a two-part structured summary of a
     forwarded WhatsApp/email message in a will-writing context.
@@ -487,10 +494,37 @@ def _summarise_message(raw_text: str) -> str:
       **What was communicated** — coherent paraphrase of the message
       **What we deduce** — interpreted will-writing intent (assets, beneficiaries, etc.)
 
+    🔥 §10x.60 — caches by sha256(raw_text). Identical inputs return the
+    cached summary instantly (saves the $0.05/call Haiku roundtrip).
+
     Returns empty string on failure (caller falls back to blockquote).
     """
     if not raw_text or len(raw_text.strip()) < 30:
         return ''
+    import hashlib
+    cache_key = hashlib.sha256(raw_text.encode('utf-8')).hexdigest()
+    if cache_key in _SUMMARY_CACHE:
+        return _SUMMARY_CACHE[cache_key]
+    # DB-backed cache: check for a prior assistant message with this same
+    # input hash. If found, return its summary content (process restart
+    # won't trigger a fresh $0.05 Haiku call).
+    try:
+        from database import db, ChatMessage
+        existing = (db.session.query(ChatMessage.content)
+                    .filter(ChatMessage.role == 'assistant')
+                    .filter(ChatMessage.content.like(f'%_summary_hash:{cache_key[:16]}%'))
+                    .order_by(ChatMessage.created_at.desc()).first())
+        if existing and existing[0]:
+            # Strip our internal hash marker from cached return value
+            cached = re.sub(r'<!--_summary_hash:[a-f0-9]+-->', '', existing[0]).strip()
+            # Remove the AI Summary header wrapper if present
+            cached = re.sub(r'^### 📨 AI Summary of your message\s*', '', cached).strip()
+            cached = re.sub(r'<!--quickreplies:.*?-->', '', cached, flags=re.DOTALL).strip()
+            if len(cached) > 100:   # plausible cached summary
+                _SUMMARY_CACHE[cache_key] = cached
+                return cached
+    except Exception:
+        pass
     try:
         import anthropic
         from config import ANTHROPIC_API_KEY, CLAUDE_MODEL_CHEAP
@@ -542,6 +576,7 @@ def _summarise_message(raw_text: str) -> str:
         except Exception:
             pass
         result = (msg.content[0].text or '').strip() if msg.content else ''
+        _SUMMARY_CACHE[cache_key] = result
         return result
     except Exception:
         return ''

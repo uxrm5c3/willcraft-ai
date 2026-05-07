@@ -278,10 +278,18 @@ def make_web_resolver(claude_client) -> Callable[[str], Optional[GeoResult]]:
     import json
 
     def _query(text: str) -> Optional[GeoResult]:
+        # 🔥 §10x.60 — prompt caching on the strict no-memory system
+        # prompt. Mukim resolver runs per AssetItem (5 properties per
+        # client × multiple polls), so the system prompt repeats often
+        # within the 5-minute cache TTL.
         msg = claude_client.messages.create(
             model="claude-haiku-4-5",   # cheap; this is a lookup
             max_tokens=400,
-            system=WEB_RESOLVER_SYSTEM_PROMPT,
+            system=[{
+                'type': 'text',
+                'text': WEB_RESOLVER_SYSTEM_PROMPT,
+                'cache_control': {'type': 'ephemeral'},
+            }],
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": f"Find the Malaysian Mukim for: {text}"}],
         )

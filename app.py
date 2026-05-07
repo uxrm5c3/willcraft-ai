@@ -10240,6 +10240,12 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                             ).count()
                         except Exception:
                             _in_progress = 0
+                        # 🔥 §10x.60 — embed input hash so subsequent
+                        # _summarise_message calls can hit DB cache and
+                        # skip the $0.05 Haiku roundtrip.
+                        import hashlib as _hashlib
+                        _hash16 = _hashlib.sha256(cleaned.encode('utf-8')).hexdigest()[:16]
+                        _hash_marker = f'<!--_summary_hash:{_hash16}-->'
                         if _in_progress > 0:
                             tail = (
                                 f"\n\n🔍 _Analysing {_in_progress} exhibit(s) — "
@@ -10250,6 +10256,7 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                                 "### 📨 AI Summary of your message\n\n"
                                 + summary
                                 + tail
+                                + f"\n{_hash_marker}"
                             )
                         else:
                             _quick = _json.dumps([
@@ -10260,6 +10267,7 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                                 "### 📨 AI Summary of your message\n\n"
                                 + summary
                                 + f"\n\n<!--quickreplies:{_quick}-->"
+                                + f"\n{_hash_marker}"
                             )
                         summary_msg = ChatMessage(
                             session_id=cs.id, role='assistant',

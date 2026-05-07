@@ -180,10 +180,18 @@ def search_property_clues(
         return None
 
     try:
+        # 🔥 §10x.60 — prompt caching. Anthropic charges 10% of normal
+        # input price for cached tokens (5min TTL, ≥1024 token min).
+        # PROPERTY_CLUES_SYSTEM_PROMPT is ~1300 tokens and called for
+        # every property (5 props × N polls = many repeats within 5min).
         msg = claude_client.messages.create(
             model=model,
             max_tokens=max_tokens,
-            system=PROPERTY_CLUES_SYSTEM_PROMPT,
+            system=[{
+                'type': 'text',
+                'text': PROPERTY_CLUES_SYSTEM_PROMPT,
+                'cache_control': {'type': 'ephemeral'},
+            }],
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": f"Address: {address.strip()}"}],
         )
