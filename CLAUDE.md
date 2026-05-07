@@ -2658,6 +2658,79 @@ change.
 
 ---
 
+### 10x.25  ⚡ The saved template the AI follows STRICTLY ⚡
+
+**Question the user keeps asking:** "is there a saved template that the
+AI refers to and follows strictly when generating wills?"
+
+**Answer:** YES — two things working together:
+
+1. **`documents/sample_will_phek_yi_ting.py`** — verbatim Alan & Tan
+   firm template, source of truth for format/wording.
+2. **`ai/drafter.py::draft_will_mock(will_data)`** — programmatic
+   clause generator that emits Phek-compliant text from `WillData`.
+   The drafter does NOT freely paraphrase; it follows the patterns
+   codified in **§10x.24** for every gift kind.
+
+### Strict-follow checklist
+
+The drafter's output MUST match these exact phrasings (verified by
+`/tmp/sim_will_gen.py`):
+
+| Section | Phek wording the drafter emits |
+|---------|------------------------------|
+| Header | `"LAST WILL AND TESTAMENT OF\n\n[NAME]"` |
+| Opening | `"This Will is made by me [NAME] (MALAYSIA NRIC No. [N]) of [ADDRESS]."` |
+| Revocation | `"By signing this Will, I [hereby] revoke all earlier Wills..."` (clause 1) |
+| Executor | `"I hereby appoint my [RELATION] [NAME] (NRIC ...) of [ADDRESS] as the Executor..."` (clause 2) |
+| Trustee | `"In this Will unless it is specifically stated to the contrary, my Executor(s) shall also act as my Trustee(s)."` (clause 3) |
+| Property — joint | `"I hereby devise and bequeath to [BENEFICIARIES] all my [SHARE] undivided shares in the property known as [ADDRESS] held under [TITLE_TYPE] No. [N], Lot No. [N], Mukim [M], District of [D], State of [S]..."` |
+| Property — sole | `"I hereby devise and bequeath to [BENEFICIARIES] the property known as [ADDRESS] held under..."` (no "undivided") |
+| Bank | `"I hereby devise and bequeath to [B] the monies in my [BANK] Account No. [N] together with all interests/dividends already accrued due or accruing thereon."` |
+| Insurance | `"I hereby devise and bequeath to [B] the benefits of my [INSURER] insurance policy No. [N] together with all bonuses or accretions already declared or accruing thereon."` |
+| Substitute | `"Pursuant to Clause [N] above, if [B] does not survive me, then the benefit he/she would have received shall be given to [SUB]."` |
+| Residuary | `"Unless specifically stated to the contrary in this Will, my Trustee(s) shall hold the rest of my estate on trust to retain or sell..."` (clause 7) followed by `"To pay debts..."` (a) and `"To give the residue..."` (b) |
+| Declaration | `"I have given due consideration to all the other Beneficiaries..."` (clause 8) and `"For the purpose of ascertaining entitlement..."` (clause 9) |
+| Closing | `"********** the remaining page is intentionally left blank **********"` followed by signature blocks |
+
+### How to verify the AI follows strictly
+
+Run the snapshot test:
+```bash
+docker exec willcraft-web python /app/data/sim_will_gen.py
+```
+
+It generates a sample will from KOID's 12 saved gifts and asserts:
+- "all my 1/2 undivided shares" appears for joint properties ✓
+- "the property known as" (without "undivided") for sole properties ✓
+- "the monies in my [BANK] Account No." for banks ✓
+- "the benefits of my [INSURER] insurance policy No." for insurance ✓
+- Co-owner names ABSENT from any clause ✓
+- Phek-style "Pursuant to Clause N above..." for substitutes ✓
+
+If any of these patterns drift, the test fails — and the regression
+gets caught before it ships.
+
+### Where format change requests go
+
+If the firm wants to update the will format:
+1. Edit `documents/sample_will_phek_yi_ting.py` (the canonical source)
+2. Update §10x.24 patterns in CLAUDE.md
+3. Update `models/gift.py::FinancialDetails.to_formatted_description`
+   AND `Gift._ownership_prefix` to match
+4. Run `sim_will_gen.py` to verify
+5. Have the Approver compare a generated sample against the new
+   firm template side-by-side before deploying
+
+### Symptom of regression
+
+User generates will → Approver reviews → spots a clause that doesn't
+match Alan & Tan format. **Bug is in `ai/drafter.py` or `models/gift.py`
+— fix at source, do NOT post-process the output.** The drafter and the
+gift model are the only authority on clause shape.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
