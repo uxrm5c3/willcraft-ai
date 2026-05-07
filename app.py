@@ -3459,22 +3459,13 @@ def api_chat_history(client_id):
             with _PROCESSING_LOCK:
                 if _m.id in _PROCESSING_INFLIGHT:
                     continue
-            # (3) intake card already posted = processor finished, the
-            # remaining chat_inbox docs are likely permanent failures
-            # (corrupt files, vision API hard-error). Do not re-fire.
-            # Match both "exhibits received" (with attachments) and
-            # "Asset inventory" (text-only forwards) — see §10x.28.
-            from sqlalchemy import or_ as _or
-            _intake_done = (ChatMessage.query
-                            .filter_by(session_id=cs.id, role='assistant')
-                            .filter(ChatMessage.created_at >= _m.created_at)
-                            .filter(_or(
-                                ChatMessage.content.ilike('%exhibits received%'),
-                                ChatMessage.content.ilike('%Asset inventory%'),
-                            ))
-                            .first())
-            if _intake_done:
-                continue
+            # 🔥 §10x.29 — DO NOT block re-firing on "intake card exists".
+            # The earlier check (3) blocked the watchdog whenever an intake
+            # card had been posted, which left stuck `chat_inbox` docs
+            # un-retried forever. The §10x.26 retry-counter promotes docs
+            # to `needs_review` after 3 attempts, so re-firing is bounded.
+            # Card-duplication is prevented INSIDE the processor (at the
+            # `_intake_already_posted` check before posting), not here.
             _t.Thread(
                 target=_process_inbound_message_async,
                 args=(app, _m.id),
