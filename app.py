@@ -6793,25 +6793,30 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
     if 'sole' in own_lc:
         testator_share = '1/1'
     elif 'joint' in own_lc or 'share' in own_lc or 'with' in own_lc:
-        # Try to find a fraction pattern: "1/2", "share 1/2", "50/50",
-        # "share 1/3" — testator's share = numerator/denominator.
+        # Two-party joint idioms — testator owns 1/2:
+        #   "50/50"          → each owner has 50%, two owners → 1/2
+        #   "share 1/2"      → testator has 1/2 explicitly
+        # Three-party joint:
+        #   "share 1/3"      → 1/3 explicitly
+        # When fraction with num==den (50/50 idiom), assume two parties.
         _share_re = re.compile(
             r'(?:share\s+)?(?P<num>\d+)\s*/\s*(?P<den>\d+)',
             re.IGNORECASE,
         )
-        # Prefer "1/2" form over "50/50" form. The "50/50" idiom means
-        # split equally between 2 owners → testator's share = 1/2.
         m = _share_re.search(own)
         if m:
             num, den = int(m.group('num')), int(m.group('den'))
             if num == den and den >= 2:
-                testator_share = '1/' + str(den)   # "50/50" → 1/2
+                # "50/50" means two parties splitting equally
+                testator_share = '1/2'
             elif num < den:
-                testator_share = f'{num}/{den}'    # "share 1/2" → 1/2
+                testator_share = f'{num}/{den}'
+            else:
+                testator_share = '1/2'   # safety fallback
         else:
-            # No fraction found but joint → assume 1/2
+            # No fraction found but joint → assume 1/2 (most common)
             testator_share = '1/2'
-        # Match "with <Name1> [, <Name2>]" — names are 1-4 capitalised words.
+        # Match "with <Name1> [, <Name2>]" — names are 1-5 capitalised words.
         _name_re = re.compile(
             r'\bwith\s+(?:my\s+wife\s+|my\s+husband\s+|my\s+spouse\s+'
             r'|my\s+son\s+|my\s+daughter\s+)?'
@@ -6821,7 +6826,8 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
         )
         for m in _name_re.finditer(own):
             nm = m.group(1).strip()
-            nm = re.sub(r'\s+(share|fun|with)\s*$', '', nm, flags=re.IGNORECASE).strip()
+            # Drop only filler tokens — never strip real surnames like "Fun"
+            nm = re.sub(r'\s+(share|with)\s*$', '', nm, flags=re.IGNORECASE).strip()
             if nm and len(nm) > 2 and nm.lower() not in ('share', 'with'):
                 co_owners.append(nm[:80])
         seen_co = set()

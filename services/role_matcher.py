@@ -33,8 +33,10 @@ _ROLE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Phone regex (Malaysia / SG / generic 10-12 digits with optional +)
-_PHONE_RE = re.compile(r'(?:\+?60|\+?65)?\s*[\d][\d\s\-]{7,14}\d')
+# Phone regex — Malaysian / Singapore / generic 8-15 digit numbers,
+# optional +60 / +65 country code, dashes/spaces inside. The {6,13}
+# range plus required final digit ensures a real number, not partial.
+_PHONE_RE = re.compile(r'\+?\d{1,3}[\s\-]?\d[\d\s\-]{6,13}\d')
 
 # "My Executor — My Sister in law Tel:+6016-7338764"
 _EXECUTOR_BLOCK_RE = re.compile(
