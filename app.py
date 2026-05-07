@@ -4668,6 +4668,27 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                             claimed_addresses.add(a_addr.lower())
                             continue   # skip the chat-text enrichment for this doc
 
+            # ── §10h: scrub pre-stored hallucinated address (e.g. "Condominium
+            # Example") so we don't carry it forward AND don't claim it.
+            existing_addr_check = (ex_orig.get('property_address') or '').strip()
+            _NOISE_BUILDING_PRE = ('example', 'sample', 'unknown', 'placeholder',
+                                    'untitled', '<address>', 'n/a', 'tbd')
+            if existing_addr_check and any(tok in existing_addr_check.lower()
+                                           for tok in _NOISE_BUILDING_PRE):
+                _doc_pre = db.session.get(Document, doc_id)
+                if _doc_pre:
+                    try:
+                        _stored_pre = json.loads(_doc_pre.extracted_data) if _doc_pre.extracted_data else {}
+                    except (json.JSONDecodeError, TypeError):
+                        _stored_pre = {}
+                    _stored_pre['property_address'] = ''
+                    _stored_pre.setdefault('_enriched_from', [])
+                    if 'cleared.hallucinated_address' not in _stored_pre['_enriched_from']:
+                        _stored_pre['_enriched_from'].append('cleared.hallucinated_address')
+                    _doc_pre.extracted_data = json.dumps(_stored_pre)
+                    ex_orig = _stored_pre
+                    changed = True
+
             # Already has a REAL (non-NLC) address — add to claimed set and skip.
             # NLC-format addresses (e.g. "H.S.(D) 251041 P.T.D …") are treated
             # the same as missing — we try to find a real street address to replace them.
@@ -4689,6 +4710,43 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
             # Run enrichment (sibling cross-ref + chat-text scan)
             enriched = _enrich_property_from_siblings(p)
             enriched = _enrich_from_chat_text(enriched, filtered_text)
+
+            # ── §10h Address whitelist: only accept addresses that exist in
+            # the AI Summary. Anything else is either OCR noise, a hallucinated
+            # building name, or a self-referential echo from a previous chat
+            # turn (e.g. "Condominium Example" copied out of an assistant card
+            # that was itself populated from an earlier hallucinated extract).
+            new_addr = (enriched.get('property_address') or '').strip()
+            if new_addr and _ai_summary:
+                # Token-based fuzzy match: every AI Summary address contributes
+                # a set of distinctive tokens; the enriched address must hit at
+                # least one such set with ≥ 2 distinctive tokens (or 1 unit-like
+                # token, e.g. "c-30-08").
+                _NOISE_BUILDING = ('example', 'sample', 'unknown', 'placeholder',
+                                   'untitled', '<address>', 'n/a', 'tbd')
+                _new_lc = new_addr.lower()
+                if any(tok in _new_lc for tok in _NOISE_BUILDING):
+                    enriched['property_address'] = ''   # reject hallucination
+                else:
+                    def _toks(s: str):
+                        return set(t for t in re.split(r'[^a-z0-9]+', (s or '').lower())
+                                   if len(t) >= 3)
+                    new_toks = _toks(new_addr)
+                    matched_any = False
+                    for ap in _ai_summary:
+                        a_addr = (ap.get('address') or '').strip()
+                        if not a_addr:
+                            continue
+                        a_toks = _toks(a_addr)
+                        if not a_toks:
+                            continue
+                        overlap = new_toks & a_toks
+                        # accept if ≥ 2 token overlap
+                        if len(overlap) >= 2:
+                            matched_any = True
+                            break
+                    if not matched_any:
+                        enriched['property_address'] = ''   # not in AI Summary
 
             # Check which fields actually changed or improved.
             # For property_address: also count as "newly filled" if the old
