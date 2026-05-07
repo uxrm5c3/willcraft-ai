@@ -2490,8 +2490,26 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
     """
     next_ic = pending_ics[0]
     ex = next_ic['extracted'] or {}
-    name = (ex.get('full_name') or '').strip() or '(name unreadable)'
-    nric = (ex.get('nric_number') or '').strip() or 'NRIC unreadable'
+    # 🔥 §10x.64 — clean §10aa noise from name and NRIC before display.
+    # OCR routinely emits 'VALUE: 650629-04-5308-02-01' or 'KETUA PENGARAH
+    # PENDAFTARAN NEGARA' as the name. Strip prefixes + extract canonical
+    # NRIC pattern. If the cleaned values are empty/garbage, surface a
+    # specific 'manual entry needed' card instead of '(name unreadable)'.
+    raw_name = (ex.get('full_name') or '').strip()
+    raw_nric = (ex.get('nric_number') or '').strip()
+    # Strip '__' prefix and 'VALUE:' tokens from NRIC
+    nric_cleaned = re.sub(r'^(?:VALUE\s*[:\-]?\s*|IC\s*NO\.?\s*[:\-]?\s*|NO\s*KP\s*[:\-]?\s*)',
+                            '', raw_nric, flags=re.IGNORECASE).strip()
+    # Extract canonical NNNNNN-NN-NNNN pattern (12 digits with dashes)
+    _nric_match = re.search(r'\b(\d{6}[-\s]?\d{2}[-\s]?\d{4})\b', nric_cleaned)
+    nric = _nric_match.group(1) if _nric_match else (nric_cleaned[:14] if nric_cleaned else 'NRIC unreadable')
+    # Reject issuing-authority text as name
+    _AUTH_NOISE = {'KETUA PENGARAH', 'JABATAN PENDAFTARAN', 'MYKAD',
+                   'KAD PENGENALAN', 'IDENTITY CARD', 'WARGANEGARA'}
+    name_upper = raw_name.upper()
+    if any(tok in name_upper for tok in _AUTH_NOISE):
+        raw_name = ''
+    name = raw_name or '(name unreadable)'
 
     # ── (a) Name-verbatim match ───────────────────────────────────────
     deduction = None
@@ -2539,8 +2557,23 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
 
     parts = [
         f"### 👤 Step 1: Identity ({len(pending_ics)} left)",
-        f"**{name}** — {nric}",
     ]
+    # 🔥 §10x.64 — render name + NRIC line clearly. When BOTH are
+    # unreadable, surface a manual-entry prompt up-front so the user
+    # knows they need to type the name and NRIC.
+    name_unreadable = (name == '(name unreadable)')
+    nric_unreadable = (nric == 'NRIC unreadable')
+    if name_unreadable and nric_unreadable:
+        parts.append(
+            "⚠️ **Vision OCR couldn't read this IC clearly.** "
+            "Type the name and NRIC below, or click **Delete** if it's "
+            "not a real IC."
+        )
+    else:
+        # Show what we have — possibly partial
+        nric_disp = nric if not nric_unreadable else '_NRIC not extracted_'
+        name_disp = name if not name_unreadable else '_(name not extracted)_'
+        parts.append(f"**{name_disp}** — {nric_disp}")
     quick: List[Dict[str, str]] = []
     if deduction:
         parts.append(
