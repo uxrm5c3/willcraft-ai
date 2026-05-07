@@ -425,12 +425,19 @@ def _summarise_message(raw_text: str) -> str:
             "**What we deduce:**\n"
             "• <item>\n"
             "• <item>\n\n"
-            f"Message:\n{raw_text[:3000]}"
+            f"Message:\n{raw_text[:6000]}"
         )
         msg = client.messages.create(
             model=CLAUDE_MODEL_CHEAP,
-            max_tokens=900,
-            timeout=20.0,   # raised — complex messages with 5+ assets need more time
+            # 🔥 BURN-IN — DO NOT LOWER THIS BELOW 4000.
+            # Real WhatsApp forwards routinely list 5+ properties, 3-4 bank
+            # accounts, and 2-3 insurance policies, plus the analyst's
+            # "What we deduce" block expands each into 6-8 lines. At 900
+            # the response truncates mid-property and the user has to
+            # scroll through an incomplete list — they noticed and called
+            # it out. See CLAUDE.md §10x.
+            max_tokens=4000,
+            timeout=60.0,   # complex messages with 5+ assets need more time
             messages=[{"role": "user", "content": prompt}]
         )
         try:

@@ -1536,6 +1536,146 @@ Q: When the message contradicts itself (same property, two beneficiaries),
 
 ---
 
+## 10x. 🔥🔥🔥 BURN-IN — The Inbound-Pipeline FUCK List 🔥🔥🔥
+
+**These are the bugs that cost the user real time and money. Each one was
+caught more than once. They are pinned here so the next session does not
+re-introduce them.**
+
+### 10x.1  AI Summary token cap
+
+`ai/chat_planner.py::_summarise_message` MUST keep `max_tokens >= 4000`
+and `raw_text[:6000]` minimum. A real WhatsApp forward is 5+ properties +
+3-4 banks + 2-3 insurance policies, plus a "What we deduce" block that
+spends 6-8 lines per asset. At 900 / 3000 the response truncates mid-property
+and the user cannot read the deduction for the last 2 properties.
+**Symptom:** summary card ends mid-sentence at "Property 4 – House, 10
+Jalan Sri Laguna 1/7, Taman Laguna, 81200 Johor".
+
+### 10x.2  Reprocess must NEVER downgrade a real category
+
+In `_process_inbound_message_async`, after the parallel classify+extract
+batch, the per-doc commit must be **monotonic**:
+
+```python
+if kind != 'other':
+    doc.category = kind                  # promote
+elif doc.category in (None, '', 'chat_inbox', 'other'):
+    doc.category = 'chat_inbox'          # only set if not yet real
+# else: keep existing real category — never downgrade
+```
+
+The watchdog re-fires the processor on every chat-history poll. A flaky
+network call returning `kind='other'` must NOT wipe a previously
+successful classification. Once a doc is `property_title` / `nric` /
+`bank_statement`, it stays that way until explicitly reset.
+
+### 10x.3  Parallel workers MUST hold app_context + track_context
+
+`ThreadPoolExecutor` workers run outside the request thread, so the
+Flask app context is missing. Without it:
+
+- `cost_tracker.log_usage` raises "Working outside of application context"
+  and silently swallows it → cost shows $0.00 when real cost is $0.30+
+- `db.session` writes can't happen → workers must NOT touch DB
+
+Required wrapper for every worker:
+
+```python
+def _classify_one(...):
+    from ai.cost_tracker import track_context as _tc
+    with app_obj.app_context(), _tc(
+        will_id=..., client_id=..., document_id=...):
+        # all classify_file / extract_*_data calls here
+        return classification, extracted
+```
+
+DB writes happen later in the main thread, NOT inside the worker.
+
+### 10x.4  Dedup at upload MUST use SHA256 content hash
+
+`Document.content_hash` (SHA256 of bytes, indexed) is the canonical
+dedup key. **Filename + file_size is not enough** — Postmark and
+WhatsApp routinely rename "the same image" with different timestamps.
+Two distinct rows with identical bytes = the user pays vision-classify
+twice and ends up with phantom "duplicate IC" cards.
+
+The upload site at `/api/inbound-email` must:
+1. Compute `_content_hash = sha256(data).hexdigest()` for every attachment.
+2. Look up existing rows by `(client_id, content_hash)` first.
+3. Fall back to `(client_id, filename, file_size, content_hash IS NULL)`
+   only for legacy rows, AND backfill content_hash on hit.
+4. Persist `content_hash` on every NEW Document row.
+
+A backfill script `dedupe_docs.py` exists for older clients; run it
+once if you suspect duplicates.
+
+### 10x.5  Daemon background threads die on redeploy
+
+`threading.Thread(daemon=True)` started inside a gunicorn worker is
+killed when the container restarts. Two safeguards must coexist:
+
+(a) **Watchdog inside `/api/chat/<client_id>/history`** — every history
+fetch (every 5 s while the chat tab is open) checks for any user
+message older than 60 s with attachments still in `chat_inbox`. If
+found, re-spawn `_process_inbound_message_async` for that message.
+
+(b) **Idempotency rule §10x.2** — the resumed run must not destroy
+already-completed work.
+
+**Operational rule:** never `docker compose up -d web` while a user is
+actively waiting on inbound classification. Wait for the AI Summary
+card to land first. Or, if you must redeploy, immediately re-fire the
+watchdog by reloading the chat tab.
+
+### 10x.6  Static-asset cache-busting must be automatic
+
+`<script src=".../chat.js?v=…">` MUST resolve via `asset_version()`
+template helper which returns `os.path.getmtime(path)` as an integer.
+**Hardcoded `?v=20260507a` is forbidden** — every deploy that touches
+the JS file must invalidate the browser cache without the user
+hard-refreshing. Asset_version is implemented in `app.py` context
+processor; templates use:
+
+```jinja
+?v={{ asset_version('js/chat.js') }}
+```
+
+If you ever see the symptom "user has to hard-refresh to see new JS",
+the regression is a hardcoded `?v=…`. Fix it at the template, not by
+asking the user to refresh.
+
+### 10x.7  Cost visibility is non-negotiable
+
+The right pane in chat shows `💰 API cost this will`. It is wired to
+`/api/cost/<will_id>` which sums `cost_usd` from `ApiCallLog`.
+
+If this shows `$0.0000` after vision classification has run on 20+
+images, **the bug is upstream** — a parallel worker or a deeply nested
+helper failed to log because of:
+- missing app_context (§10x.3),
+- missing track_context (call sites must call `log_usage(msg, call_site=…)`),
+- swallowed exception in cost_tracker.
+
+The fix is at the silent path. Showing $0.00 to the user when the real
+cost is $0.30 is worse than showing nothing.
+
+### 10x.8  Operational test pipeline
+
+Each test cycle (CLAUDE.md §2) MUST end with:
+
+1. Verify cost > $0 in `/api/cost/<will_id>` after classification.
+2. Verify intake card was posted (chat has assistant message containing
+   `## 📋 N exhibits received`).
+3. Verify AI Summary card was posted AND is not truncated (no trailing
+   ellipsis or mid-sentence break).
+4. Verify the categorization didn't get reset to chat_inbox by a
+   subsequent watchdog poll (§10x.2).
+
+If any of these fails, the deploy is not done. **Don't claim success.**
+
+---
+
 ## 11. Things NOT To Do
 
 These are direct quotes / paraphrases of user feedback. Do not repeat these mistakes.

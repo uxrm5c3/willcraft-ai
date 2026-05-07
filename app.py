@@ -8545,7 +8545,18 @@ def _process_inbound_message_async(app_obj, user_msg_id):
                                        'reason': 'no result'}
                     extracted = None
                 kind = classification.get('kind', 'other')
-                doc.category = kind if kind != 'other' else 'chat_inbox'
+                # 🔥 BURN-IN §10x — NEVER DOWNGRADE A REAL CATEGORY TO chat_inbox.
+                # The reprocess watchdog re-runs this loop on every chat-history
+                # poll. If a previous run successfully classified the doc as
+                # 'property_title' but the current run gets a low-confidence
+                # 'other' (network blip, rate limit), we must NOT overwrite.
+                # Categorization is monotonic: chat_inbox → real, never the
+                # other way around.
+                if kind != 'other':
+                    doc.category = kind
+                elif doc.category in (None, '', 'chat_inbox', 'other'):
+                    doc.category = 'chat_inbox'
+                # else: keep existing real category
                 doc.description = (classification.get('reason') or '')[:500] or None
                 purpose = (classification.get('purpose') or '').strip()
                 prop_hint = (classification.get('property_hint') or '').strip()
