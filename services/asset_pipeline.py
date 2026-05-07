@@ -156,7 +156,13 @@ _STOPWORDS = {
 def distinctive_tokens(text: str) -> set:
     """Return the lowercase tokens worth matching on — drops stopwords,
     keeps unit-like patterns ('c-30-08'), building names, street names,
-    postcodes."""
+    postcodes.
+
+    🔥 §10x.50 Bug F — drop pure short-number tokens like '10' that
+    cause false positives ('10 Jalan Sri Laguna' wrongly matching
+    '10 Marsiling Lane'). Pure numeric tokens must be ≥4 digits to
+    qualify as distinctive (postcodes, lot numbers, unit serials).
+    """
     if not text:
         return set()
     raw = re.findall(r'[a-z0-9]+(?:[-/][a-z0-9]+)*', text.lower())
@@ -165,6 +171,9 @@ def distinctive_tokens(text: str) -> set:
         if t in _STOPWORDS:
             continue
         if len(t) < 2:
+            continue
+        # Pure-number short tokens are too generic
+        if re.fullmatch(r'\d{1,3}', t):
             continue
         out.add(t)
     return out
@@ -397,9 +406,14 @@ def group_documents(client_id: str) -> List[DocGroup]:
             if cm in canonical_mukims:
                 merged['mukim'] = cm.title()
             else:
-                # Fuzzy: if cm shares a 5+ char prefix with a canonical one
+                # Fuzzy: edit distance ≤ 2 from any canonical mukim, OR
+                # shares ≥ 60% chars at same position. Catches OCR typos
+                # like 'pientong' (1 substitution from 'plentong') and
+                # 'plentongy' (1 insertion).
+                import difflib
                 for canon in canonical_mukims:
-                    if len(cm) >= 5 and (cm[:5] == canon[:5] or canon[:5] == cm[:5]):
+                    if len(cm) >= 4 and difflib.SequenceMatcher(
+                            None, cm, canon).ratio() >= 0.80:
                         merged['mukim'] = canon.title()
                         break
 
