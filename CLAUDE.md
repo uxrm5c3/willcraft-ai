@@ -1701,6 +1701,97 @@ regressed.
 It MUST go through the same lock + idempotency checks. Never bypass them
 by calling `_process_inbound_message_async_inner` directly.
 
+### 10x.12  ⚡ EVERY AI-SUMMARY ITEM IS A SPECIFIC GIFT ⚡
+
+**Hard rule from the user:** every item that appears in the AI Summary
+"What we deduce" section — property, bank account, vehicle, insurance
+policy, EPF, securities, anything — MUST result in exactly one entry
+in `step5_data` (Wizard Step 6: Specific Gifts) with its own beneficiary
+instructions.
+
+For the KOID test forward, this means:
+
+```
+5 properties              → 5 step5_data entries
+4 bank accounts           → 4 step5_data entries
+3 insurance policies      → 3 step5_data entries
+─────────────────────────────────────────────────
+Total: 12 specific gifts
+```
+
+**Wrong patterns (forbidden):**
+- ❌ "Banks generic" single clause "all banks → wife 100%" — this loses
+  per-account fidelity (account number, institution, currency).
+- ❌ Insurance silently dropped because there's no `insurance` category
+  in the gift walker.
+- ❌ "POSB Bank account ending in 5917" merged with "Maybank account
+  ending in 2259" because both go to the same beneficiary.
+- ❌ EPF / unit trust / shares ignored because they're not "title docs".
+
+**Right pattern:**
+- Every named asset → its own card in the walkthrough → its own gift
+  entry → its own clause in the generated will.
+- The probate lawyer needs to be able to tick off each asset against
+  the deceased's estate. Lumping kills auditability.
+
+### Implementation contract
+
+`get_pending_gift_documents(client_id)` returns:
+```python
+{
+    'property':  [...],   # title docs + isolated property images
+    'bank':      [...],   # one entry PER bank account, even if same bank
+    'vehicle':   [...],
+    'insurance': [...],   # one entry PER policy
+    'epf':       [...],   # one entry PER EPF/KWSP / unit trust statement
+    'shares':    [...],   # securities, one per holding
+    'other':     [...],   # anything else flagged as testator-asset
+}
+```
+
+`_extract_ai_summary_*` MUST exist for every category. They parse the
+AI Summary text and return the canonical list:
+- `_extract_ai_summary_properties` ✅ (already exists)
+- `_extract_ai_summary_banks` (NEW — parse bank lines: institution,
+  account number, currency, beneficiary)
+- `_extract_ai_summary_insurance` (NEW — parse insurer, policy number,
+  beneficiary)
+- `_extract_ai_summary_other` (catch-all)
+
+The walkthrough iterates AI-Summary items first. Each item:
+1. Try to bind to an uploaded Document (by lot/title for property,
+   account number for bank, policy number for insurance).
+2. If matched → render Layer 1 with image evidence.
+3. If unmatched but stated in AI Summary → render H3 placeholder
+   (per §10hg) — confirm + collect details later.
+4. If image exists but NOT in AI Summary → §10d unverified card.
+
+Layer 2 (beneficiary assignment) ALWAYS runs for every saved gift,
+regardless of category. NO category gets a generic "all → X" shortcut.
+
+### Verifier rule
+
+`verify_step6.py` MUST count step5_data entries against AI Summary
+count and fail if:
+```
+len(step5_property_gifts)  != AI Summary properties
+len(step5_bank_gifts)      != AI Summary banks
+len(step5_insurance_gifts) != AI Summary insurance
+len(step5_other_gifts)     != AI Summary other
+```
+
+A passing test means EVERY item in the user's WhatsApp forward has its
+own clause in the generated will.
+
+### Symptom that proves the rule was violated
+
+User sees 5 properties + 4 banks + 3 insurance in the AI Summary, but
+the wizard's Step 6 right pane shows fewer than 12 gift entries. **That
+is a regression.** Fix the parser / walker / save handler — do NOT
+patch the symptom by silently grouping.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
