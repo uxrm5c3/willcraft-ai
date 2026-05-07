@@ -176,14 +176,15 @@ def total_for_client(client_id: str) -> Decimal:
 # (e.g. watchdog re-firing or accidental retry storms) that would burn
 # the credit pool before any single client gets useful output.
 #
-# Default ceiling: $1.50/day per client (production target is $1/will
-# total but we leave 50% headroom for retries / edge cases).
+# Default ceiling: $2.00/day per client.
+# Production target: $1/will end-to-end. The $2/day ceiling gives 100%
+# headroom for retries, mid-flow uploads, conflict re-walkthroughs etc.
 #
 # When the ceiling fires, callers should:
 #   • return None / empty for the requested AI call
 #   • surface a "manual review needed" status to the user
 #   • NEVER raise into Sentry-style noise — this is a defensive feature
-DEFAULT_CLIENT_DAILY_CEILING_USD = 1.50
+DEFAULT_CLIENT_DAILY_CEILING_USD = 2.00
 
 
 def cost_today_for_client(client_id: str) -> Decimal:
