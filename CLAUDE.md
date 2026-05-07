@@ -3877,6 +3877,9 @@ Each entry has:
 | 19 | "Watchdog must NEVER post duplicate cards" | §10x.9 + §10x.28 | Idempotency: 1 intake + 1 AI Summary, no dups |
 | 20 | "Vision retry has terminal state — no infinite analysing" | §10x.26 | `_classify_attempts >= 3` → `needs_review` |
 | 21 | "Pre-deploy asset audit MUST pass" | §10x.33 | `asset_audit.py` reconciliation checks |
+| 22 | "Identity must have a role — never ghost identities" | §10x.41 | `ensure_person` refuses on empty role; verifier #22 |
+| 23 | "When new identity added mid-flow, re-run downstream (named beneficiary auto-added)" | §10x.42 | `_reconcile_downstream_for_new_identity`; verifier #23 |
+| 24 | "When new image/message provided midway, MUST re-run AI Summary → Image Analysis → Identity Match → Role Match → Asset Match (3 layers)" | §10x.43 | Inbound webhook → watchdog re-fire (§10x.29) → walker re-emit pending → reconciler |
 
 ### Maintenance rule
 
@@ -4154,6 +4157,136 @@ If a person is in the Person table as Wife but not in step4 as
 beneficiary despite the message saying "all to my wife", the
 reconciler is broken. Fix at the reconciler, not by manually editing
 step4 in the DB.
+
+---
+
+### 10x.43  🔥🔥🔥🔥 BURN-IN — MID-FLOW MESSAGE/IMAGE = FULL PIPELINE REPLAY 🔥🔥🔥🔥
+
+**Whenever ANY new WhatsApp message and/or image is provided AFTER
+the walkthrough has progressed past Step 1, the system MUST re-run
+the full pipeline:**
+
+```
+NEW MESSAGE / NEW IMAGE
+       ↓
+1. AI Summary       — re-parse the combined text (existing + new)
+2. Image Analysis   — vision-classify any new attachment
+3. Identity Match   — re-check pending IC list; match new ICs to family
+4. Role Match       — assign role per §10x.30 (HIGH→LOW confidence)
+5. Asset Match      — 3 layers per asset:
+                       Layer 1: Identify asset (Confirm card)
+                       Layer 2: Main Beneficiary (per §10x.36 + §10x.40)
+                       Layer 3: Substitute Beneficiary (per §10x.14)
+       ↓
+RECONCILE downstream — per §10x.42, integrate the new entity
+into Steps 3 / 5 / 6 if the message names them.
+```
+
+NEVER skip steps just because they were marked complete earlier.
+A new email may name new beneficiaries / executors / properties
+that need to be threaded back into already-completed steps.
+
+### Why this rule exists
+
+User said:
+> "AI SUMMARY → IMAGE ANALYSIS → IDENTITY MATCH → ROLE MATCH →
+>  ASSET MATCH (3 layers, identity, main beneficiary, substitute
+>  beneficiary). Must rerun this whenever any NEW whatsapp message
+>  and/or image is provided midway"
+
+Real-world flow that triggered this: KOID forwarded the original
+WhatsApp message → walkthrough advanced through Steps 1-5. THEN
+they emailed Lim Bee Yan's IC photo separately. The system had to:
+- Re-classify the IC (Step 3 of pipeline above)
+- Match her IC to the family (Step 4)
+- Auto-add her as Wife per the role-match (Step 5)
+- Reconcile downstream: she's named as bank/insurance beneficiary
+  in the original message, so she belongs in Step 5 (Beneficiaries)
+  — even though Step 5 was previously "complete"
+
+Without §10x.43, that reconciliation might silently fail (and did,
+until §10x.42 was burned in).
+
+### What "full pipeline replay" means in practice
+
+When the inbound webhook receives a new email for an existing client:
+
+1. **Re-fire `_process_inbound_message_async`** (already happens via
+   the watchdog per §10x.5/§10x.29).
+2. **`_summarise_message`** runs again — combined message text gets
+   a fresh AI Summary. Replace the stale summary card.
+3. **Vision-classify new attachments only** (existing classifications
+   are monotonic per §10x.2 — never downgrade).
+4. **`get_pending_ic_documents` and `get_pending_gift_documents`
+   recompute** — NEW ICs / gifts surface as pending cards on the
+   next chat poll.
+5. **For each new pending IC:** identity walkthrough card → role
+   match → §10x.42 reconcile downstream.
+6. **For each new pending gift:** Layer 1 → Layer 2 → Layer 3 cards
+   per §10x.23.
+
+The chat planner already runs `plan_turn` on every history poll, so
+as long as `pending_ics` and `pending_gifts` are non-empty, the
+walkthrough re-engages naturally. The §10x.42 reconciler closes the
+loop for downstream effects.
+
+### Hard rules
+
+1. **A new inbound email is NEVER ignored just because Steps 2-5
+   were marked complete.** The `pending_ics` / `pending_gifts`
+   walkthrough always engages first.
+
+2. **Stale cards are NEVER trusted as ground truth.** Re-derive the
+   AI Summary, IC list, and gift list from the live Document table
+   on every refresh. Per §10x.17, wizard reads from DB on every GET.
+
+3. **The 3-layer asset flow runs PER ASSET regardless of order.**
+   New asset arriving mid-flow goes through Layer 1 → 2 → 3 even
+   if other assets are already done.
+
+4. **Identity reconciliation cascades.** Adding a new family member
+   may require:
+   - Step 3 (Executor) re-evaluation (if they're named as such)
+   - Step 4 (Guardian) re-evaluation (if minor children + spouse)
+   - Step 5 (Beneficiary) re-evaluation per §10x.42
+   - Step 6 (Specific Gifts) re-evaluation if they're named as
+     beneficiary of any specific asset
+
+5. **Audit MUST verify reconciliation.** `fuck_list_verify.py` check
+   #23 enforces "every named-beneficiary in step4". A future check
+   should verify: "if message names a new spouse and gifts existed
+   before, those gifts' beneficiary fields include the new spouse."
+
+### Where this is enforced
+
+| Pipeline step | File | Function |
+|---------------|------|----------|
+| Inbound webhook | `app.py::api_inbound_email` | Adds doc rows; spawns processor |
+| Process docs | `app.py::_process_inbound_message_async_inner` | Vision classify + AI Summary card |
+| AI Summary | `ai/chat_planner.py::_summarise_message` | Parses combined text |
+| Watchdog re-fire | `app.py::api_chat_history` watchdog (§10x.29) | Re-fires processor for stuck docs |
+| Identity match | `services/identity_walker.py::get_pending_ic_documents` | Surfaces new ICs + H3 placeholders |
+| Role match | `app.py::_try_assign_pending_identity` (§10x.32) | Family-only, with role-matcher fallback |
+| Asset match | `services/gift_walker.py::get_pending_gift_documents` | New asset → pending |
+| Layer 1/2/3 | `app.py::_try_save_*_layered_gift` (§10x.23) | Per-gift Confirm → Main → Substitute |
+| Reconcile | `app.py::_reconcile_downstream_for_new_identity` (§10x.42) | Step 5 auto-add when message names them |
+
+### Litmus test
+
+```
+Q: Walkthrough has reached Step 6. User forwards a 2nd email with
+   a new IC for "Aunt Mary".
+   - Aunt Mary IC classified, surfaces as pending Step 1 card    → ✓
+   - User confirms her as Aunt → Person row created
+   - If message says "Aunt Mary gets the savings account",
+     she's auto-added to step4 + the savings gift                → ✓
+   - If neither: she's just an identity, no further changes      → ✓
+```
+
+If a new inbound email is silently dropped, or Steps 1-5 don't
+re-engage when new entities appear, §10x.43 has been violated.
+The fix is at the inbound handler / walkthrough gates — never patch
+by manually editing DB rows.
 
 ---
 
