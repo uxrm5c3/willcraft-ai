@@ -1951,6 +1951,101 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
     }
 
 
+def _walkthrough_property_card_candidates(ai_prop: Dict[str, Any],
+                                            candidates: List[Dict[str, Any]],
+                                            doc_groups_by_id: Dict[str, Dict[str, Any]],
+                                            seq_num: int, total: int) -> Dict[str, Any]:
+    """🔥 §10x.51 / Path Y — Candidate-with-confirm card (§10he Step 4).
+
+    Renders for AssetItems that the matcher couldn't auto-bind but
+    found ranked candidates above CANDIDATE_THRESHOLD. The user picks
+    one (binds), picks "None" (free-form types), or skips.
+
+    Click format: `inventory match h3 <ai_idx> <doc_id>` where doc_id is
+    the first Document.id of the chosen DocGroup.
+    """
+    name = (ai_prop.get('name') or 'this property').strip()
+    addr = (ai_prop.get('address') or '').strip()
+    mukim = (ai_prop.get('mukim') or '').strip()
+    daerah = (ai_prop.get('daerah') or '').strip()
+    negeri = (ai_prop.get('negeri') or '').strip()
+
+    # Strip Layer-2 / parenthetical leakage per §10x.46 R1
+    def _strip_parens(s: str) -> str:
+        s = re.sub(r'\s*\([^)]*\)\s*', ' ', s or '').strip()
+        return re.sub(r'\s+', ' ', s).strip(' ,;.')
+    addr = _strip_parens(addr)
+
+    parts = [
+        f"### 🏠 Property {seq_num} of {total}",
+        f"**{name[:80]}**",
+    ]
+    bullets = []
+    if addr:   bullets.append(f"• **Address:** {addr}")
+    if mukim:  bullets.append(f"• **Mukim:** {mukim}")
+    if daerah: bullets.append(f"• **Daerah:** {daerah}")
+    if negeri: bullets.append(f"• **Negeri:** {negeri}")
+    if bullets:
+        parts.append('\n'.join(bullets))
+
+    parts.append(
+        f"📎 I found {len(candidates)} image(s) you uploaded that may "
+        "be the title document for this property:"
+    )
+
+    ai_idx = ai_prop.get('_ai_summary_idx')
+    if ai_idx is None:
+        # Compute from position — caller passes _ai_summary_idx normally
+        ai_idx = ai_prop.get('ai_index', 0)
+
+    quick: List[Dict[str, str]] = []
+    for i, c in enumerate(candidates[:3], start=1):
+        gid = c.get('group_id', '')
+        g = doc_groups_by_id.get(gid) or {}
+        ge = g.get('merged_extracted') or {}
+        doc_ids = g.get('document_ids') or []
+        first_doc_id = doc_ids[0] if doc_ids else ''
+        # Build a one-line summary of the candidate
+        summary_bits = []
+        if ge.get('lot_number'):
+            summary_bits.append(f"Lot {ge['lot_number']}")
+        if ge.get('title_number'):
+            summary_bits.append(f"Title {ge['title_number'][:30]}")
+        if ge.get('mukim'):
+            summary_bits.append(f"Mukim {ge['mukim']}")
+        if ge.get('owner_name'):
+            owner = (ge['owner_name'] or '').strip()
+            if owner:
+                summary_bits.append(f"owner: {owner[:40]}")
+        summary = ' · '.join(summary_bits) or '(sparse OCR)'
+        ocr_snippet = (ge.get('property_address') or '').strip()[:80]
+        parts.append(
+            f"\n**Candidate {i}** — `{gid[:8]}`\n"
+            f"  • {summary}\n"
+            + (f"  • OCR address: _{ocr_snippet}_\n" if ocr_snippet else "")
+            + f"  • Evidence: {c.get('evidence', '')[:160]}"
+        )
+        # Button label: short, click-friendly
+        btn_label = f"✅ Yes — Candidate {i}"
+        if first_doc_id:
+            quick.append({
+                'label': btn_label,
+                'value': f'inventory match h3 {ai_idx} {first_doc_id}',
+            })
+
+    quick.append({'label': '✏️ None — type details manually', 'value': 'other'})
+    quick.append({'label': '⏭ Skip for now', 'value': 'inventory h3 skip'})
+
+    parts.append(
+        "\n_Click the candidate that matches this property, or 'None' "
+        "to type the title/lot manually._"
+    )
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': [],
+    }
+
+
 def _ai_props_already_handled(client_id: str,
                                 ai_props: List[Dict[str, Any]],
                                 will_data: Dict[str, Any]
@@ -4071,8 +4166,29 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
             i = h3_idx[0]
             seq = sum(1 for h in _handled if h) + 1
             total = len(_ai_props)
-            card = _walkthrough_property_card_h3(_ai_props[i], seq, total)
-            return card
+            # 🔥 §10x.51 Path Y — before falling to H3 placeholder, check
+            # whether the unified scorer found candidates for this AssetItem.
+            # If yes, render a candidate-with-confirm card so the user can
+            # bind a matching image instead of typing details from scratch.
+            candidates = []
+            doc_groups_by_id: Dict[str, Dict[str, Any]] = {}
+            try:
+                from services.asset_pipeline import run_pipeline
+                _r = run_pipeline(_client_id) if _client_id else {}
+                cfc = _r.get('candidates_for_confirm') or {}
+                # Match by ai_index (pipeline's index) — same i because both
+                # sources iterate _extract_ai_summary_properties in order.
+                candidates = cfc.get(i) or []
+                doc_groups_by_id = {g['group_id']: g for g in (_r.get('doc_groups') or [])}
+            except Exception:
+                candidates = []
+            ap = dict(_ai_props[i])
+            ap['_ai_summary_idx'] = i   # tag so card builder has it
+            if candidates:
+                return _walkthrough_property_card_candidates(
+                    ap, candidates, doc_groups_by_id, seq, total
+                )
+            return _walkthrough_property_card_h3(_ai_props[i], seq, total)
 
     # ╔═════════════════════════════════════════════════════════════╗
     # ║ 🔥 BURN-IN §10x.12 — AI-Summary banks + insurance per item    ║

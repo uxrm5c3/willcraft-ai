@@ -3887,6 +3887,7 @@ def _api_chat_message_impl(client_id):
                           or _try_handle_unlink_action(client_id, user_text)
                           or _try_handle_inventory_action(client_id, user_text)
                           # §10hg — H3 placeholder confirm/skip when no pending image
+                          or _try_handle_h3_user_match(client_id, user_text)
                           or _try_handle_h3_property_action(client_id, user_text)
                           # §10hg — conflict resolve replies
                           or _try_handle_message_conflict(client_id, user_text)
@@ -6793,6 +6794,88 @@ _ASSETS_MORE_TOKENS = (
 # ║  catches it and records the AI-Summary slot into step5_data with a     ║
 # ║  _h3_placeholder flag (or _ai_summary_skipped flag).                    ║
 # ╚════════════════════════════════════════════════════════════════════════╝
+def _try_handle_h3_user_match(client_id: str, user_text: str):
+    """🔥 §10x.51 Path Y — User confirmed a candidate match from the
+    candidate-with-confirm card.
+
+    Click value format: `inventory match h3 <ai_idx> <doc_id>`
+
+    Build the gift via the §10x.48 pipeline (build_gift) but with a
+    user_confirmed binding: tier='A', match_via='user_confirmed',
+    confidence='high'. Persist to step5_data with _layer1_confirmed=True
+    so the next walkthrough turn moves to Layer 2 (main beneficiary).
+    """
+    if not user_text:
+        return None
+    t = (user_text or '').strip()
+    m = re.match(r'^inventory\s+match\s+h3\s+(\d+)\s+(\S+)$', t, re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        ai_idx = int(m.group(1))
+    except ValueError:
+        return None
+    doc_id = m.group(2).strip()
+
+    doc = Document.query.filter_by(id=doc_id, client_id=client_id).first()
+    if not doc:
+        return None
+    active_will = (Will.query.filter_by(client_id=client_id, status='draft')
+                   .filter(Will.deleted_at.is_(None))
+                   .order_by(Will.updated_at.desc()).first())
+    if not active_will:
+        return None
+
+    try:
+        from services.asset_pipeline import (parse_canonical_assets,
+                                                group_documents,
+                                                build_gift, Binding)
+    except Exception:
+        return None
+
+    items = parse_canonical_assets(client_id)
+    target_ai = next((a for a in items if a.ai_index == ai_idx), None)
+    if not target_ai:
+        return None
+    groups = group_documents(client_id)
+    target_group = next((g for g in groups if doc_id in g.document_ids), None)
+    if not target_group:
+        return None
+    binding = Binding(
+        ai_index=ai_idx, group_id=target_group.group_id,
+        tier='A', match_via='user_confirmed', confidence='high',
+        evidence='User confirmed candidate match',
+    )
+    entry = build_gift(target_ai, binding, target_group)
+    entry['_layer1_confirmed'] = True
+    entry['_user_confirmed_match'] = True
+    entry['_ai_summary_idx'] = ai_idx
+    entry['beneficiaries'] = entry.get('beneficiaries') or []
+    pi = entry.get('property_info') or {}
+    entry.setdefault('testator_share', pi.get('testator_share') or '1/1')
+    entry.setdefault('address', pi.get('property_address') or '')
+
+    # Append to step5_data; remove any prior placeholder entry for same ai_idx
+    try:
+        s5 = json.loads(active_will.step5_data) if active_will.step5_data else []
+        if not isinstance(s5, list):
+            s5 = []
+    except Exception:
+        s5 = []
+    s5 = [g for g in s5 if g.get('_ai_summary_idx') != ai_idx]
+    s5.append(entry)
+    active_will.step5_data = json.dumps(s5)
+    db.session.commit()
+
+    return {
+        'kind': 'inventory_user_matched',
+        'ai_idx': ai_idx,
+        'doc_id': doc_id,
+        'group_id': target_group.group_id,
+        'name': (target_ai.fields.get('address') or '')[:60] or 'property',
+    }
+
+
 def _try_handle_h3_property_action(client_id: str, user_text: str):
     """Handle 'inventory confirm' / 'inventory skip' when there is no
     image-derived pending property — i.e. the card was an H3 placeholder
