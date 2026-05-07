@@ -115,9 +115,17 @@ def plan_turn(
                 "✅ Kept all supporting docs as-is. Back to the property:"
             )
         elif just_kind == 'testator_confirmed':
+            # 🔥 §10x.37 — transition messages MUST be dynamic. The next
+            # step depends on pending_gifts / completed flags / identities.
+            # Hardcoded 'Step 3: Executor' was wrong when assets are
+            # pending (planner actually renders Step 6 first).
+            try:
+                _next_label = _compute_next_step_label(current_will_data or {})
+            except Exception:
+                _next_label = 'Step 3: Executor'
             reply_parts.append(
                 f"✅ Testator confirmed: **{just_assigned.get('name','')}**.\n\n"
-                f"Now moving to **Step 3: Executor**."
+                f"Now moving to **{_next_label}**."
             )
         elif just_kind == 'identity_skipped':
             # 🔥 §10x.31 — Skip is a no-op. Same IC reappears below.
@@ -5080,6 +5088,24 @@ def _compute_next_step_label(will_data: Dict[str, Any]) -> str:
     # Step 2 — testator confirm (skip if already confirmed)
     if not _is_confirmed(will_data, 'testator'):
         return 'Step 2: Confirm Testator'
+
+    # 🔥 §10x.38 / §10x.55 — pending gifts run BEFORE executor in the
+    # planner because the asset walkthrough fires first whenever
+    # pending_gifts > 0 (line 232 in plan_turn). The label MUST match
+    # what's actually rendered or the user sees a "Now moving to Step 3:
+    # Executor" message followed by a Step 6 property card.
+    if 'assets_confirmed' not in completed:
+        # Need to check if any gifts are actually pending (not just placeholder)
+        if client_id:
+            try:
+                from services.gift_walker import get_pending_gift_documents
+                pg = get_pending_gift_documents(client_id) or {}
+                if sum(len(v) for v in pg.values()
+                        if isinstance(v, list)) > 0:
+                    return 'Step 6: Specific Gifts'
+            except Exception:
+                pass
+
     # Step 3 — executors
     n_exec = len((s2.get('executors') or []))
     if n_exec < 1:
@@ -5090,7 +5116,6 @@ def _compute_next_step_label(will_data: Dict[str, Any]) -> str:
     if not s4:
         return 'Step 5: Beneficiaries'
     # Step 6 — specific gifts walkthrough
-    # 🔥 §10x.38 — pending gifts override 'assets_confirmed' flag.
     if 'assets_confirmed' not in completed:
         return 'Step 6: Specific Gifts'
     if client_id:
