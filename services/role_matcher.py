@@ -289,6 +289,10 @@ def _testator_family_names(client_id: str) -> set:
     # words, and the role word must be inside parentheses or appear
     # within 5 chars after the name (not 60+ chars away).
 
+    # Stop-words that NEVER belong in a real name. Surnames are NOT
+    # included here — KOID/PHEK/LIM are perfectly valid parts of full
+    # Malaysian names ("JOSHUA KOID TECK SENG"). The 2-token minimum
+    # already prevents standalone surnames from matching.
     _STOPWORDS = {
         'WITH', 'ALL', 'AND', 'OR', 'THE', 'TO', 'GO', 'GOES', 'OF',
         'AT', 'FROM', 'BY', 'IN', 'ON', 'FOR', 'BANK', 'SAVINGS',
@@ -297,7 +301,7 @@ def _testator_family_names(client_id: str) -> set:
         'NO', 'PROPERTY', 'CONDOMINIUM', 'HOUSE', 'SHOP', 'UNIT',
         'PERCENT', 'PERCENTAGE', 'EQUAL', 'EQUALLY', 'SHARE', 'SHARES',
         'JOINT', 'JOINTLY', 'CO', 'OWNED', 'OWNERSHIP', 'COMMON',
-        'PHEK', 'KOID',  # surnames are fine as parts; not as standalone
+        'ONLY', 'BOTH', 'EACH', 'ANY', 'EVERY', 'NONE', 'SOME',
     }
     def _looks_like_real_name(nm: str) -> bool:
         nm = nm.strip()
