@@ -140,5 +140,5 @@ function copyInboxAddress() {
     });
 }
 </script>
-<script src="{{ url_for('static', filename='js/chat.js') }}?v=20260507a"></script>
+<script src="{{ url_for('static', filename='js/chat.js') }}?v={{ asset_version('js/chat.js') }}"></script>
 {% endblock %}

@@ -383,7 +383,7 @@
     window._personRegistry = {{ (persons | default([])) | tojson }};
     window._testatorPersonId = {{ (testator_person_id | default('')) | tojson }};
 </script>
-<script src="{{ url_for('static', filename='js/wizard.js') }}?v=20260320j"></script>
+<script src="{{ url_for('static', filename='js/wizard.js') }}?v={{ asset_version('js/wizard.js') }}"></script>
 
 <!-- Wizard-side chat sync: poll Person registry every 6s. When new identities
      are added by the chat in another tab, show a toast offering Refresh. -->

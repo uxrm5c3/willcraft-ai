@@ -255,7 +255,25 @@ def inject_global_context():
         'role_labels': ROLE_LABELS,
         'pending_approval_count': pending_count,
         'has_generated_will': has_generated_will,
+        # Auto cache-bust for static assets — use file mtime so any
+        # change to chat.js / wizard.js etc. is picked up by the browser
+        # automatically. No more manual ?v=… bumps and no more telling
+        # users to hard-refresh.
+        'asset_version': _asset_version,
     }
+
+
+def _asset_version(filename: str) -> str:
+    """Return a cache-busting query string based on file mtime.
+
+    Usage in templates:
+        <script src="{{ url_for('static', filename='js/chat.js') }}?v={{ asset_version('js/chat.js') }}"></script>
+    """
+    try:
+        path = os.path.join(app.static_folder, filename)
+        return str(int(os.path.getmtime(path)))
+    except Exception:
+        return '0'
 
 
 with app.app_context():

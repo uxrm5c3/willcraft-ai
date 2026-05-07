@@ -783,12 +783,20 @@
           else if (g._pending_beneficiary) label += ' · ⏳ awaiting beneficiary';
           return [null, label.slice(0, 120)];
         }) : null },
-      { n: '7', name: 'Residuary Estate', link: '/wizard/step/7', optional: false,
-        fields: will.step6 && Object.keys(will.step6).length ? [[null, 'Configured']] : null },
-      { n: '8', name: 'Trust', link: '/wizard/step/8', optional: true,
-        fields: will.step7 && Object.keys(will.step7).length ? [[null, 'Configured']] : null },
-      { n: '9', name: 'Other Matters', link: '/wizard/step/9', optional: true,
-        fields: will.step8 && Object.keys(will.step8).length ? [[null, 'Configured']] : null },
+      // Configured-check helper: ignore internal underscore-prefixed keys
+      // (e.g. step6._raw_forward_text is the inbound email body, not user
+      // residuary data — it must NOT mark the step as configured).
+      ...(function() {
+        const _hasUserConfig = (obj) => obj && Object.keys(obj).some(k => !k.startsWith('_'));
+        return [
+          { n: '7', name: 'Residuary Estate', link: '/wizard/step/7', optional: false,
+            fields: _hasUserConfig(will.step6) ? [[null, 'Configured']] : null },
+          { n: '8', name: 'Trust', link: '/wizard/step/8', optional: true,
+            fields: _hasUserConfig(will.step7) ? [[null, 'Configured']] : null },
+          { n: '9', name: 'Other Matters', link: '/wizard/step/9', optional: true,
+            fields: _hasUserConfig(will.step8) ? [[null, 'Configured']] : null },
+        ];
+      })(),
     ];
 
     // Pick "current" step in priority order:
