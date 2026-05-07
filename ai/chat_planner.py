@@ -3688,6 +3688,27 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
 
     if props:
         target = props[0]
+        # 🔥 §10hg / §10x.23 — H3 placeholders MUST go to the H3 Layer 1
+        # confirm card. Earlier the code always called
+        # _walkthrough_property_card (image-bound layout) which rendered
+        # the wrong card and skipped the Confirm-Asset semantics.
+        if target.get('_h3_placeholder'):
+            ai_match = target.get('_ai_summary_match') or {}
+            # Compute sequence number across all property positions
+            try:
+                from services.gift_walker import get_pending_gift_documents as _gpd
+                pg = _gpd(_client_id) or {}
+                total = len(pg.get('property') or []) or 1
+                # this index = first H3 in props (this `target`)
+                seq = 1
+                for i, pp in enumerate(pg.get('property') or []):
+                    if pp is target:
+                        seq = i + 1
+                        break
+            except Exception:
+                seq = 1
+                total = len(props)
+            return _walkthrough_property_card_h3(ai_match, seq, total)
         # If the writer just pressed "Wrong supporting docs" on this
         # property, the app handler stamped _unlink_pending. Render the
         # support-doc picker instead of the normal card.
