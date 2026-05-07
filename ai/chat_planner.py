@@ -10,7 +10,7 @@ Stages (in priority order):
 Each stage knows how to advance to the next; the planner emits a
 "✅ Step N complete — moving to Step N+1" line at the boundary.
 """
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import json as _json
 import json
 import re
