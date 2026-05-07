@@ -9500,12 +9500,9 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                 elif doc.category in (None, '', 'chat_inbox', 'other'):
                     # 🔥 §10x.26 — TERMINAL STATE for vision failures.
                     # Without this guard, every chat-history poll (every 5s)
-                    # re-classified the same 5 unreadable docs forever, burning
-                    # API tokens and posting duplicate intake cards. After 3
-                    # failed attempts, promote the doc to 'needs_review' so the
-                    # watchdog (which only re-fires for chat_inbox docs) stops.
-                    # The chat surfaces "needs your manual review" to the user
-                    # instead of "Analysing…" forever.
+                    # re-classified the same 5 unreadable docs forever.
+                    # After 3 failed attempts, promote the doc to
+                    # 'needs_review' so the watchdog stops re-firing.
                     try:
                         prev_attempts = int(
                             (json.loads(doc.extracted_data or '{}') or {})
@@ -9513,6 +9510,11 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                     except Exception:
                         prev_attempts = 0
                     new_attempts = prev_attempts + 1
+                    # Guard: `extracted` may still be None at this point
+                    # (the `if extracted is None: extracted = {}` line is
+                    # below us). Ensure it's a dict before assignment.
+                    if extracted is None:
+                        extracted = {}
                     extracted['_classify_attempts'] = new_attempts
                     is_unreadable = bool(classification.get('manual_review')) \
                                     or 'unreadable' in (classification.get('reason') or '').lower()
