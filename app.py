@@ -4562,6 +4562,65 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
             if addr:
                 claimed_addresses.add(addr)
 
+        # ╔════════════════════════════════════════════════════════════════╗
+        # ║ 🔥 BURN-IN §10h — AI SUMMARY IS THE CANONICAL ADDRESS SOURCE 🔥 ║
+        # ║ Per §10ha, title docs DO NOT contain street addresses. The      ║
+        # ║ canonical address for any property is in the AI Summary text.   ║
+        # ║ When a doc's title/lot uniquely matches an AI Summary entry,    ║
+        # ║ use THAT entry's address — not whatever the chat-text regex     ║
+        # ║ happens to fish out (which historically hallucinates building   ║
+        # ║ names like "Condominium Example" from prior AI noise).          ║
+        # ╚════════════════════════════════════════════════════════════════╝
+        try:
+            from ai.chat_planner import _extract_ai_summary_properties
+            _ai_summary = _extract_ai_summary_properties(client_id) or []
+        except Exception:
+            _ai_summary = []
+
+        def _digits_only(s: str) -> str:
+            return re.sub(r'\D', '', s or '')
+
+        def _match_doc_to_ai_summary(ex: dict) -> dict:
+            """Return the matching AI-Summary entry (or None) for this doc.
+            Match priority: title digits → lot digits → (mukim+daerah, single match)."""
+            if not _ai_summary:
+                return None
+            d_title = _digits_only(ex.get('title_number') or '')
+            d_lot   = _digits_only(ex.get('lot_number') or '')
+            d_mukim = (ex.get('mukim') or '').strip().lower()
+            d_daerah = (ex.get('daerah') or '').strip().lower()
+            # Title digits — strongest match
+            if d_title and len(d_title) >= 4:
+                for ap in _ai_summary:
+                    a_title = _digits_only(ap.get('title') or '')
+                    if a_title and a_title == d_title:
+                        return ap
+            # Lot digits — strong
+            if d_lot and len(d_lot) >= 3:
+                for ap in _ai_summary:
+                    a_lot = _digits_only(ap.get('lot') or '')
+                    if a_lot and a_lot == d_lot:
+                        return ap
+            # Mukim+daerah — only match if EXACTLY ONE AI prop is in same mukim
+            # AND that AI prop has no claimant doc yet (i.e. its address isn't
+            # already in claimed_addresses). Otherwise too ambiguous.
+            if d_mukim:
+                cands = []
+                for ap in _ai_summary:
+                    a_mukim = (ap.get('mukim') or '').strip().lower()
+                    if a_mukim and a_mukim != d_mukim:
+                        continue
+                    a_daerah = (ap.get('daerah') or '').strip().lower()
+                    if d_daerah and a_daerah and a_daerah != d_daerah:
+                        continue
+                    a_addr = (ap.get('address') or '').strip().lower()
+                    if a_addr and a_addr in claimed_addresses:
+                        continue   # already taken
+                    cands.append(ap)
+                if len(cands) == 1:
+                    return cands[0]
+            return None
+
         changed = False
         for p in props:
             doc_id = p.get('document_id')
@@ -4569,10 +4628,49 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                 continue
             ex_orig = p.get('extracted') or {}
 
+            # ── §10h pre-enrichment: AI Summary address takes precedence ───
+            # If the doc matches a unique AI Summary entry by title/lot/mukim,
+            # set the address from the summary BEFORE chat-text scan touches it.
+            # This kills the "hallucinated Condominium Example" class of bugs.
+            from ai.chat_planner import _NLC_ADDR_RE as _nlc_re
+            ai_match = _match_doc_to_ai_summary(ex_orig)
+            if ai_match:
+                a_addr = (ai_match.get('address') or '').strip()
+                if a_addr:
+                    existing_addr_pre = (ex_orig.get('property_address') or '').strip()
+                    # Overwrite when missing, NLC-format, or different from canonical.
+                    needs_overwrite = (
+                        not existing_addr_pre
+                        or _nlc_re.match(existing_addr_pre)
+                        or existing_addr_pre.lower() != a_addr.lower()
+                    )
+                    if needs_overwrite:
+                        doc = db.session.get(Document, doc_id)
+                        if doc:
+                            try:
+                                stored = json.loads(doc.extracted_data) if doc.extracted_data else {}
+                            except (json.JSONDecodeError, TypeError):
+                                stored = {}
+                            stored['property_address'] = a_addr
+                            stored.setdefault('_enriched_from', [])
+                            tag = 'ai_summary.canonical_address'
+                            if tag not in stored['_enriched_from']:
+                                stored['_enriched_from'].append(tag)
+                            # Strip the old enriched-from-chat-text tag if present —
+                            # it's no longer truthful after this overwrite.
+                            stored['_enriched_from'] = [
+                                t for t in stored['_enriched_from']
+                                if t != 'chat_text.property_address'
+                            ]
+                            doc.extracted_data = json.dumps(stored)
+                            ex_orig = stored
+                            changed = True
+                            claimed_addresses.add(a_addr.lower())
+                            continue   # skip the chat-text enrichment for this doc
+
             # Already has a REAL (non-NLC) address — add to claimed set and skip.
             # NLC-format addresses (e.g. "H.S.(D) 251041 P.T.D …") are treated
             # the same as missing — we try to find a real street address to replace them.
-            from ai.chat_planner import _NLC_ADDR_RE as _nlc_re
             existing_addr = (ex_orig.get('property_address') or '').strip()
             if existing_addr and not _nlc_re.match(existing_addr):
                 claimed_addresses.add(existing_addr.lower())
