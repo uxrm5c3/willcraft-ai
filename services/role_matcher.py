@@ -280,26 +280,68 @@ def _testator_family_names(client_id: str) -> set:
     if not text:
         return set()
     names: set = set()
-    # Regex hits like "to Joshua Koid Teck Seng (son)" / "Esther Koid En Hui (daughter)"
-    # / "with my wife Lim Bee Yan" / "spouse Lim Bee Yan"
-    family_role_re = re.compile(
-        r'(?P<name>[A-Z][A-Z\s\-/]{4,60}?[A-Z])\s*'
-        r'\(?\s*(?P<role>son|daughter|wife|husband|spouse|father|mother|'
-        r'parent|brother|sister)\b',
-        re.IGNORECASE)
-    for m in family_role_re.finditer(text):
-        nm = m.group('name').strip()
-        # Filter typos / phrases that grabbed too much
-        if 5 <= len(nm) <= 60 and nm.upper() == nm.upper():
-            names.add(nm.upper())
-    # Also: explicit role-tagged hints like "to my wife (Lim Bee Yan)"
+    # 🔥 §10x.30 — TIGHTENED regex. Earlier version greedily matched
+    # any uppercase phrase before a role word, producing junk like:
+    #   "WITH ALL BANK SAVINGS AND INSURANCE PROCEEDS TO GO TO THE [son]"
+    #   "OR ONLY THE [son]"
+    # New rules: name must be 2–4 capitalized tokens of letters only,
+    # no junk "AND/OR/THE/WITH/ALL/PROCEEDS/SAVINGS/INSURANCE..." stop-
+    # words, and the role word must be inside parentheses or appear
+    # within 5 chars after the name (not 60+ chars away).
+
+    _STOPWORDS = {
+        'WITH', 'ALL', 'AND', 'OR', 'THE', 'TO', 'GO', 'GOES', 'OF',
+        'AT', 'FROM', 'BY', 'IN', 'ON', 'FOR', 'BANK', 'SAVINGS',
+        'SAVING', 'INSURANCE', 'PROCEEDS', 'POLICY', 'POLICIES',
+        'ACCOUNT', 'ACCOUNTS', 'NRIC', 'IC', 'PASSPORT', 'NUMBER',
+        'NO', 'PROPERTY', 'CONDOMINIUM', 'HOUSE', 'SHOP', 'UNIT',
+        'PERCENT', 'PERCENTAGE', 'EQUAL', 'EQUALLY', 'SHARE', 'SHARES',
+        'JOINT', 'JOINTLY', 'CO', 'OWNED', 'OWNERSHIP', 'COMMON',
+        'PHEK', 'KOID',  # surnames are fine as parts; not as standalone
+    }
+    def _looks_like_real_name(nm: str) -> bool:
+        nm = nm.strip()
+        if not (5 <= len(nm) <= 60):
+            return False
+        toks = [t for t in re.split(r'\s+', nm) if t]
+        if not (2 <= len(toks) <= 5):
+            return False
+        # Each token: alphabetic, 2+ chars, capitalized
+        for t in toks:
+            if not re.match(r"^[A-Z][A-Z'\-]{1,}$", t):
+                return False
+        # All tokens must NOT be stopwords
+        if any(t.upper() in _STOPWORDS for t in toks):
+            return False
+        return True
+
+    # Pattern 1: "<NAME> (role)" — role in parens directly after name
     for m in re.finditer(
-        r'\bmy\s+(son|daughter|wife|husband|spouse|brother|sister)\s+'
-        r'\(?(?P<name>[A-Z][A-Z\s\-/]{4,60}?[A-Z])\b',
+        r'\b(?P<name>[A-Z][A-Za-z\-\']{1,}(?:\s+[A-Z][A-Za-z\-\']{1,}){1,4})'
+        r'\s*\(\s*(?P<role>son|daughter|wife|husband|spouse|father|mother|'
+        r'parent|brother|sister)\s*\)',
         text, re.IGNORECASE):
-        nm = m.group('name').strip()
-        if 5 <= len(nm) <= 60:
-            names.add(nm.upper())
+        nm = m.group('name').upper().strip()
+        if _looks_like_real_name(nm):
+            names.add(nm)
+    # Pattern 2: "<NAME>(role)" — no space between name and parens (KOID style)
+    for m in re.finditer(
+        r'\b(?P<name>[A-Z][A-Za-z\-\']{1,}(?:\s+[A-Z][A-Za-z\-\']{1,}){1,4})'
+        r'\(\s*(?P<role>son|daughter|wife|husband|spouse|father|mother|'
+        r'parent|brother|sister)\s*\)',
+        text, re.IGNORECASE):
+        nm = m.group('name').upper().strip()
+        if _looks_like_real_name(nm):
+            names.add(nm)
+    # Pattern 3: "my <role> <NAME>" or "my <role> (NAME)"
+    for m in re.finditer(
+        r'\bmy\s+(?:son|daughter|wife|husband|spouse|brother|sister'
+        r'|father|mother)\s+\(?\s*'
+        r'(?P<name>[A-Z][A-Za-z\-\']{1,}(?:\s+[A-Z][A-Za-z\-\']{1,}){1,4})\b',
+        text, re.IGNORECASE):
+        nm = m.group('name').upper().strip()
+        if _looks_like_real_name(nm):
+            names.add(nm)
     return names
 
 

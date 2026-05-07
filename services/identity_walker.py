@@ -115,17 +115,31 @@ RELATIONSHIP_KEYWORDS = {
 
 def _score_ic_confidence(name: str, recent_text: str,
                           role_matcher_outsider_names: set) -> int:
-    """🔥 §10e (identity edition) — score how confidently the user's
-    message tells us this person's relationship to the testator.
+    """🔥 §10x.30 BURN-IN — Identity matching: HIGH → LOW confidence.
 
-    Higher score = clearer evidence in the message.
-        5 — Name + role mentioned together in message
-            ("Joshua Koid Teck Seng(son)", "(daughter) Esther")
-        3 — Name appears in message but no role-word adjacent
-        1 — Name NOT in message but outsider-elimination identifies them
-            (the lone IC whose name doesn't match any family member named
-             in the message — the §10x.21 sister-in-law case)
-        0 — No signal at all
+    Mirrors §10e for asset matching, applied to identities. The IC
+    walkthrough orders pending identities by HOW CONFIDENTLY the
+    relationship can be deduced from the message.
+
+    Score grid:
+        5 — HIGH:   Name + family-role word ('son', 'daughter', 'wife',
+                    'husband', 'spouse', 'father', 'mother', 'brother',
+                    'sister') within 30 chars before / 60 chars after.
+                    e.g. "Joshua Koid Teck Seng(son)" → 5
+        4 — HIGH:   Name + co-owner phrase ('I share with', 'joint with',
+                    'co-owned with'). Per §10x.19, co-owners are NOT
+                    Person rows — they're stored on property only —
+                    but the deduction is still HIGH so the user sees a
+                    "co-owner of property X" suggestion.
+                    e.g. "I share with Chai Mei Fun 50/50" → 4
+        3 — MEDIUM: Name appears in message, no role word adjacent.
+                    User has to choose.
+        1 — LOW:    Name NOT in message; outsider-elimination identifies
+                    them as the lone non-family candidate (§10x.21).
+                    e.g. "My Sister in law Tel:+6016-..." with LIM LAY
+                    CHENG as the only IC whose name doesn't match any
+                    family member → 1
+        0 — NONE:   No signal at all.
     """
     nm = (name or '').strip().upper()
     if not nm:
@@ -133,12 +147,19 @@ def _score_ic_confidence(name: str, recent_text: str,
     text_upper = (recent_text or '').upper()
     if nm in text_upper:
         idx = text_upper.find(nm)
-        # Window: 30 chars before / 60 chars after to catch trailing role
+        # Window: 30 chars before / 60 chars after to catch role tag
         ctx = text_upper[max(0, idx - 30): idx + len(nm) + 60]
         FAMILY_ROLES = ('SON', 'DAUGHTER', 'WIFE', 'HUSBAND', 'SPOUSE',
                          'FATHER', 'MOTHER', 'BROTHER', 'SISTER')
         if any(r in ctx for r in FAMILY_ROLES):
             return 5
+        # Score 4 — co-owner phrasing within 50 chars BEFORE the name
+        # (the phrase precedes the name: "I share with Chai Mei Fun")
+        before = text_upper[max(0, idx - 50): idx]
+        CO_OWNER_PHRASES = ('SHARE WITH', 'JOINT WITH', 'CO-OWNED WITH',
+                             'CO OWNED WITH', 'JOINTLY WITH')
+        if any(p in before for p in CO_OWNER_PHRASES):
+            return 4
         return 3
     # Outsider-elimination match (sister-in-law case)
     if nm in role_matcher_outsider_names:

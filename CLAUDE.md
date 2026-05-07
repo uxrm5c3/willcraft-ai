@@ -2731,6 +2731,117 @@ gift model are the only authority on clause shape.
 
 ---
 
+### 10x.30  🔥🔥🔥 BURN-IN — Identity Matching: HIGH → LOW Confidence 🔥🔥🔥
+
+**Same rule as §10e for asset matching, applied to identities. The IC
+walkthrough orders pending identities by HOW CONFIDENTLY their
+relationship can be deduced from the message. HIGH-confidence
+matches walk FIRST. Low-confidence inferences walk LAST. NO EXCEPTIONS.**
+
+### Why this rule
+
+Resolving HIGH-confidence identities first lets them claim "I am the
+son" / "I am the daughter" / "I am the wife" before low-confidence
+inferences are made. By the time we reach the low-confidence outsider,
+the system already KNOWS who's family — so the outsider-elimination
+("the only IC name NOT in your family") has solid ground to stand on.
+
+If we walk LOW-confidence first, we might misassign the only outsider
+to "sister-in-law" before realising one of the named-family ICs was
+ALSO needed for that role. Order = correctness.
+
+### The confidence grid (`services/identity_walker._score_ic_confidence`)
+
+| Score | Tier | Trigger |
+|-------|------|---------|
+| **5** | **HIGH** | Name appears in message AND a family-role word (`son`, `daughter`, `wife`, `husband`, `spouse`, `father`, `mother`, `brother`, `sister`) appears within 30 chars before / 60 chars after the name. Example: `"Joshua Koid Teck Seng(son)"`, `"Esther Koid En Hui (daughter)"`, `"my wife (Lim Bee Yan)"` |
+| **4** | **HIGH** | Name appears in message with a co-owner phrase (`"I share with X"`, `"joint with X"`, `"co-owned with X"`). Per §10x.19 the IC is NOT added to the Person table — the name is recorded on the property's `co_owners` array only. But the deduction confidence is HIGH so the user sees a clear "this is co-owner of property X" suggestion. |
+| **3** | **MEDIUM** | Name appears in message but NO role word adjacent. User has to choose. |
+| **1** | **LOW** | Name does NOT appear in message, but role-only mentions plus outsider-elimination via `role_matcher.match_role_to_candidates` identifies them as the lone non-family candidate (§10x.21). Example: `"My Sister in law Tel:+6016-..."` → the only IC whose extracted name doesn't match any family member named elsewhere is the sister-in-law. |
+| **0** | **NONE** | No signal at all. User must manually identify. |
+
+### Sort order (mandatory)
+
+```python
+pending.sort(key=lambda p: (-p['_deduction_score'], p.get('created_at', '')))
+```
+
+Score DESC → upload-time ASC as tie-breaker. Deterministic, stable.
+
+### Example (KOID test fixture)
+
+Message contains:
+- "Joshua Koid Teck Seng(son)" → Joshua scores 5
+- "Esther Koid En Hui (daughter)" → Esther scores 5
+- "my wife (Lim Bee Yan)" → Lim Bee Yan scores 5
+- "I share with Chai Mei Fun 50/50" → Chai Mei Fun scores 4 (co-owner)
+- "My Sister in law Tel:+6016-7338764" → role-only mention → triggers
+  outsider-elimination → LIM LAY CHENG scores 1
+
+Walkthrough order (HIGH → LOW):
+```
+score=5  JOSHUA KOID TECK SENG    (son, name+role)
+score=5  ESTHER KOID EN HUI       (daughter, name+role)
+score=5  LIM BEE YAN              (wife, name+role)  [if IC uploaded]
+score=4  CHAI MEI FUN             (co-owner B-05-11) [§10x.19 → property only, NOT Person]
+score=1  LIM LAY CHENG            (sister-in-law via outsider elimination)
+```
+
+Numbers 1-4 are DETERMINISTIC: name is in the message, role is in
+the message. Number 5 is INFERENCE.
+
+### Hard rules
+
+1. **Walk HIGH first.** Score-5 ICs MUST be presented before any
+   score-4. Score-4 before score-3. Etc. Tie within tier → upload time.
+
+2. **Show evidence snippet on every IC card.** Per §9, the chat MUST
+   show the message snippet that prompted the deduction. The user
+   verifies, confirms with one click. No guessing.
+
+3. **Buttons reflect the message, not a fixed list.** When the
+   deduction is HIGH, show "✓ Yes — \<role\>" as the FIRST button.
+   The fallback buttons (Spouse / Sister / Brother / Friend / etc.)
+   appear ONLY when no deduction is possible (score 0).
+
+4. **Co-owners (score 4) are tracked separately** per §10x.19. They
+   do NOT receive a Person row. The chat surfaces them as part of the
+   property card ("Co-owner: \<name\>") not as an identity.
+
+5. **Outsider-elimination (score 1) requires that ALL higher-scored
+   ICs are matched first.** If Joshua's IC is still in `pending`,
+   we DON'T yet say "LIM LAY CHENG = the only outsider" — wait until
+   Joshua + Esther + spouse are all assigned, THEN do elimination on
+   what's left. The sort order naturally enforces this: by the time
+   the matcher is asked about score-1 ICs, score-5 ICs are no longer
+   pending.
+
+### Where this is enforced
+
+| File | Function | Role |
+|------|----------|------|
+| `services/identity_walker.py` | `_score_ic_confidence` | Scoring rubric (5/4/3/1/0) |
+| `services/identity_walker.py` | `get_pending_ic_documents` | Sort by score DESC + upload-time |
+| `services/identity_walker.py` | `_gather_message_text` | Pull AI Summary + raw forward text once |
+| `services/identity_walker.py` | `_outsider_eliminated_names` | Cache role-matcher HIGH outsider names for score 1 |
+| `services/role_matcher.py` | `match_role_to_candidates` | Outsider-elimination cascade (used to populate score-1 names) |
+| `ai/chat_planner.py` | `_identity_question` | Renders IC card with deduced role + evidence snippet |
+| `app.py` | `_try_assign_pending_identity` | Yes-button handler — falls through to role_matcher if `deduce_roles` can't match name verbatim |
+
+### The litmus test (run before shipping any IC-walkthrough change)
+
+```
+Q: For KOID test fixture, what is the pending IC walkthrough order?
+   - Joshua → Esther → LIM LAY CHENG  ✓ ship
+   - LIM LAY CHENG first              ✗ §10e order regressed; fix before ship
+```
+
+If the order ever inverts, the bug is in `get_pending_ic_documents`
+sort step or in `_score_ic_confidence`. Fix THERE, not by patching
+the chat-planner.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
