@@ -1618,10 +1618,13 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
         elif 'joint' in own_lc or 'with' in own_lc:
             _testator_share_display = '1/2 (joint, assumed equal split)'
 
+    # 🔥 §10x.46 — Layer 1 = ASSET IDENTITY ONLY.
+    # No beneficiary info, no testator-share %, no "Confidence: HIGH"
+    # text. Those belong to Layer 2 / internal scoring respectively.
+    # Layer 1's only job: confirm "this property exists in the will".
     parts = [
-        f"### 🏠 Property {seq_num} of {total} — Layer 1: Confirm Asset",
+        f"### 🏠 Property {seq_num} of {total}",
         f"**{name[:80]}**",
-        ("📨 **From your message** — message-stated, no title document attached yet:"),
     ]
     bullets = []
     if addr:   bullets.append(f"• **Address:** {addr}")
@@ -1630,23 +1633,22 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
     if mukim:  bullets.append(f"• **Mukim:** {mukim}")
     if daerah: bullets.append(f"• **Daerah:** {daerah}")
     if own:    bullets.append(f"• **Ownership:** {own}")
-    if _testator_share_display:
-        bullets.append(f"• **Your share to dispose:** **{_testator_share_display}** "
-                       f"_(the will only disposes of this portion)_")
-    if bene:   bullets.append(f"• **Beneficiary intent:** {bene}")
     if bullets:
         parts.append('\n'.join(bullets))
+    # Note: testator-share % and beneficiary intent were here per §10x.13
+    # display, but they belong to Layer 2. Removed per user feedback.
 
+    # No "Confidence: HIGH" label — confidence is internal scoring per
+    # §10x.46. Just say what's missing in plain language:
     parts.append(
-        "🔎 **Confidence: HIGH** — you stated this property. I just need the "
-        "legal-doc details (lot/title/mukim) to finalise it for the will. "
-        "Confirm to add it, then upload the title or type the details."
+        "📝 No title document attached yet. Confirm the property — you can "
+        "upload the title doc later or type the lot/title manually."
     )
     quick = [
-        {'label': '✅ Confirm — add this property to the will', 'value': 'inventory h3 confirm'},
-        {'label': '📎 Upload title document for this property', 'value': 'inbox start'},
-        {'label': '✏️ Type the title/lot/mukim manually',       'value': 'other'},
-        {'label': '⏭ Skip for now',                              'value': 'inventory h3 skip'},
+        {'label': '✅ Confirm', 'value': 'inventory h3 confirm'},
+        {'label': '📎 Upload title document', 'value': 'inbox start'},
+        {'label': '✏️ Type details manually', 'value': 'other'},
+        {'label': '⏭ Skip for now', 'value': 'inventory h3 skip'},
     ]
     return {
         'text': '\n\n'.join(parts) + _qr_marker(quick),

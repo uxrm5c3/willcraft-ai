@@ -3882,6 +3882,10 @@ Each entry has:
 | 24 | "When new image/message provided midway, MUST re-run AI Summary → Image Analysis → Identity Match → Role Match → Asset Match (3 layers)" | §10x.43 | Inbound webhook → watchdog re-fire (§10x.29) → walker re-emit pending → reconciler |
 | 25 | "New identity can also be executor / guardian / trustee — must reconcile into ANY step that names them" | §10x.44 | `_step2/3/4/7_add_*` dispatchers fire per will-role pattern in message |
 | 26 | "Improve the UI — looks cluttered / confusing" | §10x.45 | One-line registry, terse warnings, ≤6 sections per card, no triple-stack transition msgs |
+| 27 | "Layer 1 ASSET IDENTITY ONLY — no testator-share %, no beneficiary intent" | §10x.46 R1 | Strip Layer 2 fields from Layer 1 card |
+| 28 | "Do not show Confidence level — it's internal" | §10x.46 R2 | No "Confidence: HIGH/MEDIUM/LOW" labels on user-facing cards |
+| 29 | "HIGH confidence requires MESSAGE + IMAGE both confirm" | §10x.46 R3 | Tier definition tightened: HIGH = lot/title in image == AI Summary's |
+| 30 | "FIND THE ROOT CAUSE. DON'T JUST PATCH" | §10x.46 R4 | Document signal vocabularies before adding match logic; lexical → semantic layer |
 
 ### Maintenance rule
 
@@ -4461,6 +4465,145 @@ Q: Visual scan of any chat card.
 If a future card builder adds a 4-line block of legal explanation,
 move it to a footnote OR cut it. Cards are decision tools, not
 training material.
+
+---
+
+### 10x.46  🔥🔥🔥🔥 BURN-IN — Layer separation + confidence is INTERNAL 🔥🔥🔥🔥
+
+**FOUR rules user called out together. All four must be enforced
+together — they're tightly coupled.**
+
+### Rule 1 — Layer 1 = ASSET IDENTITY ONLY
+
+The Layer 1 confirm card asks "is this property in your will?" — and
+NOTHING ELSE. It must NOT include:
+
+- ❌ Testator share % ("Your share to dispose: 1/2")
+- ❌ Beneficiary intent ("Joshua 25%, Esther 25%")
+- ❌ Distribution math ("of sender's share")
+- ❌ Anything from Layer 2 / Layer 3
+
+Layer 1 includes ONLY:
+- ✓ Property name / address
+- ✓ Lot / Title / Mukim / Daerah / Negeri (when known)
+- ✓ Ownership type (sole / joint with X) — needed to identify the asset
+- ✓ "Confirm / Upload / Type / Skip" buttons
+
+The user reads Layer 1 once per property to validate IDENTITY. Forcing
+them to also process beneficiary % at this stage causes confusion and
+slow decisions.
+
+### Rule 2 — Confidence levels are INTERNAL
+
+`HIGH / MEDIUM / LOW` confidence is **internal scoring** that drives
+routing logic (which card to show, how many buttons, etc.). It MUST
+NOT be displayed to the user. Strip every:
+
+- ❌ "🔎 Confidence: HIGH"
+- ❌ "🎯 HIGH confidence — your message clearly states..."
+- ❌ "⚠️ MEDIUM confidence — partial match..."
+- ❌ "🤔 No clear distribution..." (LOW)
+
+Replace with **plain factual statements** about what we have / don't have:
+
+- ✓ "No title document attached yet."
+- ✓ "Distribution suggested from your message: Joshua 50%, Esther 50%."
+- ✓ "Pick the option that matches your intent."
+
+The button layout still varies by confidence (HIGH = 1 button,
+MEDIUM/LOW = 3 — per §10x.40), but the LABEL "HIGH/MEDIUM/LOW" never
+appears in the user-facing text.
+
+### Rule 3 — HIGH confidence requires MESSAGE + IMAGE both agree
+
+Calling a card "HIGH confidence" while showing **"no title document
+attached yet"** is a contradiction. HIGH means the system has BOTH
+sources of truth aligned:
+
+| Tier | Requirement |
+|------|-------------|
+| **HIGH** | Message names the asset AND a matching image confirms it (lot/title in image == AI Summary lot/title, OR strong token+mukim match) |
+| **MEDIUM** | Message names the asset OR image extracted ID, but not both — partial verification |
+| **LOW** | Asset present in only one source with no corroboration |
+
+Before today, every message-stated H3 (no image) was tagged HIGH.
+That's wrong — a message-only assertion is at best MEDIUM. HIGH
+demands two-source corroboration.
+
+### Rule 4 — ROOT CAUSE: stop patching symptoms
+
+User explicit feedback:
+> "WHY THIS FUCK HAPPEN. FIND THE ROOT CAUSE. DONT JUST FIX THIS"
+
+Pattern observed across this session: bug surfaces → I patch the
+symptom (e.g. "filter dropped real images, just don't filter") →
+new bug surfaces from the unfiltered case → patch again → repeat.
+
+The root cause for the §10h-filter regression specifically:
+1. AI Summary parser DOES NOT extract lot/title from message text
+   (the user's WhatsApp doesn't contain lot/title — they only typed
+   "Unit C-30-08, Marina Cove").
+2. Image OCR addresses are STRUCTURED land-registry format
+   ("PTD 127082, Mukim Plentong, Johor Bahru"), not street format.
+3. AI Summary addresses are STREET format ("No. 03 Jalan Gunung 4,
+   Seri Alam Masai, 81750").
+4. Token overlap between (2) and (3) is RARE — different vocabularies.
+5. So matching by tokens silently fails on 90% of real cases.
+6. Without a fallback semantic bridge (geo bridge, postcode → mukim,
+   building name → mukim), images get dropped or mis-bound.
+
+**Lesson burned in:** before adding any "match" logic, document
+WHAT signals each source contains and which ones overlap. If the
+overlap is rare, the match algorithm needs a SEMANTIC layer
+(geo bridge / synonym table / Claude-vision question) not lexical.
+
+### Implementation
+
+`ai/chat_planner.py::_walkthrough_property_card_h3` updated to:
+- Drop testator-share line + beneficiary intent
+- Drop "Confidence: HIGH" text label
+- Replace with neutral "No title document attached yet" copy
+
+Confidence-tier button selection (§10x.40) STILL applies — buttons
+on HIGH-tier cards still default to 1 confirm + skip + remove. The
+text label is what's removed.
+
+`services/gift_walker.py::_match_image_to_ai_summary` (the H3 dedup):
+- HIGH score = 5+ (lot/title or tokens+mukim)
+- Matched images → bound to AI Summary
+- Unmatched images → §10d residual
+
+When an image group binds to an AI Summary entry, that AI prop's H3
+placeholder is suppressed (image bound = no need for H3). Confidence
+on the resulting card becomes HIGH (image+message both confirm).
+
+### Where this is enforced
+
+| Rule | File | Function |
+|------|------|----------|
+| #1 Layer 1 only | `ai/chat_planner.py` | `_walkthrough_property_card_h3` |
+| #2 No confidence label | All card builders | Strip "Confidence: HIGH/MEDIUM/LOW" text |
+| #3 HIGH = msg+img | `services/gift_walker.py` | `_match_image_to_ai_summary` (score ≥ 5) |
+| #4 Root cause docs | This rule | Maintenance habit, not a single function |
+
+### Litmus test
+
+```
+Q: Render Layer 1 card for KOID Property 1 (Paradisonuava — no image).
+   - No "Your share to dispose" line                  → ✓
+   - No "Beneficiary intent" line                     → ✓
+   - No "Confidence: HIGH" or any tier label          → ✓
+   - Says "No title document attached yet"            → ✓
+   - 4 buttons: Confirm / Upload / Type / Skip        → ✓
+
+Q: Render Layer 1 card for property where image+message agree.
+   - Card title: "Property X of N"                   → ✓
+   - Body: address, lot, title, mukim, daerah         → ✓
+   - NO confidence label                              → ✓
+   - 1 confirm button (per §10x.40 HIGH tier)         → ✓
+```
+
+If any tier-label text appears on a user-facing card, §10x.46 broke.
 
 ---
 
