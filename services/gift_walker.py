@@ -1298,11 +1298,17 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
                 if score > best_score:
                     best_score = score
                     best_ai_idx = ai_idx
-            if best_ai_idx is not None and best_score >= 2:
+            # 🔥 §10h — require STRONG match: lot+title (10), title or lot
+            # alone (5), or token+mukim combined (5). Mukim alone (2) is
+            # not enough — Plentong matches 4 properties for KOID. Image
+            # groups with weak match go to §10d residual (manual binding).
+            if best_ai_idx is not None and best_score >= 5:
                 ai_signatures[best_ai_idx]['matched_image_idx'] = img_idx
                 grp['_ai_summary_match'] = ai_props[best_ai_idx]
                 kept_images.append(grp)
-            # else: image has no AI Summary linkage → drop (§10d residual)
+            # else: image has no strong AI Summary linkage → drop (§10d
+            # residual). User can later use "Match to existing property"
+            # button or upload the missing identification.
         out['property'] = kept_images
     # When ai_props is empty, leave out['property'] alone (legacy path)
 
