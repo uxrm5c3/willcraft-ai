@@ -2047,6 +2047,84 @@ the writer.
 
 ---
 
+### 10x.17  ⚡ AI Chat saves MUST sync with Wizard immediately ⚡
+
+**The contract:** the moment the chat confirms a gift (Layer 1 + Layer 2),
+the wizard's Step 6 page must show that gift on the next page load —
+without the user clicking "Reload from DB" or doing any manual sync.
+
+### Why this breaks naively
+
+Flask wizard routes traditionally read from `session['step5_gifts']`
+which is a cookie cache. The chat handlers write directly to
+`will.step5_data` in the database. If the wizard renders from session
+cache, the chat's saves are invisible until something explicitly
+calls `load_will_into_session()` for that will.
+
+### Required behaviour
+
+Every wizard step GET handler that reads from session storage MUST
+first refresh that session slice from the database:
+
+```python
+@app.route('/wizard/step/N', methods=['GET', 'POST'])
+def wizard_step_N():
+    if request.method == 'GET':
+        # 🔥 BURN-IN §10x.17 — refresh session from DB before render
+        will_id = session.get('will_id')
+        if will_id:
+            w = db.session.get(Will, will_id)
+            if w:
+                session['stepK_xxx'] = json.loads(w.stepK_data or '...')
+                session.modified = True
+        return render_template(...)
+```
+
+This makes chat-driven and wizard-driven edits **eventually consistent
+within one HTTP request roundtrip**. Both sides write to DB; both sides
+read fresh on every GET.
+
+### Applies to all chat-writeable steps
+
+| Wizard step | DB column | session key | Chat writes? |
+|-------------|-----------|-------------|--------------|
+| Step 1 (Identities) | `identities_data` | `step1_data` | ✅ via Person |
+| Step 2 (Testator) | `step1_data` | `step1_data` | ✅ |
+| Step 3 (Executors) | `step2_data` | `step2_executors` | ✅ |
+| Step 4 (Guardians) | `step3_data` | `step3_guardians` | (rare) |
+| Step 5 (Beneficiaries) | `step4_data` | `step4_beneficiaries` | ✅ |
+| **Step 6 (Specific Gifts)** | **`step5_data`** | **`step5_gifts`** | **✅ heavy** |
+| Step 7 (Residuary) | `step6_data` | `step6_residuary` | ✅ |
+| Step 8 (Trust) | `step7_data` | `step7_trust` | (rare) |
+
+Step 6 is the highest-traffic chat write site and MUST refresh on GET.
+Other steps benefit from the same pattern but are lower priority.
+
+### What "synced" means in practice
+
+When the user finishes the chat walkthrough:
+
+1. step5_data on the Will record has 12 gift entries (5 properties +
+   4 banks + 3 insurance) per §10x.12.
+2. User clicks "Open Wizard" → wizard loads.
+3. Wizard step 6 reads will.step5_data fresh from DB.
+4. Page shows 12 gift cards with main + substitute beneficiaries
+   pre-filled — exactly what the chat confirmed.
+5. User can click "Generate Will" and the will document compiles
+   from these 12 gifts WITHOUT additional data entry.
+
+### The smell test for §10x.17
+
+Forward email → finish chat walkthrough → open wizard step 6.
+Count gift cards. Must equal AI Summary asset count. Each card must
+have main + substitute beneficiaries pre-populated.
+
+If the wizard shows 0 gifts but step5_data has 12 → the GET handler
+isn't refreshing. If it shows 12 gifts but no substitutes → the
+schema mapping is wrong (per §10x.16).
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

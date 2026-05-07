@@ -9160,6 +9160,7 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
 @login_required
 def wizard_step_identities():
     if request.method == 'GET':
+        _refresh_wizard_session_from_db()   # §10x.17
         client_id = session.get('client_id')
         if client_id:
             _refresh_session_person_registry(client_id)
@@ -9188,6 +9189,7 @@ def wizard_step_identities():
 @login_required
 def wizard_step_testator():
     if request.method == 'GET':
+        _refresh_wizard_session_from_db()   # §10x.17
         return render_template(
             'wizard/step2_testator.html',
             current_step=2,
@@ -9248,6 +9250,7 @@ def wizard_step_testator():
 @login_required
 def wizard_step_executors():
     if request.method == 'GET':
+        _refresh_wizard_session_from_db()   # §10x.17
         return render_template(
             'wizard/step3_executors.html',
             current_step=3,
@@ -9394,6 +9397,7 @@ def wizard_step_executors():
 @login_required
 def wizard_step_guardians():
     if request.method == 'GET':
+        _refresh_wizard_session_from_db()   # §10x.17
         return render_template(
             'wizard/step4_guardians.html',
             current_step=4,
@@ -9455,6 +9459,7 @@ def wizard_step_guardians():
 @login_required
 def wizard_step_beneficiaries():
     if request.method == 'GET':
+        _refresh_wizard_session_from_db()   # §10x.17
         return render_template(
             'wizard/step5_beneficiaries.html',
             current_step=5,
@@ -9492,10 +9497,57 @@ def wizard_step_beneficiaries():
 
 # -- Step 6: Gifts (optional) ------------------------------------------------
 
+def _refresh_wizard_session_from_db():
+    """🔥 BURN-IN §10x.17 — sync session ← will.step*_data on every wizard GET.
+
+    Chat handlers write directly to the Will's step*_data columns. The
+    wizard reads from session storage (cookie-cached for client editing).
+    Without this refresh, the wizard would show stale data after the chat
+    confirms gifts. Call this at the top of every wizard step GET handler.
+    """
+    will_id = session.get('will_id')
+    if not will_id:
+        return
+    w = db.session.get(Will, will_id)
+    if not w:
+        return
+    def _j(s, default):
+        try:
+            return json.loads(s) if s else default
+        except (json.JSONDecodeError, TypeError):
+            return default
+    s2 = _j(w.step2_data, {})
+    if isinstance(s2, dict):
+        if 'executors' in s2:   # new format
+            session['step2_executors']    = s2.get('executors', [])
+            session['step3_executor_type'] = s2.get('executor_type', 'single')
+            session['step3_trustees']      = s2.get('trustee_data', {'same_as_executor': True, 'trustees': [{}]})
+        else:
+            session['step2_executors']    = s2.get('executors', [])
+    session['step1'] = _j(w.step1_data, {})
+    s3 = _j(w.step3_data, {})
+    session['step3_guardians']         = s3.get('guardians', []) if isinstance(s3, dict) else []
+    session['step3_guardian_allowance'] = s3.get('guardian_allowance', {}) if isinstance(s3, dict) else {}
+    session['step4_beneficiaries']     = _j(w.step4_data, [])
+    s5_raw = _j(w.step5_data, [])
+    if isinstance(s5_raw, dict):
+        s5_raw = s5_raw.get('gifts', []) or []
+    if not isinstance(s5_raw, list):
+        s5_raw = []
+    session['step5_gifts']     = s5_raw
+    session['step6_residuary'] = _j(w.step6_data, {})
+    session['step7_trust']     = _j(w.step7_data, {})
+    session['step8_others']    = _j(w.step8_data, {})
+    session['completed_steps'] = _j(w.completed_steps, [])
+    _refresh_session_person_registry(w.client_id)
+    session.modified = True
+
+
 @app.route('/wizard/step/6', methods=['GET', 'POST'])
 @login_required
 def wizard_step_gifts():
     if request.method == 'GET':
+        _refresh_wizard_session_from_db()
         return render_template(
             'wizard/step6_gifts.html',
             current_step=6,
@@ -9665,6 +9717,7 @@ def wizard_step_gifts():
 @login_required
 def wizard_step_residuary():
     if request.method == 'GET':
+        _refresh_wizard_session_from_db()   # §10x.17
         return render_template(
             'wizard/step7_residuary.html',
             current_step=7,
@@ -9744,6 +9797,7 @@ def wizard_step_residuary():
 @login_required
 def wizard_step_trust():
     if request.method == 'GET':
+        _refresh_wizard_session_from_db()   # §10x.17
         return render_template(
             'wizard/step8_trust.html',
             current_step=8,
@@ -9827,6 +9881,7 @@ def wizard_step_trust():
 @login_required
 def wizard_step_others():
     if request.method == 'GET':
+        _refresh_wizard_session_from_db()   # §10x.17
         return render_template(
             'wizard/step9_others.html',
             current_step=9,
@@ -9896,6 +9951,7 @@ def wizard_step_others():
 @app.route('/wizard/step/10', methods=['GET'])
 @login_required
 def wizard_step_review():
+    _refresh_wizard_session_from_db()   # §10x.17 — Review must reflect chat saves
     # Build the will data model from session
     try:
         will_data = build_will_data()
