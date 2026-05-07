@@ -10300,6 +10300,27 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                             attachments_json='[]',  # no exhibit thumbnails in summary
                         )
                         db.session.add(summary_msg)
+                        db.session.flush()
+                        # 🔥 §10x.63 — post-insert duplicate detection.
+                        # The pre-check race (two processors both seeing
+                        # "no existing summary" because neither committed
+                        # yet) means the start-of-function _summary_already_posted
+                        # check isn't enough. Re-query AFTER our flush:
+                        # if any OTHER AI Summary was posted before ours
+                        # (lower created_at), we're the duplicate — delete
+                        # self before committing.
+                        try:
+                            _earlier = (ChatMessage.query
+                                        .filter(ChatMessage.session_id == cs.id,
+                                                 ChatMessage.role == 'assistant',
+                                                 ChatMessage.id != summary_msg.id,
+                                                 ChatMessage.created_at < summary_msg.created_at,
+                                                 ChatMessage.content.ilike('%AI Summary of your message%'))
+                                        .first())
+                            if _earlier:
+                                db.session.delete(summary_msg)
+                        except Exception:
+                            pass
                         db.session.commit()
                 except Exception:
                     pass  # non-critical — intake card is the primary response
@@ -10320,6 +10341,28 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                 target_will_id=active_will.id if active_will else None,
             )
             db.session.add(asst_msg)
+            db.session.flush()
+            # 🔥 §10x.63 — post-insert dedup for intake card. If another
+            # processor already posted an "exhibits received" message
+            # before ours, delete self.
+            reply_text = plan.get('reply', '')
+            if 'exhibits received' in reply_text or 'Asset inventory' in reply_text:
+                try:
+                    from sqlalchemy import or_ as _or_op
+                    _earlier = (ChatMessage.query
+                                .filter(ChatMessage.session_id == cs.id,
+                                         ChatMessage.role == 'assistant',
+                                         ChatMessage.id != asst_msg.id,
+                                         ChatMessage.created_at < asst_msg.created_at)
+                                .filter(_or_op(
+                                    ChatMessage.content.ilike('%exhibits received%'),
+                                    ChatMessage.content.ilike('%Asset inventory%'),
+                                ))
+                                .first())
+                    if _earlier:
+                        db.session.delete(asst_msg)
+                except Exception:
+                    pass
             db.session.commit()
 
             # 🔥 §10x.53 — post a "Ready to verify" follow-up message so the
