@@ -3935,9 +3935,11 @@ def _api_chat_message_impl(client_id):
                                     just_gift_deleted = (None if just_role
                                                           else _try_delete_pending_gift(client_id, user_text))
                                     if not just_role and not just_gift_deleted:
-                                        # §10x.12 H3 handlers run FIRST so the bank/insurance
-                                        # H3 quickreplies don't fall into the generic handlers.
-                                        just_gift = (_try_save_bank_h3_gift(client_id, user_text)
+                                        # §10x.23 layered handlers run FIRST so 'bank_l1/l2/l3'
+                                        # and 'insurance_l1/l2/l3' route correctly.
+                                        just_gift = (_try_save_bank_layered_gift(client_id, user_text)
+                                                     or _try_save_insurance_layered_gift(client_id, user_text)
+                                                     or _try_save_bank_h3_gift(client_id, user_text)
                                                      or _try_save_insurance_h3_gift(client_id, user_text))
                                         if not just_gift:
                                             just_gift = _try_save_property_gift(client_id, user_text)
@@ -7191,6 +7193,319 @@ def _try_handle_others_action(client_id: str, user_text: str):
         except Exception:
             db.session.rollback()
         return {'name': clause_key, 'role': f'updated: {new_val[:60]}', 'kind': 'others_updated'}
+
+    return None
+
+
+def _try_save_bank_layered_gift(client_id, user_text):
+    """🔥 §10x.23 — handle 3-layer bank flow:
+        bank_l1 confirm/skip/remove   → save Layer 1 placeholder
+        bank_l2 main 100% <name> | equal children   → save main beneficiary
+        bank_l3 sub <action>          → save substitute beneficiary
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    low = t.lower()
+    if not (low.startswith('bank_l1') or low.startswith('bank_l2') or low.startswith('bank_l3')):
+        return None
+
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        gifts = json.loads(will.step5_data or '[]')
+        if not isinstance(gifts, list):
+            gifts = []
+    except Exception:
+        gifts = []
+
+    persons = Person.query.filter_by(client_id=client_id).all()
+    spouse = next((p for p in persons
+                   if (p.relationship or '').lower() in ('spouse', 'wife', 'husband')), None)
+    children = [p for p in persons
+                if (p.relationship or '').lower() in ('son', 'daughter')]
+    spouse_name = spouse.full_name if spouse else ''
+    child_names = [c.full_name for c in children]
+
+    from ai.chat_planner import _extract_ai_summary_banks
+    ai_banks = _extract_ai_summary_banks(client_id) or []
+
+    # Helper: find which AI bank we're acting on (the first incomplete one
+    # for whatever layer the input represents).
+    saved_bank_by_acct = {}
+    for g in gifts:
+        if not isinstance(g, dict): continue
+        if g.get('kind') != 'bank': continue
+        ak = re.sub(r'\W+', '', g.get('account_number') or '')
+        if ak: saved_bank_by_acct[ak] = g
+
+    # Layer 1
+    if low.startswith('bank_l1'):
+        # Find first AI bank with no saved entry yet
+        target = None
+        target_idx = -1
+        for i, b in enumerate(ai_banks):
+            ak = re.sub(r'\W+', '', b.get('account_number') or '')
+            if ak in saved_bank_by_acct:
+                continue
+            target = b; target_idx = i; break
+        if not target:
+            return None
+        action = low[len('bank_l1'):].strip()
+        new_gift = {
+            'kind': 'bank', 'asset_type': 'bank',
+            '_ai_summary_bank_idx': target_idx,
+            '_layer1_confirmed': action == 'confirm',
+            'bank_name':       target.get('bank_name'),
+            'account_number':  target.get('account_number'),
+            'country':         target.get('country'),
+            'account_type':    target.get('account_type'),
+            'gift_type': 'financial',
+            'financial_details': {
+                'asset_type':     'bank',
+                'institution':    target.get('bank_name') or '',
+                'account_number': target.get('account_number') or '',
+                'country':        target.get('country') or '',
+            },
+            'allocations':         [],
+            'beneficiaries':       [],
+            'substitute_mode':     None,
+            'substitute_specific': None,
+        }
+        if action == 'skip':
+            new_gift['skipped'] = True
+        elif action == 'remove':
+            new_gift['_user_rejected'] = True
+        gifts.append(new_gift)
+        will.step5_data = json.dumps(gifts)
+        db.session.commit()
+        return {'name': target.get('bank_name'), 'role': f'l1_{action}', 'kind': 'gift_bank_l1'}
+
+    # Layer 2 (main beneficiary)
+    if low.startswith('bank_l2'):
+        # Find first saved bank with empty beneficiaries
+        target_idx = -1
+        for gi, g in enumerate(gifts):
+            if (isinstance(g, dict) and g.get('kind') == 'bank'
+                    and not g.get('skipped') and not g.get('_user_rejected')
+                    and not (g.get('beneficiaries') or [])):
+                target_idx = gi; break
+        if target_idx < 0:
+            return None
+        rest = t[len('bank_l2'):].strip().lower()
+        main_bens = []
+        if rest.startswith('main equal children') and len(child_names) >= 2:
+            share = '1/' + str(len(child_names))
+            main_bens = [{'name': c, 'share': share} for c in child_names]
+        elif rest.startswith('main 100% '):
+            nm = t[len('bank_l2 main 100% '):].strip()
+            main_bens = [{'name': nm, 'share': '1/1'}]
+        elif rest == 'skip':
+            gifts[target_idx]['skipped'] = True
+            will.step5_data = json.dumps(gifts); db.session.commit()
+            return {'name': gifts[target_idx].get('bank_name'), 'role': 'l2_skip', 'kind': 'gift_bank_l2'}
+        else:
+            return None
+        gifts[target_idx]['beneficiaries'] = main_bens
+        gifts[target_idx]['allocations'] = [
+            {'beneficiary_name': b['name'], 'share': b['share'], 'role': 'MB'}
+            for b in main_bens
+        ]
+        will.step5_data = json.dumps(gifts); db.session.commit()
+        return {'name': gifts[target_idx].get('bank_name'),
+                'role': f'main {main_bens[0]["name"]}', 'kind': 'gift_bank_l2'}
+
+    # Layer 3 (substitute)
+    if low.startswith('bank_l3'):
+        target_idx = -1
+        for gi, g in enumerate(gifts):
+            if (isinstance(g, dict) and g.get('kind') == 'bank'
+                    and not g.get('skipped') and not g.get('_user_rejected')
+                    and (g.get('beneficiaries') or [])
+                    and g.get('substitute_specific') is None
+                    and g.get('substitute_mode') in (None, '')):
+                target_idx = gi; break
+        if target_idx < 0:
+            return None
+        rest = t[len('bank_l3'):].strip().lower()
+        sub_bens = None
+        sub_mode = 'specific'
+        main_bens = gifts[target_idx].get('beneficiaries') or []
+        if rest == 'sub none':
+            sub_bens = []; sub_mode = 'none'
+        elif rest == 'sub equal children' and len(child_names) >= 2:
+            share = '1/' + str(len(child_names))
+            sub_bens = [{'name': c, 'share': share} for c in child_names]
+        elif rest == 'sub survivors' and len(main_bens) >= 2:
+            share = '1/' + str(len(main_bens))
+            sub_bens = [{'name': m['name'], 'share': share} for m in main_bens]
+        elif rest.startswith('sub 100% '):
+            nm = t[len('bank_l3 sub 100% '):].strip()
+            sub_bens = [{'name': nm, 'share': '1/1'}]
+        else:
+            return None
+        gifts[target_idx]['substitute_specific'] = sub_bens
+        gifts[target_idx]['substitute_mode'] = sub_mode
+        # Mirror into allocations[*].substitutes
+        if sub_bens:
+            for alloc in gifts[target_idx].get('allocations') or []:
+                alloc['substitutes'] = [
+                    {'beneficiary_name': s['name'], 'share': s['share']}
+                    for s in sub_bens
+                ]
+        will.step5_data = json.dumps(gifts); db.session.commit()
+        return {'name': gifts[target_idx].get('bank_name'),
+                'role': f'sub {sub_mode}', 'kind': 'gift_bank_l3'}
+
+    return None
+
+
+def _try_save_insurance_layered_gift(client_id, user_text):
+    """🔥 §10x.23 — same 3-layer flow for insurance policies."""
+    if not user_text:
+        return None
+    t = user_text.strip()
+    low = t.lower()
+    if not (low.startswith('insurance_l1') or low.startswith('insurance_l2') or low.startswith('insurance_l3')):
+        return None
+
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        gifts = json.loads(will.step5_data or '[]')
+        if not isinstance(gifts, list):
+            gifts = []
+    except Exception:
+        gifts = []
+
+    persons = Person.query.filter_by(client_id=client_id).all()
+    spouse = next((p for p in persons
+                   if (p.relationship or '').lower() in ('spouse', 'wife', 'husband')), None)
+    children = [p for p in persons
+                if (p.relationship or '').lower() in ('son', 'daughter')]
+    spouse_name = spouse.full_name if spouse else ''
+    child_names = [c.full_name for c in children]
+
+    from ai.chat_planner import _extract_ai_summary_insurance
+    ai_ins = _extract_ai_summary_insurance(client_id) or []
+
+    saved_ins_by_pol = {}
+    for g in gifts:
+        if not isinstance(g, dict): continue
+        if g.get('kind') != 'insurance': continue
+        pn = re.sub(r'\W+', '', g.get('policy_number') or '')
+        if pn: saved_ins_by_pol[pn] = g
+
+    if low.startswith('insurance_l1'):
+        target = None; target_idx = -1
+        for i, ins in enumerate(ai_ins):
+            pn = re.sub(r'\W+', '', ins.get('policy_number') or '')
+            if pn in saved_ins_by_pol: continue
+            target = ins; target_idx = i; break
+        if not target:
+            return None
+        action = low[len('insurance_l1'):].strip()
+        new_gift = {
+            'kind': 'insurance', 'asset_type': 'insurance',
+            '_ai_summary_insurance_idx': target_idx,
+            '_layer1_confirmed': action == 'confirm',
+            'insurer':       target.get('insurer'),
+            'policy_number': target.get('policy_number'),
+            'gift_type': 'financial',
+            'financial_details': {
+                'asset_type':     'insurance',
+                'institution':    target.get('insurer') or '',
+                'account_number': target.get('policy_number') or '',
+            },
+            'allocations':         [],
+            'beneficiaries':       [],
+            'substitute_mode':     None,
+            'substitute_specific': None,
+        }
+        if action == 'skip':
+            new_gift['skipped'] = True
+        elif action == 'remove':
+            new_gift['_user_rejected'] = True
+        gifts.append(new_gift)
+        will.step5_data = json.dumps(gifts); db.session.commit()
+        return {'name': target.get('insurer'), 'role': f'l1_{action}', 'kind': 'gift_insurance_l1'}
+
+    if low.startswith('insurance_l2'):
+        target_idx = -1
+        for gi, g in enumerate(gifts):
+            if (isinstance(g, dict) and g.get('kind') == 'insurance'
+                    and not g.get('skipped') and not g.get('_user_rejected')
+                    and not (g.get('beneficiaries') or [])):
+                target_idx = gi; break
+        if target_idx < 0:
+            return None
+        rest = t[len('insurance_l2'):].strip().lower()
+        main_bens = []
+        if rest.startswith('main equal children') and len(child_names) >= 2:
+            share = '1/' + str(len(child_names))
+            main_bens = [{'name': c, 'share': share} for c in child_names]
+        elif rest.startswith('main 100% '):
+            nm = t[len('insurance_l2 main 100% '):].strip()
+            main_bens = [{'name': nm, 'share': '1/1'}]
+        elif rest == 'skip':
+            gifts[target_idx]['skipped'] = True
+            will.step5_data = json.dumps(gifts); db.session.commit()
+            return {'name': gifts[target_idx].get('insurer'), 'role': 'l2_skip', 'kind': 'gift_insurance_l2'}
+        else:
+            return None
+        gifts[target_idx]['beneficiaries'] = main_bens
+        gifts[target_idx]['allocations'] = [
+            {'beneficiary_name': b['name'], 'share': b['share'], 'role': 'MB'}
+            for b in main_bens
+        ]
+        will.step5_data = json.dumps(gifts); db.session.commit()
+        return {'name': gifts[target_idx].get('insurer'),
+                'role': f'main {main_bens[0]["name"]}', 'kind': 'gift_insurance_l2'}
+
+    if low.startswith('insurance_l3'):
+        target_idx = -1
+        for gi, g in enumerate(gifts):
+            if (isinstance(g, dict) and g.get('kind') == 'insurance'
+                    and not g.get('skipped') and not g.get('_user_rejected')
+                    and (g.get('beneficiaries') or [])
+                    and g.get('substitute_specific') is None
+                    and g.get('substitute_mode') in (None, '')):
+                target_idx = gi; break
+        if target_idx < 0:
+            return None
+        rest = t[len('insurance_l3'):].strip().lower()
+        sub_bens = None; sub_mode = 'specific'
+        main_bens = gifts[target_idx].get('beneficiaries') or []
+        if rest == 'sub none':
+            sub_bens = []; sub_mode = 'none'
+        elif rest == 'sub equal children' and len(child_names) >= 2:
+            share = '1/' + str(len(child_names))
+            sub_bens = [{'name': c, 'share': share} for c in child_names]
+        elif rest == 'sub survivors' and len(main_bens) >= 2:
+            share = '1/' + str(len(main_bens))
+            sub_bens = [{'name': m['name'], 'share': share} for m in main_bens]
+        elif rest.startswith('sub 100% '):
+            nm = t[len('insurance_l3 sub 100% '):].strip()
+            sub_bens = [{'name': nm, 'share': '1/1'}]
+        else:
+            return None
+        gifts[target_idx]['substitute_specific'] = sub_bens
+        gifts[target_idx]['substitute_mode'] = sub_mode
+        if sub_bens:
+            for alloc in gifts[target_idx].get('allocations') or []:
+                alloc['substitutes'] = [
+                    {'beneficiary_name': s['name'], 'share': s['share']}
+                    for s in sub_bens
+                ]
+        will.step5_data = json.dumps(gifts); db.session.commit()
+        return {'name': gifts[target_idx].get('insurer'),
+                'role': f'sub {sub_mode}', 'kind': 'gift_insurance_l3'}
 
     return None
 

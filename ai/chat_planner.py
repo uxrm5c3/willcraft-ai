@@ -1266,19 +1266,16 @@ def _walkthrough_conflict_card(conflict: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ╔══════════════════════════════════════════════════════════════════╗
-# ║ 🔥 BURN-IN §10x.12 — Bank and Insurance H3 Cards 🔥                ║
-# ║ Each AI-Summary bank and insurance line gets its own confirm card. ║
-# ║ Defaults follow §10x.14 substitute rules.                          ║
+# ║ 🔥 BURN-IN §10x.23 — 3-LAYER FLOW FOR ALL ASSETS 🔥                ║
+# ║ Every asset (property, bank, insurance) goes through 3 cards:     ║
+# ║   Layer 1: Confirm Asset (identification only)                     ║
+# ║   Layer 2: Confirm Main Beneficiaries                              ║
+# ║   Layer 3: Confirm Substitute Beneficiaries                        ║
+# ║ Default substitute follows §10x.14 rules.                          ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
-def _walkthrough_bank_h3_card(bank: Dict[str, Any], seq: int, total: int,
-                                identities: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """One bank account = one card. Confirm + assign beneficiary in
-    a single click. Default substitute follows §10x.14:
-    - if main = wife → substitute = both children equally
-    - if main = single child → substitute = other child
-    - if main = multi → substitute = survivors equal
-    """
+def _walkthrough_bank_layer1_card(bank: Dict[str, Any], seq: int, total: int) -> Dict[str, Any]:
+    """🔥 §10x.23 Layer 1 — confirm bank account is real / belongs to testator."""
     bn   = (bank.get('bank_name') or 'Bank').strip()
     acct = (bank.get('account_number') or '').strip()
     cty  = (bank.get('country') or '').strip()
@@ -1286,65 +1283,31 @@ def _walkthrough_bank_h3_card(bank: Dict[str, Any], seq: int, total: int,
     bene_hint = (bank.get('beneficiary') or '').strip()
     bene_pct  = (bank.get('beneficiary_share') or '').strip()
 
-    spouse_name = ''
-    children: List[str] = []
-    for i in identities or []:
-        rel = (i.get('relationship') or '').lower()
-        nm  = (i.get('full_name') or '').strip()
-        if not nm:
-            continue
-        if rel in ('spouse', 'wife', 'husband'):
-            spouse_name = nm
-        elif rel in ('son', 'daughter'):
-            children.append(nm)
-
     parts = [
-        f"### 🏦 Bank Account {seq} of {total} — {bn}",
+        f"### 🏦 Bank Account {seq} of {total} — Layer 1: Confirm Asset",
         f"📨 **From your message:**",
         f"• **Institution:** {bn}" + (f" ({cty})" if cty else ''),
         f"• **Account No.:** `{acct}`" + (f" _({typ})_" if typ else ''),
     ]
     if bene_hint:
         parts.append(f"• **Beneficiary intent:** {bene_hint} {bene_pct}".strip())
-
-    parts.append(
-        "**Who inherits this account?** "
-        "_(Tap a quick option or type a different name.)_"
-    )
-    quick: List[Dict[str, str]] = []
-    # §10x.14: default to wife if hint says "wife", else equal children
-    if 'wife' in bene_hint.lower() and spouse_name:
-        quick.append({'label': f'✅ {spouse_name} 100% (default)',
-                      'value': f'bank_h3 confirm 100% {spouse_name}'})
-    elif spouse_name:
-        quick.append({'label': f'👤 {spouse_name} 100%',
-                      'value': f'bank_h3 confirm 100% {spouse_name}'})
-    if len(children) >= 2:
-        quick.append({'label': f'👨‍👩‍👧 Both children equally',
-                      'value': 'bank_h3 confirm equal children'})
-    for ch in children[:3]:
-        quick.append({'label': f'👤 {ch} 100%',
-                      'value': f'bank_h3 confirm 100% {ch}'})
-    quick.append({'label': '⏭ Skip — handle later',
-                  'value': 'bank_h3 skip'})
-    quick.append({'label': '🗑 Wrong — remove from list',
-                  'value': 'bank_h3 remove'})
-
-    return {
-        'text': '\n\n'.join(parts) + _qr_marker(quick),
-        'focus_doc_ids': [],
-        '_h3_bank': bank,
-    }
+    parts.append("Confirm this account belongs to the testator?")
+    quick = [
+        {'label': '✅ Confirm — add to specific gifts',
+         'value': 'bank_l1 confirm'},
+        {'label': '🗑 Wrong — remove from list',
+         'value': 'bank_l1 remove'},
+        {'label': '⏭ Skip — handle later',
+         'value': 'bank_l1 skip'},
+    ]
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick), 'focus_doc_ids': []}
 
 
-def _walkthrough_insurance_h3_card(ins: Dict[str, Any], seq: int, total: int,
-                                     identities: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """One insurance policy = one card. Same shape as bank card."""
-    insurer = (ins.get('insurer') or 'Insurer').strip()
-    policy  = (ins.get('policy_number') or '').strip()
-    bene_hint = (ins.get('beneficiary') or '').strip()
-    bene_pct  = (ins.get('beneficiary_share') or '').strip()
-
+def _walkthrough_bank_layer2_card(gift: Dict[str, Any],
+                                    identities: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """🔥 §10x.23 Layer 2 — pick main beneficiary for a confirmed bank gift."""
+    bn   = (gift.get('bank_name') or 'Bank').strip()
+    acct = (gift.get('account_number') or '').strip()
     spouse_name = ''
     children: List[str] = []
     for i in identities or []:
@@ -1358,40 +1321,207 @@ def _walkthrough_insurance_h3_card(ins: Dict[str, Any], seq: int, total: int,
             children.append(nm)
 
     parts = [
-        f"### 🛡 Insurance Policy {seq} of {total} — {insurer}",
+        f"### 🎯 Main Beneficiary — {bn} {acct}",
+        "Layer 2: **Who inherits this account 100%?**",
+    ]
+    quick: List[Dict[str, str]] = []
+    if spouse_name:
+        quick.append({'label': f'💛 {spouse_name} 100% (wife — default for bank savings)',
+                      'value': f'bank_l2 main 100% {spouse_name}'})
+    if len(children) >= 2:
+        quick.append({'label': f'👨‍👩‍👧 Both children equally',
+                      'value': 'bank_l2 main equal children'})
+    for ch in children[:3]:
+        quick.append({'label': f'👤 {ch} 100%',
+                      'value': f'bank_l2 main 100% {ch}'})
+    quick.append({'label': '✏️ Type a different name',
+                  'value': 'other'})
+    quick.append({'label': '⏭ Skip', 'value': 'bank_l2 skip'})
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick), 'focus_doc_ids': []}
+
+
+def _walkthrough_bank_layer3_card(gift: Dict[str, Any],
+                                    identities: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """🔥 §10x.23 Layer 3 — pick substitute beneficiary (§10x.14 defaults)."""
+    bn   = (gift.get('bank_name') or 'Bank').strip()
+    acct = (gift.get('account_number') or '').strip()
+    main_bens = gift.get('beneficiaries') or []
+    main_names = [b.get('name', '') for b in main_bens]
+    main_str = ', '.join(main_names) or '?'
+
+    spouse_name = ''
+    children: List[str] = []
+    for i in identities or []:
+        rel = (i.get('relationship') or '').lower()
+        nm  = (i.get('full_name') or '').strip()
+        if not nm: continue
+        if rel in ('spouse', 'wife', 'husband'):
+            spouse_name = nm
+        elif rel in ('son', 'daughter'):
+            children.append(nm)
+
+    # §10x.14 default
+    sole = main_names[0] if len(main_names) == 1 else None
+    if sole and sole.upper() == spouse_name.upper() and len(children) >= 2:
+        default = f'children equally'
+        default_value = 'bank_l3 sub equal children'
+    elif sole and sole in children:
+        others = [c for c in children if c != sole]
+        if others:
+            default = f'{others[0]} 100%'
+            default_value = f'bank_l3 sub 100% {others[0]}'
+        else:
+            default = 'no substitute'
+            default_value = 'bank_l3 sub none'
+    elif len(main_bens) >= 2:
+        default = 'surviving beneficiaries equal'
+        default_value = 'bank_l3 sub survivors'
+    else:
+        default = f'children equally' if len(children) >= 2 else 'no substitute'
+        default_value = 'bank_l3 sub equal children' if len(children) >= 2 else 'bank_l3 sub none'
+
+    parts = [
+        f"### 🔄 Substitute Beneficiary — {bn} {acct}",
+        f"Layer 3: **If {main_str} dies before you, who gets this account?**",
+        f"_§10x.14 default: **{default}**_",
+    ]
+    quick = [
+        {'label': f'✅ Default — {default}', 'value': default_value},
+    ]
+    if spouse_name and spouse_name not in main_names:
+        quick.append({'label': f'👤 {spouse_name} 100%',
+                      'value': f'bank_l3 sub 100% {spouse_name}'})
+    for ch in children[:3]:
+        if ch in main_names:
+            continue
+        quick.append({'label': f'👤 {ch} 100%',
+                      'value': f'bank_l3 sub 100% {ch}'})
+    if len(children) >= 2:
+        quick.append({'label': f'👨‍👩‍👧 Children equally',
+                      'value': 'bank_l3 sub equal children'})
+    quick.append({'label': '⏭ No substitute clause',
+                  'value': 'bank_l3 sub none'})
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick), 'focus_doc_ids': []}
+
+
+def _walkthrough_insurance_layer1_card(ins: Dict[str, Any], seq: int, total: int) -> Dict[str, Any]:
+    insurer = (ins.get('insurer') or 'Insurer').strip()
+    policy  = (ins.get('policy_number') or '').strip()
+    parts = [
+        f"### 🛡 Insurance Policy {seq} of {total} — Layer 1: Confirm Asset",
         f"📨 **From your message:**",
         f"• **Insurer:** {insurer}",
         f"• **Policy No.:** `{policy}`",
+        "Confirm this policy belongs to the testator?",
     ]
-    if bene_hint:
-        parts.append(f"• **Beneficiary intent:** {bene_hint} {bene_pct}".strip())
-    parts.append(
-        "**Who is the named beneficiary?** "
-        "_(For policies that pay direct, this overrides the will, but we still record it.)_"
-    )
+    quick = [
+        {'label': '✅ Confirm — add to specific gifts', 'value': 'insurance_l1 confirm'},
+        {'label': '🗑 Wrong — remove',                   'value': 'insurance_l1 remove'},
+        {'label': '⏭ Skip',                              'value': 'insurance_l1 skip'},
+    ]
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick), 'focus_doc_ids': []}
+
+
+def _walkthrough_insurance_layer2_card(gift: Dict[str, Any],
+                                         identities: List[Dict[str, Any]]) -> Dict[str, Any]:
+    insurer = (gift.get('insurer') or '').strip()
+    policy  = (gift.get('policy_number') or '').strip()
+    spouse_name = ''
+    children: List[str] = []
+    for i in identities or []:
+        rel = (i.get('relationship') or '').lower()
+        nm  = (i.get('full_name') or '').strip()
+        if not nm: continue
+        if rel in ('spouse', 'wife', 'husband'):
+            spouse_name = nm
+        elif rel in ('son', 'daughter'):
+            children.append(nm)
+    parts = [
+        f"### 🎯 Main Beneficiary — {insurer} Policy {policy}",
+        "Layer 2: **Who is the named beneficiary?**",
+        "_(For policies that pay direct to a nominee, this overrides the will, but we still record it.)_",
+    ]
     quick: List[Dict[str, str]] = []
-    if 'wife' in bene_hint.lower() and spouse_name:
-        quick.append({'label': f'✅ {spouse_name} 100% (default)',
-                      'value': f'insurance_h3 confirm 100% {spouse_name}'})
-    elif spouse_name:
-        quick.append({'label': f'👤 {spouse_name} 100%',
-                      'value': f'insurance_h3 confirm 100% {spouse_name}'})
+    if spouse_name:
+        quick.append({'label': f'💛 {spouse_name} 100% (wife — default)',
+                      'value': f'insurance_l2 main 100% {spouse_name}'})
     if len(children) >= 2:
         quick.append({'label': f'👨‍👩‍👧 Both children equally',
-                      'value': 'insurance_h3 confirm equal children'})
+                      'value': 'insurance_l2 main equal children'})
     for ch in children[:3]:
         quick.append({'label': f'👤 {ch} 100%',
-                      'value': f'insurance_h3 confirm 100% {ch}'})
-    quick.append({'label': '⏭ Skip — handle later',
-                  'value': 'insurance_h3 skip'})
-    quick.append({'label': '🗑 Wrong — remove from list',
-                  'value': 'insurance_h3 remove'})
+                      'value': f'insurance_l2 main 100% {ch}'})
+    quick.append({'label': '✏️ Type a different name', 'value': 'other'})
+    quick.append({'label': '⏭ Skip', 'value': 'insurance_l2 skip'})
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick), 'focus_doc_ids': []}
 
-    return {
-        'text': '\n\n'.join(parts) + _qr_marker(quick),
-        'focus_doc_ids': [],
-        '_h3_insurance': ins,
-    }
+
+def _walkthrough_insurance_layer3_card(gift: Dict[str, Any],
+                                         identities: List[Dict[str, Any]]) -> Dict[str, Any]:
+    insurer = (gift.get('insurer') or '').strip()
+    policy  = (gift.get('policy_number') or '').strip()
+    main_bens = gift.get('beneficiaries') or []
+    main_names = [b.get('name', '') for b in main_bens]
+    main_str = ', '.join(main_names) or '?'
+
+    spouse_name = ''
+    children: List[str] = []
+    for i in identities or []:
+        rel = (i.get('relationship') or '').lower()
+        nm  = (i.get('full_name') or '').strip()
+        if not nm: continue
+        if rel in ('spouse', 'wife', 'husband'):
+            spouse_name = nm
+        elif rel in ('son', 'daughter'):
+            children.append(nm)
+
+    sole = main_names[0] if len(main_names) == 1 else None
+    if sole and sole.upper() == spouse_name.upper() and len(children) >= 2:
+        default = 'children equally'
+        default_value = 'insurance_l3 sub equal children'
+    elif sole and sole in children:
+        others = [c for c in children if c != sole]
+        if others:
+            default = f'{others[0]} 100%'
+            default_value = f'insurance_l3 sub 100% {others[0]}'
+        else:
+            default = 'no substitute'
+            default_value = 'insurance_l3 sub none'
+    elif len(main_bens) >= 2:
+        default = 'surviving beneficiaries equal'
+        default_value = 'insurance_l3 sub survivors'
+    else:
+        default = 'children equally' if len(children) >= 2 else 'no substitute'
+        default_value = 'insurance_l3 sub equal children' if len(children) >= 2 else 'insurance_l3 sub none'
+
+    parts = [
+        f"### 🔄 Substitute Beneficiary — {insurer} Policy {policy}",
+        f"Layer 3: **If {main_str} dies before you, who gets this?**",
+        f"_§10x.14 default: **{default}**_",
+    ]
+    quick = [{'label': f'✅ Default — {default}', 'value': default_value}]
+    if spouse_name and spouse_name not in main_names:
+        quick.append({'label': f'👤 {spouse_name} 100%',
+                      'value': f'insurance_l3 sub 100% {spouse_name}'})
+    for ch in children[:3]:
+        if ch in main_names: continue
+        quick.append({'label': f'👤 {ch} 100%',
+                      'value': f'insurance_l3 sub 100% {ch}'})
+    if len(children) >= 2:
+        quick.append({'label': '👨‍👩‍👧 Children equally',
+                      'value': 'insurance_l3 sub equal children'})
+    quick.append({'label': '⏭ No substitute clause',
+                  'value': 'insurance_l3 sub none'})
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick), 'focus_doc_ids': []}
+
+
+# Legacy single-card stubs — kept for any caller; redirect to Layer 1.
+def _walkthrough_bank_h3_card(bank, seq, total, identities):
+    return _walkthrough_bank_layer1_card(bank, seq, total)
+
+
+def _walkthrough_insurance_h3_card(ins, seq, total, identities):
+    return _walkthrough_insurance_layer1_card(ins, seq, total)
 
 
 def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
@@ -3464,26 +3594,67 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
             pn = (g.get('policy_number') or '').strip()
             if pn:
                 _saved_policy.add(re.sub(r'\W+', '', pn))
-        # Surface FIRST unhandled bank
+        # 🔥 §10x.23 — 3-layer flow for banks. Per asset:
+        #   Layer 1 (no entry yet)        → render Layer 1 confirm card
+        #   Layer 2 (no beneficiaries yet) → render main-beneficiary card
+        #   Layer 3 (no substitute yet)    → render substitute card
+        identities_for_l = (will_data or {}).get('identities') or []
+        # Find the FIRST bank that's incomplete in any layer.
+        # Build map of saved bank gifts by account number.
+        saved_bank_by_acct = {}
+        for g in s5:
+            if not isinstance(g, dict): continue
+            if g.get('kind') != 'bank': continue
+            ak = re.sub(r'\W+', '', g.get('account_number') or '')
+            if ak: saved_bank_by_acct[ak] = g
         for i, b in enumerate(_ai_banks):
-            ack = re.sub(r'\W+', '', b.get('account_number') or '')
-            if ack and ack in _saved_acct:
-                continue
+            ak = re.sub(r'\W+', '', b.get('account_number') or '')
             done = sum(1 for x in _ai_banks
-                       if re.sub(r'\W+', '', x.get('account_number') or '') in _saved_acct)
-            return _walkthrough_bank_h3_card(
-                b, done + 1, len(_ai_banks),
-                (will_data or {}).get('identities') or [])
-        # Surface FIRST unhandled insurance
+                       if re.sub(r'\W+', '', x.get('account_number') or '') in saved_bank_by_acct
+                       and (saved_bank_by_acct.get(re.sub(r'\W+', '', x.get('account_number') or '')) or {}).get('substitute_specific') is not None)
+            seq = i + 1
+            total = len(_ai_banks)
+            saved = saved_bank_by_acct.get(ak)
+            if not saved or saved.get('skipped') or saved.get('_user_rejected'):
+                if not saved:
+                    return _walkthrough_bank_layer1_card(b, seq, total)
+                continue   # already skipped/removed
+            # Layer 1 done — check Layer 2
+            bens = saved.get('beneficiaries') or []
+            if not bens:
+                return _walkthrough_bank_layer2_card(saved, identities_for_l)
+            # Layer 2 done — check Layer 3
+            sub = saved.get('substitute_specific')
+            mode = saved.get('substitute_mode')
+            if sub is None and mode in (None, ''):
+                return _walkthrough_bank_layer3_card(saved, identities_for_l)
+            # Fully complete — move on
+            continue
+
+        # Same 3-layer flow for insurance
+        saved_ins_by_pol = {}
+        for g in s5:
+            if not isinstance(g, dict): continue
+            if g.get('kind') != 'insurance': continue
+            pn = re.sub(r'\W+', '', g.get('policy_number') or '')
+            if pn: saved_ins_by_pol[pn] = g
         for i, ins in enumerate(_ai_ins):
             pn = re.sub(r'\W+', '', ins.get('policy_number') or '')
-            if pn and pn in _saved_policy:
+            seq = i + 1
+            total = len(_ai_ins)
+            saved = saved_ins_by_pol.get(pn)
+            if not saved or saved.get('skipped') or saved.get('_user_rejected'):
+                if not saved:
+                    return _walkthrough_insurance_layer1_card(ins, seq, total)
                 continue
-            done = sum(1 for x in _ai_ins
-                       if re.sub(r'\W+', '', x.get('policy_number') or '') in _saved_policy)
-            return _walkthrough_insurance_h3_card(
-                ins, done + 1, len(_ai_ins),
-                (will_data or {}).get('identities') or [])
+            bens = saved.get('beneficiaries') or []
+            if not bens:
+                return _walkthrough_insurance_layer2_card(saved, identities_for_l)
+            sub = saved.get('substitute_specific')
+            mode = saved.get('substitute_mode')
+            if sub is None and mode in (None, ''):
+                return _walkthrough_insurance_layer3_card(saved, identities_for_l)
+            continue
 
     if banks:
         return _walkthrough_bank_card(banks[0], len(banks))

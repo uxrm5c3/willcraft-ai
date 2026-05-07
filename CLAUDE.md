@@ -2495,6 +2495,65 @@ loosened too far.
 
 ---
 
+### 10x.23  ⚡ Every asset goes through 3 layers — same UX for property/bank/insurance ⚡
+
+**Rule from the user:** every specific gift, regardless of kind, must
+walk through three sequential cards:
+
+| Layer | Card | Saves |
+|-------|------|-------|
+| **1** | "Confirm Asset" | identification only — `_layer1_confirmed=True`, empty `beneficiaries` |
+| **2** | "Confirm Main Beneficiaries" | populates `beneficiaries` + `allocations` |
+| **3** | "Confirm Substitute Beneficiaries" | populates `substitute_specific` + `allocations[*].substitutes` |
+
+### Quick-reply value namespace
+
+| Asset kind | Layer 1 | Layer 2 | Layer 3 |
+|------------|---------|---------|---------|
+| Property | `inventory h3 confirm/skip` | gift_main format (existing) | substitute format (existing) |
+| Bank | `bank_l1 confirm/skip/remove` | `bank_l2 main 100% <name>` / `bank_l2 main equal children` | `bank_l3 sub 100% <name>` / `bank_l3 sub equal children` / `bank_l3 sub survivors` / `bank_l3 sub none` |
+| Insurance | `insurance_l1 confirm/skip/remove` | `insurance_l2 main ...` | `insurance_l3 sub ...` |
+
+### State machine
+
+`_asset_walkthrough_question` walks AI Summary items in this order:
+properties → banks → insurance. For each AI item:
+
+```python
+saved = saved_gift_for(ai_item)
+if not saved:
+    return Layer 1 card     # confirm/skip/remove
+elif not saved.beneficiaries:
+    return Layer 2 card     # main
+elif saved.substitute_specific is None and saved.substitute_mode in (None, ''):
+    return Layer 3 card     # substitute (with §10x.14 default pre-selected)
+else:
+    continue   # this asset is fully done — move to next
+```
+
+The walkthrough advances naturally: each click answers exactly one
+question and surfaces the next layer until all 12 (5 prop + 4 bank +
+3 ins) are complete.
+
+### Defaults applied
+
+- **Layer 2** banks default to wife (per §10x.14 spouse → child cascade)
+- **Layer 2** insurance default same
+- **Layer 3** uses §10x.14 substitute defaults (spouse → both children;
+  single child → other child; multi → survivors equal)
+- The default substitute is the FIRST quickreply in the Layer 3 card
+  with prefix `✅ Default — …` so the user can one-click accept.
+
+### Symptom of regression
+
+User sees a bank card asking "Who inherits + Substitute" all in one
+button — that's the old `bank_h3 confirm 100% <name>` shortcut, which
+collapses Layers 2+3 into one click. The new flow MUST present them
+as separate clicks. The legacy stub remains for backward compat but
+is no longer rendered by the asset walkthrough.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
