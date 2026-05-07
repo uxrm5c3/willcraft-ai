@@ -52,11 +52,34 @@ def _fmt_id(person) -> str:
     return f"{nationality.upper()} Identification No. {nric}"
 
 
-def _he_she(person) -> str:
+def _he_she(person, will_data=None) -> str:
+    """Phek-style: 'he' or 'she'. Tries the person's own .gender first, then
+    falls back to looking up in WillData.identities or beneficiaries by name
+    (Executor model lacks a gender field but the IC scan recorded one)."""
     g = (getattr(person, 'gender', None) or '').strip().lower()
     if g.startswith('f'):
         return 'she'
-    return 'he'
+    if g.startswith('m'):
+        return 'he'
+    # Try identities lookup
+    if will_data is not None and getattr(will_data, 'identities', None):
+        nm = (getattr(person, 'full_name', '') or '').strip().upper()
+        for ident in will_data.identities:
+            if (ident.get('full_name') or '').strip().upper() == nm:
+                ig = (ident.get('gender') or '').strip().lower()
+                if ig.startswith('f'):
+                    return 'she'
+                if ig.startswith('m'):
+                    return 'he'
+    # Heuristic: relationship word implies gender for common ones
+    rel = (getattr(person, 'relationship', '') or '').strip().lower()
+    if rel in ('sister', 'mother', 'daughter', 'wife', 'aunt', 'sister-in-law',
+                'mother-in-law', 'daughter-in-law'):
+        return 'she'
+    if rel in ('brother', 'father', 'son', 'husband', 'uncle', 'brother-in-law',
+                'father-in-law', 'son-in-law'):
+        return 'he'
+    return 'he'   # Default — caller can override
 
 
 def _ben_phrase(name: str, nric: str, nationality: str = 'Malaysian',
@@ -126,24 +149,42 @@ def _index_beneficiaries(will_data) -> dict:
 # ─── Specific-gift clause renderers ────────────────────────────────────────
 
 def _render_property_clause(clause_num: int, gift, beneficiaries_index: dict) -> str:
-    desc = _format_gift_property(gift)        # already starts with prefix per §10x.24
+    """Property gift clause — Phek format §10x.24:
+        "I hereby devise and bequeath unto X all my ¼ undivided shares in the
+         property known as ... held under Geran No. ..., Lot No. ..., Mukim ...,
+         District of ..., State of ....
+
+         Unless specifically stated to the contrary in this Will, I direct
+         that any sums required to discharge a charge or to withdraw a
+         private caveat or lien attached to this property shall be paid out
+         of my residuary estate."
+    """
+    desc = _format_gift_property(gift)        # body w/o trailing punctuation
     bens = _allocations_phrase(gift, beneficiaries_index)
     if not bens:
-        # Fallback — at least name the property; never hallucinate beneficiaries
-        return (f"{clause_num}.  I hereby devise and bequeath {desc} "
+        body = (f"{clause_num}.  I hereby devise and bequeath {desc} "
                 f"[BENEFICIARIES TO BE CONFIRMED].")
-    return f"{clause_num}.  I hereby devise and bequeath {bens} {desc}"
+    else:
+        body = f"{clause_num}.  I hereby devise and bequeath {bens} {desc}."
+    # Phek attaches the discharge clause directly under each property gift
+    discharge = (
+        "Unless specifically stated to the contrary in this Will, I direct "
+        "that any sums required to discharge a charge or to withdraw a "
+        "private caveat or lien attached to this property shall be paid "
+        "out of my residuary estate.")
+    return body + "\n\n" + discharge
 
 
 def _render_financial_clause(clause_num: int, gift, beneficiaries_index: dict) -> str:
     """Banks / insurance / EPF / mutual fund — financial assets.
     The Phek phrasing comes from models/gift.py::FinancialDetails.to_formatted_description.
+    Ends with "." per Phek format.
     """
     desc = _format_gift_property(gift)
     bens = _allocations_phrase(gift, beneficiaries_index)
     if not bens:
         return f"{clause_num}.  I hereby devise and bequeath {desc} [BENEFICIARIES TO BE CONFIRMED]."
-    return f"{clause_num}.  I hereby devise and bequeath {bens} {desc}"
+    return f"{clause_num}.  I hereby devise and bequeath {bens} {desc}."
 
 
 def _render_other_clause(clause_num: int, gift, beneficiaries_index: dict) -> str:
@@ -255,7 +296,7 @@ def fill_will(will_data) -> str:
         parts.append(EXECUTOR_SINGLE_WITH_SUBSTITUTE_TEMPLATE.format(
             relationship=e1.relationship.lower(), executor_name=e1.full_name,
             nric=e1.nric_passport, address=e1.address,
-            he_she=_he_she(e1),
+            he_she=_he_she(e1, will_data),
             sub_relationship=s1.relationship.lower(), substitute_name=s1.full_name,
             sub_nric=s1.nric_passport, sub_address=s1.address,
         ))
@@ -283,13 +324,13 @@ def fill_will(will_data) -> str:
     if gifts:
         parts.append(NON_RESIDUARY_HEADING)
         parts.append('')
-        # Group by kind in Phek's preferred order: property → bank → insurance
-        # → epf → other. Property usually first because real estate is
-        # bequeathed before liquid assets in the firm's standard.
+        # 🔒 Phek order (verbatim sample): financial assets FIRST (bank,
+        # mutual fund, insurance, epf), property LAST. The verbatim Phek
+        # ordering is bank (cl. 4), mutual fund (cl. 5), property (cl. 6).
         order_key = {
-            'property': 0,
-            'financial': 1,
-            'other': 2,
+            'financial': 0,
+            'other': 1,
+            'property': 2,
         }
         gifts_sorted = sorted(
             gifts, key=lambda g: order_key.get(getattr(g, 'gift_type', 'other'), 99))

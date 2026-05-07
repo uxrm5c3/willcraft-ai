@@ -1,3 +1,4 @@
+import re
 from pydantic import BaseModel
 from typing import Any, List, Literal, Optional
 
@@ -37,25 +38,46 @@ class PropertyDetails(BaseModel):
         return addr
 
     def to_formatted_description(self, ownership_prefix: str = "") -> str:
-        """Generate Malaysian standard property description (top-tier law firm format)."""
+        """Generate Phek-format property description.
+
+        🔒 LOCKED to verbatim Phek Yi Ting sample (CLAUDE.md §10x.24):
+            "all my ¼ undivided shares in the property known as
+             NO. 68, JALAN SONGKIT 3, TAMAN SENTOSA, 80150 JOHOR BAHRU, JOHOR
+             held under Geran No. 433036, Lot No. 12058, Mukim Plentong,
+             District of Johor Bahru, State of Johor"
+
+        Key points (must match verbatim):
+          - Address keeps trailing state — do NOT strip it
+          - "Mukim X" stays Malay
+          - "District of X" + "State of X" use ENGLISH (not Daerah / Negeri)
+          - State name is plain ("State of Johor"), no Darul Ta'zim honorific
+          - Period at end (".") — set by the caller, NOT by this fn
+        """
         if not self.property_address:
             return ""
         prefix = ownership_prefix or "my property"
-        clean_addr = self._clean_address()
-        parts = [f"{prefix} known as {clean_addr}"]
+        # 🔒 Phek-lock: use the address as-is (don't strip trailing state).
+        # The earlier `_clean_address` aggressive strip dropped ", JOHOR" off
+        # the end and produced "BAHRU, held under" instead of Phek's
+        # "BAHRU, JOHOR held under". Trust the user's input.
+        addr = (self.property_address or '').strip()
+        # Still collapse double commas + whitespace
+        addr = re.sub(r'\s*,\s*', ', ', addr)
+        addr = re.sub(r'\s+', ' ', addr).strip().rstrip(',')
+        parts = [f"{prefix} known as {addr}"]
         title_parts = []
         if self.title_type and self.title_number:
-            # Normalize title type to proper case
             tt = self.title_type
             tt_map = {'GRN': 'Geran', 'GERAN': 'Geran', 'GM': 'Geran',
                        'HAKMILIK': 'Hakmilik', 'PAJAKAN': 'Pajakan Negeri',
-                       'PAJAKAN NEGERI': 'Pajakan Negeri'}
+                       'PAJAKAN NEGERI': 'Pajakan Negeri',
+                       'HSD': 'H.S.(D)', 'HSM': 'H.S.(M)', 'HS(D)': 'H.S.(D)',
+                       'HS(M)': 'H.S.(M)', 'PTD': 'PTD', 'PTM': 'PTM'}
             tt = tt_map.get(tt.upper(), tt) if tt else tt
             title_parts.append(f"held under {tt} No. {self.title_number}")
         if self.lot_number:
             title_parts.append(f"Lot No. {self.lot_number}")
         if self.bandar_pekan:
-            # Strip leading "Mukim"/"MUKIM"/"Bandar" to avoid duplication
             mukim_val = self.bandar_pekan.strip()
             for pfx in ['MUKIM ', 'Mukim ', 'BANDAR ', 'Bandar ']:
                 if mukim_val.upper().startswith(pfx.upper()):
@@ -68,31 +90,24 @@ class PropertyDetails(BaseModel):
                 if daerah_val.upper().startswith(pfx.upper()):
                     daerah_val = daerah_val[len(pfx):]
                     break
-            title_parts.append(f"Daerah {daerah_val}")
+            # 🔒 Phek uses ENGLISH "District of X" (not Malay "Daerah X")
+            title_parts.append(f"District of {daerah_val}")
         if self.negeri:
             negeri_val = self.negeri.strip()
             for pfx in ['NEGERI ', 'Negeri ', 'STATE OF ', 'State of ']:
                 if negeri_val.upper().startswith(pfx.upper()):
                     negeri_val = negeri_val[len(pfx):]
                     break
-            # Normalize to official state name with honorific
-            _STATE_NAMES = {
-                'JOHOR': 'Johor Darul Ta\'zim', 'KEDAH': 'Kedah Darul Aman',
-                'KELANTAN': 'Kelantan Darul Naim', 'MELAKA': 'Melaka',
-                'NEGERI SEMBILAN': 'Negeri Sembilan Darul Khusus',
-                'PAHANG': 'Pahang Darul Makmur', 'PERAK': 'Perak Darul Ridzuan',
-                'PERLIS': 'Perlis Indera Kayangan', 'PULAU PINANG': 'Pulau Pinang',
-                'SABAH': 'Sabah', 'SARAWAK': 'Sarawak',
-                'SELANGOR': 'Selangor Darul Ehsan', 'TERENGGANU': 'Terengganu Darul Iman',
-                'W.P. KUALA LUMPUR': 'Wilayah Persekutuan Kuala Lumpur',
-                'W.P. LABUAN': 'Wilayah Persekutuan Labuan',
-                'W.P. PUTRAJAYA': 'Wilayah Persekutuan Putrajaya',
-            }
-            negeri_val = _STATE_NAMES.get(negeri_val.upper(), negeri_val)
-            title_parts.append(f"Negeri {negeri_val}")
+            # 🔒 Phek uses plain state name ("State of Johor") — no
+            # "Darul Ta'zim" honorific appended. The lookup table is
+            # available below for cases where the firm explicitly wants
+            # the honorific, but DEFAULT is plain.
+            title_parts.append(f"State of {negeri_val}")
         if title_parts:
             parts.extend(title_parts)
-        return ", ".join(parts) + ";"
+        # 🔒 No trailing punctuation — caller decides ('.' for terminal,
+        # ';' for list-of-properties bullet).
+        return ", ".join(parts)
 
 
 class FinancialDetails(BaseModel):
@@ -219,10 +234,14 @@ class Gift(BaseModel):
 
     def _ownership_prefix(self) -> str:
         """Build ownership prefix for asset descriptions.
-        🔥 §10x.13 — sole properties (testator_share='1/1' OR no share)
-        say "the property known as ..." — NOT "all my 1/1 undivided shares".
-        Joint properties say "all my [N/M] undivided shares in the property".
+        🔒 §10x.24 / Phek format — fractions rendered with unicode glyphs
+        (¼, ½, ¾, ⅓, ⅔) when standard, ASCII otherwise.
         """
+        # Unicode fraction map for Phek format
+        _FRAC = {'1/2': '½', '1/3': '⅓', '2/3': '⅔', '1/4': '¼',
+                 '3/4': '¾', '1/5': '⅕', '2/5': '⅖', '3/5': '⅗',
+                 '4/5': '⅘', '1/6': '⅙', '5/6': '⅚', '1/8': '⅛',
+                 '3/8': '⅜', '5/8': '⅝', '7/8': '⅞'}
         if self.gift_type == "property":
             ts = (self.testator_share or '').strip()
             ot = (self.ownership_type or '').strip().lower()
@@ -231,7 +250,8 @@ class Gift(BaseModel):
                 return "the property"
             # Joint ownership — testator's share only
             if ts and ts not in ('1/1', '1'):
-                return f"all my {ts} undivided shares in the property"
+                share_glyph = _FRAC.get(ts, ts)
+                return f"all my {share_glyph} undivided shares in the property"
             if ot == "joint":
                 return "my undivided share in the property"
             return "the property"
