@@ -364,6 +364,45 @@ def group_documents(client_id: str) -> List[DocGroup]:
             vals = [v for v in vals if v]
             if vals:
                 merged[key] = vals[0]
+
+        # 🔥 §10x.50 Bug E — Stage 1 geo-bridge: when OCR mukim is empty
+        # but OCR address contains a known township (e.g. 'BANDAR MEDINI
+        # ISKANDAR' → Pulai), fill it. Without this, Tier B can't match
+        # an image-bound DocGroup to an AssetItem because OCR mukim is
+        # blank. Real example: B-05-11 Paradisonuava image had address
+        # 'BANDAR MEDINI ISKANDAR' but mukim=''. Now it gets mukim='Pulai'
+        # and Tier B mukim_token fires.
+        if not merged.get('mukim'):
+            blob = ' '.join([merged.get('property_address') or '',
+                              merged.get('description') or '',
+                              merged.get('building_name') or '',
+                              merged.get('township') or ''])
+            bridged = resolve_mukim_from_address(blob)
+            if bridged:
+                merged['mukim'] = bridged[0]
+                if not merged.get('daerah'):
+                    merged['daerah'] = bridged[1]
+                if not merged.get('negeri'):
+                    merged['negeri'] = bridged[2]
+
+        # 🔥 §10x.50 Bug C — typo-tolerant mukim canonicalisation. OCR
+        # frequently emits 'Pientong', 'Plentongy', 'Plentong, Johor Bahru'.
+        # If OCR mukim is close to a known mukim name (substring or one-edit
+        # distance), normalise to canonical form so Tier B equality holds.
+        if merged.get('mukim'):
+            cm = merged['mukim'].lower().strip()
+            cm = re.sub(r'^mukim\s+', '', cm).strip()
+            cm = re.sub(r'[,;].*$', '', cm).strip()  # 'Plentong, Johor Bahru' → 'Plentong'
+            canonical_mukims = {'plentong', 'pulai', 'tebrau', 'senai', 'johor bahru'}
+            if cm in canonical_mukims:
+                merged['mukim'] = cm.title()
+            else:
+                # Fuzzy: if cm shares a 5+ char prefix with a canonical one
+                for canon in canonical_mukims:
+                    if len(cm) >= 5 and (cm[:5] == canon[:5] or canon[:5] == cm[:5]):
+                        merged['mukim'] = canon.title()
+                        break
+
         kind = members[0]['category'] or ''
         if kind in ('property_title', 'property_spa', 'property_tax', 'loan_agreement'):
             kind = 'property'
