@@ -1199,6 +1199,65 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
     def _digits_only(s: str) -> str:
         return re.sub(r'\D', '', s or '')
 
+    # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 §10h — AI Summary IS the canonical asset list (count = N).    ║
+    # ║  Match image groups TO AI Summary entries. Image groups that      ║
+    # ║  cannot be bound to any AI Summary property are RESIDUAL noise —  ║
+    # ║  they get filtered out of the walkthrough (§10d unverified card  ║
+    # ║  is shown for those instead).                                     ║
+    # ╚════════════════════════════════════════════════════════════════════╝
+    def _addr_tokens_local(addr: str) -> set:
+        STOP = {'JALAN', 'TAMAN', 'BANDAR', 'KAMPUNG', 'KAMPONG',
+                'UNIT', 'BLOCK', 'BLOK', 'NO', 'JOHOR', 'BAHRU',
+                'KUALA', 'LUMPUR', 'SELANGOR', 'CONDOMINIUM',
+                'APARTMENT', 'PERSIARAN', 'SOLOK', 'LORONG',
+                'LEBUH', 'MUKIM', 'DAERAH', 'NEGERI', 'STATE',
+                'DISTRICT', 'MALAYSIA', 'PHASE', 'WITH',
+                'KAWASAN', 'PERUSAHAAN'}
+        out_t: set = set()
+        for t in re.findall(r"[A-Za-z]{4,}", (addr or '').upper()):
+            if t in STOP: continue
+            out_t.add(t)
+        return out_t
+
+    # Build AI Summary signature index for image-group dedup
+    ai_lot_digits: set = set()
+    ai_title_digits: set = set()
+    ai_tokens: set = set()
+    for ap in ai_props:
+        ld = _digits_only(ap.get('lot', ''))
+        td = _digits_only(ap.get('title', ''))
+        if ld: ai_lot_digits.add(ld)
+        if td: ai_title_digits.add(td)
+        ai_tokens.update(_addr_tokens_local(ap.get('address', '')))
+        ai_tokens.update(_addr_tokens_local(ap.get('name', '')))
+
+    # Filter image-bound property groups to those with at least one
+    # signal of AI-Summary linkage. Preserves §10h "match TO summary".
+    if ai_props:   # only filter when we HAVE a canonical list
+        kept = []
+        for grp in out['property']:
+            ex = (grp.get('extracted') or {}) if grp else {}
+            ld = _digits_only(_clean_id_value(ex.get('lot_number') or ''))
+            td = _digits_only(_clean_id_value(ex.get('title_number') or ''))
+            toks = _addr_tokens_local(ex.get('property_address') or '')
+            has_link = (
+                (ld and ld in ai_lot_digits) or
+                (td and td in ai_title_digits) or
+                bool(toks & ai_tokens)
+            )
+            # Strata-aware: an image with lot in ai_lot_digits links even
+            # if its OCR address is wrong. Lot+title strong signal beats
+            # weak token mismatch.
+            if has_link:
+                kept.append(grp)
+            else:
+                # No AI-Summary connection → residual (§10d unverified)
+                # Drop from pending. The chat may surface separately as
+                # §10d unverified card if it's an isolated single image.
+                pass
+        out['property'] = kept
+
     # ── Properties: add H3 for AI-Summary properties not already covered
     # 🔥 §10b — match by lot, title, normalised address, OR distinctive
     # locality token (e.g. "Seri Alam", "Marina Cove", "Paradiso Nuova",
