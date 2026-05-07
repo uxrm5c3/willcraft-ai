@@ -230,6 +230,20 @@ def plan_turn(
     total_pending = sum(len(v) for v in pending_gifts.values()
                          if isinstance(v, list))
     if 'assets_confirmed' not in completed or total_pending > 0:
+        # 🔥 §10x.46 R7 — Layer 2 MUST run before the no-pending shortcut.
+        # When the last property's Layer 1 is confirmed, total_pending=0
+        # and has_any_assets=False. Without this check the planner returns
+        # `_assets_prompt_for_uploads()` ("Reply confirm assets to lock in")
+        # and skips the last gift's Layer 2 (main beneficiary). Verifier
+        # then fails R4/R5 for that gift.
+        layer2_pending_early = current_will_data.get('layer2_pending_props') or []
+        if layer2_pending_early:
+            identities_early = current_will_data.get('identities') or []
+            if identities_early:
+                q = _step6_property_question(layer2_pending_early, recent_text, current_will_data)
+                reply_parts.append(q['text'])
+                focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
+                return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
         if not has_any_assets:
             reply_parts.append(_assets_prompt_for_uploads())
             return _wrap(reply_parts, questions, patch, advice)
