@@ -9362,9 +9362,14 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                 ALSO uses cost_tracker.track_context() so each call's
                 cost is attributed to this client/will/document."""
                 from ai.cost_tracker import track_context as _tc
+                # 🔥 §10x.3 — track_context only accepts client_id/will_id/user_id.
+                # Passing document_id used to silently break every classify worker
+                # ("track_context() got an unexpected keyword 'document_id'") which
+                # left all docs in chat_inbox forever. Do NOT add document_id back
+                # without first widening the cost_tracker signature.
                 with app_obj.app_context(), _tc(
                     will_id=doc.will_id if hasattr(doc, 'will_id') else None,
-                    client_id=doc.client_id, document_id=doc.id):
+                    client_id=doc.client_id):
                     try:
                         classification = classify_file(
                             abs_path, group_context=group_ctx,
