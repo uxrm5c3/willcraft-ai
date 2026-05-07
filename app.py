@@ -6302,6 +6302,13 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
     # Auto-stamp `assets_confirmed` if this was the LAST un-reviewed asset.
     # Saves the writer from having to type "confirm assets" at the end —
     # walk-through completion IS the confirmation.
+    # ╔══════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN §10hg — DO NOT AUTO-STAMP UNTIL H3 PROPERTIES HANDLED ║
+    # ║  AI Summary may name properties with NO image attached. Those H3  ║
+    # ║  cards still need to surface for explicit user Confirm/Skip       ║
+    # ║  before we lock the inventory. Counting only Document-row pendings║
+    # ║  hides H3 candidates and races past them straight to bank/exec.   ║
+    # ╚══════════════════════════════════════════════════════════════════╝
     pend_after = get_pending_gift_documents(client_id)
     any_left = False
     for k in ('property', 'bank', 'vehicle'):
@@ -6311,6 +6318,46 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                 break
         if any_left:
             break
+    # H3 check — any AI-Summary property with no matching image group AND
+    # not yet represented in step5_data (placeholder or skip).
+    if not any_left:
+        try:
+            from ai.chat_planner import (_extract_ai_summary_properties,
+                                          _classify_property_match,
+                                          _ai_props_already_handled)
+            _ai_props_h3 = _extract_ai_summary_properties(client_id)
+            if _ai_props_h3:
+                _will_h3 = (Will.query.filter_by(client_id=client_id, status='draft')
+                            .filter(Will.deleted_at.is_(None))
+                            .order_by(Will.updated_at.desc()).first())
+                _wd_h3 = {'step5': []}
+                if _will_h3 and _will_h3.step5_data:
+                    try:
+                        _s5h = json.loads(_will_h3.step5_data)
+                        _wd_h3['step5'] = _s5h if isinstance(_s5h, list) else []
+                    except Exception:
+                        pass
+                _handled_h3 = _ai_props_already_handled(client_id, _ai_props_h3, _wd_h3)
+                _all_props_h3 = pend_after.get('property') or []
+                _claimed = set()
+                _matched = []
+                for ap in _ai_props_h3:
+                    avail = [g for g in _all_props_h3
+                             if g.get('document_id') not in _claimed]
+                    cls = _classify_property_match(ap, avail)
+                    if cls['variant'] in ('h1', 'h2') and cls.get('group'):
+                        _matched.append(True)
+                        _claimed.add(cls['group'].get('document_id'))
+                    else:
+                        _matched.append(False)
+                _h3_unhandled = any(
+                    (not _handled_h3[i]) and (not _matched[i])
+                    for i in range(len(_ai_props_h3))
+                )
+                if _h3_unhandled:
+                    any_left = True
+        except Exception:
+            pass
     if not any_left:
         will = (Will.query.filter_by(client_id=client_id, status='draft')
                 .filter(Will.deleted_at.is_(None))
