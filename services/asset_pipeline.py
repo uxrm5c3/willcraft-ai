@@ -642,14 +642,18 @@ def _parse_ownership(ownership_text: str) -> Tuple[str, List[str]]:
     t = ownership_text.lower()
     if 'sole' in t and 'joint' not in t:
         return '1/1', []
-    share = '1/2'  # default for joint
+    share = '1/2'  # default for joint (two-party)
     m = re.search(r'(\d+)\s*/\s*(\d+)', ownership_text)
     if m:
         num, den = int(m.group(1)), int(m.group(2))
+        # "50/50" idiom — N==D means each party gets equal share. Two-party
+        # is the overwhelmingly common case for joint property → 1/2 each.
         if num == den and den >= 2:
-            share = f'1/{den}'
-        elif num < den:
+            share = '1/2'
+        # "1/2", "1/3", "2/3" — explicit fraction
+        elif num < den and den <= 10:
             share = f'{num}/{den}'
+        # else: default 1/2 (the regex matched something unusable)
     co_owners: List[str] = []
     for m in re.finditer(
         r'\bwith\s+(?:my\s+(?:wife|husband|spouse|son|daughter|father|mother|brother|sister)\s+)?'

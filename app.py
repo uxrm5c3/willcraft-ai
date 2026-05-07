@@ -6801,83 +6801,59 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
     except Exception:
         s5 = []
 
-    ap = ai_props[h3_idx]
-    # 🔥 BURN-IN §10x.19 — extract co-owner names from the ownership clause
-    # so they're recorded inside the gift WITHOUT becoming Person rows.
-    # 🔥 BURN-IN §10x.13 — also extract testator_share (e.g. '1/2' for
-    # joint, '1/1' for sole) so the will clause can say "my undivided
-    # 1/2 share" not "the whole property".
-    own = (ap.get('ownership') or '').strip()
-    own_lc = own.lower()
-    co_owners = []
-    testator_share = '1/1'   # default sole ownership
-    if 'sole' in own_lc:
-        testator_share = '1/1'
-    elif 'joint' in own_lc or 'share' in own_lc or 'with' in own_lc:
-        # Two-party joint idioms — testator owns 1/2:
-        #   "50/50"          → each owner has 50%, two owners → 1/2
-        #   "share 1/2"      → testator has 1/2 explicitly
-        # Three-party joint:
-        #   "share 1/3"      → 1/3 explicitly
-        # When fraction with num==den (50/50 idiom), assume two parties.
-        _share_re = re.compile(
-            r'(?:share\s+)?(?P<num>\d+)\s*/\s*(?P<den>\d+)',
-            re.IGNORECASE,
-        )
-        m = _share_re.search(own)
-        if m:
-            num, den = int(m.group('num')), int(m.group('den'))
-            if num == den and den >= 2:
-                # "50/50" means two parties splitting equally
-                testator_share = '1/2'
-            elif num < den:
-                testator_share = f'{num}/{den}'
-            else:
-                testator_share = '1/2'   # safety fallback
+    # 🔥 §10x.48 Stage 4 — build gift via canonical pipeline so address,
+    # lot/title, mukim (via §10ha geo bridge), co_owners, and
+    # testator_share all derive from one source of truth.
+    try:
+        from services.asset_pipeline import (parse_canonical_assets,
+                                                group_documents,
+                                                bind_assets, build_gift)
+        asset_items = parse_canonical_assets(client_id)
+        doc_groups = group_documents(client_id)
+        bindings = bind_assets(asset_items, doc_groups)
+        target_ai = next((a for a in asset_items if a.ai_index == h3_idx), None)
+        target_b = next((b for b in bindings if b.ai_index == h3_idx), None)
+        if target_ai and target_b:
+            group_by_id = {g.group_id: g for g in doc_groups}
+            dg = group_by_id.get(target_b.group_id) if target_b.group_id else None
+            entry = build_gift(target_ai, target_b, dg)
         else:
-            # No fraction found but joint → assume 1/2 (most common)
-            testator_share = '1/2'
-        # Match "with <Name1> [, <Name2>]" — names are 1-5 capitalised words.
-        _name_re = re.compile(
-            r'\bwith\s+(?:my\s+wife\s+|my\s+husband\s+|my\s+spouse\s+'
-            r'|my\s+son\s+|my\s+daughter\s+)?'
-            r'((?:[A-Z][A-Za-z]+\s*){1,5})'
-            r'(?=,|\s+\(|\s+share|\s+\d|\s*$)',
-            re.IGNORECASE,
-        )
-        for m in _name_re.finditer(own):
-            nm = m.group(1).strip()
-            # Drop only filler tokens — never strip real surnames like "Fun"
-            nm = re.sub(r'\s+(share|with)\s*$', '', nm, flags=re.IGNORECASE).strip()
-            if nm and len(nm) > 2 and nm.lower() not in ('share', 'with'):
-                co_owners.append(nm[:80])
-        seen_co = set()
-        co_owners = [c for c in co_owners
-                     if not (c.lower() in seen_co or seen_co.add(c.lower()))]
+            # Fallback to legacy ap dict if pipeline can't resolve
+            entry = None
+    except Exception:
+        entry = None
 
-    entry = {
-        'kind': 'property',
-        'asset_type': 'property',
-        'property_info': {
-            'property_address': ap.get('address') or '',
-            'lot_number':       ap.get('lot') or '',
-            'title_number':     ap.get('title') or '',
-            'mukim':            ap.get('mukim') or '',
-            'daerah':           ap.get('daerah') or '',
-            'co_owners':        co_owners,        # §10x.19
-            'testator_share':   testator_share,   # §10x.13
-            'ownership_type':   'joint' if testator_share != '1/1' else 'sole',
-        },
-        'testator_share':       testator_share,   # §10x.13 (top-level for verifier)
-        'address':            ap.get('address') or '',
-        'beneficiaries':      [],   # not yet assigned — Layer 2 still pending
-        'ownership_intent':   ap.get('ownership') or '',
-        'beneficiary_intent': ap.get('beneficiary') or '',
-        '_ai_summary_idx':    h3_idx,
-        '_h3_placeholder':    True if is_confirm else False,
-        '_ai_summary_skipped': True if is_skip else False,
-        '_layer1_confirmed':  True,  # message-stated = HIGH; user just confirmed
-    }
+    if entry is None:
+        # Legacy fallback (pipeline import failed) — minimal entry
+        ap = ai_props[h3_idx]
+        entry = {
+            'kind': 'property', 'asset_type': 'property',
+            'property_info': {
+                'property_address': ap.get('address') or '',
+                'lot_number':       ap.get('lot') or '',
+                'title_number':     ap.get('title') or '',
+                'mukim':            ap.get('mukim') or '',
+                'daerah':           ap.get('daerah') or '',
+                'co_owners': [], 'testator_share': '1/1',
+            },
+            'testator_share': '1/1',
+            'address': ap.get('address') or '',
+            '_ai_summary_idx': h3_idx,
+        }
+    # Ensure required Layer-1 / Layer-2 / Layer-3 fields are present.
+    entry['beneficiaries'] = entry.get('beneficiaries') or []
+    entry['_ai_summary_idx'] = h3_idx
+    entry['_layer1_confirmed'] = True if is_confirm else entry.get('_layer1_confirmed', False)
+    if is_skip:
+        entry['_ai_summary_skipped'] = True
+        entry['_h3_placeholder'] = False
+    entry.setdefault('ownership_intent', ai_props[h3_idx].get('ownership') or '')
+    entry.setdefault('beneficiary_intent', ai_props[h3_idx].get('beneficiary') or '')
+    # Keep top-level mirrors for downstream code that reads them.
+    pi = entry.get('property_info') or {}
+    entry.setdefault('testator_share', pi.get('testator_share') or '1/1')
+    entry.setdefault('address', pi.get('property_address') or '')
+
     s5.append(entry)
     active_will.step5_data = json.dumps(s5)
     db.session.commit()
