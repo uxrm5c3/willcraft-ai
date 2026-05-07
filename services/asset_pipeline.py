@@ -701,9 +701,11 @@ _WEIGHTS = {
 }
 
 # Decision thresholds
-AUTO_BIND_THRESHOLD = 50   # ≥ HIGH confidence — bind without asking
-CANDIDATE_THRESHOLD = 25   # MEDIUM — surface as candidate-with-confirm
-# Below CANDIDATE_THRESHOLD → no signal, H3
+AUTO_BIND_THRESHOLD = 50   # ≥ HIGH — auto-bind without asking
+CANDIDATE_THRESHOLD = 30   # MEDIUM — surface as candidate-with-confirm
+# Plus: a candidate MUST have ≥ 2 distinct positive signals (mukim alone
+# is not enough; many properties share a mukim).
+# Below CANDIDATE_THRESHOLD or with only 1 signal → no candidate, H3
 
 
 def _score_pair(ai: 'AssetItem',
@@ -837,21 +839,40 @@ def _score_pair(ai: 'AssetItem',
             pass
 
     # ── Message-text-references-OCR-fragment ──
+    # The fragment must appear NEAR this AssetItem's address mention in
+    # the raw text (within ±200 chars). Otherwise we'd credit AssetItem 4
+    # for an OCR fragment that's actually about AssetItem 1.
     if raw_forward_text and g_blob:
-        # Find non-trivial OCR address fragments (≥6 chars, alphanumeric)
-        # that appear in raw_forward_text. This catches the case where
-        # the user typed a fragment of the address that the OCR also has.
         rt_lc = raw_forward_text.lower()
-        for frag in re.findall(r'[a-z][a-z0-9\s/\-]{5,40}', g_blob.lower()):
-            f = frag.strip()
-            if len(f) >= 6 and f in rt_lc and f not in ('mukim plentong',
-                                                          'mukim pulai',
-                                                          'mukim tebrau',
-                                                          'johor bahru',
-                                                          'lot lot'):
-                components['msg_text_ref'] = _WEIGHTS['msg_text_ref']
-                evidence.append(f'OCR fragment "{f[:30]}" in message text')
-                break
+        ai_addr_lc = (af.get('address') or '').lower()
+        # Find AssetItem's address position in raw text
+        anchor_idx = -1
+        if ai_addr_lc:
+            # Try first 30 chars of address as anchor
+            for probe_len in (50, 30, 20, 15):
+                if len(ai_addr_lc) >= probe_len:
+                    probe = ai_addr_lc[:probe_len]
+                    pos = rt_lc.find(probe)
+                    if pos >= 0:
+                        anchor_idx = pos
+                        break
+            # Fall back to distinctive token from AssetItem
+            if anchor_idx < 0:
+                for tok in re.findall(r'[a-z]?-?\d+(?:[-/]\d+)+', ai_addr_lc):
+                    pos = rt_lc.find(tok)
+                    if pos >= 0:
+                        anchor_idx = pos
+                        break
+        if anchor_idx >= 0:
+            window = rt_lc[max(0, anchor_idx - 200):anchor_idx + 400]
+            for frag in re.findall(r'[a-z][a-z0-9\s/\-]{5,40}', g_blob.lower()):
+                f = frag.strip()
+                if len(f) >= 6 and f in window and f not in (
+                        'mukim plentong', 'mukim pulai', 'mukim tebrau',
+                        'johor bahru', 'lot lot', 'no. lot'):
+                    components['msg_text_ref'] = _WEIGHTS['msg_text_ref']
+                    evidence.append(f'OCR fragment "{f[:30]}" near message line')
+                    break
 
     score = sum(components.values())
     return {
@@ -1031,35 +1052,59 @@ def bind_assets(asset_items: List[AssetItem],
             flat.append((c['score'], ai_idx, c['group_id'], c['evidence'], c['components']))
     flat.sort(key=lambda x: x[0], reverse=True)
 
-    # Greedy assign. Each AssetItem and DocGroup binds at most once.
+    # Greedy assign — only AUTO_BIND_THRESHOLD scores actually bind.
+    # MEDIUM-confidence candidates stay in ranked_candidates and surface
+    # to the user as candidate-with-confirm cards (§10he Step 4 / Path Y).
+    # The user's click on "Yes — this is the property" creates the binding
+    # via _try_handle_h3_user_match, NOT here. Auto-binding ambiguous
+    # matches violates §10he Step 5 ("NEVER guess").
     for score, ai_idx, group_id, evidence, components in flat:
         if ai_idx in bindings:
             continue
         if group_id in claimed:
             continue
-        if score < CANDIDATE_THRESHOLD:
-            break  # rest are below floor
-        # Determine tier
+        if score < AUTO_BIND_THRESHOLD:
+            break  # below auto-bind — rest are candidates only
+        # Reject single-signal "matches" — bare-mukim agreement is too
+        # weak even at high score. Need ≥ 2 distinct positive components.
+        positive_count = sum(1 for k, v in components.items() if v > 0)
+        if positive_count < 2:
+            continue
         has_direct_id = any(k in components for k in
                              ('lot_match', 'title_match', 'account_match', 'policy_match'))
-        if score >= AUTO_BIND_THRESHOLD:
-            tier = 'A' if has_direct_id else 'B'
-            confidence = 'high'
-            match_via = ('lot_match' if 'lot_match' in components else
-                          'title_match' if 'title_match' in components else
-                          'account_match' if 'account_match' in components else
-                          'policy_match' if 'policy_match' in components else
-                          'mukim_token')
-        else:
-            tier = 'C'
-            confidence = 'medium'  # candidate — needs user confirm
-            match_via = 'multi_signal'
+        tier = 'A' if has_direct_id else 'B'
+        match_via = ('lot_match' if 'lot_match' in components else
+                      'title_match' if 'title_match' in components else
+                      'account_match' if 'account_match' in components else
+                      'policy_match' if 'policy_match' in components else
+                      'mukim_token')
         bindings[ai_idx] = Binding(
             ai_index=ai_idx, group_id=group_id,
-            tier=tier, match_via=match_via, confidence=confidence,
+            tier=tier, match_via=match_via, confidence='high',
             evidence=f'score={score} | {evidence}',
         )
         claimed.add(group_id)
+
+    # Filter ranked candidates to only those still meaningful: score ≥
+    # CANDIDATE_THRESHOLD AND ≥ 2 positive signals AND not yet bound.
+    # The chat shows these as candidate-with-confirm cards.
+    filtered_ranked: Dict[int, List[Dict[str, Any]]] = {}
+    for ai_idx, cands in ranked.items():
+        if ai_idx in bindings:
+            continue   # already auto-bound; no candidate question needed
+        kept = []
+        for c in cands:
+            if c['score'] < CANDIDATE_THRESHOLD:
+                continue
+            pos_count = sum(1 for k, v in (c.get('components') or {}).items() if v > 0)
+            if pos_count < 2:
+                continue
+            if c['group_id'] in claimed:
+                continue
+            kept.append(c)
+        if kept:
+            filtered_ranked[ai_idx] = kept[:3]   # top 3 only
+    bind_assets._last_filtered_candidates = filtered_ranked
 
     # Stash ranked candidates so Stage 5 (chat) can render candidate-with-
     # confirm cards for AssetItems that DIDN'T auto-bind (score < AUTO).
@@ -1458,6 +1503,7 @@ def run_pipeline(client_id: str) -> Dict[str, Any]:
     # Pull ranked candidates that bind_assets stashed for the chat
     # walker to render candidate-with-confirm cards (Path Y / §10he Step 4).
     ranked = getattr(bind_assets, '_last_ranked_candidates', {}) or {}
+    filtered = getattr(bind_assets, '_last_filtered_candidates', {}) or {}
     return {
         'asset_items': [a.to_dict() for a in asset_items],
         'doc_groups': [g.to_dict() for g in doc_groups],
@@ -1465,4 +1511,5 @@ def run_pipeline(client_id: str) -> Dict[str, Any]:
         'residuals': [g.to_dict() for g in res],
         'gifts': gifts,
         'ranked_candidates': ranked,
+        'candidates_for_confirm': filtered,
     }
