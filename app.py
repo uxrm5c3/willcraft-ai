@@ -9577,6 +9577,20 @@ def _api_inbound_email_impl():
                  .filter(Will.deleted_at.is_(None))
                  .order_by(Will.updated_at.desc())
                  .first())
+        # 🔥 §10x.54 — create draft Will on first inbound email so the
+        # raw_forward_text gets persisted. Without this, fresh clients
+        # lose the email body permanently and the matcher has no
+        # AI Summary fallback. Bug observed when KOID's first email
+        # arrived: Will didn't exist yet → text_body never saved →
+        # _raw_forward_text length 0 → AI Summary parse returned 0
+        # AssetItems → walkthrough showed 1 garbage property card.
+        if not _will and text_body:
+            _will = Will(
+                client_id=client.id, status='draft',
+                title=f"Will of {client.full_name or 'Unknown'}",
+            )
+            db.session.add(_will)
+            db.session.flush()
         if _will and text_body:
             try:
                 _s6 = json.loads(_will.step6_data) if _will.step6_data else {}
