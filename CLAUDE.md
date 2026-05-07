@@ -2554,6 +2554,110 @@ is no longer rendered by the asset walkthrough.
 
 ---
 
+### 10x.24  ⚡ Will-clause format MUST follow Phek Yi Ting standard ⚡
+
+**Source of truth:** `documents/sample_will_phek_yi_ting.py`. Every
+specific gift clause in the generated will MUST follow these patterns.
+
+### Property — joint (testator's share is fractional)
+
+```
+"I hereby devise and bequeath to <BENEFICIARIES> all my <SHARE>
+ undivided shares in the property known as <ADDRESS> held under
+ <TITLE_TYPE> No. <TITLE_N>, Lot No. <LOT_N>, Mukim <MUKIM>,
+ District of <DAERAH>, State of <NEGERI> in equal shares."
+```
+
+Example for KOID B-05-11 (testator share 1/2, joint with Chai Mei Fun,
+distributed equally between Joshua and Esther):
+
+> *"I hereby devise and bequeath to my son JOSHUA KOID TECK SENG and
+>  my daughter ESTHER KOID EN HUI all my 1/2 undivided shares in the
+>  property known as Unit B-05-11, Condominium Paradisonuava…
+>  in equal shares."*
+
+**The co-owner's name (Chai Mei Fun) does NOT appear** — per §10x.19.
+
+### Property — sole (testator share 1/1)
+
+```
+"I hereby devise and bequeath to <BENEFICIARIES> the property known
+ as <ADDRESS> held under <TITLE_TYPE> No. <TITLE_N>, Lot No. <LOT_N>,
+ Mukim <MUKIM>, District of <DAERAH>, State of <NEGERI>."
+```
+
+NO "1/1 undivided" — that wording is awkward and probate-incorrect.
+Sole properties just say "the property known as".
+
+### Bank — sole
+
+```
+"I hereby devise and bequeath to <BENEFICIARY> the monies in my
+ <BANK> Account No. <N> together with all interests/dividends
+ already accrued due or accruing thereon."
+```
+
+### Bank — joint
+
+```
+"I hereby devise and bequeath to <BENEFICIARY> my share of the
+ moneys in my joint account at <BANK> Account No. <N> together
+ with all interests/dividends accrued due or accruing thereon."
+```
+
+### Insurance
+
+```
+"I hereby devise and bequeath to <BENEFICIARY> the benefits of my
+ <INSURER> insurance policy No. <N> together with all bonuses or
+ accretions already declared or accruing thereon."
+```
+
+### EPF / KWSP
+
+```
+"I hereby devise and bequeath to <BENEFICIARY> the moneys standing
+ to my credit in my Employees' Provident Fund Account No. <N>."
+```
+
+### Mutual fund / unit trust
+
+```
+"I hereby devise and bequeath to <BENEFICIARY> all monies held in
+ any of my <INSTITUTION> funds together with all interests/
+ dividends already accrued due or accruing thereon."
+```
+
+### Implementation contract
+
+`models/gift.py::FinancialDetails.to_formatted_description(prefix)`
+MUST emit the above patterns based on `asset_type`. Asset types
+recognised: `bank`, `insurance`, `epf`, `kwsp`, `mutual_fund`,
+`unit_trust`, `shares`. Anything else falls back to the generic
+"institution / account number" form.
+
+`models/gift.py::Gift._ownership_prefix()` MUST emit:
+- "the property" for sole (`testator_share='1/1'` or empty)
+- "all my X/Y undivided shares in the property" for joint with fraction
+- "my undivided share in the property" for joint without fraction
+- "my share of the moneys in my joint account at" for joint financial
+
+### Verification
+
+`/tmp/sim_will_gen.py` script generates a sample will from saved KOID
+gifts and asserts the patterns appear. Run after any drafter or model
+change.
+
+### Symptom of regression
+
+- "all my 1/1 undivided shares" appearing in will → §10x.13 sole-
+  property branch broken
+- Bank clause shows "POSB Bank (Account No. 030-25917-3) - bank" →
+  legacy fallback path firing
+- Co-owner appears in property clause → §10x.19 leak
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
