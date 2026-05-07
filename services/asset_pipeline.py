@@ -916,7 +916,8 @@ def _assert_stage2(asset_items: List[AssetItem],
     every Binding has a valid tier and match_via."""
     valid_tiers = {'A', 'B', 'C', 'D'}
     valid_via = {'lot_match', 'title_match', 'account_match', 'policy_match',
-                  'mukim_token', 'temporal', 'h3'}
+                  'mukim_token', 'temporal', 'claude_semantic',
+                  'user_confirmed', 'h3'}
     if len(bindings) != len(asset_items):
         raise ContractViolation(
             f'Stage 2: {len(bindings)} bindings for {len(asset_items)} AssetItems'
