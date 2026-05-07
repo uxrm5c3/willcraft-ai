@@ -2125,6 +2125,87 @@ schema mapping is wrong (per §10x.16).
 
 ---
 
+### 10x.18  ⚡ When text and image disagree — STOP, ASK ⚡
+
+**Rule from the user:** if the user's text states one identifier
+(account number, PTD number, title, name, address) and the uploaded
+image's OCR returns a DIFFERENT value for the same identifier — the
+chat MUST surface this conflict and ask the user which is correct.
+Don't silently pick one; don't merge; don't override.
+
+### Detection
+
+For every gift entry that has BOTH a text-derived AI Summary entry AND
+a Document with extracted fields:
+
+| Field | Compare with | Conflict if |
+|-------|--------------|-------------|
+| Bank account number | `account_number` from OCR vs from text | digits differ |
+| Insurance policy number | `policy_number` OCR vs text | values differ |
+| Property title number | OCR `title_number` vs text title | digit-strip differs |
+| Property lot/PTD | OCR `lot_number` vs text lot | digit-strip differs |
+| Owner name | OCR `owner_name` vs testator name | first-name mismatch (after AI noise scrub) |
+| IC number | OCR `ic_number` vs testator IC | values differ |
+| Property address | OCR address vs AI Summary address | wholly different street |
+
+(Apply §10aa AI-noise cleaning before comparing — `VALUE:`, `(unreadable)`,
+`UNREADABLE`, etc. are not real values.)
+
+### Required behaviour
+
+When a conflict is detected, render a **clarification card** before
+saving the gift to step5_data:
+
+```
+### ⚠️ Mismatch found — please verify
+
+You said: **POSB Bank Account 030-25917-3**
+Image shows: Account No. **030-25917-9**
+
+The last digit differs. Which is correct?
+
+[ ✅ Use what I said (030-25917-3) ]
+[ 📎 Use what the image shows (030-25917-9) ]
+[ ✏️ Type the correct number manually ]
+[ 🗑 Wrong upload — remove this image ]
+```
+
+The gift is NOT saved until the user picks. The clarification card
+takes precedence over the standard H3 confirm card.
+
+### Hard rules
+
+1. **Never auto-save when there's a conflict** — every disagreement
+   becomes a question to the user. Probate accuracy demands this.
+2. **Don't average / pick the longer / pick the shorter** — these are
+   guesses. Ask.
+3. **Log the conflict** with both readings so the lawyer's review of
+   the will draft can see the resolution path.
+4. **The user's text wins by default** if they explicitly choose
+   "Use what I said" — but the image stays attached as evidence (not
+   deleted) for cross-reference.
+
+### Where this is enforced
+
+| File | Function | What it does |
+|------|----------|--------------|
+| `services/conflict_detector.py` (NEW) | `detect_text_image_mismatches(client_id)` | Returns list of conflicts |
+| `ai/chat_planner.py` | `_walkthrough_conflict_card(conflict)` | Render the question |
+| `ai/chat_planner.py::_asset_walkthrough_question` | Pre-conflict gate | Surface clarification before normal H3 card |
+| `app.py::_try_handle_message_conflict` | Handle resolution | Save user's pick → continue walkthrough |
+
+### Symptoms of regression
+
+- Bank gift in step5_data has account number `030-25917-9` (from
+  image) but user said `030-25917-3` in text → conflict was silently
+  resolved instead of asked.
+- Property gift saved with both AI Summary's title and OCR's title
+  number stored in different fields (sloppy merge).
+- "Cannot match it" warning never raised even though OCR said one
+  thing and text said another.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
