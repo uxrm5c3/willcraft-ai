@@ -4457,6 +4457,61 @@ def _get_layer2_pending_props(client_id: str) -> list:
                         reverse=True)
         except Exception:
             pass  # sort failure is non-critical
+        # ╔════════════════════════════════════════════════════════════════╗
+        # ║ 🔥 BURN-IN §10hg — H3 PLACEHOLDERS NEED LAYER-2 TOO 🔥          ║
+        # ║ H3 gifts (no Document) are saved into step5_data with empty     ║
+        # ║ beneficiaries. They MUST surface in the layer2 queue so the     ║
+        # ║ user is asked who inherits them — otherwise residuary fires     ║
+        # ║ before beneficiaries are assigned.                              ║
+        # ╚════════════════════════════════════════════════════════════════╝
+        try:
+            will = (Will.query.filter_by(client_id=client_id, status='draft')
+                    .filter(Will.deleted_at.is_(None))
+                    .order_by(Will.updated_at.desc()).first())
+            if will and will.step5_data:
+                try:
+                    s5 = json.loads(will.step5_data)
+                except Exception:
+                    s5 = []
+                if isinstance(s5, list):
+                    seen_doc_ids = {p.get('document_id') for p in result}
+                    for idx, g in enumerate(s5):
+                        if not isinstance(g, dict):
+                            continue
+                        if not (g.get('kind') == 'property' or g.get('asset_type') == 'property'):
+                            continue
+                        if g.get('beneficiaries'):
+                            continue   # already has beneficiaries
+                        # Image-bound gifts have a real document_id already in
+                        # `seen_doc_ids` from the Document loop above. Skip
+                        # those — they're handled normally.
+                        gid = g.get('document_id')
+                        if gid and gid in seen_doc_ids:
+                            continue
+                        # Synthetic entry — backed by step5 gift, not a Document.
+                        pi = g.get('property_info') or g.get('property_details') or {}
+                        synth_ex = {
+                            'property_address': pi.get('property_address') or g.get('property_address') or '',
+                            'title_number':     pi.get('title_number') or g.get('title_number') or '',
+                            'lot_number':       pi.get('lot_number') or g.get('lot_number') or '',
+                            'mukim':            pi.get('mukim') or '',
+                            'daerah':           pi.get('daerah') or '',
+                            'negeri':           pi.get('negeri') or '',
+                            '_inventoried':     True,
+                            '_h3_step5_idx':    idx,
+                            '_ai_summary_idx':  g.get('_ai_summary_idx'),
+                            # Carry main-beneficiary state for the Phase-A→B
+                            # transition. Stored on the gift itself (not a Doc).
+                            '_main_beneficiary_set': bool(g.get('_main_beneficiary_set')),
+                            '_main_beneficiaries': g.get('_main_beneficiaries') or [],
+                        }
+                        result.append({
+                            'document_id': gid or f'_h3_synth_{idx}',
+                            'extracted':   synth_ex,
+                            '_h3_step5_idx': idx,
+                        })
+        except Exception:
+            pass
         return result
     except Exception:
         return []
@@ -7062,14 +7117,42 @@ def _try_save_property_gift(client_id: str, user_text: str):
 
     doc_id = target['document_id']
 
-    # Load the document's extracted_data to check phase state
-    doc = db.session.get(Document, doc_id)
-    if not doc:
-        return None
-    try:
-        doc_ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
-    except (json.JSONDecodeError, TypeError):
-        doc_ex = {}
+    # ╔════════════════════════════════════════════════════════════════╗
+    # ║ 🔥 BURN-IN §10hg — H3 SYNTHETIC TARGET (no Document)             ║
+    # ║ When target represents a step5 H3 placeholder (no Document row),  ║
+    # ║ phase-A/B state is stored on the step5 gift itself, not on a Doc. ║
+    # ╚════════════════════════════════════════════════════════════════╝
+    _h3_step5_idx = target.get('_h3_step5_idx')
+    if _h3_step5_idx is None:
+        _h3_step5_idx = (target.get('extracted') or {}).get('_h3_step5_idx')
+    _is_h3 = _h3_step5_idx is not None
+
+    if _is_h3:
+        # Load step5 directly — no Document.
+        try:
+            _gifts_for_h3 = json.loads(will.step5_data or '[]')
+            if not isinstance(_gifts_for_h3, list):
+                _gifts_for_h3 = []
+        except (json.JSONDecodeError, TypeError):
+            _gifts_for_h3 = []
+        if not (0 <= _h3_step5_idx < len(_gifts_for_h3)):
+            return None
+        _h3_gift = _gifts_for_h3[_h3_step5_idx] or {}
+        # Phase state is stored ON THE GIFT (not Document.extracted_data).
+        doc = None
+        doc_ex = {
+            '_main_beneficiary_set': bool(_h3_gift.get('_main_beneficiary_set')),
+            '_main_beneficiaries':   _h3_gift.get('_main_beneficiaries') or [],
+        }
+    else:
+        # Load the document's extracted_data to check phase state
+        doc = db.session.get(Document, doc_id)
+        if not doc:
+            return None
+        try:
+            doc_ex = json.loads(doc.extracted_data) if doc.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            doc_ex = {}
 
     # Load existing gifts list
     try:
@@ -7276,16 +7359,32 @@ def _try_save_property_gift(client_id: str, user_text: str):
                 and new_addr_sig and g_addr_sig and new_addr_sig == g_addr_sig):
                 _existing_idx = i
                 break
-        if _existing_idx is not None:
+        # H3 path: replace at the synthetic step5 index.
+        if _is_h3:
+            if 0 <= _h3_step5_idx < len(gifts):
+                # Preserve the H3 marker + AI-Summary linkage so verifier
+                # can attribute this gift back to its summary entry.
+                _existing = gifts[_h3_step5_idx] or {}
+                gift_entry['_h3_placeholder']   = True
+                gift_entry['_layer1_confirmed'] = True
+                if _existing.get('_ai_summary_idx') is not None:
+                    gift_entry['_ai_summary_idx'] = _existing.get('_ai_summary_idx')
+                # Drop the doc_id (it was synthetic).
+                gift_entry['document_id'] = _existing.get('document_id') or None
+                gifts[_h3_step5_idx] = gift_entry
+            else:
+                gifts.append(gift_entry)
+        elif _existing_idx is not None:
             gifts[_existing_idx] = gift_entry
         else:
             gifts.append(gift_entry)
         will.step5_data = json.dumps(gifts)
 
-        # Clear the phase flag in extracted_data
-        doc_ex['_main_beneficiary_set'] = False
-        doc_ex['_substitute_assigned']  = True
-        doc.extracted_data = json.dumps(doc_ex)
+        # Clear the phase flag in extracted_data (only if real Document)
+        if doc is not None:
+            doc_ex['_main_beneficiary_set'] = False
+            doc_ex['_substitute_assigned']  = True
+            doc.extracted_data = json.dumps(doc_ex)
 
         try:
             db.session.commit()
@@ -7338,10 +7437,23 @@ def _try_save_property_gift(client_id: str, user_text: str):
     if not parsed:
         return None
 
-    # Save main to extracted_data only — step5 updated in Phase B
-    doc_ex['_main_beneficiary_set'] = True
-    doc_ex['_main_beneficiaries']   = parsed
-    doc.extracted_data = json.dumps(doc_ex)
+    # Save main beneficiary intent (Phase A)
+    if _is_h3:
+        # Persist on the step5 gift itself.
+        try:
+            _gh3 = json.loads(will.step5_data or '[]')
+            if not isinstance(_gh3, list):
+                _gh3 = []
+        except (json.JSONDecodeError, TypeError):
+            _gh3 = []
+        if 0 <= _h3_step5_idx < len(_gh3):
+            _gh3[_h3_step5_idx]['_main_beneficiary_set'] = True
+            _gh3[_h3_step5_idx]['_main_beneficiaries']   = parsed
+            will.step5_data = json.dumps(_gh3)
+    else:
+        doc_ex['_main_beneficiary_set'] = True
+        doc_ex['_main_beneficiaries']   = parsed
+        doc.extracted_data = json.dumps(doc_ex)
     try:
         db.session.commit()
     except Exception:
