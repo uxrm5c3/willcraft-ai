@@ -75,9 +75,10 @@ def extract_role_mentions(client_id: str) -> List[Dict[str, Any]]:
                 '_raw_forward_text', '') or ''
     except Exception:
         raw_text = ''
-    # Combine — summary first (canonical asset list), raw text after
-    # (preserves phone/IC details). Both are scanned by the regexes.
-    text = (summary_text + '\n\n' + raw_text).strip()
+    # 🔥 §10x.21 ordering: scan RAW text first (has phone, original
+    # spelling) THEN summary as supplement. Earlier the summary won the
+    # dedup race and we lost the phone number from raw.
+    text = (raw_text + '\n\n' + summary_text).strip()
     if not text:
         return []
 
