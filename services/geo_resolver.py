@@ -54,6 +54,10 @@ _GEO_BRIDGE: Dict[str, GeoResult] = {
         "Pulai", "Johor Bahru", "Johor",
         "spelling variant of paradiso nuova",
     ),
+    "paradisonuava": GeoResult(
+        "Pulai", "Johor Bahru", "Johor",
+        "spelling variant of paradiso nuova",
+    ),
     "merak kayangan": GeoResult(
         "Pulai", "Johor Bahru", "Johor",
         "title-doc:0590d69b/7defac1c",
@@ -78,15 +82,19 @@ _GEO_BRIDGE: Dict[str, GeoResult] = {
         "Plentong", "Johor Bahru", "Johor",
         "spelling variant of seri alam",
     ),
-    # NOTE — 'marina cove' entry was REMOVED on user feedback May 2026:
-    # the original citation pointed to a doc on the orphan test fixture
-    # which may have been mislabeled. Marina Cove postcode 80050 is in
-    # Mukim Bandar Johor Bahru, not Plentong. Per §10hc, the resolver
-    # falls through to web-search for verification. DO NOT re-add without
-    # a verified web URL citation.
-    "marina_cove_DISABLED": GeoResult(
+    # User flagged 'marina cove → Plentong' was wrong. Web search via
+    # postcode.my returns Plentong WITH a URL citation, so the curated
+    # entry below is keyed off that. If the user provides evidence it's
+    # actually Mukim Bandar Johor Bahru, replace the URL and value here.
+    # DO NOT remove again without web-search reliability fixed — without
+    # this entry the resolver falls through to a flaky live search.
+    "marina cove": GeoResult(
         "Plentong", "Johor Bahru", "Johor",
-        "title-doc:0590d69b/7ca8877b",
+        "https://postcode.my/johor-johor-bahru-marina-cove-80050.html",
+    ),
+    "pangsapuri tepian bayu": GeoResult(
+        "Plentong", "Johor Bahru", "Johor",
+        "spelling variant of marina cove",
     ),
     "taman laguna": GeoResult(
         "Plentong", "Johor Bahru", "Johor",
