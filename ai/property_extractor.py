@@ -24,6 +24,12 @@ def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
     Returns dict with keys: property_address, title_type, lot_number,
     title_number, bandar_pekan, mukim, daerah, negeri, property_description
     """
+    # 🔥 §10x.65 EMERGENCY KILL SWITCH — disable expensive Sonnet vision
+    # calls when the env var is set. User reports run-away costs; this
+    # gives them the panic button while we fix the underlying leak.
+    if os.environ.get('DISABLE_VISION_CALLS', '').strip() == '1':
+        return {'_disabled_by_kill_switch': True}
+
     # 🔥 §10x.56 — per-process cache. The same file_path getting extracted
     # 30× during a single chat session burned $0.30 alone for ONE doc.
     # Cache key includes doc_type so re-extraction with a different doc_type

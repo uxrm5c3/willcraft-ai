@@ -208,19 +208,25 @@ def is_over_ceiling(client_id: str,
                     ceiling_usd: float = DEFAULT_CLIENT_DAILY_CEILING_USD
                     ) -> bool:
     """True if this client has spent ≥ ceiling_usd in the last 24 hours.
-
-    Caller pattern:
-        from ai.cost_tracker import is_over_ceiling
-        if is_over_ceiling(client_id):
-            # Skip expensive Claude call; fall back to manual flow
-            return None
-        result = expensive_claude_call(...)
-
-    NEVER raise. False on any error so a broken cost log doesn't break
-    the chat flow.
+    🔥 §10x.65 — also returns True if global last-24h spend exceeds
+    5× the per-client ceiling, regardless of client_id. Defends against
+    the `client_id=NULL` leak where calls bypassed the per-client cap
+    (today: 724 calls without client_id burned \$5.47).
     """
     try:
-        return float(cost_today_for_client(client_id)) >= float(ceiling_usd)
+        # Per-client check
+        if client_id and float(cost_today_for_client(client_id)) >= float(ceiling_usd):
+            return True
+        # Global safety net for null-client_id calls
+        from datetime import datetime, timedelta
+        from database import db, ApiCallLog
+        from sqlalchemy import func
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        global_total = (db.session.query(func.coalesce(func.sum(ApiCallLog.cost_usd), 0))
+                         .filter(ApiCallLog.created_at >= cutoff).scalar())
+        if float(global_total or 0) >= float(ceiling_usd) * 5:   # $10 global cap
+            return True
+        return False
     except Exception:
         return False
 

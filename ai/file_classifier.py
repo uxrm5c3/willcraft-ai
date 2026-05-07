@@ -700,6 +700,14 @@ def _vision_classify_fallback(file_path: str, group_context: dict = None,
 
 
 def vision_extract_property_fields(file_path: str) -> dict:
+    # 🔥 §10x.65 EMERGENCY KILL SWITCH
+    import os as _os
+    if _os.environ.get('DISABLE_VISION_CALLS', '').strip() == '1':
+        return {}
+    return _vision_extract_property_fields_impl(file_path)
+
+
+def _vision_extract_property_fields_impl(file_path: str) -> dict:
     """🔥 §10x.52 — Vision-based property field extractor.
 
     Tesseract OCR routinely fails to extract critical property fields:

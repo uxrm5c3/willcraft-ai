@@ -971,6 +971,11 @@ def reocr_critical_field(image_path: str, field_name: str) -> str:
     Per-process cache prevents the watchdog from re-paying $0.009 each
     time it polls. Even an empty result is cached to prevent retries.
     """
+    # 🔥 §10x.65 EMERGENCY KILL SWITCH
+    import os as _os
+    if _os.environ.get('DISABLE_VISION_CALLS', '').strip() == '1':
+        return ''
+
     cache_key = (image_path, field_name)
     if cache_key in _REOCR_CACHE:
         return _REOCR_CACHE[cache_key]
