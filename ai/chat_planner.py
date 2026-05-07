@@ -561,44 +561,39 @@ def _apply_geo_bridge_inplace(parsed_props: List[Dict[str, Any]]) -> None:
     themselves). Without this, Tier B mukim_token equality fails.
     """
     try:
-        from services.asset_pipeline import (resolve_mukim_from_address,
-                                                _GEO_BRIDGE)
+        from services.asset_pipeline import resolve_mukim_from_address
     except Exception:
         return
-    bridge_keys = {k.lower() for k in _GEO_BRIDGE.keys()}
+    # Real mukim names (not townships). If AI Summary returns one of these
+    # in the mukim field, treat as already canonical and don't re-bridge.
+    _CANONICAL_MUKIM = {'plentong', 'pulai', 'tebrau', 'senai',
+                         'bandar johor bahru', 'tanjung kupang'}
     for p in parsed_props or []:
         if not isinstance(p, dict):
             continue
-        # If mukim is set BUT it's a township (key in _GEO_BRIDGE), normalise.
         cur_mukim = (p.get('mukim') or '').strip()
-        cur_mukim_lc = cur_mukim.lower()
-        # Strip leading "Mukim " prefix that AI Summary sometimes adds
-        cur_mukim_lc = re.sub(r'^mukim\s+', '', cur_mukim_lc).strip()
-        # Match either exact township OR substring (longest key wins) so
-        # "Seri Alam Masai" → checks "bandar seri alam" → "seri alam" → match.
-        # Real example: AI Summary returns mukim='Seri Alam Masai' (combination
-        # of two township names). Bridge has 'seri alam' and 'masai' — both
-        # map to Plentong. Substring lookup catches it.
-        bridge_hit = None
-        if cur_mukim_lc:
-            if cur_mukim_lc in bridge_keys:
-                bridge_hit = cur_mukim_lc
-            else:
-                for k in sorted(_GEO_BRIDGE.keys(), key=len, reverse=True):
-                    if k in cur_mukim_lc:
-                        bridge_hit = k
-                        break
-        if bridge_hit:
-            real_mukim, real_daerah, real_negeri = _GEO_BRIDGE[bridge_hit]
-            p['mukim'] = real_mukim
-            if not (p.get('daerah') or '').strip():
-                p['daerah'] = real_daerah
-            if not (p.get('negeri') or '').strip():
-                p['negeri'] = real_negeri
+        cur_mukim_norm = re.sub(r'^mukim\s+', '', cur_mukim, flags=re.IGNORECASE).strip()
+        cur_mukim_norm = re.sub(r'[,;].*$', '', cur_mukim_norm).strip()
+        cur_lc = cur_mukim_norm.lower()
+        # If already a canonical mukim, accept as-is (no normalisation needed).
+        if cur_lc in _CANONICAL_MUKIM:
+            p['mukim'] = cur_mukim_norm.title()
             continue
-        # Otherwise, fill from address bridge if mukim still empty
+        # If mukim is set but NOT canonical (likely a township string from
+        # AI Summary like 'Taman Laguna'), resolve via the §10hc resolver
+        # — curated cache + web-search, citation-backed only.
         if cur_mukim:
+            bridged = resolve_mukim_from_address(cur_mukim)
+            if bridged and bridged[0].lower() != cur_lc:
+                p['mukim'] = bridged[0]
+                if not (p.get('daerah') or '').strip():
+                    p['daerah'] = bridged[1]
+                if not (p.get('negeri') or '').strip():
+                    p['negeri'] = bridged[2]
+            # If resolver didn't recognise it, leave the original value —
+            # let downstream Tier B compare verbatim. NEVER fabricate.
             continue
+        # No mukim set — resolve from full address.
         bridged = resolve_mukim_from_address(
             p.get('address') or p.get('name') or ''
         )

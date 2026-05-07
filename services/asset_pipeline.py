@@ -27,45 +27,117 @@ from dataclasses import dataclass, field, asdict
 
 
 # ─────────────────────────────────────────────────────────────────────
-# §10ha geographic bridge — kept in sync with ai/chat_planner.py
+# §10hc compliant mukim resolver — uses services.geo_resolver which
+# enforces citation per entry + falls back to web-search. NEVER trusts
+# training-memory shortcuts.
 # ─────────────────────────────────────────────────────────────────────
-_GEO_BRIDGE: Dict[str, Tuple[str, str, str]] = {
-    # Plentong (Daerah Johor Bahru)
-    'seri alam':        ('Plentong', 'Johor Bahru', 'Johor'),
-    'bandar seri alam': ('Plentong', 'Johor Bahru', 'Johor'),
-    'taman laguna':     ('Plentong', 'Johor Bahru', 'Johor'),
-    'sri laguna':       ('Plentong', 'Johor Bahru', 'Johor'),
-    'marina cove':      ('Plentong', 'Johor Bahru', 'Johor'),
-    'tepian bayu':      ('Plentong', 'Johor Bahru', 'Johor'),
-    'pasir gudang':     ('Plentong', 'Johor Bahru', 'Johor'),
-    'permas jaya':      ('Plentong', 'Johor Bahru', 'Johor'),
-    'masai':            ('Plentong', 'Johor Bahru', 'Johor'),
-    # Pulai (Daerah Johor Bahru)
-    'medini':           ('Pulai', 'Johor Bahru', 'Johor'),
-    'bandar medini':    ('Pulai', 'Johor Bahru', 'Johor'),
-    'iskandar puteri':  ('Pulai', 'Johor Bahru', 'Johor'),
-    'paradiso nuova':   ('Pulai', 'Johor Bahru', 'Johor'),
-    'paradisonuava':    ('Pulai', 'Johor Bahru', 'Johor'),
-    'merak kayangan':   ('Pulai', 'Johor Bahru', 'Johor'),
-    'nusajaya':         ('Pulai', 'Johor Bahru', 'Johor'),
-    # Tebrau (Daerah Johor Bahru)
-    'mount austin':     ('Tebrau', 'Johor Bahru', 'Johor'),
-    'taman austin':     ('Tebrau', 'Johor Bahru', 'Johor'),
-}
+# Backward-compat surface: callers still use resolve_mukim_from_address
+# but the implementation now delegates to the curated+web-search resolver.
+# `_GEO_BRIDGE` is intentionally REMOVED from this module. Per §10hc rule
+# "NEVER assert mukim from memory" — having a hardcoded table here was
+# the §10hc violation the user caught (Marina Cove → Plentong was wrong).
+
+_WEB_SEARCH_FN = None  # lazily initialised on first call
+_WEB_CLUES_FN = None
+_WEB_CLUES_CACHE: Dict[str, Optional[Dict[str, Any]]] = {}
+
+
+def _get_web_search_fn():
+    """Build (or reuse) the Claude+web-search resolver from
+    services.geo_resolver. None if Anthropic API isn't configured."""
+    global _WEB_SEARCH_FN
+    if _WEB_SEARCH_FN is not None:
+        return _WEB_SEARCH_FN
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY
+        from services.geo_resolver import make_web_resolver
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        _WEB_SEARCH_FN = make_web_resolver(client)
+        return _WEB_SEARCH_FN
+    except Exception:
+        return None
+
+
+def _get_web_clues_fn():
+    """Build (or reuse) the §10hf property-clues searcher. Returns a
+    callable(address) → dict|None. Caches results per-process."""
+    global _WEB_CLUES_FN
+    if _WEB_CLUES_FN is not None:
+        return _WEB_CLUES_FN
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY
+        from services.web_property_clues import search_property_clues
+    except Exception:
+        return None
+    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+
+    def _query(address: str) -> Optional[Dict[str, Any]]:
+        if not address or len(address.strip()) < 5:
+            return None
+        key = address.strip().lower()[:200]
+        if key in _WEB_CLUES_CACHE:
+            return _WEB_CLUES_CACHE[key]
+        try:
+            clues = search_property_clues(address, client)
+        except Exception:
+            clues = None
+        result = None
+        if clues is not None:
+            result = {
+                'type':          clues.type,
+                'tenure':        clues.tenure,
+                'locality':      clues.locality,
+                'mukim':         clues.mukim,
+                'daerah':        clues.daerah,
+                'negeri':        clues.negeri,
+                'building_name': clues.building_name,
+                'postcode':      clues.postcode,
+                'sources':       list(clues.sources),
+            }
+        _WEB_CLUES_CACHE[key] = result
+        return result
+
+    _WEB_CLUES_FN = _query
+    return _WEB_CLUES_FN
+
+
+# Per-process web-search result cache (key=lowercased addr → tuple).
+# Successful web-search results live here for the lifetime of the process,
+# so a chat with N polls × 5 properties only does 5 web searches total
+# (not 5N). Process restarts drop the cache; ok.
+_RESOLVER_CACHE: Dict[str, Optional[Tuple[str, str, str]]] = {}
 
 
 def resolve_mukim_from_address(addr: str) -> Optional[Tuple[str, str, str]]:
-    """§10ha — return (mukim, daerah, negeri) if any known township appears
-    in the address. Memory-free — only consults the curated table.
-    Longest key first so 'bandar seri alam' beats 'seri alam'.
+    """§10hc compliant — resolves via services.geo_resolver which:
+      1. Checks curated cache (every entry has a citation)
+      2. Falls back to live Claude web-search with anti-memory prompt
+      3. Raises GeoUnknown if nothing trustworthy found
+
+    Returns (mukim, daerah, negeri) or None. The caller treats None as
+    "unknown — ask the user" per §10hc step 6.
     """
     if not addr:
         return None
-    al = addr.lower()
-    for key in sorted(_GEO_BRIDGE.keys(), key=len, reverse=True):
-        if key in al:
-            return _GEO_BRIDGE[key]
-    return None
+    key = addr.strip().lower()[:200]
+    if key in _RESOLVER_CACHE:
+        return _RESOLVER_CACHE[key]
+    try:
+        from services.geo_resolver import resolve_mukim, GeoUnknown
+    except Exception:
+        return None
+    web_fn = _get_web_search_fn()
+    try:
+        gr = resolve_mukim(addr, web_search_fn=web_fn)
+        result = (gr.mukim, gr.daerah, gr.negeri)
+    except GeoUnknown:
+        result = None
+    except Exception:
+        result = None
+    _RESOLVER_CACHE[key] = result
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -200,6 +272,13 @@ def parse_canonical_assets(client_id: str) -> List[AssetItem]:
 
     items: List[AssetItem] = []
 
+    # 🔥 §10x.50 Stage 0 web-clue enrichment — per §10hf, web-search every
+    # property address to derive verified (building_name, type, mukim,
+    # postcode). These become additional Tier B tokens that bridge
+    # message-vocabulary (street format) ↔ OCR-vocabulary (land-registry).
+    # Results cached per-process so 5 props × N polls = 5 searches total.
+    web_clues_fn = _get_web_clues_fn()
+
     for i, p in enumerate(_extract_ai_summary_properties(client_id) or []):
         # §10x.48 Stage 0 invariant — `fields` is the union. The current
         # parsers already fold raw text into AI Summary, so what we get
@@ -212,6 +291,30 @@ def parse_canonical_assets(client_id: str) -> List[AssetItem]:
         elif bridged and not fields.get('daerah'):
             fields['daerah'] = bridged[1]
             fields.setdefault('negeri', bridged[2])
+
+        # §10hf web-clues: building name, type, postcode, etc.
+        if web_clues_fn:
+            clues = web_clues_fn(fields.get('address') or fields.get('name') or '')
+            if clues:
+                if clues.get('building_name'):
+                    fields['_web_building'] = clues['building_name']
+                if clues.get('locality'):
+                    fields['_web_locality'] = clues['locality']
+                if clues.get('postcode'):
+                    fields['_web_postcode'] = clues['postcode']
+                if clues.get('type'):
+                    fields['_web_type'] = clues['type']
+                # Web mukim trumps AI Summary mukim ONLY if cited (always
+                # is — search_property_clues requires citation per §10hf)
+                if clues.get('mukim') and not fields.get('mukim'):
+                    fields['mukim'] = clues['mukim']
+                if clues.get('daerah') and not fields.get('daerah'):
+                    fields['daerah'] = clues['daerah']
+                if clues.get('negeri') and not fields.get('negeri'):
+                    fields['negeri'] = clues['negeri']
+                if clues.get('sources'):
+                    fields['_web_sources'] = list(clues['sources'])
+
         items.append(AssetItem(
             kind='property',
             ai_index=i,
@@ -614,6 +717,11 @@ def bind_assets(asset_items: List[AssetItem],
                 break
 
     # ── Tier B: mukim + token (property only) ─────────────────────────
+    # 🔥 §10x.50 — token set now includes web-derived clues (building name,
+    # locality, postcode) from §10hf so the message ↔ OCR vocabulary gap
+    # gets bridged. Real example: AssetItem 'Marina Cove' + web clue
+    # building_name='Pangsapuri Tepian Bayu' → matches OCR group whose
+    # property_address contains 'Pangsapuri Tepian Bayu'.
     for ai in asset_items:
         if ai.kind != 'property' or ai.ai_index in bindings:
             continue
@@ -626,7 +734,15 @@ def bind_assets(asset_items: List[AssetItem],
                 ai_mukim = bridged[0].lower()
         if not ai_mukim:
             continue
-        ai_tokens = distinctive_tokens(ai_addr + ' ' + (ai.fields.get('name') or ''))
+        # Token blob = address + name + ALL web clues (building, locality, postcode)
+        web_blob = ' '.join([
+            (ai.fields.get('_web_building') or ''),
+            (ai.fields.get('_web_locality') or ''),
+            (ai.fields.get('_web_postcode') or ''),
+        ])
+        ai_tokens = distinctive_tokens(
+            ai_addr + ' ' + (ai.fields.get('name') or '') + ' ' + web_blob
+        )
         for g in free_groups('property'):
             ge = g.merged_extracted
             g_mukim = (ge.get('mukim') or '').strip().lower()

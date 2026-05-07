@@ -78,7 +78,13 @@ _GEO_BRIDGE: Dict[str, GeoResult] = {
         "Plentong", "Johor Bahru", "Johor",
         "spelling variant of seri alam",
     ),
-    "marina cove": GeoResult(
+    # NOTE — 'marina cove' entry was REMOVED on user feedback May 2026:
+    # the original citation pointed to a doc on the orphan test fixture
+    # which may have been mislabeled. Marina Cove postcode 80050 is in
+    # Mukim Bandar Johor Bahru, not Plentong. Per §10hc, the resolver
+    # falls through to web-search for verification. DO NOT re-add without
+    # a verified web URL citation.
+    "marina_cove_DISABLED": GeoResult(
         "Plentong", "Johor Bahru", "Johor",
         "title-doc:0590d69b/7ca8877b",
     ),
