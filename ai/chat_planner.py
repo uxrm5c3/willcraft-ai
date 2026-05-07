@@ -225,8 +225,16 @@ def plan_turn(
     # they can paste a clean inventory into the wizard.
     completed = current_will_data.get('completed_steps') or []
     pending_gifts = current_will_data.get('pending_gifts') or {}
-    has_any_assets = any(pending_gifts.get(k) for k in ('property', 'bank', 'vehicle'))
-    if 'assets_confirmed' not in completed:
+    # 🔥 §10x.38 / §10x.43 — pending gifts include insurance now too,
+    # and pending count overrides 'assets_confirmed' flag so that the
+    # walkthrough doesn't prematurely advance to Step 7 while gifts
+    # remain unwalked. The chat MUST stay in Step 6 as long as ANY
+    # asset card is pending, regardless of any flag set earlier.
+    has_any_assets = any(pending_gifts.get(k)
+                          for k in ('property', 'bank', 'insurance', 'vehicle'))
+    total_pending = sum(len(v) for v in pending_gifts.values()
+                         if isinstance(v, list))
+    if 'assets_confirmed' not in completed or total_pending > 0:
         if not has_any_assets:
             reply_parts.append(_assets_prompt_for_uploads())
             return _wrap(reply_parts, questions, patch, advice)
@@ -4604,9 +4612,9 @@ def _step6_property_question(pending_props, recent_text, will_data):
 
 
 def _compute_next_step_label(will_data: Dict[str, Any]) -> str:
-    """🔥 §7 — Returns the human-readable label for the NEXT step the
-    planner will land on. Used by the 'Step 1 complete — moving to X'
-    announcement so the message doesn't lie to the user.
+    """🔥 §7 / §10x.38 — Returns the human-readable label for the NEXT
+    step the planner will land on. MUST match what plan_turn actually
+    shows, otherwise the "moving to Step X" message lies to the user.
     """
     if not will_data:
         return 'Step 2: Testator Info'
@@ -4614,6 +4622,7 @@ def _compute_next_step_label(will_data: Dict[str, Any]) -> str:
     s2 = will_data.get('step2') or {}
     s4 = will_data.get('step4') or []
     completed = will_data.get('completed_steps') or []
+    client_id = will_data.get('client_id') or ''
 
     # Step 2 — testator confirm (skip if already confirmed)
     if not _is_confirmed(will_data, 'testator'):
@@ -4628,8 +4637,18 @@ def _compute_next_step_label(will_data: Dict[str, Any]) -> str:
     if not s4:
         return 'Step 5: Beneficiaries'
     # Step 6 — specific gifts walkthrough
+    # 🔥 §10x.38 — pending gifts override 'assets_confirmed' flag.
     if 'assets_confirmed' not in completed:
         return 'Step 6: Specific Gifts'
+    if client_id:
+        try:
+            from services.gift_walker import get_pending_gift_documents
+            pg = get_pending_gift_documents(client_id) or {}
+            if sum(len(v) for v in pg.values()
+                    if isinstance(v, list)) > 0:
+                return 'Step 6: Specific Gifts'
+        except Exception:
+            pass
     # Step 7 — residuary
     s6 = will_data.get('step6') or {}
     if not s6.get('beneficiaries'):
