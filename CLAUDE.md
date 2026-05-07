@@ -2206,6 +2206,132 @@ takes precedence over the standard H3 confirm card.
 
 ---
 
+### 10x.19  ⚡ Co-owner is NOT a family relationship ⚡
+
+**Rule:** when the message says "I share with X 50/50" or "joint with X",
+X is a **co-owner of that specific asset only**, NOT a family relative
+of the testator and NOT a beneficiary (unless explicitly named).
+
+### Wrong pattern (forbidden)
+
+```
+Person table:
+  CHAI MEI FUN — relationship='co-owner'   ❌
+```
+
+This pollutes the identity registry, shows up as a "person" in Step 1,
+and confuses the will-generator into thinking she's part of the family.
+"co-owner" is a property attribute, not a family relationship.
+
+### Right pattern
+
+```
+step5_data[i] (the B-05-11 property gift):
+  property_details:
+    co_owners: ["Chai Mei Fun"]              ✓
+    testator_share: "1/2"
+  beneficiaries: [Joshua 1/2, Esther 1/2]    ← of testator's 1/2 share
+
+Person table:
+  (no row for Chai Mei Fun)                  ✓
+```
+
+The will clause then reads:
+
+> *"I give my undivided 1/2 share in Unit B-05-11 Condominium Paradisonuava
+>  to my son Joshua and my daughter Esther in equal shares."*
+
+The clause does NOT need to name Chai Mei Fun — her share is hers, the
+title deed already has her on it, and she retains her 1/2 outside the will.
+
+### Detection
+
+Co-owner candidates are people mentioned in the WhatsApp/email body via
+phrases like:
+
+- "I share with X 50/50"
+- "joint with X"
+- "co-owned with X"
+- "X and I own"
+
+If X also appears as a child's parent, executor, or beneficiary
+elsewhere, X IS a Person — but they're a co-owner OF that asset AND a
+family member separately. Only when X has no other role in the will do
+they stay out of the Person table.
+
+### Beneficiary check (the safety gate)
+
+If X is named as a beneficiary anywhere ("my 50% to X"), they ARE a
+person and need an entry. If X is ONLY mentioned as a co-owner, no
+Person entry is created — they're recorded only inside the gift.
+
+---
+
+### 10x.20  ⚡ Executor name from message + IC cross-reference ⚡
+
+**Rule:** when the message names an executor by ROLE only (e.g. "my
+sister-in-law", "my brother") with a phone number but no full name,
+the chat MUST cross-reference uploaded IC photos to find candidates,
+not just leave the executor's `full_name` blank for the user to type.
+
+### Example from KOID
+
+Message says:
+
+> *"My 'Executor' My Sister in law Tel:+6016-7338764"*
+
+The chat has:
+- 28 uploaded photos (some are ICs).
+- IC walkthrough has assigned: testator, spouse, 2 children — 4 ICs used.
+- Any remaining un-assigned IC is a candidate for "sister-in-law".
+
+### Required behaviour
+
+1. **List unassigned IC candidates.** Any Person with no relationship
+   set, OR any extracted IC from a Document that isn't yet in the
+   Person table.
+2. **Surface a clarification card** in chat:
+
+```
+### ⚖️ Step 3: Executor — Confirm sister-in-law
+
+You wrote: *"My Executor — My Sister in law Tel:+6016-7338764"*
+
+I have these unassigned ICs from your uploads:
+
+  [ 👤 SARAH BT ALI (NRIC 700707-...) — IC photo PHOTO-...28.jpg ]
+  [ 👤 NORHAYATI BTE ABU (NRIC 720303-...) — IC photo PHOTO-...30.jpg ]
+  [ ✏️ Type her name manually if not in the uploads ]
+  [ ⏭ Skip — fill later ]
+```
+
+3. **On selection**: that Person becomes `relationship='executor'` in
+   the Person table AND `full_name` populates `step2.executors[0].full_name`.
+   The phone number from the message is preserved.
+
+4. **If no IC matches**: chat asks for the full name + IC manually,
+   THEN reminds the user to upload her IC if available — because the
+   will requires her IC for probate.
+
+### Hard rules
+
+- ❌ Don't leave `executor.full_name = ""` if any unassigned IC exists.
+- ❌ Don't pick an IC at random — ALWAYS ask the user.
+- ❌ Don't dump every uploaded IC as candidate (only ICs not yet in
+  Person registry with a real role).
+- ✅ DO show the role evidence (the message snippet that names them).
+
+### Same pattern for other named-by-role people
+
+- "my brother" → cross-reference unassigned ICs
+- "my mother" → ditto
+- "my friend James" — has a partial name, search ICs for "James"
+
+The principle: **never silently leave a critical person's identity
+blank if there's evidence in the uploads to populate it.**
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
