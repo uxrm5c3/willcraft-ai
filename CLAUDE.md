@@ -1957,6 +1957,96 @@ chose "no substitute" via the **⏭ No substitute clause** quickreply.
 
 ---
 
+### 10x.15  ⚡ Image is VERIFICATION ONLY — text details are sufficient ⚡
+
+**Rule from the user:** if the user provides full asset details in text
+(WhatsApp/email body), that text alone is enough to create a complete
+gift. The image, if uploaded, is **verification** — not a requirement.
+
+| Asset | Sufficient text content | Image role |
+|-------|-------------------------|------------|
+| Property | address + (title OR lot number OR mukim+daerah) | Verification of ownership share, encumbrance, plan |
+| Bank account | institution + account number | Verification of account state (unused if no image) |
+| Insurance policy | insurer + policy number | Verification of beneficiary nomination |
+| EPF / unit trust | institution + account number | Verification |
+| Vehicle | reg number + make/model | Verification |
+
+**Behavior rule:**
+1. AI Summary parser extracts full asset details from message text.
+2. Walkthrough renders one card per AI-Summary item (per §10x.12).
+3. If a Document is bound (image evidence), card shows it as evidence
+   with a "✅ Verified by image" badge.
+4. If NO Document is bound, card still renders as **HIGH confidence
+   message-stated** (per §10hg). User confirms → gift saved with full
+   text-derived details. **No image-matching block.**
+5. Image-matching is a separate workflow (§10g, §10ha–§10hf) — only
+   runs against assets that DO have uploaded images. Never blocks an
+   asset that the user described in text.
+
+**Hard rules:**
+
+- ❌ Don't show "title document required to complete this gift" for an
+  asset that already has the title number stated in the message.
+- ❌ Don't park a bank or insurance gift in `pending` status because no
+  image was uploaded. Banks and insurance routinely have no image.
+- ❌ Don't make Layer 1 confirmation conditional on image presence —
+  text-stated assets are HIGH confidence by default (§10hg).
+- ✅ DO ask the user to upload an image only if the asset's text
+  details are missing critical fields (e.g. property has no
+  title/lot/mukim AND no address).
+
+### 10x.16  ⚡ Wizard Step 6 must show every gift's main + substitute ⚡
+
+**Rule from the user:** the wizard's Step 6 (Specific Gifts) page MUST
+display, for every gift in `step5_data`:
+- The asset identity (property address / bank+account / insurer+policy)
+- Main beneficiary names + shares
+- **Substitute clause** — names + shares OR "no substitute"
+
+**Schema contract (every gift entry in step5_data):**
+
+```python
+{
+    'kind': 'property' | 'bank' | 'insurance' | 'vehicle',
+
+    # Asset identity (one of these blocks based on kind)
+    'property_info': {address, title_number, lot_number, mukim, daerah, negeri},
+    'bank_name', 'account_number', 'country', 'account_type',
+    'insurer', 'policy_number',
+
+    # Main beneficiaries (Layer 2)
+    'beneficiaries':       [{'name', 'share'}, …],   # canonical
+    'allocations':         [{'beneficiary_name', 'share', 'role': 'MB',
+                             'substitutes': [{'beneficiary_name', 'share'}]}],
+
+    # Substitute clause
+    'substitute_mode':     'specific' | 'equal' | 'prorata' | 'none',
+    'substitute_specific': [{'name', 'share'}, …]    # if mode='specific'
+}
+```
+
+**Wizard render must:**
+- Read EVERY kind (property, bank, insurance, vehicle, …).
+- Show main beneficiaries from `beneficiaries` (or fall back to
+  `allocations[*].beneficiary_name`).
+- Show substitutes from `allocations[*].substitutes` (or fall back to
+  `substitute_specific`).
+- Display "No substitute" when `substitute_mode == 'none'` AND no
+  `substitute_specific`.
+
+**Symptom that proves a regression:**
+
+User opens wizard Step 6 → sees property gifts but no bank/insurance.
+OR sees gifts but only main beneficiaries (no substitutes shown).
+That means either the wizard renderer ignores the new kinds, or the
+chat handler is saving in a format the wizard can't read.
+
+Fix at the **schema mapping** — the chat → step5 → wizard pipeline
+must use one canonical schema (above). Don't patch render-side; fix
+the writer.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

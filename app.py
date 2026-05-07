@@ -7250,6 +7250,7 @@ def _try_save_bank_h3_gift(client_id, user_text):
                 for s in sub_bens
             ]
     gift_entry = {
+        # ── canonical (chat-side reads these) ─────────────────
         'kind': 'bank',
         'asset_type': 'bank',
         '_ai_summary_bank_idx': target_idx,
@@ -7257,6 +7258,16 @@ def _try_save_bank_h3_gift(client_id, user_text):
         'account_number': target.get('account_number'),
         'country': target.get('country'),
         'account_type': target.get('account_type'),
+        # ── wizard-compatible mirror (templates/wizard/step6_gifts.html
+        #    reads gift_type + financial_details) ──────────────
+        'gift_type': 'financial',
+        'financial_details': {
+            'asset_type':     'bank',
+            'institution':    target.get('bank_name') or '',
+            'account_number': target.get('account_number') or '',
+            'country':        target.get('country') or '',
+        },
+        # ── beneficiaries ─────────────────────────────────────
         'allocations': allocations,
         'beneficiaries': main_bens,
         'substitute_mode': 'specific' if sub_bens else 'none',
@@ -7378,11 +7389,20 @@ def _try_save_insurance_h3_gift(client_id, user_text):
                 for s in sub_bens
             ]
     gift_entry = {
+        # ── canonical ────────────────────────────────────────
         'kind': 'insurance',
         'asset_type': 'insurance',
         '_ai_summary_insurance_idx': target_idx,
         'insurer': target.get('insurer'),
         'policy_number': target.get('policy_number'),
+        # ── wizard-compatible mirror ─────────────────────────
+        'gift_type': 'financial',
+        'financial_details': {
+            'asset_type':     'insurance',
+            'institution':    target.get('insurer') or '',
+            'account_number': target.get('policy_number') or '',
+        },
+        # ── beneficiaries ────────────────────────────────────
         'allocations': allocations,
         'beneficiaries': main_bens,
         'substitute_mode': 'specific' if sub_bens else 'none',
