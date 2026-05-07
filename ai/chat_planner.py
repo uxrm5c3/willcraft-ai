@@ -1541,8 +1541,27 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
     lot = (ai_prop.get('lot') or '').strip()
     title = (ai_prop.get('title') or '').strip()
 
+    # 🔥 §10x.13 display — pre-compute testator_share so user sees what
+    # they're actually disposing of ("my 1/2 share", not the whole property).
+    own_lc = own.lower()
+    _testator_share_display = ''
+    if 'sole' in own_lc:
+        _testator_share_display = '1/1 (sole owner)'
+    elif own:
+        _share_re = re.compile(r'(?:share\s+)?(\d+)\s*/\s*(\d+)')
+        m = _share_re.search(own)
+        if m:
+            n, d = int(m.group(1)), int(m.group(2))
+            if n == d and d >= 2:
+                _testator_share_display = '1/2 (joint, splitting equally)'
+            elif n < d:
+                _testator_share_display = f'{n}/{d}'
+        elif 'joint' in own_lc or 'with' in own_lc:
+            _testator_share_display = '1/2 (joint, assumed equal split)'
+
     parts = [
-        f"### 🏠 Property {seq_num} of {total} — {name[:80]}",
+        f"### 🏠 Property {seq_num} of {total} — Layer 1: Confirm Asset",
+        f"**{name[:80]}**",
         ("📨 **From your message** — message-stated, no title document attached yet:"),
     ]
     bullets = []
@@ -1552,6 +1571,9 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
     if mukim:  bullets.append(f"• **Mukim:** {mukim}")
     if daerah: bullets.append(f"• **Daerah:** {daerah}")
     if own:    bullets.append(f"• **Ownership:** {own}")
+    if _testator_share_display:
+        bullets.append(f"• **Your share to dispose:** **{_testator_share_display}** "
+                       f"_(the will only disposes of this portion)_")
     if bene:   bullets.append(f"• **Beneficiary intent:** {bene}")
     if bullets:
         parts.append('\n'.join(bullets))
