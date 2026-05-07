@@ -3886,6 +3886,8 @@ Each entry has:
 | 28 | "Do not show Confidence level — it's internal" | §10x.46 R2 | No "Confidence: HIGH/MEDIUM/LOW" labels on user-facing cards |
 | 29 | "HIGH confidence requires MESSAGE + IMAGE both confirm" | §10x.46 R3 | Tier definition tightened: HIGH = lot/title in image == AI Summary's |
 | 30 | "FIND THE ROOT CAUSE. DON'T JUST PATCH" | §10x.46 R4 | Document signal vocabularies before adding match logic; lexical → semantic layer |
+| 31 | "where are all the images" — declared PASS on a fixture with 0 Documents; matcher never ran | §10x.47 | Pre-flight: pass if text-only AND every text-stated detail lands on the gift; fail if Documents present but every gift is H3 |
+| 32 | "the whole flow is fucked up and need to reset the entire flow" | §10x.48 | SIX stages (Parse / Group / Bind / Residual / Build / Walkthrough), separated cleanly. No cross-stage shortcuts. AssetItem ← message ∪ AI Summary; DocGroup is the binding unit (not Document); Tier A→B→C→D priority; one-claim-only |
 
 ### Maintenance rule
 
@@ -4604,6 +4606,275 @@ Q: Render Layer 1 card for property where image+message agree.
 ```
 
 If any tier-label text appears on a user-facing card, §10x.46 broke.
+
+---
+
+### 10x.48  🔥🔥🔥🔥🔥 BURN-IN — CANONICAL ASSET-MATCHING FLOW (CONFIRMED) 🔥🔥🔥🔥🔥
+
+**This is THE flow. Every previous §10g / §10ha / §10hb / §10he / §10hf / §10hg / §10i / §10x.18 / §10x.43 / §10x.46 rule is a constraint on a specific stage below — they do NOT describe separate algorithms. The flow has six stages and they MUST be implemented as separate stages. Cross-stage shortcuts are the root cause every time matching breaks.**
+
+> User confirmation: "correct" — May 2026. This rule replaces the patchwork
+> matching code that drifted between sessions. Reading this rule is the
+> first thing any future Claude session should do before touching any
+> file in the matching path.
+
+### Six stages, in order
+
+```
+STAGE 0  Parse canonical asset list   →  AssetItem[]
+STAGE 1  Group documents              →  DocGroup[]
+STAGE 2  Bind AssetItem ↔ DocGroup    →  Binding[]   (one-claim-only)
+STAGE 3  Surface residual DocGroups   →  §10d unverified cards
+STAGE 4  Build merged Gift records    →  step5_data
+STAGE 5  3-layer walkthrough          →  Layer1+2+3 user clicks
+STAGE 6  Replay on new input          →  resume, never restart
+```
+
+### STAGE 0 — Parse canonical AssetItem list
+
+INPUT: AI Summary card content + `Will.step6_data._raw_forward_text`
+OUTPUT: ordered list of AssetItem records — canonical N for the walker.
+
+```python
+AssetItem = {
+  'kind':            'property' | 'bank' | 'insurance' | 'vehicle',
+  'ai_index':        int,                   # 0..N-1 — stable handle
+  'fields':          {address, lot, title, mukim, daerah, ownership,
+                      account_number, institution, policy_number, ...},
+  'message_line':    str,                   # verbatim user text
+  'message_ts':      datetime | None,       # if export has timestamps
+  'beneficiary_text': str,                  # raw distribution phrase
+  'conflicts_flagged': list[str],           # any "❓" Claude raised
+}
+```
+
+Hard rules:
+1. **AI Summary loses info; raw text doesn't.** `fields` MUST be the
+   union of (parsed-from-AI-Summary) ∪ (parsed-from-raw-line). If raw
+   text says "Hakmilik 504662, Lot 207922" and AI Summary card omitted
+   them, the AssetItem MUST still carry both. Single-source parsing is
+   the bug §10x.48 prevents.
+2. **AI-Summary count == AssetItem count == walker N.** Sub-lines like
+   "HSD H.S.(D) 251041" inside Property 5's block are NEVER promoted to
+   a 6th AssetItem. (§10b enforces.)
+3. **Beneficiary text is preserved verbatim** for later §10x.13
+   distribution-share interpretation. Don't pre-rescale here.
+
+### STAGE 1 — Image grouping (§10g Step 1)
+
+INPUT: all `Document` rows for client_id
+OUTPUT: list of DocGroup, each containing 1..many Documents that
+represent ONE physical asset.
+
+```python
+DocGroup = {
+  'group_id':       str,                    # generated, stable
+  'documents':      list[Document],
+  'kind':           inferred from member docs ('property', 'bank', ...)
+  'merged_extracted': dict,                 # union of OCR fields, with
+                                            # conflicts surfaced not silenced
+  'msg_id':         str | None,             # delivering ChatMessage
+  'created_at_min': datetime,               # earliest member timestamp
+}
+```
+
+Cluster signals (any single signal merges two Documents into one group):
+
+| # | Signal | Notes |
+|---|--------|-------|
+| 1 | `content_hash` equal | exact duplicate (dedup at upload — §10c, §10x.4) |
+| 2 | Same `lot+title` after §10aa cleaning | landed property |
+| 3 | Same `address_signature` after normalisation | non-strata only |
+| 4 | Same `account_number` digits | bank |
+| 5 | Same `policy_number` digits | insurance |
+| 6 | Sibling rule | same `ChatMessage.id` AND no conflicting identifiers in any of {lot, title, account_number, policy_number} |
+| 7 | Strata exception (§10hd) | same lot but DIFFERENT title → DO NOT merge — split |
+
+Hard rules:
+1. **Stage 2 binds DocGroups, never individual Documents.** This is the
+   structural difference from the broken matcher.
+2. Every Document belongs to exactly ONE DocGroup. No double-membership.
+3. Conflicts within a group (e.g. two members disagree on title number)
+   surface as a clarification card per §10x.18 — do NOT silently average.
+
+### STAGE 2 — Binding cascade (the actual matching)
+
+INPUT: AssetItem[], DocGroup[]
+OUTPUT: Binding[] — at most one DocGroup per AssetItem.
+
+Process AssetItems in HIGH-confidence order (§10e). For each AssetItem,
+try the four tiers in priority order:
+
+| Tier | Signal | Confidence | `_match_via` |
+|------|--------|------------|--------------|
+| **A** | AssetItem.lot/title equal to DocGroup's lot/title (digit-equal after §10aa cleaning) | HIGH | `'lot_match'` or `'title_match'` |
+| **B** | AssetItem's address resolves via §10ha geo bridge → mukim X. DocGroup has `mukim==X` AND ≥1 distinctive address-token overlap | MEDIUM-HIGH | `'mukim_token'` |
+| **C** | AssetItem.message_line was delivered in (or temporally adjacent to) the same ChatMessage that delivered the DocGroup AND no other AssetItem is closer in time | MEDIUM | `'temporal'` (with timestamp evidence per §10i) |
+| **D** | None of A/B/C | — | DO NOT BIND. Mark as H3. **Never guess** (§10he Step 5). |
+
+Constraints:
+1. **Greedy by confidence**: ALL Tier-A bindings resolve across the
+   whole AssetItem list before any Tier-B attempt. Then all Tier-B,
+   then all Tier-C. A strong direct match always beats a weaker
+   temporal guess.
+2. **One-claim-only** (§10g): once a DocGroup binds to AssetItem X,
+   it's removed from the candidate pool. No second AssetItem can claim
+   it. If two AssetItems compete for the same DocGroup at the same
+   tier, surface a clarification card — do NOT pick.
+3. **Conflict surface** (§10x.18): if AssetItem.lot == 504662 but
+   bound DocGroup.lot == 564662 → conflict card BEFORE saving the gift.
+4. **Web-search fallback** (§10hf) lives at the EDGE of Stage 2 only:
+   when Tier A/B/C all fail AND the address has unresolved geo, run
+   `search_property_clues(address)` to enrich AssetItem.fields with
+   {type, tenure, mukim, building_name}, then RETRY Tier B with the
+   enriched fields. Web-search is NEVER a binding signal on its own —
+   it's a clue source.
+
+After Stage 2: every AssetItem has either `binding=DocGroup` or
+`binding=None` (→ H3).
+
+### STAGE 3 — Residual handling (§10g Step 3, §10d)
+
+DocGroups not consumed by Stage 2 are residual. For each:
+
+| Residual kind | Action |
+|---|---|
+| Looks like a property (lot/title) but no AssetItem matches | §10d unverified card → ASK user |
+| Identity (IC) | route to identity walker, not asset walker |
+| Bank/insurance with no AssetItem match | §10d unverified card |
+| Junk (low-confidence noise) | ignore unless user surfaces |
+
+**Hard rule**: a residual DocGroup NEVER auto-creates a new AssetItem.
+That violates §10h (AI Summary is canonical count). The user must
+explicitly tell the chat "yes this is a real asset I forgot to mention"
+— and only THEN does the system add it.
+
+### STAGE 4 — Build merged Gift record
+
+INPUT: one AssetItem + its binding (DocGroup or None)
+OUTPUT: one Gift dict ready for step5_data.
+
+Field-source priority (apply per field):
+
+| Field | 1st choice | 2nd | 3rd |
+|---|---|---|---|
+| address | AssetItem.fields.address (from message) | AI Summary | DocGroup OCR (lowest — §10ha says title docs don't have street addresses) |
+| lot, title | AssetItem.fields (message text) | DocGroup OCR | AI Summary |
+| mukim, daerah, negeri | DocGroup OCR (title docs are authoritative) | §10ha bridge from address | web-search via §10hc resolver |
+| ownership | AssetItem.message_line (image can't tell you "I share with X") | — | — |
+| testator_share | derived from ownership idiom per §10x.13 | default `1/1` | — |
+| co_owners | AssetItem.message_line ownership clause | — | — |
+| beneficiaries (Layer 2) | populated by Stage 5, derived from `beneficiary_text` per §10x.13 + §10x.36 | — | — |
+| variant | `'h1'` (binding includes title doc) / `'h2'` (binding has non-title evidence + mukim/token confirm) / `'h3'` (no binding) | — | — |
+
+Hard rules:
+1. **Empty address on a property the user described in writing is a
+   §10x.48 failure.** If AssetItem.fields.address is non-empty, the
+   Gift's `property_info.property_address` MUST be non-empty. Period.
+2. **Co-owners go to `co_owners` array, never to Person table** (§10x.19).
+3. **All variants (h1/h2/h3) are HIGH confidence** (§10hg). Variant
+   only describes COMPLETENESS.
+
+### STAGE 5 — 3-layer walkthrough (§10x.23)
+
+Already specified in §10x.23 / §10x.40 / §10x.46. Per-Gift:
+- Layer 1 (Confirm Asset Identity) → `_layer1_confirmed=True`
+- Layer 2 (Main Beneficiary) → `beneficiaries=[...]`
+- Layer 3 (Substitute) → `substitute_specific=[...]`
+
+Step 6 is COMPLETE when every AssetItem's Gift has all three layers.
+
+### STAGE 6 — Replay on new input (§10x.43)
+
+Trigger: any new ChatMessage (text or attachments) for this client.
+
+```
+Replay:
+  Re-run STAGE 0          # new text may add AssetItems
+  Re-run STAGE 1          # new images regroup
+  Re-run STAGE 2          # bind, preserving prior _user_confirmed bindings
+  Re-run STAGE 3          # new residuals
+  Re-run STAGE 4          # rebuild Gift with updated bindings; preserve
+                          # user-set beneficiary/substitute fields
+  RESUME STAGE 5          # do not restart; pick up at the first incomplete
+                          # layer of the next AssetItem
+```
+
+Hard rules:
+1. **User confirmations survive replay.** A Gift with `_layer1_confirmed`
+   keeps it. Beneficiaries/substitutes once saved stay saved unless the
+   user explicitly edits.
+2. **New AssetItems insert at correct ai_index.** Don't reshuffle.
+3. **Newly-bound DocGroups attach to existing AssetItems**: a previously
+   H3 gift can promote to H1/H2 when its image arrives — completeness
+   improves, but the gift identity is preserved.
+
+### Cross-stage invariants (verifier checks these)
+
+| Invariant | Where checked |
+|---|---|
+| Stage 0: `len(AssetItem) == AI Summary count` | `verify_step6.py R1` |
+| Stage 1: every Document appears in exactly one DocGroup | `services/asset_audit.py audit_grouping` |
+| Stage 2: no DocGroup bound to two AssetItems | `services/asset_audit.py audit_one_claim_only` |
+| Stage 4: address non-empty when AssetItem has address | `verify_step6.py R6` (§10x.48 NEW) |
+| Stage 4: lot/title preserved when present in message | `verify_step6.py R7` (§10x.48 NEW) |
+| Stage 5: every gift has Layer 1 + 2 + 3 set | `verify_step6.py R4 + R5` |
+
+### Where this lives in code (target structure)
+
+| File | Function | Stage |
+|------|----------|-------|
+| `services/asset_pipeline.py` (NEW) | `parse_canonical_assets(client_id) → AssetItem[]` | Stage 0 |
+| `services/asset_pipeline.py` (NEW) | `group_documents(client_id) → DocGroup[]` | Stage 1 |
+| `services/asset_pipeline.py` (NEW) | `bind_assets(asset_items, doc_groups) → Binding[]` | Stage 2 |
+| `services/asset_pipeline.py` (NEW) | `build_gift(asset_item, binding) → Gift` | Stage 4 |
+| `services/gift_walker.py` | `get_pending_gift_documents(cid)` | calls all of Stage 0-4, returns the result |
+| `ai/chat_planner.py` | `_asset_walkthrough_question`, `_step6_property_question` | Stage 5 only |
+| `app.py` | `_try_save_property_gift`, `_try_handle_h3_property_action` | Stage 5 click handlers |
+
+The current code mixes Stage 0/1/2/4 inside `_classify_property_match`
+and `gift_walker._group_property_documents`. The refactor extracts
+each stage into its own pure function.
+
+### Litmus tests (a single change touching matcher MUST pass all)
+
+```
+Test 1 — text-only fixture (5 properties described, 0 Documents):
+  Stage 0: 5 AssetItems
+  Stage 1: 0 DocGroups
+  Stage 2: 5 Bindings, all None (H3)
+  Stage 4: 5 Gifts, every one has non-empty address
+  Stage 5: walker drives 5 Layer 1+2+3 turns
+
+Test 2 — image-only fixture (3 title docs, no AI Summary):
+  Stage 0: 0 AssetItems
+  Stage 3: 3 residual DocGroups → 3 §10d unverified cards
+  Stage 4/5: zero Gifts auto-created
+
+Test 3 — mixed (5 properties described + 5 title docs):
+  Stage 0: 5 AssetItems
+  Stage 1: 5 DocGroups (or fewer if siblings)
+  Stage 2: 5 bindings via Tier A (lot/title direct) where identifiers
+            stated in message; Tier B/C for the rest
+  Stage 4: every Gift carries address from message AND lot/mukim from
+            DocGroup OCR
+  Stage 5: walker drives 5 turns
+  Verifier: ≥1 Gift has real document_id (§10x.47)
+```
+
+### What §10x.48 KILLS
+
+The following code paths are REMOVED in the refactor (do not re-introduce):
+- `_classify_property_match` lexical-only token overlap as primary signal
+- per-Document matching loop (Stage 1 missing) → replaced by DocGroup
+- AI-Summary-OR-raw-text parsing (Stage 0 single-source) → replaced
+  by union parsing
+- Saver pulling address from DocGroup when AssetItem has it → replaced
+  by Stage 4 field-source priority
+- Random-pick / first-match fallback in any matcher path
+
+If a future PR re-introduces any of the above, §10x.48 has been
+violated. The verifier MUST fail on the corresponding invariant.
 
 ---
 
