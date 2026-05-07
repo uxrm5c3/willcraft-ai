@@ -1792,6 +1792,171 @@ patch the symptom by silently grouping.
 
 ---
 
+### 10x.13  ⚡ Beneficiary % is ALWAYS of the testator's share ⚡
+
+**The testator can only give what the testator owns.** When the AI
+Summary says:
+
+> "I share with X 50/50, my 50% to Joshua 25% and Esther 25%"
+
+the legally meaningful reading is:
+
+```
+Testator's interest:           50% (joint with X)
+Beneficiary allocations of testator's interest:
+  Joshua  →  50% of testator's share  (= 25% of full property)
+  Esther  →  50% of testator's share  (= 25% of full property)
+```
+
+The "25% / 25%" the user wrote is *of the full property* and adds up to
+exactly the testator's 50% share — meaning the testator gives equal
+halves of his own share to the two children.
+
+### How this affects every layer
+
+1. **AI Summary parser** must surface BOTH framings:
+   - `share_of_testator_pct` (canonical for will clause): 50/50
+   - `share_of_full_property_pct` (legacy display): 25/25
+   The card may show "of testator's share" to remove ambiguity.
+
+2. **Layer 2 beneficiary card** asks "of the testator's share, who
+   gets what %?" — NOT "of the full property". The default 100% means
+   100% of the testator's interest, regardless of whether the testator
+   owns 100% or only a partial share.
+
+3. **`step5_data` gift entry** stores allocations as fractions of the
+   testator's share (`'share': '1/2'` for each child). The wizard's
+   probate-clause generator already reads this format and produces:
+   > *"my undivided 1/2 share in [property] to Joshua and Esther in
+   >  equal shares"*
+
+   The full-property percentages are derived (`testator_share_pct ×
+   beneficiary_share_of_testator_pct`) only for display, never stored.
+
+4. **Generated will clause** must NEVER assert percentages of the FULL
+   property — only "my [share] in [asset] to [beneficiaries] in [shares]".
+   The will speaks for the testator's interest only; outsiders' shares
+   are out of scope.
+
+### Equal-share shorthand
+
+When the AI Summary says "X% to A, X% to B" and X×2 equals the testator's
+full share, treat as `equal among A and B of testator's share`. This is
+the most common case for property-jointly-owned-with-spouse-or-sibling.
+
+The card should show the equal-share interpretation prominently:
+
+> Beneficiaries (of testator's 50% share):
+>   • Joshua Koid Teck Seng — **50%** (= 25% of full property)
+>   • Esther Koid En Hui — **50%** (= 25% of full property)
+>   *Equivalent to: my share split equally between the two children.*
+
+### Worked example for KOID
+
+| Asset | Testator's share | Beneficiary of testator's share | Will clause |
+|-------|------------------|--------------------------------|-------------|
+| B-05-11 Paradisonuava | 1/2 | Joshua 1/2 + Esther 1/2 (equal) | "my 1/2 share to Joshua and Esther equally" |
+| C-30-08 Marina Cove | 1/2 (joint with son Joshua) | Esther 100% | "my 1/2 share to Esther" |
+| C-05-01 Marina Cove | 1/1 | Esther 100% | "the whole of [unit] to Esther" |
+| 10 Sri Laguna | 1/2 (joint with wife) | Joshua 100% | "my 1/2 share to Joshua" |
+| Shop Jalan Gunung 4 | 1/1 | Joshua 1/2 + Esther 1/2 | "the whole of [shop] to Joshua and Esther equally" |
+
+Note that Property 5 (the shop) is sole ownership, so "50%/50%" really
+does mean 50% of the full property to each child. Context (ownership
+type) tells us whether to interpret % as fractions of full or of share.
+
+### Implementation contract
+
+Every gift entry in `step5_data` must carry:
+
+```python
+{
+    'kind': 'property',
+    'testator_share': '1/2',      # what the testator owns
+    'allocations': [
+        {'beneficiary_name': 'Joshua', 'share': '1/2', 'role': 'MB'},
+        {'beneficiary_name': 'Esther', 'share': '1/2', 'role': 'MB'},
+    ],
+    # 'share' is ALWAYS a fraction of testator_share, never of full property.
+    # If allocations sum != 1/1 of testator's share → conflict card (§10hg).
+}
+```
+
+The verifier MUST flag any gift where `sum(allocations[*].share) != 1`.
+
+---
+
+### 10x.14  ⚡ Substitute Beneficiary Defaults ⚡
+
+**During testing AND in the live walkthrough, the substitute clause
+follows these defaults unless the user explicitly overrides:**
+
+| Gift's main beneficiaries | Default substitute |
+|---------------------------|--------------------|
+| Multiple beneficiaries (e.g. Joshua + Esther 50/50) | The **surviving beneficiaries** of that gift, in equal shares. |
+| Single beneficiary that is **a child** (e.g. Joshua 100%) | The **other surviving child** (Esther 100%). |
+| Single beneficiary that is **the wife** (e.g. Lim Bee Yan 100%) | **Both children in equal share** (Joshua 50%, Esther 50%). |
+| Single beneficiary that is some **other person** (e.g. brother) | The surviving children in equal share. |
+
+### Why these defaults
+
+- **Surviving-beneficiaries-equal** is the most common probate
+  presumption when one of two co-heirs predeceases the testator.
+- **Spouse → children** mirrors Malaysian Distribution Act 1958
+  intuition where the wife is primary and children are residuary
+  fallback.
+
+### How this maps to the walker
+
+`walk_step6.py::pick_next` and the chat substitute card MUST default to:
+
+```python
+def _default_substitute(main_bens, identities):
+    """Return [{'name', 'share'}, …] — the substitute clause."""
+    if len(main_bens) >= 2:
+        # surviving beneficiaries in equal shares
+        return [{'name': b['name'], 'share': '1/' + str(len(main_bens))}
+                for b in main_bens]
+    sole = main_bens[0]['name']
+    children = [i for i in identities
+                if (i.get('relationship') or '').lower() in ('son', 'daughter')]
+    if sole in [c['full_name'] for c in children]:
+        # sole beneficiary is a child → other surviving child(ren)
+        others = [c for c in children if c['full_name'] != sole]
+        return [{'name': c['full_name'],
+                 'share': '1/' + str(len(others))}
+                for c in others] if others else []
+    # spouse / other → all children equally
+    return [{'name': c['full_name'],
+             'share': '1/' + str(len(children))}
+            for c in children] if children else []
+```
+
+The chat card surfaces this as the **default option** so the user can
+just tap ✅ to accept. The user can always override with a different
+named substitute or "no substitute clause".
+
+### Worked example for KOID
+
+| Gift | Main | Default substitute |
+|------|------|--------------------|
+| B-05-11 (Joshua + Esther 50/50) | Joshua 50% + Esther 50% | Joshua 50% + Esther 50% (surviving) |
+| C-30-08 (Esther 100%) | Esther | Joshua 100% (other child) |
+| C-05-01 (Esther 100%) | Esther | Joshua 100% (other child) |
+| 10 Sri Laguna (Joshua 100%) | Joshua | Esther 100% (other child) |
+| Shop (Joshua 50% + Esther 50%) | Joshua + Esther | Joshua + Esther (surviving) |
+| All banks → wife | Lim Bee Yan | Joshua + Esther equally |
+| All insurance → wife | Lim Bee Yan | Joshua + Esther equally |
+
+### Verifier rule
+
+`verify_step6.py` MUST check that every saved gift has a
+`substitute_specific` (or `substitute_mode`) field populated. A gift
+with no substitute clause is incomplete unless the user explicitly
+chose "no substitute" via the **⏭ No substitute clause** quickreply.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
