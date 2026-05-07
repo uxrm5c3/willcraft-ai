@@ -5260,14 +5260,21 @@ def _try_delete_pending_identity(client_id: str, user_text: str):
 
 
 def _current_stage_num(client_id: str, will) -> int:
-    """Numeric counterpart of _current_stage_label — the wizard step
-    number the chat planner is currently working on. Used by the chat's
-    right-pane snapshot so the "current" indicator pulses on the RIGHT
-    step (e.g. Step 6 Specific Gifts), not the first empty optional step
-    (Step 4 Guardians is optional and often skipped — the snapshot used
-    to glow it forever).
+    """🔥 §10x.38 — Numeric current step. Wizard right-pane indicator
+    MUST match what the chat planner is currently asking. Computed from
+    the EXACT same gates the chat planner uses, in the EXACT same order:
 
-    Mirrors the planner's stage ordering in ai/chat_planner.plan_turn.
+      pending IC                    → 1 (Identity walkthrough)
+      testator not confirmed        → 2 (Confirm Testator)
+      < 1 executor                  → 3 (Executor)
+      no beneficiaries              → 5 (Beneficiaries)
+      pending gifts in walkthrough  → 6 (Specific Gifts)
+      no residuary                  → 7 (Residuary)
+      else                          → 10 (Generate)
+
+    Earlier this function returned 7 when 'assets_confirmed' was in
+    completed_steps EVEN IF s5 had 0 saved gifts (walkthrough mid-flight)
+    — a wizard / chat desync that confused users.
     """
     from services.identity_walker import get_pending_ic_documents
     if get_pending_ic_documents(client_id):
@@ -5288,19 +5295,28 @@ def _current_stage_num(client_id: str, will) -> int:
     if not (s1 or {}).get('full_name'):
         return 2  # Step 2 Testator
     n_exec = len((s2 or {}).get('executors') or [])
-    # Asset inventory phase happens BEFORE executor in the new flow —
-    # snapshot it as Step 6 (Specific Gifts) so the writer knows that's
-    # what the chat is reviewing.
-    if 'assets_confirmed' not in completed:
-        return 6
-    if n_exec < 2:
+    if n_exec < 1:
         return 3  # Step 3 Executors
     if not isinstance(s4, list) or len(s4) == 0:
         return 5  # Step 5 Beneficiaries
-    if isinstance(s5, list) and any(isinstance(g, dict) and g.get('document_id') for g in s5):
-        return 6  # Step 6 mid-assignment
+    # 🔥 §10x.38 — Pending-gift check overrides 'assets_confirmed' flag.
+    # The flag means asset-inventory phase ended; walkthrough may still
+    # be running. As long as ANY gift is pending OR no gifts saved yet
+    # while the walkthrough has assets to walk, we're STILL on Step 6.
+    try:
+        from services.gift_walker import get_pending_gift_documents
+        pg = get_pending_gift_documents(client_id) or {}
+        total_pending = sum(len(v) for v in pg.values()
+                             if isinstance(v, list))
+    except Exception:
+        total_pending = 0
+    has_saved_gifts = isinstance(s5, list) and len(s5) > 0
+    if total_pending > 0:
+        return 6   # walkthrough has more cards to show
+    if 'assets_confirmed' not in completed and not has_saved_gifts:
+        return 6   # asset inventory phase not yet acknowledged
     if not s6 or not (s6.get('beneficiaries') or s6.get('residuary_beneficiary_name')):
-        return 7  # Step 7 Residuary
+        return 7   # Step 7 Residuary
     return 10  # done — Generate
 
 

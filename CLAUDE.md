@@ -3764,6 +3764,136 @@ reply_parts.append(
 
 ---
 
+### 10x.38  🔥🔥🔥 BURN-IN — WIZARD STEP INDICATOR = CHAT STEP. ALWAYS. 🔥🔥🔥
+
+**The right-pane "Will Snapshot" current-step indicator MUST match
+the step the chat is currently asking about. NEVER show Step 7 in the
+wizard while the chat is on Step 6. If they desync, the user sees
+contradictory state and loses trust in the system.**
+
+### Why this rule exists
+
+User report: chat showing **Step 6: Specific Gifts** walkthrough card,
+right-pane "Will Snapshot" indicator pulsing on **Step 7: Residuary**.
+Two parts of the same UI tell the user different things at the same
+moment.
+
+Root cause: `_current_stage_num` in `app.py` returned 7 because
+`'assets_confirmed'` was in `completed_steps` (set when user typed
+"confirm assets" earlier) BUT `step5_data` had 0 saved gifts (because
+the walkthrough was still running). The wizard indicator believed
+gifts were done; the chat knew it was still walking gifts. Desync.
+
+### Hard rule
+
+`_current_stage_num` and the chat planner `plan_turn` MUST derive
+their step decision from the **same gates in the same order**:
+
+```
+1  pending IC              → Step 1 (Identity walkthrough)
+2  testator not confirmed  → Step 2 (Confirm Testator)
+3  < 1 executor            → Step 3 (Executor)
+4  no minor children       → Step 4 (Guardian — skipped)
+5  no beneficiaries        → Step 5 (Beneficiaries)
+6  pending gifts > 0       → Step 6 (Specific Gifts)
+       OR 'assets_confirmed' not in completed AND no saved gifts
+7  no residuary             → Step 7 (Residuary Estate)
+8  no trust                 → Step 8 (Trust)
+9  no other                 → Step 9 (Other matters)
+10 else                     → Step 10 (Generate Will)
+```
+
+Crucial detail: **Step 6 is "still running" as long as ANY pending
+gift remains in the walker**, even if 'assets_confirmed' was set.
+'assets_confirmed' just means the asset-inventory phase ended — the
+walkthrough phase may still be open.
+
+### Implementation
+
+`app.py::_current_stage_num` queries `get_pending_gift_documents` to
+count pending across all kinds (property+bank+insurance+vehicle). If
+total_pending > 0 → return 6, regardless of any other flag.
+
+`ai/chat_planner.py::_compute_next_step_label` uses the same logic
+for the "Now moving to Step X" announcement message (§10x.37).
+
+### Where this is enforced
+
+| File | Function | Role |
+|------|----------|------|
+| `app.py` | `_current_stage_num` | Drives the JS `currentIdx` in chat right-pane |
+| `app.py` | `_current_stage_label` | Human-readable label for Q&A nudges |
+| `ai/chat_planner.py` | `_compute_next_step_label` | "Moving to Step X" message |
+| `static/js/chat.js` | snapshot section render | Reads `will.current_stage_num` from server |
+
+### Litmus test
+
+```
+Chat is showing Step N card. Wizard right pane current step indicator:
+  - matches N                      → ✓
+  - shows different step           → ✗ §10x.38 regression. Fix.
+```
+
+If they ever differ, the bug is in `_current_stage_num`. Fix it there
+— do NOT add UI hacks like "force step 6" in JS. The backend gates are
+the source of truth.
+
+---
+
+### 10x.39  🔥🔥🔥🔥 BURN-IN — THE FUCK LIST 🔥🔥🔥🔥
+
+**Bugs the user has explicitly called out as "must never resurface".
+This list exists because rules in CLAUDE.md alone weren't enough — the
+code regressed silently. Every entry below has a corresponding burn-in
+rule + an `asset_audit.py` / `identity_full_audit.py` check.**
+
+### The FUCK list
+
+Each entry has:
+- The exact user complaint (verbatim where possible)
+- The rule that exists to prevent it
+- The audit check that catches its return
+
+| # | What user said | Rule | Audit check |
+|---|---|---|---|
+| 1 | "EVERY SINGLE FUCKING UPDATE, SAVE IN CLAUDE.MD PERMANENTLY. DON'T FUCKING LOSE IT AGAIN" | §10x.33 + permanent burn-ins §10x.26-10x.39 | Pre-deploy `asset_audit.py` |
+| 2 | "MESSAGE > IMAGE. ALWAYS." | §10x.35 | Audit checks pending count == AI Summary count |
+| 3 | "MUST REFER TO MESSAGE: HIGHEST PRECEDENCE" | §10x.36 — every gift card MUST show 📨 message snippet | Visual check + CLAUDE.md §9 cross-reference |
+| 4 | "Wizard step and AI chat step MUST MATCH" | §10x.38 — `_current_stage_num` must match planner gate ordering | Side-by-side check: chat card + right-pane indicator |
+| 5 | "If skip, show back again until user select delete" | §10x.31 — Skip is no-op | `_chat_skipped` flag NEVER set on Skip click |
+| 6 | "Identity in message must take precedence even without image" | §10x.34 + §10x.35 | Lim Bee Yan H3 placeholder works |
+| 7 | "Step 1 IC walk only assigns family relations, not Executor" | §10x.32 | `_WILL_ROLES` filter in `_try_assign_pending_identity` |
+| 8 | "Asset matching: HIGH confidence first, LOW last" | §10e + §10x.30 | Audit: pending property scores monotonically decrease |
+| 9 | "Property count = AI Summary count, not 14, not 31" | §10b | Audit: `len(pending_props) == len(ai_props)` |
+| 10 | "Every AI-Summary item must result in a gift entry" | §10x.12 | Audit: 5 props + 4 banks + 3 ins for KOID fixture |
+| 11 | "Title docs do NOT show street addresses — get from message" | §10ha | `_persist_property_enrichment` matches by lot/title, not OCR addr |
+| 12 | "Strata: same lot ≠ same property — group by (lot, title)" | §10hd | `_group_property_documents` strata branch |
+| 13 | "Co-owner is NOT a family relationship" | §10x.19 | Co-owner stays in `property_info.co_owners`, never Person row |
+| 14 | "Beneficiary % is of testator's SHARE, not full property" | §10x.13 | Deduce path accepts totals in {25, 33, 50, 66, 75} and rescales |
+| 15 | "Substitute beneficiary defaults: spouse → both children, etc." | §10x.14 | `_default_substitute()` in walker |
+| 16 | "Image is verification only — text alone is sufficient" | §10x.15 + §10x.35 | H3 placeholders synthesised for AI-Summary-only items |
+| 17 | "Will-clause format MUST follow Phek Yi Ting standard" | §10x.24 | `sim_will_gen.py` snapshot test |
+| 18 | "AI follows the saved template STRICTLY — no creativity" | §10x.25 | `template_filler.py` is deterministic, no LLM |
+| 19 | "Watchdog must NEVER post duplicate cards" | §10x.9 + §10x.28 | Idempotency: 1 intake + 1 AI Summary, no dups |
+| 20 | "Vision retry has terminal state — no infinite analysing" | §10x.26 | `_classify_attempts >= 3` → `needs_review` |
+| 21 | "Pre-deploy asset audit MUST pass" | §10x.33 | `asset_audit.py` reconciliation checks |
+
+### Maintenance rule
+
+When the user calls out a bug "should not happen again":
+1. Add to this FUCK list
+2. Find or write the §10x rule in CLAUDE.md
+3. Add a check to `asset_audit.py` (or build a new audit file)
+4. Verify the check fails on the buggy code BEFORE shipping the fix
+5. Verify the check passes after the fix
+6. Commit ALL of (CLAUDE.md, audit, code fix) in ONE commit so they
+   never separate
+
+The reason this list exists: between sessions / contexts, code drifts.
+Audits + permanent rules are the only way to keep bugs DEAD.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
