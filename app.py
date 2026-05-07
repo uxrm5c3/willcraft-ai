@@ -4604,39 +4604,65 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                         return ap
             # ── §10hd Strata sibling ───────────────────────────────────────
             # Two title docs with the SAME lot but DIFFERENT title numbers
-            # are different units in the SAME building. If one sibling has
-            # already been bound to an AI Summary entry (and we can read the
-            # building tokens from that entry's address), the unbound sibling
-            # MUST come from another AI Summary entry that shares those
-            # building tokens.
+            # are different units in the SAME building. Find any sibling
+            # prop (same lot), get its address tokens, find AI Summary
+            # entries whose address tokens overlap (building/township),
+            # and exclude any AI Summary entry already token-matched by
+            # the sibling itself.
             if d_lot and len(d_lot) >= 3:
-                _sibling_building_toks = set()
-                for ap_other in _ai_summary:
-                    addr_other = (ap_other.get('address') or '').strip().lower()
-                    if not addr_other or addr_other not in claimed_addresses:
+                def _btok(s: str) -> set:
+                    GENERIC = {'unit', 'unit,', 'condominium', 'condo',
+                               'apartment', 'apt', 'no', 'jalan', 'lot',
+                               'taman', 'bandar', 'malaysia', 'johor',
+                               'bahru', 'kuala', 'lumpur', 'selangor',
+                               'tower', 'block', 'level', 'floor', 'storey',
+                               'phase', 'jalan,'}
+                    return set(t for t in re.split(r'[^a-z0-9]+', (s or '').lower())
+                               if len(t) >= 4 and t not in GENERIC)
+                # Sibling prop tokens: aggregate from all OTHER same-lot props
+                _sibling_tokens = set()
+                for q in props:
+                    q_ex = q.get('extracted') or {}
+                    if q_ex is ex:
                         continue
-                    # Find any prop with the same lot_number — its claimant's
-                    # address tokens become the building-token signature.
+                    q_lot = _digits_only(q_ex.get('lot_number') or '')
+                    if q_lot != d_lot:
+                        continue
+                    q_addr = (q_ex.get('property_address') or '').strip()
+                    if q_addr:
+                        _sibling_tokens.update(_btok(q_addr))
+                if _sibling_tokens:
+                    # Find AI props whose address shares any sibling token AND
+                    # whose own address is not already claimed.
+                    cands = []
+                    sibling_matched_idxs = set()
+                    # Pass A: which AI entries does the sibling itself match?
+                    # Mark them so we DON'T pick them for the current doc.
                     for q in props:
                         q_ex = q.get('extracted') or {}
-                        q_lot = _digits_only(q_ex.get('lot_number') or '')
-                        if q_lot != d_lot:
+                        if q_ex is ex:
                             continue
-                        q_addr = (q_ex.get('property_address') or '').strip().lower()
-                        if q_addr and q_addr == addr_other:
-                            _sibling_building_toks.update(
-                                t for t in re.split(r'[^a-z0-9]+', addr_other)
-                                if len(t) >= 4
-                            )
-                if _sibling_building_toks:
-                    cands = []
-                    for ap in _ai_summary:
+                        q_lot2 = _digits_only(q_ex.get('lot_number') or '')
+                        if q_lot2 != d_lot:
+                            continue
+                        q_addr2 = (q_ex.get('property_address') or '').strip()
+                        if not q_addr2:
+                            continue
+                        q_toks = _btok(q_addr2)
+                        for j, apj in enumerate(_ai_summary):
+                            a_toks_j = _btok(apj.get('address') or '')
+                            if a_toks_j and (q_toks & a_toks_j):
+                                sibling_matched_idxs.add(j)
+                    # Pass B: pick an AI prop sharing tokens with sibling but
+                    # not the sibling's own match.
+                    for j, ap in enumerate(_ai_summary):
+                        if j in sibling_matched_idxs:
+                            continue
                         a_addr = (ap.get('address') or '').strip().lower()
                         if not a_addr or a_addr in claimed_addresses:
                             continue
-                        a_toks = set(t for t in re.split(r'[^a-z0-9]+', a_addr)
-                                     if len(t) >= 4)
-                        if a_toks & _sibling_building_toks:
+                        a_toks = _btok(a_addr)
+                        if a_toks and (a_toks & _sibling_tokens):
                             cands.append(ap)
                     if len(cands) == 1:
                         return cands[0]
