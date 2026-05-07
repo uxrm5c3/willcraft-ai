@@ -51,14 +51,33 @@ def extract_role_mentions(client_id: str) -> List[Dict[str, Any]]:
 
     Returns list of dicts:
         {role, evidence_snippet, phone, partial_name, line_idx}
+
+    🔥 §10x.21 fix: the AI Summary paraphrases ("executor (sister-in-law).")
+    and DROPS phone numbers / partial names. Always merge the RAW forward
+    text (step6_data._raw_forward_text) with the summary so phone/snippet
+    extraction has the original signal to work with.
     """
     if not client_id:
         return []
     try:
         from ai.chat_planner import _gather_summary_source_text
-        text = _gather_summary_source_text(client_id) or ''
+        summary_text = _gather_summary_source_text(client_id) or ''
     except Exception:
-        return []
+        summary_text = ''
+    raw_text = ''
+    try:
+        from database import db, Will
+        import json as _json
+        w = (Will.query.filter_by(client_id=client_id)
+             .order_by(Will.created_at.desc()).first())
+        if w and w.step6_data:
+            raw_text = (_json.loads(w.step6_data) or {}).get(
+                '_raw_forward_text', '') or ''
+    except Exception:
+        raw_text = ''
+    # Combine — summary first (canonical asset list), raw text after
+    # (preserves phone/IC details). Both are scanned by the regexes.
+    text = (summary_text + '\n\n' + raw_text).strip()
     if not text:
         return []
 
@@ -131,8 +150,14 @@ def extract_role_mentions(client_id: str) -> List[Dict[str, Any]]:
 
 
 def find_unassigned_ic_candidates(client_id: str) -> List[Dict[str, Any]]:
-    """Return Person rows that are NOT testator/spouse/son/daughter/father/mother
-    AND have a real full_name. These are candidates for executor / witness / etc.
+    """Return candidates for executor / witness / etc.
+
+    🔥 §10x.21 fix: candidates come from TWO sources — Person rows AND raw
+    Document rows of category='nric' that have not yet been linked to any
+    Person. The original implementation only looked at Person, but Persons
+    are created during the identity walkthrough — which has not yet run on
+    a fresh inbound. Without including raw IC docs, the role matcher ALWAYS
+    returned [] on freshly-classified accounts.
     """
     if not client_id:
         return []
@@ -147,6 +172,10 @@ def find_unassigned_ic_candidates(client_id: str) -> List[Dict[str, Any]]:
         'beneficiary', 'main beneficiary',
     }
     candidates: List[Dict[str, Any]] = []
+    seen_doc_ids: set = set()
+    seen_nrics: set = set()
+
+    # Source 1: Person rows (already-assigned identity walkthrough output)
     try:
         persons = Person.query.filter_by(client_id=client_id).all()
     except Exception:
@@ -154,27 +183,77 @@ def find_unassigned_ic_candidates(client_id: str) -> List[Dict[str, Any]]:
     for p in persons:
         rel = (p.relationship or '').strip().lower()
         if rel in REAL_FAMILY:
+            # Track their IC docs so we don't re-surface them as Source 2 unassigned
+            if p.document_id:
+                seen_doc_ids.add(p.document_id)
+            if p.nric_passport:
+                seen_nrics.add(_digits(p.nric_passport))
             continue
         if not (p.full_name or '').strip():
             continue
-        # Get the source IC document timestamp for §10i temporal match
         upload_ts = None
         if p.document_id:
             try:
                 d = db.session.get(Document, p.document_id)
                 if d and d.created_at:
                     upload_ts = d.created_at
+                seen_doc_ids.add(p.document_id)
             except Exception:
                 upload_ts = None
+        if p.nric_passport:
+            seen_nrics.add(_digits(p.nric_passport))
         candidates.append({
             'person_id':   p.id,
             'full_name':   p.full_name,
             'nric':        p.nric_passport or '',
             'address':     p.address or '',
             'phone':       getattr(p, 'phone', '') or '',
-            'relationship_hint': rel,   # what the user typed when matching IC
+            'relationship_hint': rel,
             'document_id': p.document_id or '',
             'upload_ts':   upload_ts,
+            '_source':     'person',
+        })
+
+    # Source 2: raw IC Documents not yet linked to a Person
+    try:
+        ic_docs = Document.query.filter_by(
+            client_id=client_id, category='nric').all()
+    except Exception:
+        ic_docs = []
+    import json as _json, re as _re
+    for d in ic_docs:
+        if d.id in seen_doc_ids:
+            continue   # already represented via a Person row
+        try:
+            ed = _json.loads(d.extracted_data or '{}')
+        except Exception:
+            ed = {}
+        # Pull canonical NRIC from possibly-noisy extractor output
+        nric_raw = str(ed.get('nric_number') or '')
+        m = _re.search(r'\d{6}[-\s]?\d{2}[-\s]?\d{4}', nric_raw)
+        nric_clean = m.group(0) if m else ''
+        nric_digits = _digits(nric_clean)
+        if nric_digits and nric_digits in seen_nrics:
+            continue   # IC already accounted for under a Person
+        # Clean the name (strip issuing-authority text per §10aa)
+        name_raw = (ed.get('full_name') or '').strip()
+        AUTH_NOISE = ('KETUA PENGARAH', 'JABATAN PENDAFTARAN', 'MYKAD',
+                      'KAD PENGENALAN', 'WARGANEGARA', 'IDENTITY CARD')
+        if any(n in name_raw.upper() for n in AUTH_NOISE):
+            name_clean = ''
+        else:
+            name_clean = name_raw
+        candidates.append({
+            'person_id':         '',                          # no Person yet
+            'full_name':         name_clean,                  # may be empty
+            'nric':              nric_clean,
+            'address':           (ed.get('address') or '').strip(),
+            'phone':             '',
+            'relationship_hint': '',                          # unassigned
+            'document_id':       d.id,
+            'upload_ts':         d.created_at,
+            '_source':           'unlinked_ic',
+            '_filename':         d.original_filename,
         })
     return candidates
 
@@ -202,6 +281,11 @@ def match_role_to_candidates(
     partial = (role_mention.get('partial_name') or '').strip().lower()
 
     # ── Layer 1: content match (phone digits, partial name, family hint)
+    # Stable identity key: person_id if present, else document_id (handles
+    # unlinked-IC candidates from §10x.21 fix).
+    def _key(c):
+        return c.get('person_id') or c.get('document_id') or id(c)
+
     high_matched: set = set()
     for c in candidates:
         c_phone = _digits(c.get('phone', ''))
@@ -212,18 +296,18 @@ def match_role_to_candidates(
         if phone and c_phone and len(phone) >= 7:
             if phone[-7:] == c_phone[-7:]:
                 out.append((c, 'high', f'Phone digits match (…{phone[-4:]})'))
-                high_matched.add(c['person_id'])
+                high_matched.add(_key(c))
                 continue
         # Family-relation hint match (e.g. user labelled IC as "sister-in-law"
         # during identity walk → exact role match)
         if fam_hint and c_rel and fam_hint == c_rel:
             out.append((c, 'high', f'IC labelled "{fam_hint}" during identity walk'))
-            high_matched.add(c['person_id'])
+            high_matched.add(_key(c))
             continue
         # Partial name match
         if partial and partial in c_name:
             out.append((c, 'high', f'Name contains "{partial}"'))
-            high_matched.add(c['person_id'])
+            high_matched.add(_key(c))
             continue
 
     # ── Layer 2: temporal proximity (per §10i)
@@ -232,7 +316,7 @@ def match_role_to_candidates(
 
     # ── Layer 3: residual — list every unmatched candidate as 'low'
     for c in candidates:
-        if c['person_id'] in high_matched:
+        if _key(c) in high_matched:
             continue
         out.append((c, 'low', 'Unassigned IC — please confirm if this person'))
 
