@@ -1660,6 +1660,60 @@ helper failed to log because of:
 The fix is at the silent path. Showing $0.00 to the user when the real
 cost is $0.30 is worse than showing nothing.
 
+### 10x.9  ⚡ Watchdog must NEVER post duplicate cards ⚡
+
+**The catastrophic bug:** the watchdog in `/api/chat/<client_id>/history`
+fires every 5 seconds while the chat tab is open. If `_process_inbound_
+message_async` runs concurrently in N threads, each one calls
+`plan_turn()` and posts a NEW intake card + NEW AI Summary. The user
+ended up with **12+ duplicate cards** in one chat. Cost was multiplied
+N× because every concurrent run re-classified all images.
+
+**Three layers of defence — ALL three must remain:**
+
+1. **In-process lock (`_PROCESSING_LOCK` + `_PROCESSING_INFLIGHT` set)**
+   in app.py. The wrapper `_process_inbound_message_async` adds the
+   user_msg_id before calling `_process_inbound_message_async_inner`
+   and removes it in `finally`. If user_msg_id is already in the set,
+   wrapper returns immediately. Per-worker, but combined with (3) it's
+   robust across workers too.
+
+2. **Watchdog throttle in `api_chat_history`** — before spawning a
+   thread, check:
+   - `_m.id not in _PROCESSING_INFLIGHT` (lock held)
+   - any doc still `chat_inbox` (else nothing to do)
+   - no assistant message contains "exhibits received" already (work done)
+
+3. **Idempotency in the processor itself** — before posting the intake
+   card OR the AI Summary card, check if one already exists for this
+   `user_msg.created_at <= ChatMessage.created_at` window. If yes,
+   skip the `db.session.add(...)` step. Doc category updates still happen,
+   but no chat-message duplicates.
+
+**The smell test:** open the chat tab, leave it open 60 seconds. There
+must be exactly ONE `📋 N exhibits received` card and ONE `📨 AI Summary`
+card per inbound email. If you see any duplication, the watchdog
+regressed.
+
+### 10x.10  Reprocess scripts must be idempotent on chat history
+
+`/app/data/reprocess2.py` directly calls `_process_inbound_message_async`.
+It MUST go through the same lock + idempotency checks. Never bypass them
+by calling `_process_inbound_message_async_inner` directly.
+
+### 10x.11  Operational test pipeline (verify no duplicates)
+
+After deploying any inbound-pipeline change, run the smell test and
+confirm:
+- 1 user message ✅
+- 1 intake card "📋 N exhibits received" ✅
+- 1 AI Summary card "📨 AI Summary of your message" ✅
+- 0 docs left in `chat_inbox` (all classified)
+- Cost > $0 in `/api/cost/<will_id>`
+
+If any duplicate cards appear → STOP, the lock or idempotency check
+regressed. Don't ship.
+
 ### 10x.8  Operational test pipeline
 
 Each test cycle (CLAUDE.md §2) MUST end with:

@@ -3427,12 +3427,16 @@ def api_chat_history(client_id):
             messages.append(_serialise_chat_message(m))
 
     # ── Watchdog: resume stuck inbound processing ────────────────────
-    # A user message older than 60s with any chat_inbox attachment is
-    # almost certainly the victim of a killed daemon thread. Re-spawn.
+    # 🔥 BURN-IN §10x.9 — DO NOT RE-FIRE WHILE ANOTHER THREAD IS WORKING
+    # The chat polls /history every 5 s. Without these guards we re-spawn
+    # the processor 12 times per minute → 12 duplicate intake/summary
+    # cards. Three layers of defence:
+    #   (1) skip if processor lock is held for this user_msg (in-flight)
+    #   (2) skip if no docs are still chat_inbox (nothing to do)
+    #   (3) skip if intake card was already posted (work is done)
     try:
         import threading as _t
         _now = datetime.utcnow()
-        _resumed = set()
         for _m in (cs.messages if cs else []):
             if _m.role != 'user':
                 continue
@@ -3449,13 +3453,27 @@ def api_chat_history(client_id):
                       .filter(Document.id.in_(_ids))
                       .filter(Document.category == 'chat_inbox')
                       .count())
-            if _stuck > 0 and _m.id not in _resumed:
-                _resumed.add(_m.id)
-                _t.Thread(
-                    target=_process_inbound_message_async,
-                    args=(app, _m.id),
-                    daemon=True,
-                ).start()
+            if _stuck == 0:
+                continue   # all classified — nothing to resume
+            # (1) lock held = another thread already working
+            with _PROCESSING_LOCK:
+                if _m.id in _PROCESSING_INFLIGHT:
+                    continue
+            # (3) intake card already posted = processor finished, the
+            # remaining chat_inbox docs are likely permanent failures
+            # (corrupt files, vision API hard-error). Do not re-fire.
+            _intake_done = (ChatMessage.query
+                            .filter_by(session_id=cs.id, role='assistant')
+                            .filter(ChatMessage.created_at >= _m.created_at)
+                            .filter(ChatMessage.content.ilike('%exhibits received%'))
+                            .first())
+            if _intake_done:
+                continue
+            _t.Thread(
+                target=_process_inbound_message_async,
+                args=(app, _m.id),
+                daemon=True,
+            ).start()
     except Exception:
         pass   # watchdog is best-effort; never block history load
 
@@ -8344,6 +8362,25 @@ def _api_inbound_email_impl():
     })
 
 
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║ 🔥 BURN-IN §10x.9 — INBOUND PROCESSOR LOCK 🔥                      ║
+# ║ The watchdog in /api/chat/<client_id>/history fires every 5 s     ║
+# ║ while the chat tab is open. Without a lock, the same user_msg     ║
+# ║ gets re-classified by N concurrent threads → N duplicate intake   ║
+# ║ cards + N duplicate AI Summary cards posted to chat. The user     ║
+# ║ saw 12+ duplicate cards before this lock was added.               ║
+# ║                                                                    ║
+# ║ Lock is in-process (Python set) per gunicorn worker. Combined     ║
+# ║ with the idempotency check below (skip card posting if intake     ║
+# ║ card already exists in chat), this guarantees:                    ║
+# ║   - At most 1 thread per worker per user_msg classifying at once  ║
+# ║   - At most 1 intake card + 1 AI Summary card per user_msg ever   ║
+# ╚══════════════════════════════════════════════════════════════════╝
+import threading as _proc_threading
+_PROCESSING_LOCK = _proc_threading.Lock()
+_PROCESSING_INFLIGHT: set = set()   # user_msg_ids currently being processed
+
+
 def _process_inbound_message_async(app_obj, user_msg_id):
     """Background processing — runs after the webhook has returned 200.
 
@@ -8353,6 +8390,22 @@ def _process_inbound_message_async(app_obj, user_msg_id):
     Then call the planner over (text + voice transcripts + extracted artifacts)
     and save the assistant ChatMessage.
     """
+    # ── In-process lock ─────────────────────────────────────────────
+    # Refuse if another thread in this gunicorn worker is already
+    # processing this user_msg. Caller (watchdog) just exits silently.
+    with _PROCESSING_LOCK:
+        if user_msg_id in _PROCESSING_INFLIGHT:
+            return
+        _PROCESSING_INFLIGHT.add(user_msg_id)
+    try:
+        _process_inbound_message_async_inner(app_obj, user_msg_id)
+    finally:
+        with _PROCESSING_LOCK:
+            _PROCESSING_INFLIGHT.discard(user_msg_id)
+
+
+def _process_inbound_message_async_inner(app_obj, user_msg_id):
+    """Inner body — wrapped by the lock above."""
     with app_obj.app_context():
         from ai.file_classifier import classify_file
         from ai.ocr import extract_nric_data
@@ -8695,26 +8748,61 @@ def _process_inbound_message_async(app_obj, user_msg_id):
             # immediately — no need for the user to send a message first.
             _persist_property_enrichment(client.id, recent_text)
 
-            plan = plan_turn(text, artifacts, _will_data_snapshot(active_will),
-                             pending_ics=pending_ics, recent_text=recent_text)
+            # ── §10x.9 idempotency check ────────────────────────────
+            # If an intake card was already posted for this user_msg's
+            # session (any assistant message containing "📋 N exhibits
+            # received" with timestamp >= user_msg.created_at), do NOT
+            # post another one. The watchdog must not produce duplicates.
+            _intake_already_posted = False
+            try:
+                _existing = (ChatMessage.query
+                             .filter_by(session_id=cs.id, role='assistant')
+                             .filter(ChatMessage.created_at >= user_msg.created_at)
+                             .filter(ChatMessage.content.ilike('%exhibits received%'))
+                             .first())
+                if _existing:
+                    _intake_already_posted = True
+            except Exception:
+                pass
 
-            asst_msg = ChatMessage(
-                session_id=cs.id, role='assistant',
-                content=plan.get('reply', ''),
-                attachments_json=json.dumps(plan.get('focus_attachments') or []),
-                clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
-                proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
-                advice_json=json.dumps(plan.get('advice', [])),
-                target_will_id=active_will.id if active_will else None,
-            )
-            db.session.add(asst_msg)
-            db.session.commit()
+            if not _intake_already_posted:
+                plan = plan_turn(text, artifacts, _will_data_snapshot(active_will),
+                                 pending_ics=pending_ics, recent_text=recent_text)
+                asst_msg = ChatMessage(
+                    session_id=cs.id, role='assistant',
+                    content=plan.get('reply', ''),
+                    attachments_json=json.dumps(plan.get('focus_attachments') or []),
+                    clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
+                    proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
+                    advice_json=json.dumps(plan.get('advice', [])),
+                    target_will_id=active_will.id if active_will else None,
+                )
+                db.session.add(asst_msg)
+                db.session.commit()
+            else:
+                # Intake already done; this re-run is just to finish
+                # classifying any remaining stuck docs. Doc category
+                # commits happen earlier in the loop; nothing more to post.
+                return
+
+            # ── §10x.9 idempotency check (AI Summary) ──────────────
+            _summary_already_posted = False
+            try:
+                _existing_sum = (ChatMessage.query
+                                 .filter_by(session_id=cs.id, role='assistant')
+                                 .filter(ChatMessage.created_at >= user_msg.created_at)
+                                 .filter(ChatMessage.content.ilike('%AI Summary of your message%'))
+                                 .first())
+                if _existing_sum:
+                    _summary_already_posted = True
+            except Exception:
+                pass
 
             # ── Post AI summary as a follow-up message ────────────────────
             # The intake card says "summary will appear below in a moment" —
             # deliver on that promise by generating the summary inline here
             # (we're already in a background thread, no timeout risk).
-            if artifacts and text:
+            if artifacts and text and not _summary_already_posted:
                 try:
                     from ai.chat_planner import _summarise_message, _clean_email_body
                     import json as _json
