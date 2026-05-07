@@ -103,14 +103,78 @@ class FinancialDetails(BaseModel):
     description: str = ""
 
     def to_formatted_description(self, ownership_prefix: str = "") -> str:
-        """Generate formatted financial asset description."""
+        """🔥 §10x.16/.23 — match Phek Yi Ting standard:
+            Bank:     "the monies in my [BANK] [SAVING/CURRENT/FIXED] Account
+                       No. [N] together with all interests/dividends already
+                       accrued due or accruing thereon"
+            Insurance: "the benefits of my [INSURER] insurance policy
+                        No. [N] together with all bonuses or accretions
+                        already declared or accruing thereon"
+            EPF:      "the moneys standing to my credit in my Employees'
+                       Provident Fund Account No. [N]"
+            Mutual fund: "all monies held in any of my [INSTITUTION] funds
+                          together with all interests/dividends..."
+        Generic ownership_prefix is applied for joint accounts (e.g.
+        "my share of the moneys in my joint account at" + institution).
+        """
+        kind = (self.asset_type or '').strip().lower()
+        inst = (self.institution or '').strip()
+        acct = (self.account_number or '').strip()
+
+        if kind == 'bank' or 'bank' in kind:
+            # "the monies in my POSB Bank Account No. 030-25917-3 together
+            #  with all interests/dividends already accrued due or accruing
+            #  thereon"
+            if ownership_prefix and 'joint' in ownership_prefix.lower():
+                # joint-account variant
+                base = f'{ownership_prefix} {inst}' if inst else ownership_prefix
+                if acct:
+                    base += f' Account No. {acct}'
+                return base + (
+                    " together with all interests/dividends already accrued "
+                    "due or accruing thereon"
+                )
+            base = "the monies in my"
+            if inst:
+                base += f' {inst}'
+            if acct:
+                base += f' Account No. {acct}'
+            return base + (
+                " together with all interests/dividends already accrued "
+                "due or accruing thereon"
+            )
+        if kind == 'insurance':
+            base = "the benefits of my"
+            if inst:
+                base += f' {inst}'
+            base += " insurance policy"
+            if acct:
+                base += f' No. {acct}'
+            return base + (
+                " together with all bonuses or accretions already declared "
+                "or accruing thereon"
+            )
+        if kind == 'epf' or kind == 'kwsp':
+            base = "the moneys standing to my credit in my Employees' Provident Fund"
+            if acct:
+                base += f' Account No. {acct}'
+            return base
+        if kind in ('mutual_fund', 'unit_trust', 'shares'):
+            base = "all monies held in any of my"
+            if inst:
+                base += f' {inst} funds'
+            return base + (
+                " together with all interests/dividends already accrued "
+                "due or accruing thereon"
+            )
+        # Fallback: legacy concatenation
         parts = []
         if ownership_prefix:
             parts.append(ownership_prefix)
-        if self.institution:
-            parts.append(self.institution)
-        if self.account_number:
-            parts.append(f"(Account No. {self.account_number})")
+        if inst:
+            parts.append(inst)
+        if acct:
+            parts.append(f"(Account No. {acct})")
         if self.asset_type:
             parts.append(f"- {self.asset_type}")
         if self.description:
@@ -155,15 +219,22 @@ class Gift(BaseModel):
 
     def _ownership_prefix(self) -> str:
         """Build ownership prefix for asset descriptions.
-        Returns prefix ending with 'property' — to_formatted_description appends 'known as [address]'.
+        🔥 §10x.13 — sole properties (testator_share='1/1' OR no share)
+        say "the property known as ..." — NOT "all my 1/1 undivided shares".
+        Joint properties say "all my [N/M] undivided shares in the property".
         """
         if self.gift_type == "property":
-            if self.testator_share:
-                return f"all my {self.testator_share} undivided shares in the property"
-            elif self.ownership_type == "joint":
+            ts = (self.testator_share or '').strip()
+            ot = (self.ownership_type or '').strip().lower()
+            # Sole ownership — full property
+            if ts in ('1/1', '1', '') and ot != 'joint':
+                return "the property"
+            # Joint ownership — testator's share only
+            if ts and ts not in ('1/1', '1'):
+                return f"all my {ts} undivided shares in the property"
+            if ot == "joint":
                 return "my undivided share in the property"
-            else:
-                return "my property"
+            return "the property"
         elif self.gift_type == "financial":
             if self.ownership_type == "joint":
                 return "my share of the moneys in my joint account at"
