@@ -549,6 +549,32 @@ def _summarise_message(raw_text: str) -> str:
 # ║  beneficiary} per property. Downstream walkthrough code filters       ║
 # ║  pending property cards against this list.                             ║
 # ╚════════════════════════════════════════════════════════════════════════╝
+def _apply_geo_bridge_inplace(parsed_props: List[Dict[str, Any]]) -> None:
+    """🔥 §10x.48 Stage 0 — apply §10ha geo bridge to fill mukim/daerah/
+    negeri when address contains a known township. Mutates each prop dict
+    in place. ONE source of truth for the bridge — used by both
+    _extract_ai_summary_properties and the asset_pipeline.
+    """
+    try:
+        from services.asset_pipeline import resolve_mukim_from_address
+    except Exception:
+        return
+    for p in parsed_props or []:
+        if not isinstance(p, dict):
+            continue
+        if (p.get('mukim') or '').strip():
+            continue
+        bridged = resolve_mukim_from_address(
+            p.get('address') or p.get('name') or ''
+        )
+        if bridged:
+            p['mukim'] = bridged[0]
+            if not (p.get('daerah') or '').strip():
+                p['daerah'] = bridged[1]
+            if not (p.get('negeri') or '').strip():
+                p['negeri'] = bridged[2]
+
+
 def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
     """Parse the most recent assistant '📨 AI Summary' chat message for
     this client and return the property list as the source of truth.
@@ -581,6 +607,7 @@ def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
         if msg and msg.content:
             parsed = _parse_ai_summary_text(msg.content)
             if parsed:
+                _apply_geo_bridge_inplace(parsed)
                 return parsed
         # ── Fallback: parse raw forward text from step6_data ──────────────
         # Per CLAUDE.md §10hg: the canonical N must survive a chat reset.
@@ -596,7 +623,9 @@ def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
                 _s6 = _json.loads(_will.step6_data)
                 raw_fwd = (_s6.get('_raw_forward_text') or '').strip()
                 if raw_fwd:
-                    return _parse_raw_forward_properties(raw_fwd)
+                    parsed = _parse_raw_forward_properties(raw_fwd)
+                    _apply_geo_bridge_inplace(parsed)
+                    return parsed
         except Exception:
             pass
         return []
@@ -1704,8 +1733,24 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
     bene = (ai_prop.get('beneficiary') or '').strip()
     mukim = (ai_prop.get('mukim') or '').strip()
     daerah = (ai_prop.get('daerah') or '').strip()
+    negeri = (ai_prop.get('negeri') or '').strip()
     lot = (ai_prop.get('lot') or '').strip()
     title = (ai_prop.get('title') or '').strip()
+
+    # 🔥 §10x.46 R1 — Layer 1 = ASSET IDENTITY ONLY. Strip Claude's
+    # parenthetical annotations that leak Layer-2 / internal info into
+    # Layer 1: "(sender's share 1/2)", "(location not specified)",
+    # "(of sender's 50% share)" etc. These belong to Layer 2 or are
+    # noise. Keep only the part before the first '(' for ownership/addr.
+    def _strip_parens(s: str) -> str:
+        s = re.sub(r'\s*\([^)]*\)\s*', ' ', s or '').strip()
+        return re.sub(r'\s+', ' ', s).strip(' ,;.')
+    addr = _strip_parens(addr)
+    own  = _strip_parens(own)
+    # Ownership: also strip share fractions like "50/50 share" — those
+    # belong to Layer 2 (testator-share %). Keep "joint with X" / "sole".
+    own = re.sub(r',?\s*\d+\s*/\s*\d+(?:\s+share)?\s*$', '', own,
+                 flags=re.IGNORECASE).strip(' ,;.')
 
     # 🔥 §10x.13 display — pre-compute testator_share so user sees what
     # they're actually disposing of ("my 1/2 share", not the whole property).
@@ -1739,6 +1784,7 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
     if title:  bullets.append(f"• **Title:** {title}")
     if mukim:  bullets.append(f"• **Mukim:** {mukim}")
     if daerah: bullets.append(f"• **Daerah:** {daerah}")
+    if negeri: bullets.append(f"• **Negeri:** {negeri}")
     if own:    bullets.append(f"• **Ownership:** {own}")
     if bullets:
         parts.append('\n'.join(bullets))
