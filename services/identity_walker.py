@@ -113,6 +113,39 @@ RELATIONSHIP_KEYWORDS = {
 }
 
 
+def _score_ic_confidence(name: str, recent_text: str,
+                          role_matcher_outsider_names: set) -> int:
+    """🔥 §10e (identity edition) — score how confidently the user's
+    message tells us this person's relationship to the testator.
+
+    Higher score = clearer evidence in the message.
+        5 — Name + role mentioned together in message
+            ("Joshua Koid Teck Seng(son)", "(daughter) Esther")
+        3 — Name appears in message but no role-word adjacent
+        1 — Name NOT in message but outsider-elimination identifies them
+            (the lone IC whose name doesn't match any family member named
+             in the message — the §10x.21 sister-in-law case)
+        0 — No signal at all
+    """
+    nm = (name or '').strip().upper()
+    if not nm:
+        return 0
+    text_upper = (recent_text or '').upper()
+    if nm in text_upper:
+        idx = text_upper.find(nm)
+        # Window: 30 chars before / 60 chars after to catch trailing role
+        ctx = text_upper[max(0, idx - 30): idx + len(nm) + 60]
+        FAMILY_ROLES = ('SON', 'DAUGHTER', 'WIFE', 'HUSBAND', 'SPOUSE',
+                         'FATHER', 'MOTHER', 'BROTHER', 'SISTER')
+        if any(r in ctx for r in FAMILY_ROLES):
+            return 5
+        return 3
+    # Outsider-elimination match (sister-in-law case)
+    if nm in role_matcher_outsider_names:
+        return 1
+    return 0
+
+
 def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
     """ICs that don't yet have a corresponding Person. Dedupes by extracted
     name (case-insensitive) and NRIC number, so re-uploading the same IC
@@ -123,6 +156,12 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
       - any Person already exists with the same extracted name, OR
       - any Person already exists with the same extracted NRIC, OR
       - user already skipped it this session (_chat_skipped flag in extracted_data).
+
+    🔥 §10e (identity edition) — pending list is sorted by deduction
+    confidence DESC: ICs whose relationship is OBVIOUS from the message
+    (Joshua = son, Esther = daughter) come FIRST. Outsider-elimination
+    cases (LIM LAY CHENG = sister-in-law because she's the only non-
+    family name) come LAST. Same HIGH→LOW order as asset matching.
     """
     docs = (Document.query
             .filter_by(client_id=client_id, category='nric')
@@ -182,7 +221,64 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
             'original_filename': d.original_filename,
             'created_at': d.created_at.isoformat() if d.created_at else '',
         })
+
+    # ── 🔥 §10e — sort pending by deduction confidence DESC ────────
+    # Build the deduction inputs once, score every pending IC.
+    recent_text = _gather_message_text(client_id) or ''
+    outsider_names = _outsider_eliminated_names(client_id)
+    for p in pending:
+        nm = (p['extracted'].get('full_name') or '').strip()
+        p['_deduction_score'] = _score_ic_confidence(
+            nm, recent_text, outsider_names)
+    # Stable sort: highest score first, then by upload time as tie-breaker
+    pending.sort(key=lambda p: (-p['_deduction_score'], p.get('created_at', '')))
     return pending
+
+
+def _gather_message_text(client_id: str) -> str:
+    """Lazy import — pull the AI Summary + raw forward text for relationship
+    inference. Mirrors what role_matcher uses."""
+    try:
+        from ai.chat_planner import _gather_summary_source_text
+        summary = _gather_summary_source_text(client_id) or ''
+    except Exception:
+        summary = ''
+    raw = ''
+    try:
+        from database import db, Will
+        import json as _json
+        w = (Will.query.filter_by(client_id=client_id)
+             .order_by(Will.created_at.desc()).first())
+        if w and w.step6_data:
+            raw = (_json.loads(w.step6_data) or {}).get('_raw_forward_text', '') or ''
+    except Exception:
+        raw = ''
+    return (summary + '\n\n' + raw).strip()
+
+
+def _outsider_eliminated_names(client_id: str) -> set:
+    """Return the set of full-names (UPPER) that the role_matcher's
+    outsider-elimination identified as candidates for executor / witness /
+    etc. (§10x.21). Used to give those ICs a baseline confidence even
+    when their name doesn't appear in the message."""
+    try:
+        from services.role_matcher import (
+            extract_role_mentions, find_unassigned_ic_candidates,
+            match_role_to_candidates,
+        )
+        mentions = extract_role_mentions(client_id) or []
+        cands = find_unassigned_ic_candidates(client_id) or []
+        out = set()
+        for m in mentions:
+            ranked = match_role_to_candidates(m, cands, client_id=client_id)
+            for c, conf, _reason in ranked:
+                if conf == 'high':
+                    nm = (c.get('full_name') or '').strip().upper()
+                    if nm:
+                        out.add(nm)
+        return out
+    except Exception:
+        return set()
 
 
 def skip_pending_ic_document(client_id: str) -> Optional[Dict[str, Any]]:
