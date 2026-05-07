@@ -8903,18 +8903,36 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
     if any((' ' + s + ' ') in text_lower for s in _SKIP_TOKENS):
         return None  # user said skip — leave for next turn
 
+    # 🔥 §10x.30 / §10x.21 — Step 1 (Identity) is for FAMILY relations
+    # only. Will-roles (Executor / Trustee / Guardian / Witness /
+    # Beneficiary) are set in LATER steps. If a deducer (LLM) returns
+    # a will-role here, we SILENTLY MAP it back to the family relation
+    # via outsider-elimination. Saving "LIM LAY CHENG = Executor" in
+    # Step 1 would make her invisible to the family identity registry
+    # and corrupt later steps that key off relationship.
+    _WILL_ROLES = {'Executor', 'Trustee', 'Guardian', 'Witness',
+                    'Beneficiary'}
     rel = parse_relationship(user_text)
     chosen_role = None
-    if rel:
+    if rel and rel not in _WILL_ROLES:
         chosen_role = rel
-    elif any((' ' + c + ' ') in text_lower for c in _CONFIRM_TOKENS):
+    elif rel in _WILL_ROLES:
+        # User typed/clicked a will-role; we only accept family here.
+        # Fall through to deducer + outsider-elimination below to find
+        # the correct family relation.
+        pass
+    if not chosen_role and any((' ' + c + ' ') in text_lower for c in _CONFIRM_TOKENS):
         # User said yes/confirm — apply the deduced role from EITHER:
-        #   (a) ai.role_deducer (name-verbatim) OR
+        #   (a) ai.role_deducer (name-verbatim, FAMILY only) OR
         #   (b) services.role_matcher outsider-elimination (§10x.21)
         recent = _gather_recent_chat_text(client_id)
         ded = deduce_roles(recent, [name])
-        if ded.get(name):
-            chosen_role = ded[name]['role']
+        # 🔒 §10x.30 — Step 1 only accepts FAMILY roles. If deducer
+        # returned a will-role (e.g. 'Executor'), discard it so the
+        # outsider-elimination fallback runs instead.
+        ded_role = (ded.get(name) or {}).get('role') or ''
+        if ded_role and ded_role not in _WILL_ROLES:
+            chosen_role = ded_role
         else:
             # Fallback: outsider-elimination — see if THIS IC was matched
             # as the executor's family-relation by role_matcher
@@ -8938,7 +8956,12 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
                         if (c.get('document_id') == this_doc_id
                                 or (cnric and this_nric_digits
                                     and cnric == this_nric_digits)):
-                            chosen_role = m.get('family_relation') or 'sister-in-law'
+                            fam = (m.get('family_relation') or 'sister-in-law').strip()
+                            # Normalize to canonical Title-Case used in the
+                            # Person table (e.g. 'sister-in-law' → 'Sister-in-law')
+                            chosen_role = '-'.join(
+                                p.capitalize() for p in fam.split('-')
+                            ) if '-' in fam else fam.capitalize()
                             break
                     if chosen_role:
                         break
