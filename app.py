@@ -8908,11 +8908,42 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
     if rel:
         chosen_role = rel
     elif any((' ' + c + ' ') in text_lower for c in _CONFIRM_TOKENS):
-        # User said yes/confirm — apply the deduced role
+        # User said yes/confirm — apply the deduced role from EITHER:
+        #   (a) ai.role_deducer (name-verbatim) OR
+        #   (b) services.role_matcher outsider-elimination (§10x.21)
         recent = _gather_recent_chat_text(client_id)
         ded = deduce_roles(recent, [name])
         if ded.get(name):
             chosen_role = ded[name]['role']
+        else:
+            # Fallback: outsider-elimination — see if THIS IC was matched
+            # as the executor's family-relation by role_matcher
+            try:
+                from services.role_matcher import (
+                    extract_role_mentions, find_unassigned_ic_candidates,
+                    match_role_to_candidates,
+                )
+                mentions = extract_role_mentions(client_id) or []
+                cands = find_unassigned_ic_candidates(client_id) or []
+                this_doc_id = target.get('document_id') or ''
+                this_nric_digits = ''.join(
+                    ch for ch in (ex.get('nric_number') or '') if ch.isdigit())
+                for m in mentions:
+                    ranked = match_role_to_candidates(m, cands, client_id=client_id)
+                    for c, conf, reason in ranked:
+                        if conf != 'high':
+                            continue
+                        cnric = ''.join(
+                            ch for ch in (c.get('nric') or '') if ch.isdigit())
+                        if (c.get('document_id') == this_doc_id
+                                or (cnric and this_nric_digits
+                                    and cnric == this_nric_digits)):
+                            chosen_role = m.get('family_relation') or 'sister-in-law'
+                            break
+                    if chosen_role:
+                        break
+            except Exception:
+                pass
 
     if not chosen_role:
         return None

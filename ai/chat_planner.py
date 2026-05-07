@@ -144,7 +144,9 @@ def plan_turn(
 
     # ── 2. IDENTITY WALK-THROUGH — pending IC? ──────────────────────────
     if pending_ics:
-        reply_parts.append(_identity_question(pending_ics, recent_text))
+        _cid_for_idq = (current_will_data or {}).get('client_id') or ''
+        reply_parts.append(_identity_question(pending_ics, recent_text,
+                                                client_id=_cid_for_idq))
         # Show the IC photo for the one being asked about so user can verify
         focus = [pending_ics[0]['document_id']] if pending_ics[0].get('document_id') else []
         return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
@@ -1899,22 +1901,66 @@ def _intake_summary(artifacts: List[Dict[str, Any]]) -> str:
     return '\n'.join(lines)
 
 
-def _identity_question(pending_ics: List[Dict[str, Any]], recent_text: str) -> str:
-    """Ask about the next pending IC, with role pre-deduced from text if possible."""
+def _identity_question(pending_ics: List[Dict[str, Any]], recent_text: str,
+                        client_id: str = '') -> str:
+    """Ask about the next pending IC, with role pre-deduced from message
+    via TWO signal sources:
+      (a) ai.role_deducer.deduce_roles — name appears verbatim in text
+      (b) services.role_matcher.match_role_to_candidates — outsider
+          elimination (LIM LAY CHENG is the only IC name NOT in family
+          list → she's the sister-in-law mentioned generically in the
+          message)
+    Source (b) was missing earlier so generic-role mentions like
+    "My Sister in law Tel:+6016-..." weren't picked up at the IC walk.
+    """
     next_ic = pending_ics[0]
     ex = next_ic['extracted'] or {}
     name = (ex.get('full_name') or '').strip() or '(name unreadable)'
     nric = (ex.get('nric_number') or '').strip() or 'NRIC unreadable'
 
-    # Try to deduce role from the recent text
+    # ── (a) Name-verbatim match ───────────────────────────────────────
     deduction = None
+    snippet = ''
     if name and name != '(name unreadable)' and recent_text:
         try:
             from ai.role_deducer import deduce_roles
             deductions = deduce_roles(recent_text, [name])
             deduction = deductions.get(name)
+            if deduction:
+                snippet = deduction.get('evidence', '')
         except Exception:
             deduction = None
+
+    # ── (b) Outsider-elimination via role_matcher (§10x.21) ───────────
+    # If this IC is the only candidate that ISN'T a family member named
+    # in the message, suggest the executor's family-relation directly.
+    out_role = None
+    out_snippet = ''
+    if not deduction and client_id:
+        try:
+            from services.role_matcher import (extract_role_mentions,
+                                                find_unassigned_ic_candidates,
+                                                match_role_to_candidates)
+            mentions = extract_role_mentions(client_id) or []
+            cands = find_unassigned_ic_candidates(client_id) or []
+            # Find a HIGH-confidence outsider match for THIS pending IC
+            this_doc_id = next_ic.get('document_id') or next_ic.get('id') or ''
+            this_nric_digits = ''.join(ch for ch in nric if ch.isdigit())
+            for m in mentions:
+                ranked = match_role_to_candidates(m, cands, client_id=client_id)
+                for c, conf, reason in ranked:
+                    if conf != 'high':
+                        continue
+                    cnric = ''.join(ch for ch in (c.get('nric') or '') if ch.isdigit())
+                    if (c.get('document_id') == this_doc_id
+                            or (cnric and this_nric_digits and cnric == this_nric_digits)):
+                        out_role = m.get('family_relation') or 'sister-in-law'
+                        out_snippet = m.get('evidence_snippet', '')[:200]
+                        break
+                if out_role:
+                    break
+        except Exception:
+            out_role = None
 
     parts = [
         f"### 👤 Step 1: Identity ({len(pending_ics)} left)",
@@ -1931,8 +1977,28 @@ def _identity_question(pending_ics: List[Dict[str, Any]], recent_text: str) -> s
             {'label': 'Skip', 'value': 'skip'},
             {'label': 'Delete', 'value': 'delete'},
         ]
+    elif out_role:
+        # 🔥 §10x.21 + §9 — show the message snippet as evidence
+        evidence_block = (f"\n\n📨 _from your message:_ \"{out_snippet}\"") if out_snippet else ''
+        parts.append(
+            f"Looks like your **{out_role}** (the only IC name NOT in "
+            f"your immediate family list).{evidence_block}\n\nConfirm?"
+        )
+        quick = [
+            {'label': f"✓ Yes — {out_role}", 'value': 'yes'},
+            {'label': 'Spouse', 'value': 'spouse'},
+            {'label': 'Sister', 'value': 'sister'},
+            {'label': 'Brother', 'value': 'brother'},
+            {'label': 'Friend', 'value': 'friend'},
+            {'label': 'Skip', 'value': 'skip'},
+            {'label': 'Delete', 'value': 'delete'},
+        ]
     else:
         parts.append("**Relationship to testator?**\n_(Executor / Trustee / Guardian roles are set in later steps)_")
+        # 🔥 §10x.30 — buttons now include in-laws (sister-in-law /
+        # brother-in-law / mother-in-law / father-in-law). Earlier list
+        # forced users to use "✏️ None of above" for these very common
+        # relationships.
         quick = [
             {'label': 'Spouse', 'value': 'spouse'},
             {'label': 'Son', 'value': 'son'},
@@ -1941,8 +2007,12 @@ def _identity_question(pending_ics: List[Dict[str, Any]], recent_text: str) -> s
             {'label': 'Mother', 'value': 'mother'},
             {'label': 'Brother', 'value': 'brother'},
             {'label': 'Sister', 'value': 'sister'},
+            {'label': 'Sister-in-law', 'value': 'sister in law'},
+            {'label': 'Brother-in-law', 'value': 'brother in law'},
             {'label': 'Son-in-law', 'value': 'son in law'},
             {'label': 'Daughter-in-law', 'value': 'daughter in law'},
+            {'label': 'Mother-in-law', 'value': 'mother in law'},
+            {'label': 'Father-in-law', 'value': 'father in law'},
             {'label': 'Skip', 'value': 'skip'},
             {'label': 'Delete', 'value': 'delete'},
         ]
