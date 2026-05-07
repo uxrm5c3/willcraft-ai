@@ -526,6 +526,171 @@ _AI_SUMMARY_FIELD_RE = {
 }
 
 
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║ 🔥 BURN-IN §10x.12 — AI Summary parsers for banks + insurance 🔥  ║
+# ║ Each AI Summary item must become its own step5_data gift entry.  ║
+# ║ These parsers extract every bank account and insurance policy    ║
+# ║ from the raw forward text so the walkthrough can iterate them.   ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+# Bank lines look like (in raw forward or AI summary):
+#   "Posb Bank (Singapore) Account No:030-25917-3"
+#   "May Bank (Singapore) Account No:14200692259"
+#   "Public Bank (Malaysian) Account No:3244955834(Current account)"
+#   "POSB Bank, Account No. 030-25917-3 — to Lim Bee Yan 100%"
+_AI_BANK_LINE_RE = re.compile(
+    r'(?P<inst>(?:[A-Z][A-Za-z]*\s*){1,4}(?:Bank|BANK|Maybank|MAYBANK))\s*'
+    r'(?:\((?P<country>[^)]+)\))?\s*[,\-]?\s*'
+    r'(?:Account|A/C|Acct)\s*(?:No\.?|Number)\s*[:\-]?\s*'
+    r'(?P<acct>[\w\-/]+)'
+    r'(?:\s*\((?P<acct_type>[^)]+)\))?',
+    re.IGNORECASE,
+)
+
+# Insurance lines look like:
+#   "Insurance Policy number:1811500170(NTUC Income)"
+#   "eaTiQa Insurance Policy number 10030125"
+#   "AIA Insurance Policy number L516911049"
+#   "NTUC Income, Policy No. 1811500170 — to Lim Bee Yan 100%"
+_AI_INSURANCE_LINE_RE = re.compile(
+    r'(?:'
+    r'(?P<insurer1>(?:[A-Z][A-Za-z]*\s*){1,4})Insurance\s*'
+    r'Policy\s*(?:No\.?|number)\s*[:\-]?\s*(?P<policy1>[A-Z0-9]+)'
+    r'|'
+    r'Insurance\s*Policy\s*(?:No\.?|number)\s*[:\-]?\s*(?P<policy2>[A-Z0-9]+)'
+    r'\s*\((?P<insurer2>[^)]+)\)'
+    r'|'
+    r'(?P<insurer3>(?:NTUC[^,\n]*|AIA[^,\n]*|eaTiQa[^,\n]*|Great Eastern[^,\n]*|'
+    r'Prudential[^,\n]*|Allianz[^,\n]*|Tokio Marine[^,\n]*|Manulife[^,\n]*))'
+    r'.*?Policy\s*(?:No\.?|number)\s*[:\-]?\s*(?P<policy3>[A-Z0-9]+)'
+    r')',
+    re.IGNORECASE,
+)
+
+
+def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
+    """Return one entry per bank account mentioned in the user's
+    forward (canonical AI Summary card OR fallback _raw_forward_text).
+
+    Each entry: {bank_name, account_number, country, account_type,
+                 beneficiary (string), beneficiary_share (string)}.
+    """
+    if not client_id:
+        return []
+    raw = _gather_summary_source_text(client_id)
+    if not raw:
+        return []
+    seen = set()
+    out: List[Dict[str, Any]] = []
+    for m in _AI_BANK_LINE_RE.finditer(raw):
+        inst = (m.group('inst') or '').strip()
+        acct = (m.group('acct') or '').strip()
+        if not inst or not acct:
+            continue
+        # Reject false positives (e.g. "World Bank Report" without a number)
+        if not re.search(r'\d', acct):
+            continue
+        key = (re.sub(r'\W+', '', inst).lower(), re.sub(r'\W+', '', acct))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            'bank_name':       inst[:80],
+            'account_number':  acct[:40],
+            'country':         (m.group('country') or '').strip()[:40],
+            'account_type':    (m.group('acct_type') or '').strip()[:40],
+            'beneficiary':     '',   # filled by sibling parser if needed
+            'beneficiary_share': '',
+        })
+    # Heuristic: if the raw text says "All my Bank Savings go [to] my wife
+    # 100percent" then default every bank's beneficiary to "wife".
+    wife_default = re.search(
+        r'all\s+(?:my\s+)?(?:bank\s+)?savings?\s+(?:go|to)\s+'
+        r'(?:my\s+)?wife', raw, re.IGNORECASE)
+    if wife_default:
+        for b in out:
+            b['beneficiary'] = 'wife'
+            b['beneficiary_share'] = '100%'
+    return out
+
+
+def _extract_ai_summary_insurance(client_id: str) -> List[Dict[str, Any]]:
+    """Return one entry per insurance policy mentioned. Each entry:
+    {insurer, policy_number, beneficiary, beneficiary_share}."""
+    if not client_id:
+        return []
+    raw = _gather_summary_source_text(client_id)
+    if not raw:
+        return []
+    seen = set()
+    out: List[Dict[str, Any]] = []
+    for m in _AI_INSURANCE_LINE_RE.finditer(raw):
+        insurer = (m.group('insurer1') or m.group('insurer2')
+                   or m.group('insurer3') or '').strip()
+        policy = (m.group('policy1') or m.group('policy2')
+                  or m.group('policy3') or '').strip()
+        # Drop trash / placeholder
+        if not policy or not re.search(r'\d', policy):
+            continue
+        # Strip trailing junk on insurer ("eaTiQa Insurance" → "eaTiQa")
+        insurer = re.sub(r'\s+Insurance\s*$', '', insurer, flags=re.IGNORECASE).strip()
+        key = (re.sub(r'\W+', '', insurer).lower(), policy)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            'insurer':       insurer[:80] or 'Insurance Policy',
+            'policy_number': policy[:60],
+            'beneficiary':       '',
+            'beneficiary_share': '',
+        })
+    wife_default = re.search(
+        r'all\s+insurance\s+(?:go|to)\s+(?:my\s+)?wife',
+        raw, re.IGNORECASE)
+    if wife_default:
+        for ins in out:
+            ins['beneficiary'] = 'wife'
+            ins['beneficiary_share'] = '100%'
+    return out
+
+
+def _gather_summary_source_text(client_id: str) -> str:
+    """Best source of truth for asset extraction:
+    1. The latest '📨 AI Summary of your message' assistant card
+    2. step6_data._raw_forward_text (durable across chat clears)
+    Concatenated when both exist.
+    """
+    parts: List[str] = []
+    try:
+        from database import db, ChatMessage, ChatSession
+        sess_ids_subq = (db.session.query(ChatSession.id)
+                         .filter(ChatSession.client_id == client_id)
+                         .subquery())
+        msg = (ChatMessage.query
+               .filter(ChatMessage.session_id.in_(sess_ids_subq))
+               .filter(ChatMessage.role == 'assistant')
+               .filter(ChatMessage.content.ilike('%AI Summary%'))
+               .order_by(ChatMessage.created_at.desc())
+               .first())
+        if msg and msg.content:
+            parts.append(msg.content)
+    except Exception:
+        pass
+    try:
+        from database import Will
+        _will = (Will.query.filter_by(client_id=client_id, status='draft')
+                 .filter(Will.deleted_at.is_(None))
+                 .order_by(Will.updated_at.desc()).first())
+        if _will and _will.step6_data:
+            _s6 = _json.loads(_will.step6_data)
+            raw = (_s6.get('_raw_forward_text') or '').strip()
+            if raw:
+                parts.append(raw)
+    except Exception:
+        pass
+    return '\n'.join(parts)
+
+
 def _parse_ai_summary_text(text: str) -> List[Dict[str, Any]]:
     """Pure-function parser. Splits the 'What we deduce' section into
     per-property blocks (each starts with •) and pulls fields out.
@@ -1037,6 +1202,135 @@ def _walkthrough_conflict_card(conflict: Dict[str, Any]) -> Dict[str, Any]:
     return {
         'text': '\n\n'.join(parts) + _qr_marker(quick),
         'focus_doc_ids': [],
+    }
+
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║ 🔥 BURN-IN §10x.12 — Bank and Insurance H3 Cards 🔥                ║
+# ║ Each AI-Summary bank and insurance line gets its own confirm card. ║
+# ║ Defaults follow §10x.14 substitute rules.                          ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+def _walkthrough_bank_h3_card(bank: Dict[str, Any], seq: int, total: int,
+                                identities: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """One bank account = one card. Confirm + assign beneficiary in
+    a single click. Default substitute follows §10x.14:
+    - if main = wife → substitute = both children equally
+    - if main = single child → substitute = other child
+    - if main = multi → substitute = survivors equal
+    """
+    bn   = (bank.get('bank_name') or 'Bank').strip()
+    acct = (bank.get('account_number') or '').strip()
+    cty  = (bank.get('country') or '').strip()
+    typ  = (bank.get('account_type') or '').strip()
+    bene_hint = (bank.get('beneficiary') or '').strip()
+    bene_pct  = (bank.get('beneficiary_share') or '').strip()
+
+    spouse_name = ''
+    children: List[str] = []
+    for i in identities or []:
+        rel = (i.get('relationship') or '').lower()
+        nm  = (i.get('full_name') or '').strip()
+        if not nm:
+            continue
+        if rel in ('spouse', 'wife', 'husband'):
+            spouse_name = nm
+        elif rel in ('son', 'daughter'):
+            children.append(nm)
+
+    parts = [
+        f"### 🏦 Bank Account {seq} of {total} — {bn}",
+        f"📨 **From your message:**",
+        f"• **Institution:** {bn}" + (f" ({cty})" if cty else ''),
+        f"• **Account No.:** `{acct}`" + (f" _({typ})_" if typ else ''),
+    ]
+    if bene_hint:
+        parts.append(f"• **Beneficiary intent:** {bene_hint} {bene_pct}".strip())
+
+    parts.append(
+        "**Who inherits this account?** "
+        "_(Tap a quick option or type a different name.)_"
+    )
+    quick: List[Dict[str, str]] = []
+    # §10x.14: default to wife if hint says "wife", else equal children
+    if 'wife' in bene_hint.lower() and spouse_name:
+        quick.append({'label': f'✅ {spouse_name} 100% (default)',
+                      'value': f'bank_h3 confirm 100% {spouse_name}'})
+    elif spouse_name:
+        quick.append({'label': f'👤 {spouse_name} 100%',
+                      'value': f'bank_h3 confirm 100% {spouse_name}'})
+    if len(children) >= 2:
+        quick.append({'label': f'👨‍👩‍👧 Both children equally',
+                      'value': 'bank_h3 confirm equal children'})
+    for ch in children[:3]:
+        quick.append({'label': f'👤 {ch} 100%',
+                      'value': f'bank_h3 confirm 100% {ch}'})
+    quick.append({'label': '⏭ Skip — handle later',
+                  'value': 'bank_h3 skip'})
+    quick.append({'label': '🗑 Wrong — remove from list',
+                  'value': 'bank_h3 remove'})
+
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': [],
+        '_h3_bank': bank,
+    }
+
+
+def _walkthrough_insurance_h3_card(ins: Dict[str, Any], seq: int, total: int,
+                                     identities: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """One insurance policy = one card. Same shape as bank card."""
+    insurer = (ins.get('insurer') or 'Insurer').strip()
+    policy  = (ins.get('policy_number') or '').strip()
+    bene_hint = (ins.get('beneficiary') or '').strip()
+    bene_pct  = (ins.get('beneficiary_share') or '').strip()
+
+    spouse_name = ''
+    children: List[str] = []
+    for i in identities or []:
+        rel = (i.get('relationship') or '').lower()
+        nm  = (i.get('full_name') or '').strip()
+        if not nm:
+            continue
+        if rel in ('spouse', 'wife', 'husband'):
+            spouse_name = nm
+        elif rel in ('son', 'daughter'):
+            children.append(nm)
+
+    parts = [
+        f"### 🛡 Insurance Policy {seq} of {total} — {insurer}",
+        f"📨 **From your message:**",
+        f"• **Insurer:** {insurer}",
+        f"• **Policy No.:** `{policy}`",
+    ]
+    if bene_hint:
+        parts.append(f"• **Beneficiary intent:** {bene_hint} {bene_pct}".strip())
+    parts.append(
+        "**Who is the named beneficiary?** "
+        "_(For policies that pay direct, this overrides the will, but we still record it.)_"
+    )
+    quick: List[Dict[str, str]] = []
+    if 'wife' in bene_hint.lower() and spouse_name:
+        quick.append({'label': f'✅ {spouse_name} 100% (default)',
+                      'value': f'insurance_h3 confirm 100% {spouse_name}'})
+    elif spouse_name:
+        quick.append({'label': f'👤 {spouse_name} 100%',
+                      'value': f'insurance_h3 confirm 100% {spouse_name}'})
+    if len(children) >= 2:
+        quick.append({'label': f'👨‍👩‍👧 Both children equally',
+                      'value': 'insurance_h3 confirm equal children'})
+    for ch in children[:3]:
+        quick.append({'label': f'👤 {ch} 100%',
+                      'value': f'insurance_h3 confirm 100% {ch}'})
+    quick.append({'label': '⏭ Skip — handle later',
+                  'value': 'insurance_h3 skip'})
+    quick.append({'label': '🗑 Wrong — remove from list',
+                  'value': 'insurance_h3 remove'})
+
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_ids': [],
+        '_h3_insurance': ins,
     }
 
 
@@ -2916,6 +3210,57 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
             total = len(_ai_props)
             card = _walkthrough_property_card_h3(_ai_props[i], seq, total)
             return card
+
+    # ╔═════════════════════════════════════════════════════════════╗
+    # ║ 🔥 BURN-IN §10x.12 — AI-Summary banks + insurance per item    ║
+    # ║ Walk through every bank account / insurance policy mentioned ║
+    # ║ in the user's WhatsApp forward. Each one = its own gift.      ║
+    # ╚═════════════════════════════════════════════════════════════╝
+    if _client_id:
+        try:
+            _ai_banks = _extract_ai_summary_banks(_client_id)
+        except Exception:
+            _ai_banks = []
+        try:
+            _ai_ins = _extract_ai_summary_insurance(_client_id)
+        except Exception:
+            _ai_ins = []
+        s5 = (will_data or {}).get('step5') or []
+        # Track which banks/insurance are already in step5_data (by acct/policy num)
+        _saved_acct = set()
+        _saved_policy = set()
+        for g in s5:
+            if not isinstance(g, dict):
+                continue
+            an = (g.get('account_number')
+                  or (g.get('property_info') or {}).get('account_no')
+                  or (g.get('property_details') or {}).get('account_no')
+                  or '').strip()
+            if an:
+                _saved_acct.add(re.sub(r'\W+', '', an))
+            pn = (g.get('policy_number') or '').strip()
+            if pn:
+                _saved_policy.add(re.sub(r'\W+', '', pn))
+        # Surface FIRST unhandled bank
+        for i, b in enumerate(_ai_banks):
+            ack = re.sub(r'\W+', '', b.get('account_number') or '')
+            if ack and ack in _saved_acct:
+                continue
+            done = sum(1 for x in _ai_banks
+                       if re.sub(r'\W+', '', x.get('account_number') or '') in _saved_acct)
+            return _walkthrough_bank_h3_card(
+                b, done + 1, len(_ai_banks),
+                (will_data or {}).get('identities') or [])
+        # Surface FIRST unhandled insurance
+        for i, ins in enumerate(_ai_ins):
+            pn = re.sub(r'\W+', '', ins.get('policy_number') or '')
+            if pn and pn in _saved_policy:
+                continue
+            done = sum(1 for x in _ai_ins
+                       if re.sub(r'\W+', '', x.get('policy_number') or '') in _saved_policy)
+            return _walkthrough_insurance_h3_card(
+                ins, done + 1, len(_ai_ins),
+                (will_data or {}).get('identities') or [])
 
     if banks:
         return _walkthrough_bank_card(banks[0], len(banks))

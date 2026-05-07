@@ -3927,7 +3927,12 @@ def _api_chat_message_impl(client_id):
                                 if not just_benef:
                                     just_gift_deleted = _try_delete_pending_gift(client_id, user_text)
                                     if not just_gift_deleted:
-                                        just_gift = _try_save_property_gift(client_id, user_text)
+                                        # §10x.12 H3 handlers run FIRST so the bank/insurance
+                                        # H3 quickreplies don't fall into the generic handlers.
+                                        just_gift = (_try_save_bank_h3_gift(client_id, user_text)
+                                                     or _try_save_insurance_h3_gift(client_id, user_text))
+                                        if not just_gift:
+                                            just_gift = _try_save_property_gift(client_id, user_text)
                                         if not just_gift:
                                             # Bank-account question handler (FUCK-13).
                                             # Property handler runs first because the bank
@@ -7125,6 +7130,272 @@ def _try_handle_others_action(client_id: str, user_text: str):
     return None
 
 
+def _try_save_bank_h3_gift(client_id, user_text):
+    """Handler for the per-bank H3 card (§10x.12).
+    Quick-reply values: 'bank_h3 confirm 100% <NAME>', 'bank_h3 confirm equal children',
+    'bank_h3 skip', 'bank_h3 remove'.
+
+    Saves ONE step5_data gift entry per bank account, with §10x.14 default
+    substitute (wife→both children, single→other child, multi→survivors).
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    if not t.lower().startswith('bank_h3'):
+        return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        gifts = json.loads(will.step5_data or '[]')
+        if not isinstance(gifts, list):
+            gifts = []
+    except Exception:
+        gifts = []
+    # Need to know which AI-summary bank we're on
+    from ai.chat_planner import _extract_ai_summary_banks
+    ai_banks = _extract_ai_summary_banks(client_id) or []
+    saved_acct = set()
+    for g in gifts:
+        an = (g.get('account_number') or '').strip()
+        if an:
+            saved_acct.add(re.sub(r'\W+', '', an))
+    target = None
+    target_idx = -1
+    for i, b in enumerate(ai_banks):
+        ack = re.sub(r'\W+', '', b.get('account_number') or '')
+        if ack and ack in saved_acct:
+            continue
+        target = b
+        target_idx = i
+        break
+    if not target:
+        return None
+    # Identities for substitute defaults (§10x.14)
+    persons = Person.query.filter_by(client_id=client_id).all()
+    spouse = next((p for p in persons
+                   if (p.relationship or '').lower() in ('spouse', 'wife', 'husband')), None)
+    children = [p for p in persons
+                if (p.relationship or '').lower() in ('son', 'daughter')]
+    spouse_name = spouse.full_name if spouse else ''
+    child_names = [c.full_name for c in children]
+    # Parse the action
+    rest = t[len('bank_h3'):].strip().lower()
+    if rest == 'skip':
+        gifts.append({
+            'kind': 'bank',
+            'asset_type': 'bank',
+            '_ai_summary_bank_idx': target_idx,
+            'skipped': True,
+            'bank_name': target.get('bank_name'),
+            'account_number': target.get('account_number'),
+            'beneficiaries': [],
+        })
+        will.step5_data = json.dumps(gifts)
+        db.session.commit()
+        return {'name': target.get('bank_name'), 'role': 'skipped',
+                'kind': 'gift_bank_h3'}
+    if rest == 'remove':
+        # Mark dropped (counts toward "handled" so walker advances)
+        gifts.append({
+            'kind': 'bank',
+            'asset_type': 'bank',
+            '_ai_summary_bank_idx': target_idx,
+            '_user_rejected': True,
+            'bank_name': target.get('bank_name'),
+            'account_number': target.get('account_number'),
+            'beneficiaries': [],
+        })
+        will.step5_data = json.dumps(gifts)
+        db.session.commit()
+        return {'name': target.get('bank_name'), 'role': 'removed',
+                'kind': 'gift_bank_h3'}
+    # Otherwise expect 'confirm 100% <name>' or 'confirm equal children'
+    main_bens = []
+    sub_bens = []
+    if rest.startswith('confirm equal children') and len(child_names) >= 2:
+        share = '1/' + str(len(child_names))
+        main_bens = [{'name': c, 'share': share} for c in child_names]
+        # §10x.14: multi-children main → survivors equal (same set)
+        sub_bens = list(main_bens)
+    elif rest.startswith('confirm 100% '):
+        nm = user_text.strip()[len('bank_h3 confirm 100% '):].strip()
+        main_bens = [{'name': nm, 'share': '1/1'}]
+        # §10x.14 substitute defaults
+        if nm.lower() == spouse_name.lower() and child_names:
+            share = '1/' + str(len(child_names))
+            sub_bens = [{'name': c, 'share': share} for c in child_names]
+        elif nm in child_names:
+            others = [c for c in child_names if c != nm]
+            if others:
+                share = '1/' + str(len(others))
+                sub_bens = [{'name': c, 'share': share} for c in others]
+        else:
+            # Other person (e.g. brother) → all children equal
+            if child_names:
+                share = '1/' + str(len(child_names))
+                sub_bens = [{'name': c, 'share': share} for c in child_names]
+    else:
+        return None   # unknown bank_h3 action
+    if not main_bens:
+        return None
+    allocations = [{'beneficiary_name': b['name'], 'share': b['share'], 'role': 'MB'}
+                   for b in main_bens]
+    if sub_bens:
+        for alloc in allocations:
+            alloc['substitutes'] = [
+                {'beneficiary_name': s['name'], 'share': s['share']}
+                for s in sub_bens
+            ]
+    gift_entry = {
+        'kind': 'bank',
+        'asset_type': 'bank',
+        '_ai_summary_bank_idx': target_idx,
+        'bank_name': target.get('bank_name'),
+        'account_number': target.get('account_number'),
+        'country': target.get('country'),
+        'account_type': target.get('account_type'),
+        'allocations': allocations,
+        'beneficiaries': main_bens,
+        'substitute_mode': 'specific' if sub_bens else 'none',
+        'substitute_specific': sub_bens or None,
+    }
+    gifts.append(gift_entry)
+    will.step5_data = json.dumps(gifts)
+    db.session.commit()
+    return {'name': target.get('bank_name'),
+            'role': f'{main_bens[0]["name"]} {main_bens[0]["share"]}',
+            'kind': 'gift_bank_h3'}
+
+
+def _try_save_insurance_h3_gift(client_id, user_text):
+    """Counterpart to _try_save_bank_h3_gift but for insurance policies (§10x.12).
+    Same substitute defaults from §10x.14.
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    if not t.lower().startswith('insurance_h3'):
+        return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        gifts = json.loads(will.step5_data or '[]')
+        if not isinstance(gifts, list):
+            gifts = []
+    except Exception:
+        gifts = []
+    from ai.chat_planner import _extract_ai_summary_insurance
+    ai_ins = _extract_ai_summary_insurance(client_id) or []
+    saved_pol = set()
+    for g in gifts:
+        pn = (g.get('policy_number') or '').strip()
+        if pn:
+            saved_pol.add(re.sub(r'\W+', '', pn))
+    target = None
+    target_idx = -1
+    for i, ins in enumerate(ai_ins):
+        pol = re.sub(r'\W+', '', ins.get('policy_number') or '')
+        if pol and pol in saved_pol:
+            continue
+        target = ins
+        target_idx = i
+        break
+    if not target:
+        return None
+    persons = Person.query.filter_by(client_id=client_id).all()
+    spouse = next((p for p in persons
+                   if (p.relationship or '').lower() in ('spouse', 'wife', 'husband')), None)
+    children = [p for p in persons
+                if (p.relationship or '').lower() in ('son', 'daughter')]
+    spouse_name = spouse.full_name if spouse else ''
+    child_names = [c.full_name for c in children]
+    rest = t[len('insurance_h3'):].strip().lower()
+    if rest == 'skip':
+        gifts.append({
+            'kind': 'insurance',
+            'asset_type': 'insurance',
+            '_ai_summary_insurance_idx': target_idx,
+            'skipped': True,
+            'insurer': target.get('insurer'),
+            'policy_number': target.get('policy_number'),
+            'beneficiaries': [],
+        })
+        will.step5_data = json.dumps(gifts)
+        db.session.commit()
+        return {'name': target.get('insurer'), 'role': 'skipped',
+                'kind': 'gift_insurance_h3'}
+    if rest == 'remove':
+        gifts.append({
+            'kind': 'insurance',
+            'asset_type': 'insurance',
+            '_ai_summary_insurance_idx': target_idx,
+            '_user_rejected': True,
+            'insurer': target.get('insurer'),
+            'policy_number': target.get('policy_number'),
+            'beneficiaries': [],
+        })
+        will.step5_data = json.dumps(gifts)
+        db.session.commit()
+        return {'name': target.get('insurer'), 'role': 'removed',
+                'kind': 'gift_insurance_h3'}
+    main_bens = []
+    sub_bens = []
+    if rest.startswith('confirm equal children') and len(child_names) >= 2:
+        share = '1/' + str(len(child_names))
+        main_bens = [{'name': c, 'share': share} for c in child_names]
+        sub_bens = list(main_bens)
+    elif rest.startswith('confirm 100% '):
+        nm = user_text.strip()[len('insurance_h3 confirm 100% '):].strip()
+        main_bens = [{'name': nm, 'share': '1/1'}]
+        if nm.lower() == spouse_name.lower() and child_names:
+            share = '1/' + str(len(child_names))
+            sub_bens = [{'name': c, 'share': share} for c in child_names]
+        elif nm in child_names:
+            others = [c for c in child_names if c != nm]
+            if others:
+                share = '1/' + str(len(others))
+                sub_bens = [{'name': c, 'share': share} for c in others]
+        else:
+            if child_names:
+                share = '1/' + str(len(child_names))
+                sub_bens = [{'name': c, 'share': share} for c in child_names]
+    else:
+        return None
+    if not main_bens:
+        return None
+    allocations = [{'beneficiary_name': b['name'], 'share': b['share'], 'role': 'MB'}
+                   for b in main_bens]
+    if sub_bens:
+        for alloc in allocations:
+            alloc['substitutes'] = [
+                {'beneficiary_name': s['name'], 'share': s['share']}
+                for s in sub_bens
+            ]
+    gift_entry = {
+        'kind': 'insurance',
+        'asset_type': 'insurance',
+        '_ai_summary_insurance_idx': target_idx,
+        'insurer': target.get('insurer'),
+        'policy_number': target.get('policy_number'),
+        'allocations': allocations,
+        'beneficiaries': main_bens,
+        'substitute_mode': 'specific' if sub_bens else 'none',
+        'substitute_specific': sub_bens or None,
+    }
+    gifts.append(gift_entry)
+    will.step5_data = json.dumps(gifts)
+    db.session.commit()
+    return {'name': target.get('insurer'),
+            'role': f'{main_bens[0]["name"]} {main_bens[0]["share"]}',
+            'kind': 'gift_insurance_h3'}
+
+
 def _try_handle_residuary_skip(client_id: str, user_text: str):
     """If user taps 'residuary skip', mark residuary_confirmed with no
     beneficiaries so the planner advances past step 7.
@@ -7180,6 +7451,33 @@ def _try_handle_residuary_skip(client_id: str, user_text: str):
             if not bens:
                 incomplete.append((gi, 'bank_missing_beneficiaries'))
                 continue
+    # ── §10x.12 GATE: every AI-Summary bank+insurance must have a gift ──
+    try:
+        from ai.chat_planner import (_extract_ai_summary_banks,
+                                       _extract_ai_summary_insurance)
+        ai_banks = _extract_ai_summary_banks(client_id) or []
+        ai_ins = _extract_ai_summary_insurance(client_id) or []
+        saved_acct = set()
+        saved_pol = set()
+        for g in s5:
+            if not isinstance(g, dict):
+                continue
+            an = (g.get('account_number') or '').strip()
+            if an:
+                saved_acct.add(re.sub(r'\W+', '', an))
+            pn = (g.get('policy_number') or '').strip()
+            if pn:
+                saved_pol.add(re.sub(r'\W+', '', pn))
+        for b in ai_banks:
+            ack = re.sub(r'\W+', '', b.get('account_number') or '')
+            if ack and ack not in saved_acct:
+                incomplete.append((-1, f'bank_missing:{b.get("bank_name")}/{b.get("account_number")}'))
+        for ins in ai_ins:
+            pol = re.sub(r'\W+', '', ins.get('policy_number') or '')
+            if pol and pol not in saved_pol:
+                incomplete.append((-1, f'insurance_missing:{ins.get("insurer")}/{ins.get("policy_number")}'))
+    except Exception:
+        pass
     if incomplete:
         return {'name': 'residuary', 'role': 'blocked',
                 'kind': 'residuary_blocked',
