@@ -25,6 +25,19 @@ import subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 VERIFY_PY = os.path.join(HERE, 'verify_step6.py')
 
+# Ensure the app root is on sys.path so `from services.asset_pipeline` works
+# whether the audit is invoked from /app, from the repo root, or from
+# tests/step6/. Walk up looking for a directory that contains 'services/'.
+_d = HERE
+for _ in range(5):
+    if os.path.isdir(os.path.join(_d, 'services')) and os.path.isfile(os.path.join(_d, 'app.py')):
+        sys.path.insert(0, _d)
+        break
+    _d = os.path.dirname(_d)
+# Also add /app explicitly for container invocations
+if os.path.isdir('/app') and '/app' not in sys.path:
+    sys.path.insert(0, '/app')
+
 # (client_id, friendly name, expected fixture_mode)
 # Add new fixtures here. Each must have a seeder in tests/step6/fixtures/
 # that prepares state via reset+seed before the audit runs.
@@ -44,6 +57,11 @@ def run_one(client_id: str, name: str, expected_mode: str) -> bool:
     # 1. Pipeline self-validation (Stage 0-4 contract assertions)
     try:
         from services.asset_pipeline import run_pipeline, ContractViolation
+        from app import app
+    except ImportError as e:
+        print(f'❌ Pipeline import failed: {e}')
+        return False
+    with app.app_context():
         try:
             r = run_pipeline(client_id)
             print(f'Pipeline ran cleanly: '
@@ -55,9 +73,9 @@ def run_one(client_id: str, name: str, expected_mode: str) -> bool:
         except ContractViolation as e:
             print(f'❌ §10x.49 ContractViolation: {e}')
             return False
-    except Exception as e:
-        print(f'❌ Pipeline crashed: {e}')
-        return False
+        except Exception as e:
+            print(f'❌ Pipeline crashed: {type(e).__name__}: {e}')
+            return False
 
     # 2. Reset + walk + verify (the integration test)
     repo_data = os.path.join(os.path.dirname(HERE), '..', 'data')
