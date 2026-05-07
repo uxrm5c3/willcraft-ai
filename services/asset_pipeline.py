@@ -1085,26 +1085,9 @@ def bind_assets(asset_items: List[AssetItem],
         )
         claimed.add(group_id)
 
-    # Filter ranked candidates to only those still meaningful: score ≥
-    # CANDIDATE_THRESHOLD AND ≥ 2 positive signals AND not yet bound.
-    # The chat shows these as candidate-with-confirm cards.
-    filtered_ranked: Dict[int, List[Dict[str, Any]]] = {}
-    for ai_idx, cands in ranked.items():
-        if ai_idx in bindings:
-            continue   # already auto-bound; no candidate question needed
-        kept = []
-        for c in cands:
-            if c['score'] < CANDIDATE_THRESHOLD:
-                continue
-            pos_count = sum(1 for k, v in (c.get('components') or {}).items() if v > 0)
-            if pos_count < 2:
-                continue
-            if c['group_id'] in claimed:
-                continue
-            kept.append(c)
-        if kept:
-            filtered_ranked[ai_idx] = kept[:3]   # top 3 only
-    bind_assets._last_filtered_candidates = filtered_ranked
+    # Filter ranked candidates → moved BELOW Claude fallback so candidates
+    # for AssetItems Claude binds aren't surfaced. (See "filter pass" near
+    # end of bind_assets.)
 
     # Stash ranked candidates so Stage 5 (chat) can render candidate-with-
     # confirm cards for AssetItems that DIDN'T auto-bind (score < AUTO).
@@ -1154,6 +1137,74 @@ def bind_assets(asset_items: List[AssetItem],
                 tier='D', match_via='h3', confidence='h3',
                 evidence='No matching DocGroup — text-only / H3 placeholder',
             )
+
+    # ── Filter ranked candidates AFTER all binding paths complete ─────
+    # Skip AssetItems that are auto-bound; skip groups already claimed.
+    # Surface top-3 score≥CANDIDATE_THRESHOLD candidates with ≥2 signals.
+    filtered_ranked: Dict[int, List[Dict[str, Any]]] = {}
+    for ai_idx, cands in ranked.items():
+        b = bindings.get(ai_idx)
+        if b and b.tier != 'D':
+            continue   # auto-bound; no candidate question needed
+        kept = []
+        for c in cands:
+            if c['score'] < CANDIDATE_THRESHOLD:
+                continue
+            pos_count = sum(1 for k, v in (c.get('components') or {}).items() if v > 0)
+            if pos_count < 2:
+                continue
+            if c['group_id'] in claimed:
+                continue
+            kept.append(c)
+        if kept:
+            filtered_ranked[ai_idx] = kept[:3]
+
+    # ── §10x.51 — "lone in mukim" suggestion ──────────────────────────
+    # For AssetItems that are still H3 with no candidates above threshold,
+    # check if there's exactly ONE unclaimed property DocGroup in the
+    # same mukim with non-conflicting lot/title. Surface it as a low-
+    # confidence candidate so the user can confirm. Real example:
+    # Jalan Gunung 4 has no token overlap with 85b34a44 (PTD 127082,
+    # Mukim Plentong) but 85b34a44 is the only unclaimed Plentong group
+    # with a unique lot/title in this fixture.
+    for ai in asset_items:
+        if ai.kind != 'property':
+            continue
+        b = bindings.get(ai.ai_index)
+        if b and b.tier != 'D':
+            continue
+        if filtered_ranked.get(ai.ai_index):
+            continue   # already has a real candidate
+        ai_mukim = (ai.fields.get('mukim') or '').strip().lower()
+        if not ai_mukim:
+            continue
+        same_mukim_unclaimed = []
+        for g in doc_groups:
+            if g.kind != 'property':
+                continue
+            if g.group_id in claimed:
+                continue
+            g_mukim = (g.merged_extracted.get('mukim') or '').strip().lower()
+            if g_mukim != ai_mukim:
+                continue
+            # Has at least lot or title — otherwise no probate value
+            ge = g.merged_extracted
+            if not (digits(ge.get('lot_number') or '') or
+                    digits(ge.get('title_number') or '')):
+                continue
+            same_mukim_unclaimed.append(g)
+        if len(same_mukim_unclaimed) == 1:
+            g = same_mukim_unclaimed[0]
+            ge = g.merged_extracted
+            filtered_ranked[ai.ai_index] = [{
+                'group_id': g.group_id,
+                'score': 25,
+                'evidence': (f'Lone unclaimed property in Mukim {ai_mukim.title()} '
+                             f'with non-conflicting lot/title — please confirm'),
+                'components': {'lone_in_mukim': 25},
+            }]
+
+    bind_assets._last_filtered_candidates = filtered_ranked
 
     # Return in ai_index order
     return [bindings[i] for i in sorted(bindings.keys())]
