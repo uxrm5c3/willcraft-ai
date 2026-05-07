@@ -306,11 +306,13 @@ def _testator_family_names(client_id: str) -> set:
         toks = [t for t in re.split(r'\s+', nm) if t]
         if not (2 <= len(toks) <= 5):
             return False
-        # Each token: alphabetic, 2+ chars, capitalized
+        # Each token: starts with uppercase, rest letters/apostrophe/hyphen.
+        # Accept Title Case ("Joshua") AND ALL CAPS ("JOSHUA") — the
+        # AI Summary uses mixed case while raw forwards may be ALL CAPS.
         for t in toks:
-            if not re.match(r"^[A-Z][A-Z'\-]{1,}$", t):
+            if not re.match(r"^[A-Z][A-Za-z'\-]{1,}$", t):
                 return False
-        # All tokens must NOT be stopwords
+        # All tokens must NOT be stopwords (case-insensitive)
         if any(t.upper() in _STOPWORDS for t in toks):
             return False
         return True
