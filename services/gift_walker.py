@@ -1174,6 +1174,146 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             primary['support_docs'] = deduped
             primary['group_key'] = gk
             out['property'].append(primary)
+
+    # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 BURN-IN §10x.12 + §10hg + §10x.15 — AI-SUMMARY-ONLY SYNTHESIS  ║
+    # ║  Every asset NAMED in the AI Summary must produce a pending entry, ║
+    # ║  even when no image / statement / policy was uploaded. The user    ║
+    # ║  described it in text — that's enough (per §10x.15: "Image is      ║
+    # ║  verification only — text details are sufficient"). Surface as     ║
+    # ║  H3 placeholders so the walkthrough can complete every gift.       ║
+    # ╚════════════════════════════════════════════════════════════════════╝
+    out.setdefault('insurance', [])
+    try:
+        from ai.chat_planner import (
+            _extract_ai_summary_properties,
+            _extract_ai_summary_banks,
+            _extract_ai_summary_insurance,
+        )
+        ai_props = _extract_ai_summary_properties(client_id) or []
+        ai_banks = _extract_ai_summary_banks(client_id) or []
+        ai_ins   = _extract_ai_summary_insurance(client_id) or []
+    except Exception:
+        ai_props, ai_banks, ai_ins = [], [], []
+
+    def _digits_only(s: str) -> str:
+        return re.sub(r'\D', '', s or '')
+
+    # ── Properties: add H3 for AI-Summary properties not already covered
+    covered_lot_digits: set = set()
+    covered_title_digits: set = set()
+    covered_addr_norms: set = set()
+    for grp in out['property']:
+        ex = (grp.get('extracted') or {}) if grp else {}
+        ld = _digits_only(_clean_id_value(ex.get('lot_number') or ''))
+        td = _digits_only(_clean_id_value(ex.get('title_number') or ''))
+        an = _norm_addr(ex.get('property_address') or '')[:60]
+        if ld:  covered_lot_digits.add(ld)
+        if td:  covered_title_digits.add(td)
+        if an:  covered_addr_norms.add(an)
+    # Also mark properties already saved to step5_data as covered
+    for sig in referenced_lot_addr_sigs:
+        if sig[0]: covered_lot_digits.add(sig[0])
+        if sig[1]: covered_addr_norms.add(sig[1])
+
+    for ap in ai_props:
+        a_lot = _digits_only(ap.get('lot') or '')
+        a_title = _digits_only(ap.get('title') or '')
+        a_addr = _norm_addr(ap.get('address') or '')[:60]
+        # Match by ANY of: lot digits, title digits, normalised address
+        if a_lot and a_lot in covered_lot_digits:
+            continue
+        if a_title and a_title in covered_title_digits:
+            continue
+        if a_addr and a_addr in covered_addr_norms:
+            continue
+        # H3 placeholder per §10hg — confirm-then-complete card
+        out['property'].append({
+            '_h3_placeholder': True,
+            '_ai_summary_match': ap,
+            'document_id': None,
+            'support_docs': [],
+            'all_doc_ids': [],
+            'group_key': f'H3:property:{(a_addr or a_lot or ap.get("name","")).strip()[:40]}',
+            'extracted': {
+                'property_address': ap.get('address', ''),
+                'lot_number': ap.get('lot', ''),
+                'title_number': ap.get('title', ''),
+                'mukim': ap.get('mukim', ''),
+                'daerah': ap.get('daerah', ''),
+                'negeri': ap.get('negeri', ''),
+                '_h3_source': 'ai_summary',
+            },
+            'name': ap.get('name', ''),
+        })
+
+    # ── Banks: AI Summary entries → H3 placeholders if no statement uploaded
+    covered_bank_acct: set = set()
+    for b in out['bank']:
+        ex = (b.get('extracted') or {}) if b else {}
+        an = _digits_only(ex.get('account_number') or '')
+        if an: covered_bank_acct.add(an)
+    # step5_data saved banks
+    for g in gifts or []:
+        if isinstance(g, dict) and g.get('kind') == 'bank':
+            an = _digits_only(g.get('account_number') or '')
+            if an: covered_bank_acct.add(an)
+    seen_h3_bank_acct: set = set()  # dedup AI Summary's own duplicates
+    for ab in ai_banks:
+        an = _digits_only(ab.get('account_number') or '')
+        if not an:
+            continue
+        if an in covered_bank_acct or an in seen_h3_bank_acct:
+            continue
+        seen_h3_bank_acct.add(an)
+        out['bank'].append({
+            '_h3_placeholder': True,
+            '_ai_summary_match': ab,
+            'document_id': None,
+            'support_docs': [],
+            'all_doc_ids': [],
+            'group_key': f'H3:bank:{an}',
+            'extracted': {
+                'institution':    ab.get('institution', ''),
+                'account_number': ab.get('account_number', ''),
+                'account_type':   ab.get('account_type', ''),
+                'country':        ab.get('country', ''),
+                '_h3_source':     'ai_summary',
+            },
+        })
+
+    # ── Insurance: same pattern (always H3 unless policy doc uploaded)
+    covered_ins_pol: set = set()
+    for ins in out['insurance']:
+        ex = (ins.get('extracted') or {}) if ins else {}
+        pn = (ex.get('policy_number') or '').strip().upper()
+        if pn: covered_ins_pol.add(pn)
+    for g in gifts or []:
+        if isinstance(g, dict) and g.get('kind') == 'insurance':
+            pn = (g.get('policy_number') or '').strip().upper()
+            if pn: covered_ins_pol.add(pn)
+    seen_h3_ins_pol: set = set()
+    for ai in ai_ins:
+        pn = (ai.get('policy_number') or '').strip().upper()
+        if not pn:
+            continue
+        if pn in covered_ins_pol or pn in seen_h3_ins_pol:
+            continue
+        seen_h3_ins_pol.add(pn)
+        out['insurance'].append({
+            '_h3_placeholder': True,
+            '_ai_summary_match': ai,
+            'document_id': None,
+            'support_docs': [],
+            'all_doc_ids': [],
+            'group_key': f'H3:insurance:{pn}',
+            'extracted': {
+                'insurer':       ai.get('insurer', ''),
+                'policy_number': ai.get('policy_number', ''),
+                '_h3_source':    'ai_summary',
+            },
+        })
+
     return out
 
 
