@@ -3371,7 +3371,15 @@ def chat_page(client_id):
 @app.route('/api/chat/<client_id>/history')
 @login_required
 def api_chat_history(client_id):
-    """Return all messages in the client's chat session + current will snapshot."""
+    """Return all messages in the client's chat session + current will snapshot.
+
+    Side effect: if any inbound user message has attachments still in
+    `chat_inbox` (vision-classify never finished — usually because the
+    background thread died on a redeploy), kick off processing again.
+    The thread is daemon-safe and idempotent (already-classified docs are
+    skipped). Polling every 5s on the client side means the user will see
+    the spinner clear within seconds of the next vision call returning.
+    """
     client = db.session.get(Client, client_id)
     if not client:
         return jsonify({'ok': False, 'error': 'Client not found'}), 404
@@ -3384,6 +3392,39 @@ def api_chat_history(client_id):
     if cs:
         for m in cs.messages:
             messages.append(_serialise_chat_message(m))
+
+    # ── Watchdog: resume stuck inbound processing ────────────────────
+    # A user message older than 60s with any chat_inbox attachment is
+    # almost certainly the victim of a killed daemon thread. Re-spawn.
+    try:
+        import threading as _t
+        _now = datetime.utcnow()
+        _resumed = set()
+        for _m in (cs.messages if cs else []):
+            if _m.role != 'user':
+                continue
+            _age = (_now - _m.created_at).total_seconds() if _m.created_at else 0
+            if _age < 60:
+                continue
+            try:
+                _ids = json.loads(_m.attachments_json or '[]')
+            except Exception:
+                _ids = []
+            if not _ids:
+                continue
+            _stuck = (Document.query
+                      .filter(Document.id.in_(_ids))
+                      .filter(Document.category == 'chat_inbox')
+                      .count())
+            if _stuck > 0 and _m.id not in _resumed:
+                _resumed.add(_m.id)
+                _t.Thread(
+                    target=_process_inbound_message_async,
+                    args=(app, _m.id),
+                    daemon=True,
+                ).start()
+    except Exception:
+        pass   # watchdog is best-effort; never block history load
 
     active_will = (Will.query
                    .filter_by(client_id=client_id, status='draft')

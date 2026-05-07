@@ -61,7 +61,7 @@
       will: 'Existing Will',
       death_certificate: '⚠️ Death Cert',
       unrelated: '⚠️ Unrelated',
-      chat_inbox: 'Pending',
+      chat_inbox: 'Analysing…',
       other: 'Unclassified',
     };
     return map[cat] || cat || 'File';
@@ -351,6 +351,29 @@
         }));
 
       const isMany = m.attachments.length > 6;
+      // ── Processing-progress banner ───────────────────────────────────
+      // Count attachments still in 'chat_inbox' (pending vision-classify).
+      // When there are any pending, show a spinner + estimated wait so the
+      // user knows the system is working in background.
+      const _pendingCount = m.attachments.filter(a => a.category === 'chat_inbox').length;
+      if (_pendingCount > 0) {
+        const _total = m.attachments.length;
+        const _done = _total - _pendingCount;
+        // Roughly 4 s per image for vision classify + extract
+        const _eta = Math.max(10, Math.round(_pendingCount * 4));
+        const _etaLabel = _eta >= 60
+          ? `~${Math.ceil(_eta / 60)} min`
+          : `~${_eta}s`;
+        html += `
+          <div class="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+            <svg class="animate-spin h-4 w-4 text-amber-600 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+            </svg>
+            <span><strong>Analysing exhibits — ${_done} of ${_total} done.</strong>
+            Estimated wait: <strong>${_etaLabel}</strong>. This view auto-refreshes every 5 s — please don't close the tab.</span>
+          </div>`;
+      }
       html += `<div class="mt-2 grid ${isMany ? 'grid-cols-4 sm:grid-cols-6' : 'grid-cols-3 sm:grid-cols-4'} gap-1.5">`;
       let carouselIdx = 0; // index into imgCarouselUrls for each image thumb
       for (const a of m.attachments) {
@@ -370,14 +393,24 @@
                 : 'bg-gray-100 text-gray-600';
 
         let inner = '';
+        // Spinner overlay for thumbnails still being analysed (chat_inbox).
+        const _isPending = a.category === 'chat_inbox';
+        const _spinnerOverlay = _isPending
+          ? `<div class="absolute inset-0 flex items-center justify-center bg-black/30 pointer-events-none">
+               <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+               </svg>
+             </div>`
+          : '';
         if (isImg) {
-          inner = `<img src="${url}" loading="lazy" alt="${escapeHtml(a.filename)}" class="w-full h-16 object-cover">`;
+          inner = `<img src="${url}" loading="lazy" alt="${escapeHtml(a.filename)}" class="w-full h-16 object-cover">${_spinnerOverlay}`;
         } else if (isAudio) {
-          inner = `<div class="w-full h-16 flex items-center justify-center bg-pink-50 text-pink-600 text-2xl">🎙</div>`;
+          inner = `<div class="w-full h-16 flex items-center justify-center bg-pink-50 text-pink-600 text-2xl relative">🎙${_spinnerOverlay}</div>`;
         } else if (isPdf) {
-          inner = `<div class="w-full h-16 flex items-center justify-center bg-red-50 text-red-600 text-2xl">📄</div>`;
+          inner = `<div class="w-full h-16 flex items-center justify-center bg-red-50 text-red-600 text-2xl relative">📄${_spinnerOverlay}</div>`;
         } else {
-          inner = `<div class="w-full h-16 flex items-center justify-center bg-gray-50 text-gray-500 text-2xl">📎</div>`;
+          inner = `<div class="w-full h-16 flex items-center justify-center bg-gray-50 text-gray-500 text-2xl relative">📎${_spinnerOverlay}</div>`;
         }
 
         if (isImg) {
