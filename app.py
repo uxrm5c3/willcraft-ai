@@ -9686,24 +9686,8 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
             except Exception:
                 pass
 
-            if not _intake_already_posted:
-                plan = plan_turn(text, artifacts, _will_data_snapshot(active_will),
-                                 pending_ics=pending_ics, recent_text=recent_text)
-                asst_msg = ChatMessage(
-                    session_id=cs.id, role='assistant',
-                    content=plan.get('reply', ''),
-                    attachments_json=json.dumps(plan.get('focus_attachments') or []),
-                    clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
-                    proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
-                    advice_json=json.dumps(plan.get('advice', [])),
-                    target_will_id=active_will.id if active_will else None,
-                )
-                db.session.add(asst_msg)
-                db.session.commit()
-            else:
-                # Intake already done; this re-run is just to finish
-                # classifying any remaining stuck docs. Doc category
-                # commits happen earlier in the loop; nothing more to post.
+            if _intake_already_posted:
+                # Re-run only re-classifies stuck docs; nothing to post.
                 return
 
             # ── §10x.9 idempotency check (AI Summary) ──────────────
@@ -9719,16 +9703,12 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
             except Exception:
                 pass
 
-            # ── Post AI summary as a follow-up message ────────────────────
-            # 🔥 §7 / §10x.28 — AI Summary is STEP 2 of the chat flow per
-            # CLAUDE.md (Receive WhatsApp → Summarise → Decipher images →
-            # Identity match). It must fire on the TEXT body alone, even
-            # when the email has zero attachments. The body itself contains
-            # the asset list (5 properties, 4 banks, 3 insurance per KOID
-            # case) which the parser surfaces for user verification.
-            # Earlier requirement that `artifacts` be non-empty was a bug —
-            # text-only forwards skipped Step 2 and jumped straight to
-            # "asset inventory" placeholder.
+            # ── 🔥 §7 / §10x.28 — Post AI Summary FIRST (Step 2) ────────
+            # Per CLAUDE.md §7: Receive WhatsApp → SUMMARISE → Decipher
+            # images → Identity match. Order matters in the chat: the user
+            # should read the summary card BEFORE the planner's "asset
+            # inventory" reply so they verify what we deduced from the
+            # text first.
             if text and not _summary_already_posted:
                 try:
                     from ai.chat_planner import _summarise_message, _clean_email_body
@@ -9755,6 +9735,24 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                         db.session.commit()
                 except Exception:
                     pass  # non-critical — intake card is the primary response
+
+            # ── Now post the planner reply (Step 3+: asset inventory or
+            # exhibits-received card depending on whether attachments
+            # exist). This intentionally runs AFTER the AI Summary so
+            # the user reads Step 2 first per §7 ordering.
+            plan = plan_turn(text, artifacts, _will_data_snapshot(active_will),
+                             pending_ics=pending_ics, recent_text=recent_text)
+            asst_msg = ChatMessage(
+                session_id=cs.id, role='assistant',
+                content=plan.get('reply', ''),
+                attachments_json=json.dumps(plan.get('focus_attachments') or []),
+                clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
+                proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
+                advice_json=json.dumps(plan.get('advice', [])),
+                target_will_id=active_will.id if active_will else None,
+            )
+            db.session.add(asst_msg)
+            db.session.commit()
         except Exception:
             traceback.print_exc()
             try:
