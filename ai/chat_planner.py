@@ -554,15 +554,37 @@ def _apply_geo_bridge_inplace(parsed_props: List[Dict[str, Any]]) -> None:
     negeri when address contains a known township. Mutates each prop dict
     in place. ONE source of truth for the bridge — used by both
     _extract_ai_summary_properties and the asset_pipeline.
+
+    🔥 §10x.50 Bug B — also NORMALISE mukim when AI Summary put a township
+    string into the mukim field (real example: 'Taman Laguna',
+    'Seri Alam Masai' — those are townships in Mukim Plentong, not mukim
+    themselves). Without this, Tier B mukim_token equality fails.
     """
     try:
-        from services.asset_pipeline import resolve_mukim_from_address
+        from services.asset_pipeline import (resolve_mukim_from_address,
+                                                _GEO_BRIDGE)
     except Exception:
         return
+    bridge_keys = {k.lower() for k in _GEO_BRIDGE.keys()}
     for p in parsed_props or []:
         if not isinstance(p, dict):
             continue
-        if (p.get('mukim') or '').strip():
+        # If mukim is set BUT it's a township (key in _GEO_BRIDGE), normalise.
+        cur_mukim = (p.get('mukim') or '').strip()
+        cur_mukim_lc = cur_mukim.lower()
+        # Strip leading "Mukim " prefix that AI Summary sometimes adds
+        cur_mukim_lc = re.sub(r'^mukim\s+', '', cur_mukim_lc).strip()
+        if cur_mukim_lc and cur_mukim_lc in bridge_keys:
+            real_mukim, real_daerah, real_negeri = _GEO_BRIDGE[cur_mukim_lc]
+            # Only overwrite if current mukim is a township-disguised-as-mukim
+            p['mukim'] = real_mukim
+            if not (p.get('daerah') or '').strip():
+                p['daerah'] = real_daerah
+            if not (p.get('negeri') or '').strip():
+                p['negeri'] = real_negeri
+            continue
+        # Otherwise, fill from address bridge if mukim still empty
+        if cur_mukim:
             continue
         bridged = resolve_mukim_from_address(
             p.get('address') or p.get('name') or ''
@@ -573,6 +595,82 @@ def _apply_geo_bridge_inplace(parsed_props: List[Dict[str, Any]]) -> None:
                 p['daerah'] = bridged[1]
             if not (p.get('negeri') or '').strip():
                 p['negeri'] = bridged[2]
+
+
+def _merge_raw_forward_into_props(client_id: str,
+                                    ai_props: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """🔥 §10x.50 Bug A — Stage 0 union: when AI Summary card has empty
+    lot/title/mukim but the raw forward text has them, merge them in.
+
+    Real example: user wrote "Property 5: ... HSD H.S.(D) 251041, Lot 127082"
+    but AI Summary card returned `lot=''` `title=''` because Claude rendered
+    them as 'PTD/Lot: unknown'. Without this merge, Tier A direct-match never
+    fires for Property 5 → it goes to H3 even though title 251041 sits right
+    there in a residual DocGroup.
+
+    The raw forward parser (_parse_raw_forward_properties) already extracts
+    fields from message body. We pair its results to the AI Summary props
+    by index OR by distinctive token overlap, then fill missing fields.
+    """
+    if not ai_props:
+        return ai_props
+    try:
+        from database import Will
+        _will = (Will.query.filter_by(client_id=client_id, status='draft')
+                 .filter(Will.deleted_at.is_(None))
+                 .order_by(Will.updated_at.desc()).first())
+        if not _will or not _will.step6_data:
+            return ai_props
+        _s6 = _json.loads(_will.step6_data)
+        raw_fwd = (_s6.get('_raw_forward_text') or '').strip()
+        if not raw_fwd:
+            return ai_props
+        raw_props = _parse_raw_forward_properties(raw_fwd) or []
+    except Exception:
+        return ai_props
+
+    if not raw_props:
+        return ai_props
+
+    # Pair by ai_index (positional) when counts match; otherwise pair by
+    # distinctive token overlap (unit numbers, building names).
+    def _tok(s):
+        return set(re.findall(r'[a-z0-9]+(?:[-/][a-z0-9]+)*', (s or '').lower()))
+    paired = [None] * len(ai_props)
+    if len(raw_props) == len(ai_props):
+        # 1:1 pairing — most common case for the user's "Property 1:" / 2: / 3:
+        # template forwards.
+        for i in range(len(ai_props)):
+            paired[i] = raw_props[i]
+    else:
+        # Token-overlap pairing: for each ai_prop, find the raw_prop with
+        # highest distinctive-token overlap.
+        used = set()
+        for i, ap in enumerate(ai_props):
+            ap_toks = _tok(ap.get('address', '') + ' ' + ap.get('name', ''))
+            distinctive = {t for t in ap_toks if re.match(r'^[a-z]?-?\d+[-\d/]*$', t)}
+            best, best_score = None, 0
+            for j, rp in enumerate(raw_props):
+                if j in used:
+                    continue
+                rp_toks = _tok(rp.get('address', '') + ' ' + rp.get('name', ''))
+                score = len(distinctive & rp_toks)
+                if score > best_score:
+                    best, best_score = j, score
+            if best is not None and best_score > 0:
+                paired[i] = raw_props[best]
+                used.add(best)
+
+    # Fill missing fields from the paired raw entry (raw never overwrites
+    # non-empty AI Summary fields).
+    for i, ap in enumerate(ai_props):
+        rp = paired[i]
+        if not rp:
+            continue
+        for k in ('lot', 'title', 'mukim', 'daerah', 'negeri', 'ownership'):
+            if not (ap.get(k) or '').strip() and (rp.get(k) or '').strip():
+                ap[k] = rp[k]
+    return ai_props
 
 
 def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
@@ -607,6 +705,8 @@ def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
         if msg and msg.content:
             parsed = _parse_ai_summary_text(msg.content)
             if parsed:
+                # 🔥 §10x.50 Bug A — fill missing lot/title/mukim from raw text
+                parsed = _merge_raw_forward_into_props(client_id, parsed)
                 _apply_geo_bridge_inplace(parsed)
                 return parsed
         # ── Fallback: parse raw forward text from step6_data ──────────────
