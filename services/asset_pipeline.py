@@ -1159,14 +1159,36 @@ def bind_assets(asset_items: List[AssetItem],
         if kept:
             filtered_ranked[ai_idx] = kept[:3]
 
-    # ── §10x.51 — "lone in mukim" suggestion ──────────────────────────
-    # For AssetItems that are still H3 with no candidates above threshold,
-    # check if there's exactly ONE unclaimed property DocGroup in the
-    # same mukim with non-conflicting lot/title. Surface it as a low-
-    # confidence candidate so the user can confirm. Real example:
-    # Jalan Gunung 4 has no token overlap with 85b34a44 (PTD 127082,
-    # Mukim Plentong) but 85b34a44 is the only unclaimed Plentong group
-    # with a unique lot/title in this fixture.
+    # ── §10x.51 — "lone in mukim, lot not used elsewhere" suggestion ──
+    # For AssetItems still H3 with no score-based candidates, find
+    # unclaimed property DocGroups in the same mukim whose lot/title
+    # ALSO doesn't appear in any other bound group OR higher-confidence
+    # candidate. Real example: Jalan Gunung 4 (mukim Plentong) — three
+    # unclaimed Plentong groups exist, two share lot 207922 with the
+    # C-05-01 candidate (so they're strata units of THAT building, not
+    # Jalan Gunung). The third (85b34a44, lot 127082) has a unique lot
+    # not seen anywhere else in the fixture — surface as candidate.
+
+    # Collect lots/titles already accounted for (bound or other candidates)
+    accounted_lots: set = set()
+    accounted_titles: set = set()
+    for b in bindings.values():
+        if b.group_id:
+            for g in doc_groups:
+                if g.group_id == b.group_id:
+                    ge = g.merged_extracted
+                    accounted_lots.add(digits(ge.get('lot_number') or ''))
+                    accounted_titles.add(digits(ge.get('title_number') or ''))
+    for cs in filtered_ranked.values():
+        for c in cs:
+            for g in doc_groups:
+                if g.group_id == c['group_id']:
+                    ge = g.merged_extracted
+                    accounted_lots.add(digits(ge.get('lot_number') or ''))
+                    accounted_titles.add(digits(ge.get('title_number') or ''))
+    accounted_lots.discard('')
+    accounted_titles.discard('')
+
     for ai in asset_items:
         if ai.kind != 'property':
             continue
@@ -1174,35 +1196,44 @@ def bind_assets(asset_items: List[AssetItem],
         if b and b.tier != 'D':
             continue
         if filtered_ranked.get(ai.ai_index):
-            continue   # already has a real candidate
+            continue
         ai_mukim = (ai.fields.get('mukim') or '').strip().lower()
         if not ai_mukim:
             continue
-        same_mukim_unclaimed = []
+        eligible = []
         for g in doc_groups:
             if g.kind != 'property':
                 continue
             if g.group_id in claimed:
                 continue
-            g_mukim = (g.merged_extracted.get('mukim') or '').strip().lower()
+            ge = g.merged_extracted
+            g_mukim = (ge.get('mukim') or '').strip().lower()
             if g_mukim != ai_mukim:
                 continue
-            # Has at least lot or title — otherwise no probate value
-            ge = g.merged_extracted
-            if not (digits(ge.get('lot_number') or '') or
-                    digits(ge.get('title_number') or '')):
+            g_lot = digits(ge.get('lot_number') or '')
+            g_title = digits(ge.get('title_number') or '')
+            if not (g_lot or g_title):
                 continue
-            same_mukim_unclaimed.append(g)
-        if len(same_mukim_unclaimed) == 1:
-            g = same_mukim_unclaimed[0]
-            ge = g.merged_extracted
-            filtered_ranked[ai.ai_index] = [{
-                'group_id': g.group_id,
-                'score': 25,
-                'evidence': (f'Lone unclaimed property in Mukim {ai_mukim.title()} '
-                             f'with non-conflicting lot/title — please confirm'),
-                'components': {'lone_in_mukim': 25},
-            }]
+            # Skip groups whose lot/title is already accounted for
+            if g_lot and g_lot in accounted_lots:
+                continue
+            if g_title and g_title in accounted_titles:
+                continue
+            eligible.append(g)
+        if eligible:
+            ge_lots = [(g, digits(g.merged_extracted.get('lot_number') or ''),
+                         digits(g.merged_extracted.get('title_number') or ''))
+                       for g in eligible]
+            cands_out = []
+            for g, gl, gt in ge_lots[:3]:
+                cands_out.append({
+                    'group_id': g.group_id,
+                    'score': 25,
+                    'evidence': (f'Same mukim ({ai_mukim.title()}) + unique lot/title '
+                                 f'(lot {gl or "?"}, title {gt or "?"}) — please confirm'),
+                    'components': {'lone_in_mukim': 25, 'unique_id': 5},
+                })
+            filtered_ranked[ai.ai_index] = cands_out
 
     bind_assets._last_filtered_candidates = filtered_ranked
 
