@@ -327,8 +327,18 @@ def classify_file(file_path: str, group_context: dict = None,
     raw_text = ocr_extract(file_path)
     fields   = regex_extract(raw_text)
 
-    # ── Stage 2a: Unreadable → flag for manual review, no AI ─────────────────
+    # ── Stage 2a: Tesseract failed → fall back to VISION classify ────────────
+    # 🔥 §10x.27 — Tesseract is blind to Malaysian IC holographic patterns,
+    # photos taken at angle, low contrast title docs, etc. Returning
+    # "Image unreadable" without ever asking Claude vision was burying real
+    # ICs (LIM LAY CHENG case: clear IC photo → Tesseract <50 chars →
+    # "unreadable" → never classified). Always try vision before giving up.
     if fields['raw_text_len'] < 50:
+        vision_result = _vision_classify_fallback(file_path, group_context, testator_profile)
+        if vision_result is not None:
+            return vision_result
+        # Vision also failed (network error, non-image file, etc) — only NOW
+        # mark for manual review.
         return {
             **fallback,
             "kind": "other",
@@ -547,6 +557,92 @@ Return ONLY valid JSON:
     }
     result.update(_testator_match(result, testator_profile))
     return result
+
+
+def _vision_classify_fallback(file_path: str, group_context: dict = None,
+                               testator_profile: dict = None) -> dict:
+    """🔥 §10x.27 — Vision fallback when Tesseract fails (<50 chars).
+
+    Tesseract is blind to:
+      • Malaysian IC holographic security patterns (LIM LAY CHENG case)
+      • Photos at angle / low contrast title docs
+      • Strata title plans with embossed text
+      • Old typewritten documents
+
+    When that happens, ask Claude vision (Haiku) "what kind of document is
+    this?" with the same KINDS list. ~$0.005 per call — much cheaper than
+    full extraction, and only fires when Tesseract failed.
+
+    Returns a classify_file-shape dict, or None if vision also failed.
+    """
+    import os as _os
+    if not file_path or not _os.path.isfile(file_path):
+        return None
+    ext = file_path.rsplit('.', 1)[-1].lower()
+    if ext not in ('jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'heic', 'heif',
+                    'bmp', 'tiff', 'tif'):
+        return None   # not an image — vision can't help
+
+    try:
+        from config import CLAUDE_MODEL_FAST as _MODEL
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        content_block = _make_content_block(file_path)
+        kinds_list = ', '.join(KINDS)
+        prompt = (
+            "Look at this image. What single category does it best match from "
+            f"this list: {kinds_list}.\n\n"
+            "Categories explained briefly:\n"
+            "- nric: Malaysian MyKad (identity card) — has 12-digit number, "
+            "photo, holographic 'KAD PENGENALAN MALAYSIA' or 'MyKad'\n"
+            "- property_title: Geran/Hakmilik/HSD/HSM/Pajakan/Strata title — "
+            "ownership document\n"
+            "- property_spa: Sale & Purchase Agreement\n"
+            "- property_tax: Cukai Tanah / Cukai Pintu / quit rent\n"
+            "- property_transfer: Memorandum of Transfer (Borang 14A/16A)\n"
+            "- loan_agreement: bank loan/mortgage/charge document\n"
+            "- bank_statement / insurance / epf_kwsp / vehicle / will\n"
+            "- death_certificate / unrelated / other\n\n"
+            "Output ONLY this JSON:\n"
+            '{"kind":"<one of the categories>",'
+            '"confidence":"high|medium|low",'
+            '"reason":"<short reason e.g. \'Sees MyKad with NRIC and photo\'>"}'
+        )
+        msg = client.messages.create(
+            model=_MODEL, max_tokens=400,
+            messages=[{"role": "user", "content": [
+                content_block,
+                {"type": "text", "text": prompt}]}]
+        )
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='ai.file_classifier._vision_classify_fallback')
+        except Exception:
+            pass
+        text = msg.content[0].text if msg.content else ''
+        parsed = _extract_json(text) or {}
+        kind = (parsed.get('kind') or 'other').strip().lower()
+        if kind not in KINDS:
+            kind = 'other'
+        conf = (parsed.get('confidence') or 'medium').strip().lower()
+        reason = (parsed.get('reason') or 'Identified by vision fallback')[:200]
+        return {
+            "kind": kind,
+            "confidence": conf,
+            "reason": reason,
+            "manual_review": False,
+            "will_relevant": kind not in ('death_certificate', 'unrelated'),
+            "custom_type": "",
+            "person_name": "",
+            "purpose": _kind_purpose(kind),
+            "property_hint": "",
+            "lot_number": "", "title_number": "", "property_address": "",
+            "bank_name": "", "mukim": "", "daerah": "", "negeri": "",
+            "owner_name": "", "ic_number": "",
+            "name_match": None, "ic_match": None,
+            "_via_vision_fallback": True,
+        }
+    except Exception:
+        return None
 
 
 def _testator_match(fields: dict, testator_profile: dict = None) -> dict:
