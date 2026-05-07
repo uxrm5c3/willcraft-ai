@@ -9492,7 +9492,31 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                 if kind != 'other':
                     doc.category = kind
                 elif doc.category in (None, '', 'chat_inbox', 'other'):
-                    doc.category = 'chat_inbox'
+                    # 🔥 §10x.26 — TERMINAL STATE for vision failures.
+                    # Without this guard, every chat-history poll (every 5s)
+                    # re-classified the same 5 unreadable docs forever, burning
+                    # API tokens and posting duplicate intake cards. After 3
+                    # failed attempts, promote the doc to 'needs_review' so the
+                    # watchdog (which only re-fires for chat_inbox docs) stops.
+                    # The chat surfaces "needs your manual review" to the user
+                    # instead of "Analysing…" forever.
+                    try:
+                        prev_attempts = int(
+                            (json.loads(doc.extracted_data or '{}') or {})
+                            .get('_classify_attempts', 0) or 0)
+                    except Exception:
+                        prev_attempts = 0
+                    new_attempts = prev_attempts + 1
+                    extracted['_classify_attempts'] = new_attempts
+                    is_unreadable = bool(classification.get('manual_review')) \
+                                    or 'unreadable' in (classification.get('reason') or '').lower()
+                    if new_attempts >= 3 or is_unreadable:
+                        doc.category = 'needs_review'
+                        extracted['_terminal_reason'] = (
+                            'unreadable_after_retry' if new_attempts >= 3
+                            else 'vision_marked_unreadable')
+                    else:
+                        doc.category = 'chat_inbox'
                 # else: keep existing real category
                 doc.description = (classification.get('reason') or '')[:500] or None
                 purpose = (classification.get('purpose') or '').strip()
