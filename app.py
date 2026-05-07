@@ -4582,7 +4582,8 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
 
         def _match_doc_to_ai_summary(ex: dict) -> dict:
             """Return the matching AI-Summary entry (or None) for this doc.
-            Match priority: title digits → lot digits → (mukim+daerah, single match)."""
+            Match priority: title digits → lot digits → strata sibling →
+            (mukim+daerah, single unclaimed match)."""
             if not _ai_summary:
                 return None
             d_title = _digits_only(ex.get('title_number') or '')
@@ -4601,6 +4602,44 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                     a_lot = _digits_only(ap.get('lot') or '')
                     if a_lot and a_lot == d_lot:
                         return ap
+            # ── §10hd Strata sibling ───────────────────────────────────────
+            # Two title docs with the SAME lot but DIFFERENT title numbers
+            # are different units in the SAME building. If one sibling has
+            # already been bound to an AI Summary entry (and we can read the
+            # building tokens from that entry's address), the unbound sibling
+            # MUST come from another AI Summary entry that shares those
+            # building tokens.
+            if d_lot and len(d_lot) >= 3:
+                _sibling_building_toks = set()
+                for ap_other in _ai_summary:
+                    addr_other = (ap_other.get('address') or '').strip().lower()
+                    if not addr_other or addr_other not in claimed_addresses:
+                        continue
+                    # Find any prop with the same lot_number — its claimant's
+                    # address tokens become the building-token signature.
+                    for q in props:
+                        q_ex = q.get('extracted') or {}
+                        q_lot = _digits_only(q_ex.get('lot_number') or '')
+                        if q_lot != d_lot:
+                            continue
+                        q_addr = (q_ex.get('property_address') or '').strip().lower()
+                        if q_addr and q_addr == addr_other:
+                            _sibling_building_toks.update(
+                                t for t in re.split(r'[^a-z0-9]+', addr_other)
+                                if len(t) >= 4
+                            )
+                if _sibling_building_toks:
+                    cands = []
+                    for ap in _ai_summary:
+                        a_addr = (ap.get('address') or '').strip().lower()
+                        if not a_addr or a_addr in claimed_addresses:
+                            continue
+                        a_toks = set(t for t in re.split(r'[^a-z0-9]+', a_addr)
+                                     if len(t) >= 4)
+                        if a_toks & _sibling_building_toks:
+                            cands.append(ap)
+                    if len(cands) == 1:
+                        return cands[0]
             # Mukim+daerah — only match if EXACTLY ONE AI prop is in same mukim
             # AND that AI prop has no claimant doc yet (i.e. its address isn't
             # already in claimed_addresses). Otherwise too ambiguous.
