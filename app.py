@@ -3925,8 +3925,12 @@ def _api_chat_message_impl(client_id):
                             if not just_residuary_skip:
                                 just_benef = _try_save_beneficiaries(client_id, user_text)
                                 if not just_benef:
-                                    just_gift_deleted = _try_delete_pending_gift(client_id, user_text)
-                                    if not just_gift_deleted:
+                                    # §10x.21 role-match handler runs FIRST so its
+                                    # 'role_match confirm <id>' quickreplies route correctly.
+                                    just_role = _try_handle_role_match(client_id, user_text)
+                                    just_gift_deleted = (None if just_role
+                                                          else _try_delete_pending_gift(client_id, user_text))
+                                    if not just_role and not just_gift_deleted:
                                         # §10x.12 H3 handlers run FIRST so the bank/insurance
                                         # H3 quickreplies don't fall into the generic handlers.
                                         just_gift = (_try_save_bank_h3_gift(client_id, user_text)
@@ -6773,6 +6777,34 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
         s5 = []
 
     ap = ai_props[h3_idx]
+    # 🔥 BURN-IN §10x.19 — extract co-owner names from the ownership clause
+    # so they're recorded inside the gift WITHOUT becoming Person rows.
+    # "joint with Chai Mei Fun, share 1/2"  →  co_owners = ["Chai Mei Fun"]
+    # "joint with wife Lim Bee Yan"          →  co_owners = ["Lim Bee Yan"]
+    # "sole"                                  →  co_owners = []
+    own = (ap.get('ownership') or '').strip()
+    co_owners = []
+    if own and 'sole' not in own.lower():
+        # Match "with <Name1> [, <Name2>]" — names are 1-4 capitalised words,
+        # may include "Bin"/"Bte"/"A/L"/"A/P" etc.
+        _name_re = re.compile(
+            r'\bwith\s+(?:my\s+wife\s+|my\s+husband\s+|my\s+spouse\s+'
+            r'|my\s+son\s+|my\s+daughter\s+)?'
+            r'((?:[A-Z][A-Za-z]+\s*){1,5})'
+            r'(?=,|\s+\(|\s+share|\s+\d|\s*$)',
+            re.IGNORECASE,
+        )
+        for m in _name_re.finditer(own):
+            nm = m.group(1).strip()
+            # Drop common stop-words at the end
+            nm = re.sub(r'\s+(share|fun|with)\s*$', '', nm, flags=re.IGNORECASE).strip()
+            if nm and len(nm) > 2 and nm.lower() not in ('share', 'with'):
+                co_owners.append(nm[:80])
+        # Dedup, preserve order
+        seen_co = set()
+        co_owners = [c for c in co_owners
+                     if not (c.lower() in seen_co or seen_co.add(c.lower()))]
+
     entry = {
         'kind': 'property',
         'asset_type': 'property',
@@ -6782,6 +6814,7 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
             'title_number':     ap.get('title') or '',
             'mukim':            ap.get('mukim') or '',
             'daerah':           ap.get('daerah') or '',
+            'co_owners':        co_owners,   # §10x.19
         },
         'address':            ap.get('address') or '',
         'beneficiaries':      [],   # not yet assigned — Layer 2 still pending
@@ -7414,6 +7447,96 @@ def _try_save_insurance_h3_gift(client_id, user_text):
     return {'name': target.get('insurer'),
             'role': f'{main_bens[0]["name"]} {main_bens[0]["share"]}',
             'kind': 'gift_insurance_h3'}
+
+
+def _try_handle_role_match(client_id: str, user_text: str):
+    """🔥 BURN-IN §10x.21 — handle the role-match clarification card.
+
+    Quickreplies:
+        'role_match confirm <person_id>' → promote that Person to executor
+        'role_match manual'              → fall through to generic exec card
+        'role_match skip'                → record skip
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    if not t.lower().startswith('role_match'):
+        return None
+    rest = t[len('role_match'):].strip().lower()
+
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+
+    if rest == 'manual' or rest == 'skip':
+        # Mark as 'manual' so the planner falls through to the generic
+        # executor card on the next turn (no DB change needed beyond a
+        # marker in completed_steps).
+        try:
+            cs = json.loads(will.completed_steps or '[]')
+            if not isinstance(cs, list):
+                cs = []
+        except Exception:
+            cs = []
+        marker = 'role_match_skipped' if rest == 'skip' else 'role_match_manual'
+        if marker not in cs:
+            cs.append(marker)
+            will.completed_steps = json.dumps(cs)
+            db.session.commit()
+        return {'name': 'role_match', 'role': rest, 'kind': 'role_match'}
+
+    # 'role_match confirm <person_id>'
+    if not rest.startswith('confirm '):
+        return None
+    person_id = t.split()[-1].strip()   # last token is the person_id
+    p = db.session.get(Person, person_id)
+    if not p or p.client_id != client_id:
+        return None
+
+    # Promote this Person to executor relationship
+    p.relationship = 'executor'
+    db.session.commit()
+
+    # Mirror into step2_data.executors
+    try:
+        s2 = json.loads(will.step2_data) if will.step2_data else {}
+        if not isinstance(s2, dict):
+            s2 = {}
+    except Exception:
+        s2 = {}
+    execs = s2.get('executors') or []
+    # Avoid duplicate
+    if not any((e.get('person_id') == p.id) or
+               ((e.get('full_name') or '').upper() == (p.full_name or '').upper())
+               for e in execs):
+        # Pull the phone from the role mention if available
+        phone = ''
+        try:
+            from services.role_matcher import extract_role_mentions
+            mentions = extract_role_mentions(client_id) or []
+            exec_mentions = [m for m in mentions if m.get('role') == 'executor']
+            if exec_mentions:
+                phone = exec_mentions[0].get('phone', '')
+        except Exception:
+            pass
+        execs.append({
+            'person_id':     p.id,
+            'full_name':     p.full_name,
+            'nric_passport': p.nric_passport or '',
+            'phone':         phone,
+            'relationship':  'executor',
+            'role':          'Primary',
+            'entry_type':    'individual',
+        })
+    s2['executors'] = execs
+    s2.setdefault('executor_type', 'single')
+    s2.setdefault('trustee_data', {'same_as_executor': True, 'trustees': [{}]})
+    will.step2_data = json.dumps(s2)
+    db.session.commit()
+
+    return {'name': p.full_name, 'role': 'executor', 'kind': 'role_match_confirmed'}
 
 
 def _try_handle_residuary_skip(client_id: str, user_text: str):

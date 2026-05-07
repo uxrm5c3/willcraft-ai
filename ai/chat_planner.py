@@ -1847,15 +1847,107 @@ def find_executor_candidate(identities, executors, role, recent_text=''):
     return None
 
 
+def _walkthrough_role_match_card(role_mention: Dict[str, Any],
+                                   ranked_candidates: List[Tuple[Dict[str, Any], str, str]]
+                                   ) -> Dict[str, Any]:
+    """🔥 BURN-IN §10x.21 — render the executor/witness/etc. role-matching
+    card. The user picks which uploaded IC photo is the named role-bearer
+    OR types a name manually OR skips."""
+    fam = role_mention.get('family_relation') or 'someone'
+    fam = fam.replace('-', ' ').title()
+    phone = role_mention.get('phone', '')
+    evidence = role_mention.get('evidence_snippet', '')
+    role_label = role_mention.get('role', 'executor').title()
+
+    parts = [
+        f"### ⚖️ Step 3: Confirm {role_label} — your {fam.lower()}",
+        f"📨 **From your message:**",
+        f"> _{evidence[:200]}_",
+    ]
+    if phone:
+        parts.append(f"📞 **Phone:** {phone}")
+
+    quick: List[Dict[str, str]] = []
+    high = [(c, conf, reason) for (c, conf, reason) in ranked_candidates if conf == 'high']
+    others = [(c, conf, reason) for (c, conf, reason) in ranked_candidates if conf != 'high']
+    if high:
+        c, _, reason = high[0]
+        parts.append(
+            f"🔍 **Best match:** {c['full_name']} (NRIC {c['nric']})\n"
+            f"_Reason: {reason}_"
+        )
+        quick.append({
+            'label': f"✅ Confirm — {c['full_name']}",
+            'value': f"role_match confirm {c['person_id']}",
+        })
+        for c2, _, _ in others[:3]:
+            quick.append({
+                'label': f"👤 {c2['full_name']} instead",
+                'value': f"role_match confirm {c2['person_id']}",
+            })
+    elif others:
+        parts.append(
+            f"📂 **Unassigned ICs in your uploads** — pick the one that's "
+            f"your {fam.lower()}:"
+        )
+        for c, _, _ in others[:5]:
+            quick.append({
+                'label': f"👤 {c['full_name']}",
+                'value': f"role_match confirm {c['person_id']}",
+            })
+    else:
+        parts.append(
+            "_No unassigned ICs found in your uploads. Type her full name "
+            "+ NRIC manually or upload her IC photo first._"
+        )
+    quick.append({'label': '✏️ Type name + IC manually', 'value': 'role_match manual'})
+    quick.append({'label': '⏭ Skip — fill later',        'value': 'role_match skip'})
+
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_id': (high[0][0]['document_id'] if high
+                         else (others[0][0]['document_id'] if others else None)),
+    }
+
+
 def _step3_executor_question(will_data: Dict[str, Any], recent_text: str = '') -> Dict[str, Any]:
     """Returns {text, focus_doc_id} — the question to ask + which IC photo
     to attach. Walks main → substitute executor based on what's already
-    saved in step2_data.executors."""
+    saved in step2_data.executors.
+
+    🔥 BURN-IN §10x.21 — if the message names an executor by ROLE only
+    (e.g. "my sister-in-law Tel: +6016-...") AND there's an unassigned IC
+    in the uploads, surface the role-match card BEFORE the generic picker.
+    The user picks which IC corresponds to the role-mention.
+    """
     identities = will_data.get('identities') or []
     s2 = will_data.get('step2') or {}
     executors = s2.get('executors') or []
     n_done = len(executors)
     role = 'main' if n_done == 0 else 'substitute'
+
+    # ── §10x.21 role-match — applies only to MAIN executor (not substitute)
+    if role == 'main':
+        try:
+            from services.role_matcher import (
+                extract_role_mentions, find_unassigned_ic_candidates,
+                match_role_to_candidates,
+            )
+            cid = (will_data or {}).get('client_id') or ''
+            if cid:
+                mentions = extract_role_mentions(cid)
+                # Find an executor mention without a real name yet
+                exec_mentions = [m for m in mentions
+                                 if m.get('role') == 'executor'
+                                 and not m.get('partial_name')]
+                if exec_mentions:
+                    candidates = find_unassigned_ic_candidates(cid)
+                    if candidates:
+                        ranked = match_role_to_candidates(exec_mentions[0], candidates)
+                        if ranked:
+                            return _walkthrough_role_match_card(exec_mentions[0], ranked)
+        except Exception:
+            pass   # fall through to standard picker
 
     # Compute minors from DOB (only if we have DOBs)
     from datetime import date
