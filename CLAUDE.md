@@ -3601,6 +3601,169 @@ were burned in to prevent).
 
 ---
 
+### 10x.36  🔥🔥🔥 BURN-IN — EVERY gift / identity card MUST show the message reference 🔥🔥🔥
+
+**Cross-reference §9 + §10x.35. ALL pending cards (gift, identity,
+executor, beneficiary) MUST display the message line that names this
+entity / distribution. NO EXCEPTIONS. The chat must NEVER ask the user
+something the message has already answered.**
+
+### The bug this rule prevents
+
+Real KOID example: the asset card for **Unit B-05-11 Paradisonuava**
+showed the user 5 buttons with NO reference to what the message said:
+
+```
+❌ BAD CARD (without §10x.36):
+🏠 Specific Gift (5 left) — Unit B-05-11, Condominium Paradisonuava
+   (location not specified)
+Who is the main beneficiary for this property?
+[ Esther Koid En Hui 100% ]
+[ Joshua Koid Teck Seng 100% ]
+[ Lim Bee Yan 100% ]
+[ Lim Lay Cheng 100% ]
+[ Esther + Joshua 50/50 ]
+```
+
+But the message clearly said:
+> "Unit, B-05-11 Condominium Paradisonuava
+>  I share with Chai Mei Fun 50/50,
+>  My 50percent to Joshua Koid Teck Seng(son) 25percent and 25percent
+>  to Esther Koid En Hui (daughter)"
+
+The user already specified the distribution. Showing canned 100%
+buttons IGNORES what they wrote — and worse, the system was unable
+to deduce the split because the percentages (25+25) sum to 50%, not
+100% — but per §10x.13 the percentages are of the testator's SHARE,
+not the full property.
+
+```
+✓ GOOD CARD (with §10x.36):
+🏠 Specific Gift (5 left) — Unit B-05-11, Condominium Paradisonuava
+   (location not specified)
+
+📨 from your message:
+> Unit, B-05-11 Condominium Paradisonuava I share with Chai Mei Fun 50/50,
+> My 50percent to Joshua Koid Teck Seng(son) 25percent and 25percent to
+> Esther Koid En Hui (daughter)
+
+Who is the main beneficiary for this property?
+
+📧 Suggested from email:
+  • Joshua Koid Teck Seng 50% (= 25% of full property, of testator's 50% share)
+  • Esther Koid En Hui 50% (= 25% of full property, of testator's 50% share)
+
+[ ✓ Joshua 50% + Esther 50% (suggested) ]
+[ Joshua 100% ]
+[ Esther 100% ]
+[ ⏭ Skip ]   [ 🗑 Remove ]
+```
+
+### Hard rules
+
+1. **Every gift / executor / beneficiary card MUST include a
+   `📨 from your message:` block** with at least one snippet from
+   the original WhatsApp/email text that references THIS entity.
+   No snippet → bug in the card builder. Fix it.
+
+2. **The deduce path MUST honour §10x.13** — percentages summing to
+   25 / 33 / 50 / 66 / 75 are valid (they're of the testator's share);
+   rescale to 100% for the suggested-button label, but ALSO show the
+   raw "25% of full property" interpretation so the user sees what
+   they wrote.
+
+3. **Even when the deducer can't extract a clean distribution**, the
+   card MUST still show the relevant message snippet. Better to show
+   imperfect evidence than NO evidence.
+
+4. **Asking the user a question the message answers is the worst
+   possible UX.** It signals the system didn't read what they wrote.
+   Cross-reference is ALWAYS shown, even when it duplicates what
+   the deduced suggestion implies.
+
+### Where this is enforced
+
+| File | Function | Mechanism |
+|------|----------|-----------|
+| `ai/chat_planner.py` | `_step6_property_question` | Calls `_find_property_message_snippet` and inserts `📨 from your message:` block above the buttons |
+| `ai/chat_planner.py` | `_find_property_message_snippet` | Tokenises property name+address, searches recent_text for the line containing those tokens |
+| `ai/chat_planner.py` | property deduce code | Accepts totals in {25, 33, 50, 66, 75} and rescales to 100% per §10x.13 |
+| `ai/chat_planner.py` | bank/insurance card builders | Same pattern — must inject `📨 from your message:` line |
+| `ai/chat_planner.py` | `_identity_question` | Already shows snippet (per §9 + §10x.21); covered by this rule |
+| `ai/chat_planner.py` | `_step3_executor_question` | Already shows "from your message" line (§9) |
+
+### Litmus test
+
+```
+Run KOID walkthrough end-to-end. For every assistant card shown:
+  - Is there a `📨 from your message:` block referencing the
+    relevant message line?
+    YES → ship
+    NO  → §10x.36 regression. Add the snippet to the card builder.
+```
+
+If a card asks the user "who inherits property X?" but doesn't quote
+the message line that already answered that, the bug is in the card
+builder. Fix at the card builder, not by editing user clicks.
+
+---
+
+### 10x.37  🔥 BURN-IN — Step transition messages MUST be DYNAMIC 🔥
+
+**The "🎉 Step N — COMPLETE. Now moving to Step M." message MUST
+compute M dynamically based on what the planner will actually show
+next. NEVER hardcode the destination step.**
+
+### The bug this rule prevents
+
+Real KOID example: chat showed:
+```
+✅ Saved LIM BEE YAN as Wife.
+🎉 Step 1: Identities — COMPLETE. All ICs assigned.
+   Now moving to Step 2: Testator Info.
+🏠 Specific Gift (5 left) — Unit B-05-11 ...   ← Step 6, NOT Step 2!
+```
+
+The "moving to Step 2" was a hardcoded string in the chat planner.
+But the planner had ALREADY done Steps 2-5 in earlier turns, so when
+the next planner turn ran, it landed on Step 6. The user saw two
+contradictory messages in one assistant turn.
+
+### Implementation
+
+`ai/chat_planner.py::_compute_next_step_label(will_data)` returns the
+human-readable label for the NEXT step the planner will land on:
+
+```python
+def _compute_next_step_label(will_data):
+    if not _is_confirmed(will_data, 'testator'): return 'Step 2: Confirm Testator'
+    if no executors:                              return 'Step 3: Executor'
+    if no beneficiaries:                          return 'Step 5: Beneficiaries'
+    if 'assets_confirmed' not in completed:       return 'Step 6: Specific Gifts'
+    if no residuary:                              return 'Step 7: Residuary Estate'
+    return 'Step 10: Generate Will'
+```
+
+The Step-1-complete message uses this:
+```python
+next_label = _compute_next_step_label(current_will_data)
+reply_parts.append(
+    f"🎉 Step 1: Identities — COMPLETE. All ICs assigned.\n"
+    f"Now moving to {next_label}."
+)
+```
+
+### Hard rules
+
+1. **No hardcoded step destinations in transition messages.**
+2. **Same rule for every step transition** — Step 2 → 3 ack must look
+   up the actual next step, etc.
+3. **If the computed label changes, the planner's gates must already
+   be past the previous step.** Otherwise the message will tell the
+   user something different from what they then see.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

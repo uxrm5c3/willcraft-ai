@@ -177,12 +177,16 @@ def plan_turn(
     n_beneficiaries = len(current_will_data.get('step4') or [])
 
     # Announce Step 1 completion only if we just finished an IDENTITY
-    # assignment AND there are no more pending ICs (avoid firing on
-    # executor / other-stage saves).
+    # assignment AND there are no more pending ICs.
+    # 🔥 §7 — DON'T hardcode "Step 2" — the planner may already be past it
+    # (e.g. testator confirmed, executor confirmed, etc.). Compute the
+    # ACTUAL next step the planner will land on so the announcement
+    # matches the card that follows.
     if just_assigned and not pending_ics and just_kind == 'identity':
+        next_label = _compute_next_step_label(current_will_data)
         reply_parts.append(
-            "🎉 **Step 1: Identities — COMPLETE.** All ICs assigned. "
-            "Now moving to **Step 2: Testator Info**."
+            f"🎉 **Step 1: Identities — COMPLETE.** All ICs assigned.\n\n"
+            f"Now moving to **{next_label}**."
         )
 
     # ── 3. STEP 2: confirm Testator details ─────────────────────────────
@@ -4478,6 +4482,20 @@ def _step6_property_question(pending_props, recent_text, will_data):
                 total = sum(int(d['share'].rstrip('%')) for d in deduced)
             except Exception:
                 total = 0
+            # 🔥 §10x.13 — beneficiary % may be of testator's SHARE (not full
+            # property). For a 50/50-jointly-owned property, "Joshua 25%
+            # Esther 25%" sums to 50% of FULL = 100% of testator's share.
+            # Accept any total in {25, 33, 50, 66, 75, 100} as a valid
+            # share-of-testator-interest; normalise to 100% relative shares.
+            if total in (25, 33, 50, 66, 67, 75):
+                # Rescale to 100% share-of-testator's-interest
+                _scale = 100.0 / total
+                for d in deduced:
+                    try:
+                        d['share'] = f"{int(round(int(d['share'].rstrip('%')) * _scale))}%"
+                    except Exception:
+                        pass
+                total = 100
             if total != 100:
                 deduced = []
 
@@ -4486,6 +4504,15 @@ def _step6_property_question(pending_props, recent_text, will_data):
         f"### 🏠 Specific Gift ({len(pending_props)} left) — {addr_label}",
         formatted,
     ]
+
+    # 🔥 §10x.36 / §10x.35 / §9 — ALWAYS show the message line that names
+    # this property so the user can see what they wrote about it. Even
+    # when no beneficiary deduction was possible, the snippet anchors
+    # the card to the user's own words.
+    msg_snippet = _find_property_message_snippet(p, recent_text or '')
+    if msg_snippet:
+        parts.append(f"📨 _from your message:_\n> {msg_snippet}")
+
     if evidence_block:
         parts.append(f"**📎 Based on these uploads:**\n{evidence_block}")
     parts.append("**Who is the main beneficiary for this property?**")
@@ -4510,6 +4537,94 @@ def _step6_property_question(pending_props, recent_text, will_data):
 
     text = '\n\n'.join(parts) + _qr_marker(quick)
     return {'text': text, 'focus_doc_id': p.get('document_id')}
+
+
+def _compute_next_step_label(will_data: Dict[str, Any]) -> str:
+    """🔥 §7 — Returns the human-readable label for the NEXT step the
+    planner will land on. Used by the 'Step 1 complete — moving to X'
+    announcement so the message doesn't lie to the user.
+    """
+    if not will_data:
+        return 'Step 2: Testator Info'
+    s1 = will_data.get('step1') or {}
+    s2 = will_data.get('step2') or {}
+    s4 = will_data.get('step4') or []
+    completed = will_data.get('completed_steps') or []
+
+    # Step 2 — testator confirm (skip if already confirmed)
+    if not _is_confirmed(will_data, 'testator'):
+        return 'Step 2: Confirm Testator'
+    # Step 3 — executors
+    n_exec = len((s2.get('executors') or []))
+    if n_exec < 1:
+        return 'Step 3: Executor'
+    # Step 4 — guardians (skip if no minor children declared)
+    # (We don't track guardian-needed flag here — best-effort label only)
+    # Step 5 — beneficiaries
+    if not s4:
+        return 'Step 5: Beneficiaries'
+    # Step 6 — specific gifts walkthrough
+    if 'assets_confirmed' not in completed:
+        return 'Step 6: Specific Gifts'
+    # Step 7 — residuary
+    s6 = will_data.get('step6') or {}
+    if not s6.get('beneficiaries'):
+        return 'Step 7: Residuary Estate'
+    return 'Step 10: Generate Will'
+
+
+def _find_property_message_snippet(prop_dict: Dict[str, Any],
+                                    recent_text: str) -> str:
+    """🔥 §10x.36 — for any property card, find the message line that
+    names this property's beneficiary distribution. Returns at most one
+    sentence-ish snippet (≤200 chars).
+
+    Strategy:
+      1. Pull distinctive locality tokens from the property (B-05-11,
+         Marina Cove, Sri Laguna, etc.)
+      2. Find the FIRST line in recent_text containing any token
+      3. Return that line + a few following lines (until next property
+         or until 200 chars)
+    """
+    if not recent_text:
+        return ''
+    ex = (prop_dict.get('extracted') or {}) if prop_dict else {}
+    addr = (ex.get('property_address') or '').strip()
+    name = (prop_dict.get('name') or '').strip()
+    candidates = (addr + ' ' + name).strip()
+    if not candidates:
+        return ''
+    # Build search tokens: 4+ char tokens that aren't generic stopwords
+    STOP = {'JALAN', 'TAMAN', 'BANDAR', 'KAMPUNG', 'UNIT', 'BLOCK',
+             'BLOK', 'NO', 'JOHOR', 'BAHRU', 'KUALA', 'LUMPUR',
+             'CONDOMINIUM', 'APARTMENT', 'PERSIARAN', 'LORONG',
+             'LEBUH', 'MUKIM', 'DAERAH', 'NEGERI', 'STATE', 'MALAYSIA',
+             'PHASE', 'WITH', 'KAWASAN', 'PERUSAHAAN'}
+    toks = [t for t in re.findall(r"[A-Za-z0-9\-]{4,}", candidates.upper())
+            if t not in STOP]
+    # Also include unit numbers (B-05-11, C-30-08 etc.)
+    unit_pat = re.findall(r"[A-Z]\-\d{1,3}\-\d{1,3}|\d+\-\d+\-\d+",
+                           candidates.upper())
+    toks.extend(unit_pat)
+    if not toks:
+        return ''
+    # Search line by line. Newlines OR period boundaries.
+    lines = re.split(r'(?:\r?\n|\.\s+)', recent_text)
+    best_line = ''
+    best_score = 0
+    for L in lines:
+        L_up = L.upper()
+        score = sum(1 for t in toks if t in L_up)
+        if score > best_score:
+            best_score = score
+            best_line = L
+    if not best_line:
+        return ''
+    # Trim and bound length
+    snippet = best_line.strip()
+    if len(snippet) > 240:
+        snippet = snippet[:237] + '…'
+    return snippet
 
 
 def _step6_bank_question(pending_banks, will_data):
