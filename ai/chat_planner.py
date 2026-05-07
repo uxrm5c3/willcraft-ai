@@ -539,13 +539,26 @@ _AI_SUMMARY_FIELD_RE = {
 #   "Public Bank (Malaysian) Account No:3244955834(Current account)"
 #   "POSB Bank, Account No. 030-25917-3 — to Lim Bee Yan 100%"
 _AI_BANK_LINE_RE = re.compile(
-    r'(?P<inst>(?:[A-Z][A-Za-z]*\s*){1,4}(?:Bank|BANK|Maybank|MAYBANK))\s*'
+    # Institution: 1-3 capitalized words, optionally ending with " Bank"
+    # or being "Maybank". Strip a leading bare "Bank" sentence-starter
+    # later (see _clean_bank_name) so "Bank POSB" → "POSB Bank".
+    r'(?P<inst>(?:[A-Z][A-Za-z]*\s+){0,3}(?:Bank|BANK|Maybank|MAYBANK))\s*'
     r'(?:\((?P<country>[^)]+)\))?\s*[,\-]?\s*'
     r'(?:Account|A/C|Acct)\s*(?:No\.?|Number)\s*[:\-]?\s*'
     r'(?P<acct>[\w\-/]+)'
     r'(?:\s*\((?P<acct_type>[^)]+)\))?',
     re.IGNORECASE,
 )
+
+
+def _clean_bank_name(s: str) -> str:
+    """Strip stray leading 'Bank' (sentence opener) so 'Bank POSB Bank'
+    → 'POSB Bank'. Also collapse internal whitespace."""
+    s = re.sub(r'\s+', ' ', (s or '')).strip()
+    # If string starts with "Bank " AND has another "Bank" later, drop leader
+    if s.lower().startswith('bank ') and 'bank' in s[5:].lower():
+        s = s[5:].strip()
+    return s
 
 # Insurance lines look like:
 #   "Insurance Policy number:1811500170(NTUC Income)"
@@ -595,7 +608,7 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
             continue
         seen.add(key)
         out.append({
-            'bank_name':       inst[:80],
+            'bank_name':       _clean_bank_name(inst)[:80],
             'account_number':  acct[:40],
             'country':         (m.group('country') or '').strip()[:40],
             'account_type':    (m.group('acct_type') or '').strip()[:40],
@@ -704,9 +717,20 @@ def _parse_ai_summary_text(text: str) -> List[Dict[str, Any]]:
     if m:
         body = text[m.end():]
 
-    # Split on bullets: '•' (preferred) or '- ' at line start.
-    # Each bullet block describes ONE asset (property/bank/vehicle).
-    blocks = re.split(r'(?:\n\s*[•\-]\s+|\n\s*\*\s+)', '\n' + body)
+    # 🔥 BURN-IN §10x.18 — split ONLY on top-level property markers,
+    # never on sub-field dash lines. The summary template is:
+    #     • Property 1: ...
+    #       - Address: ...
+    #       - PTD/Lot: ...
+    # Splitting on every "- " produces 15 fragments instead of 5
+    # properties. Top-level markers are `•` or numeric "Property N:" or
+    # "Property N — / -". Sub-bullets that begin a sub-field don't
+    # qualify; they're lines that start with "-" but follow a parent
+    # block.
+    blocks = re.split(
+        r'(?:\n\s*•\s+|\n\s*\*\s+|\n\s*Property\s+\d+\s*[:\-—]\s+)',
+        '\n' + body,
+    )
     out: List[Dict[str, Any]] = []
     for blk in blocks:
         blk = (blk or '').strip()
