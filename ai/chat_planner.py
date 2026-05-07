@@ -574,9 +574,22 @@ def _apply_geo_bridge_inplace(parsed_props: List[Dict[str, Any]]) -> None:
         cur_mukim_lc = cur_mukim.lower()
         # Strip leading "Mukim " prefix that AI Summary sometimes adds
         cur_mukim_lc = re.sub(r'^mukim\s+', '', cur_mukim_lc).strip()
-        if cur_mukim_lc and cur_mukim_lc in bridge_keys:
-            real_mukim, real_daerah, real_negeri = _GEO_BRIDGE[cur_mukim_lc]
-            # Only overwrite if current mukim is a township-disguised-as-mukim
+        # Match either exact township OR substring (longest key wins) so
+        # "Seri Alam Masai" → checks "bandar seri alam" → "seri alam" → match.
+        # Real example: AI Summary returns mukim='Seri Alam Masai' (combination
+        # of two township names). Bridge has 'seri alam' and 'masai' — both
+        # map to Plentong. Substring lookup catches it.
+        bridge_hit = None
+        if cur_mukim_lc:
+            if cur_mukim_lc in bridge_keys:
+                bridge_hit = cur_mukim_lc
+            else:
+                for k in sorted(_GEO_BRIDGE.keys(), key=len, reverse=True):
+                    if k in cur_mukim_lc:
+                        bridge_hit = k
+                        break
+        if bridge_hit:
+            real_mukim, real_daerah, real_negeri = _GEO_BRIDGE[bridge_hit]
             p['mukim'] = real_mukim
             if not (p.get('daerah') or '').strip():
                 p['daerah'] = real_daerah
@@ -629,7 +642,40 @@ def _merge_raw_forward_into_props(client_id: str,
     except Exception:
         return ai_props
 
-    if not raw_props:
+    # 🔥 §10x.50 Bug A.2 — locality search fallback. When raw_props yields
+    # nothing usable (e.g. Gmail-mobile run-on paragraph with no Property N:
+    # headers), scan raw_fwd directly per AssetItem: find a distinctive
+    # token (unit number / building name) and pull lot/HSD/PTD/Hakmilik
+    # numbers from the ±300-char window around it.
+    if not raw_props or len(raw_props) < len(ai_props):
+        _LOT_RE   = re.compile(r'\b(?:PTD|Lot)\s*(?:No\.?\s*)?([0-9]{3,})', re.IGNORECASE)
+        _HSD_RE   = re.compile(r'\b(?:HSD|HS\s*\(D\)|H\.S\.\s*\(D\))\s*(?:No\.?\s*)?([0-9]{3,})', re.IGNORECASE)
+        _GERAN_RE = re.compile(r'\b(?:Geran|Hakmilik|Title)\s*(?:Mukim\s*)?(?:No\.?\s*)?([0-9]{3,})', re.IGNORECASE)
+        for ap in ai_props:
+            ap_addr = ap.get('address') or ''
+            ap_name = ap.get('name') or ''
+            tokens = re.findall(r'[A-Z]?-?\d+(?:[-/]\d+)+', ap_addr + ' ' + ap_name)
+            anchor_idx = None
+            anchor_token = None
+            for tok in tokens:
+                pos = raw_fwd.find(tok)
+                if pos >= 0:
+                    anchor_idx = pos
+                    anchor_token = tok
+                    break
+            if anchor_idx is None:
+                continue
+            window = raw_fwd[max(0, anchor_idx - 200):anchor_idx + 400]
+            lot_m   = _LOT_RE.search(window)
+            hsd_m   = _HSD_RE.search(window)
+            ger_m   = _GERAN_RE.search(window)
+            if not (ap.get('lot') or '').strip() and lot_m:
+                ap['lot'] = lot_m.group(1).strip()
+            if not (ap.get('title') or '').strip():
+                if hsd_m:
+                    ap['title'] = hsd_m.group(1).strip()
+                elif ger_m:
+                    ap['title'] = ger_m.group(1).strip()
         return ai_props
 
     # Pair by ai_index (positional) when counts match; otherwise pair by
