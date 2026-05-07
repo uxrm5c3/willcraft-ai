@@ -174,6 +174,12 @@ class Document(db.Model):
     file_path = db.Column(db.String(500), nullable=False)
     file_type = db.Column(db.String(50))
     file_size = db.Column(db.Integer)
+    # SHA256 of the raw bytes — used for content-addressable dedup at upload
+    # time. Filename is unreliable (Postmark/WhatsApp rename freely), so two
+    # files with different names but identical bytes were getting both
+    # ingested AND both vision-classified, doubling the API cost. Per
+    # CLAUDE.md §10c the canonical dedup key is content hash.
+    content_hash = db.Column(db.String(64), index=True, nullable=True)
     category = db.Column(db.String(50))  # nric, property, financial, will, death_certificate, chat_inbox
     description = db.Column(db.String(500), nullable=True)
     extracted_data = db.Column(db.Text, nullable=True)

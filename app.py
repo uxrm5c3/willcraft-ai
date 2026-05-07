@@ -306,6 +306,14 @@ with app.app_context():
             pass
     # Create new tables (WillEditLog, Probate etc.) if they don't exist
     db.create_all()
+    # Migrate: add content_hash to documents for dedup-by-bytes (CLAUDE.md §10c)
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(db.text("ALTER TABLE documents ADD COLUMN content_hash VARCHAR(64)"))
+            conn.execute(db.text("CREATE INDEX IF NOT EXISTS ix_documents_content_hash ON documents(content_hash)"))
+            conn.commit()
+    except Exception:
+        pass
     # Migrate: add chat_message_id column to documents (links a doc to the chat message that uploaded it)
     try:
         with db.engine.connect() as conn:
@@ -8255,15 +8263,33 @@ def _api_inbound_email_impl():
         ctype = (att.get('ContentType') or '').lower()
 
         # ── DEDUP: same physical file re-forwarded? ──────────────────────────
-        # User often forwards the same WhatsApp email multiple times during
-        # testing. Each forward re-uploads the same attachments, exploding the
-        # Document table. Dedup by (client_id, original_filename, file_size)
-        # — if an existing row matches, reuse it instead of inserting a copy.
-        # See CLAUDE.md §10c.
+        # Per CLAUDE.md §10c: the canonical dedup key is the SHA256 of the
+        # bytes. Postmark / WhatsApp routinely rename "the same image" to
+        # different filenames, and re-encoding sometimes shifts file_size,
+        # so (filename, file_size) is unreliable. Hash dedup catches both
+        # cases AND prevents paying for vision-classification of the same
+        # bytes twice. Old rows have content_hash=NULL — fall back to the
+        # legacy key so we don't double-ingest until backfill catches up.
+        import hashlib as _hashlib
+        _content_hash = _hashlib.sha256(data).hexdigest()
         existing = (Document.query
-                    .filter_by(client_id=client.id, original_filename=name, file_size=len(data))
+                    .filter_by(client_id=client.id, content_hash=_content_hash)
                     .order_by(Document.created_at.asc()).first())
+        if not existing:
+            existing = (Document.query
+                        .filter_by(client_id=client.id,
+                                   original_filename=name, file_size=len(data),
+                                   content_hash=None)
+                        .order_by(Document.created_at.asc()).first())
         if existing:
+            # Backfill content_hash on legacy match so future uploads
+            # short-circuit on the indexed column.
+            if not existing.content_hash:
+                try:
+                    existing.content_hash = _content_hash
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
             attachment_ids.append(existing.id)
             continue
 
@@ -8283,6 +8309,7 @@ def _api_inbound_email_impl():
             filename=safe_basename, original_filename=name,
             file_path=rel_path, file_type=ctype,
             file_size=len(data), category=cat,
+            content_hash=_content_hash,
         )
         db.session.add(doc)
         db.session.flush()
@@ -8396,45 +8423,53 @@ def _process_inbound_message_async(app_obj, user_msg_id):
 
             def _classify_one(doc, abs_path, group_ctx, testator_profile):
                 """Worker: returns (classification_dict, extracted_dict).
-                Pure: no DB access, no shared mutable state."""
-                try:
-                    classification = classify_file(
-                        abs_path, group_context=group_ctx,
-                        testator_profile=testator_profile,
-                    )
-                except Exception as e:
-                    classification = {'kind': 'other', 'confidence': 'low',
-                                       'reason': f'classify error: {e}'}
-                kind = classification.get('kind', 'other')
-                # Trust batch verdict if individual said 'other'
-                if group_ctx and kind == 'other':
-                    bk = group_ctx.get('asset_kind', '')
-                    if bk and bk != 'other':
-                        kind = bk
-                        classification['kind'] = kind
-                        classification['confidence'] = 'medium'
-                extracted = None
-                try:
-                    if kind == 'nric':
-                        extracted = extract_nric_data(abs_path)
-                    elif kind in ('property_title', 'property_spa', 'property_tax',
-                                   'property_transfer'):
-                        from ai.property_extractor import extract_property_data
-                        extracted = extract_property_data(abs_path, doc_type='general')
-                    elif kind in ('utility_bill', 'bank_letter'):
-                        extracted = {}
-                    elif kind == 'bank_statement':
-                        from ai.ocr import extract_asset_document
-                        extracted = extract_asset_document(abs_path, asset_type='bank')
-                    elif kind == 'vehicle':
-                        from ai.ocr import extract_asset_document
-                        extracted = extract_asset_document(abs_path, asset_type='vehicle')
-                    elif kind in ('insurance', 'epf_kwsp'):
-                        from ai.ocr import extract_asset_document
-                        extracted = extract_asset_document(abs_path, asset_type='other')
-                except Exception as e:
-                    extracted = {'error': str(e)}
-                return classification, extracted
+                Each thread pushes its own Flask app context so that
+                cost_tracker.log_usage and any other context-bound code
+                works correctly (otherwise telemetry silently fails and
+                we lose visibility into per-image API spend).
+                ALSO uses cost_tracker.track_context() so each call's
+                cost is attributed to this client/will/document."""
+                from ai.cost_tracker import track_context as _tc
+                with app_obj.app_context(), _tc(
+                    will_id=doc.will_id if hasattr(doc, 'will_id') else None,
+                    client_id=doc.client_id, document_id=doc.id):
+                    try:
+                        classification = classify_file(
+                            abs_path, group_context=group_ctx,
+                            testator_profile=testator_profile,
+                        )
+                    except Exception as e:
+                        classification = {'kind': 'other', 'confidence': 'low',
+                                           'reason': f'classify error: {e}'}
+                    kind = classification.get('kind', 'other')
+                    if group_ctx and kind == 'other':
+                        bk = group_ctx.get('asset_kind', '')
+                        if bk and bk != 'other':
+                            kind = bk
+                            classification['kind'] = kind
+                            classification['confidence'] = 'medium'
+                    extracted = None
+                    try:
+                        if kind == 'nric':
+                            extracted = extract_nric_data(abs_path)
+                        elif kind in ('property_title', 'property_spa', 'property_tax',
+                                       'property_transfer'):
+                            from ai.property_extractor import extract_property_data
+                            extracted = extract_property_data(abs_path, doc_type='general')
+                        elif kind in ('utility_bill', 'bank_letter'):
+                            extracted = {}
+                        elif kind == 'bank_statement':
+                            from ai.ocr import extract_asset_document
+                            extracted = extract_asset_document(abs_path, asset_type='bank')
+                        elif kind == 'vehicle':
+                            from ai.ocr import extract_asset_document
+                            extracted = extract_asset_document(abs_path, asset_type='vehicle')
+                        elif kind in ('insurance', 'epf_kwsp'):
+                            from ai.ocr import extract_asset_document
+                            extracted = extract_asset_document(abs_path, asset_type='other')
+                    except Exception as e:
+                        extracted = {'error': str(e)}
+                    return classification, extracted
 
             # Dispatch parallel work for non-voice docs.
             _testator_profile = {
