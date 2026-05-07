@@ -3439,6 +3439,168 @@ or in the H3 append step. Fix THERE, not by manually adding Person rows.
 
 ---
 
+### 10x.35  🔥🔥🔥🔥 BURN-IN — MESSAGE > IMAGE. ALWAYS. 🔥🔥🔥🔥
+
+**THE MESSAGE TAKES HIGHEST PRECEDENCE for BOTH identities AND assets.
+If a person, asset, or relationship is stated in the user's WhatsApp /
+email text, it MUST appear as a pending entry — regardless of whether
+an image was uploaded. Image is verification, NOT a requirement.**
+
+This is the over-arching rule. §10x.12 (every AI-Summary item = own
+gift), §10x.15 (image is verification only), §10x.34 (H3 identity
+placeholders), §10hg (HIGH-confidence message-stated assets) are all
+specific applications of this same principle.
+
+### The principle
+
+```
+WHEN the user says it in writing → it counts.
+WHEN the user uploads a photo  → that's CONFIRMATION of what they said.
+
+Image MISSING ≠ data missing.   Text alone is sufficient evidence.
+Image MISMATCH = ASK the user (per §10x.18), don't auto-pick.
+```
+
+### Why this rule exists
+
+The user explicitly said:
+> "given identity in message, message takes highest precedence,
+>  identity must be checked even without image. Burn this. the same
+>  for asset"
+
+Real KOID examples that violated this rule before fixes shipped:
+
+| What the message said | What the system did (wrong) | Fixed by |
+|---|---|---|
+| "my wife (Lim Bee Yan) 100%" | Wife missing from identity registry — IC walkthrough only iterated `Document.category='nric'` | §10x.34 |
+| "Property 1: Unit B-05-11 Paradisonuava" | Property 1 missing from walkthrough because no title doc uploaded | §10hg + §10x.12 |
+| "Bank: POSB Account No. 030-25917-3" | Bank missing — gift_walker didn't synthesize H3 entries for banks | §10x.12 |
+| "Insurance: NTUC Income Policy 1811500170" | Insurance entirely absent — `out['insurance']` key didn't exist in the gift walker | §10x.12 |
+
+Without §10x.35 enforced as a top-level invariant, the system silently
+drops people and assets the user clearly identified. That's data loss
+in a probate-critical document.
+
+### What this means for IDENTITIES
+
+`services/identity_walker.py::get_pending_ic_documents` MUST surface
+EVERY person named in the message, regardless of IC upload state:
+
+```python
+pending = []
+# Source 1: actual IC documents (Document.category == 'nric')
+pending += [<from doc table>]
+# Source 2: H3 placeholders — names mentioned in message text but no IC
+pending += [
+    {'_h3_placeholder': True, 'extracted': {'full_name': name},
+     '_h3_role': role, '_deduction_score': 5}
+    for name, role in _extract_family_name_role_pairs(message_text)
+    if name not in known_persons
+]
+```
+
+If the IC arrives later (mid-flow upload), the H3 entry is REPLACED by
+the real IC entry on the next walkthrough refresh. The Person row,
+once created from the H3 confirm, gains the `nric_passport` +
+`document_id` when the IC photo is processed.
+
+### What this means for ASSETS
+
+`services/gift_walker.py::get_pending_gift_documents` MUST surface
+EVERY asset named in the AI Summary, regardless of doc upload state:
+
+```python
+out = {'property': [...], 'bank': [...], 'insurance': [...], 'vehicle': [...]}
+# Source 1: documents (already-classified images)
+out += <image-bound groups>
+# Source 2: H3 placeholders — AI Summary mentions not covered by image
+for ai_prop in _extract_ai_summary_properties(client_id):
+    if not _covered_by_image_group(ai_prop):
+        out['property'].append(_h3_property_placeholder(ai_prop))
+# Same for bank + insurance
+```
+
+Image-bound groups that have NO AI-Summary linkage go to RESIDUAL
+(§10d unverified card path) — they don't pollute the pending count.
+
+### Hard rules
+
+1. **Pending count = Message-stated count** for every category.
+   - Identities: pending(text) ≥ Persons(confirmed). One H3 per
+     unmatched-by-IC name.
+   - Properties: pending == AI Summary property count (§10b).
+   - Banks: pending == AI Summary bank count (§10x.12).
+   - Insurance: pending == AI Summary insurance count (§10x.12).
+
+2. **NEVER drop a message-stated entity because it lacks an image.**
+   The H3 placeholder route is mandatory — silent omission is a §10x.35
+   regression.
+
+3. **Image LATER ≠ create a new entry.** When an IC or asset doc
+   arrives mid-flow, the existing H3 placeholder is REPLACED (its
+   identity merged) with the IC-bound entry. Never two cards for the
+   same person/asset.
+
+4. **Image MISMATCH = pause and ask.** Per §10x.18, when text says one
+   thing and image says another (e.g. NRIC last digit differs), the
+   chat surfaces a clarification card. Never auto-resolve.
+
+5. **Co-owners / counterparties named in text but NOT family** stay
+   as property-card metadata only (per §10x.19), NOT in Person table.
+
+### Before-and-after example: KOID
+
+Without §10x.35:
+```
+Identities (3):  ESTHER, KOID, LIM LAY CHENG     ← LIM BEE YAN MISSING
+Pending props (3):  shop + lot 207922 + hallucinated MARSILING
+Pending banks (0):  ALL FOUR BANKS ABSENT
+Pending insurance (0):  ALL THREE POLICIES ABSENT
+```
+
+With §10x.35:
+```
+Identities pending: LIM BEE YAN [H3] role=Wife (score=5)
+                    after upload: real IC NRIC 661126-04-5182
+Pending props (5):  matches AI Summary ✓
+Pending banks (4):  matches AI Summary ✓
+Pending insurance (3):  matches AI Summary ✓
+```
+
+### Where this is enforced
+
+| Domain | File | Function | Mechanism |
+|--------|------|----------|-----------|
+| Identity | `services/identity_walker.py` | `get_pending_ic_documents` | Append H3 entries from `_extract_family_name_role_pairs` |
+| Identity | `services/identity_walker.py` | `_extract_family_name_role_pairs` | 4 regex patterns covering "(role)", "role(name)", "my role name", "name (role)" |
+| Identity | `ai/chat_planner.py` | `_identity_question` | H3 branch: "no IC uploaded yet" card with role pre-suggested |
+| Property | `services/gift_walker.py` | `get_pending_gift_documents` | H3 placeholders for unmatched AI Summary properties |
+| Bank | `services/gift_walker.py` | `get_pending_gift_documents` | H3 placeholders for AI Summary banks |
+| Insurance | `services/gift_walker.py` | `get_pending_gift_documents` | H3 placeholders for AI Summary insurance |
+| Audit | `services/asset_audit.py` | reconciliation checks | Pre-deploy gate per §10x.33 |
+
+### Litmus test (mandatory before any deploy touching identity/asset code)
+
+```
+1. Run asset_audit.py against KOID fixture
+2. Run identity_full_audit.py against KOID fixture
+3. Both must report exactly:
+     identities pending = (people named in text - already-confirmed Persons)
+     property pending = AI Summary property count
+     bank pending = AI Summary bank count
+     insurance pending = AI Summary insurance count
+4. Any deviation = §10x.35 regression. Block the deploy.
+```
+
+If a code change makes the system DROP a message-stated entry from
+pending, the bug is in the corresponding walker (`identity_walker.py`
+or `gift_walker.py`). Fix THERE, not by manually inserting Persons
+or step5 entries — those workarounds will not survive the next
+session and the bug will resurface (the very thing §10x.33 + §10x.35
+were burned in to prevent).
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
