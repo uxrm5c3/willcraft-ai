@@ -919,12 +919,33 @@ def _parse_raw_forward_properties(raw_text: str) -> List[Dict[str, Any]]:
     returns the same shape as `_parse_ai_summary_text` so downstream code
     sees a uniform canonical list.
 
-    Each property is typically one line in the raw forward (clients write
-    asset-per-line in WhatsApp). Lines that look like banks/insurance/
-    metadata are skipped. Returns [] if no property-ish line found.
+    🔥 BURN-IN §10x.46 R5 — When the forward uses explicit `Property N:`
+    headers (the canonical client format), parse it as BLOCKS not lines:
+    the header line establishes the property; following indented/sub-
+    lines (HSD/Lot/Mukim/share/beneficiary) belong to that same block,
+    NOT to a new property. A previous bug treated the sub-line
+    `   HSD H.S.(D) 251041, Lot 127082` (metadata for Property 5) as a
+    6th property, breaking AI-Summary count == walker count.
     """
     if not raw_text:
         return []
+
+    # ── Block mode: explicit `Property N:` headers ────────────────────
+    _PROP_HEADER_RE = re.compile(r'^\s*(?:\*\*\s*)?Property\s+(\d+)\s*[:\-—–−]\s*(.+?)\s*(?:\*\*)?$',
+                                  re.IGNORECASE | re.MULTILINE)
+    headers = list(_PROP_HEADER_RE.finditer(raw_text))
+    if headers:
+        out: List[Dict[str, Any]] = []
+        for i, hm in enumerate(headers):
+            blk_start = hm.end()
+            blk_end = headers[i + 1].start() if i + 1 < len(headers) else len(raw_text)
+            header_addr = (hm.group(2) or '').strip()
+            block_body  = raw_text[blk_start:blk_end]
+            full_block  = header_addr + '\n' + block_body
+            out.append(_parse_property_block(header_addr, block_body, full_block))
+        return out
+
+    # ── Line mode: no headers, fall back to per-line heuristics ───────
     out: List[Dict[str, Any]] = []
     for raw_line in raw_text.split('\n'):
         line = raw_line.strip()
@@ -1022,6 +1043,69 @@ def _parse_raw_forward_properties(raw_text: str) -> List[Dict[str, Any]]:
         }
         out.append(prop)
     return out
+
+
+def _parse_property_block(header_addr: str, block_body: str, full_block: str) -> Dict[str, Any]:
+    """Parse one Property N: block. The header line is the address; the
+    body lines carry sub-fields (HSD/Lot/share/beneficiary). All sub-fields
+    are merged into one property — sub-lines never spawn new properties.
+    """
+    addr = header_addr.strip()
+    # Strip leading "Unit," / "Our house" etc. for cleaner address
+    addr_clean = re.sub(
+        r'^(?:Unit[,\s]+|Our\s+house\s*[,\s]*|My\s+(?:shop\s+No[,\s]*|house\s*[,\s]*)?)\s*',
+        '', addr, flags=re.IGNORECASE
+    ).strip(' ,.')
+    if not addr_clean:
+        addr_clean = addr.strip(' ,.')
+
+    # Pull identifiers from the WHOLE block (header + body)
+    lot_m    = _RAW_LOT_RE.search(full_block)
+    hsd_m    = _RAW_HSD_RE.search(full_block)
+    ger_m    = _RAW_GERAN_RE.search(full_block)
+    mukim_m  = _RAW_MUKIM_RE.search(full_block)
+    daerah_m = _RAW_DAERAH_RE.search(full_block)
+
+    # Beneficiary chunk — first occurrence anywhere in block
+    bene_chunk = ''
+    m = re.search(
+        r'(?:my\s+\w+\s+)?(?:\d+\s*(?:percent|%)|go\s+to|will\s+go\s+to|all\s+my\b|\bto\s+[A-Z]).*$',
+        full_block, re.IGNORECASE | re.MULTILINE,
+    )
+    if m:
+        bene_chunk = m.group(0).strip()[:200]
+
+    # Ownership chunk
+    own_chunk = ''
+    m = re.search(
+        r'(?:I\s+share\s+with|joint(?:ly)?\s+with|share\s+with|Sole\s+owner)'
+        r'(?:\s+[^\.,\n]+)?(?:\s+(?:50/50|\d+/\d+|\d+%|\d+\s*percent))?',
+        full_block, re.IGNORECASE,
+    )
+    if m:
+        own_chunk = m.group(0).strip()[:120]
+
+    # Name = first comma segment of address (compact label)
+    if addr_clean:
+        segs = [s.strip() for s in addr_clean.split(',') if s.strip()]
+        if segs and re.fullmatch(r'\d{1,4}', segs[0]) and len(segs) > 1:
+            name = (segs[0] + ', ' + segs[1])[:120]
+        else:
+            name = (segs[0] if segs else addr_clean)[:120]
+    else:
+        name = addr_clean[:80]
+
+    return {
+        'name':        name,
+        'address':     addr_clean[:200],
+        'lot':         (lot_m.group(1).strip() if lot_m else '')[:80],
+        'title':       ((hsd_m.group(1).strip() if hsd_m else '')
+                        or (ger_m.group(1).strip() if ger_m else ''))[:80],
+        'mukim':       (mukim_m.group(1).strip() if mukim_m else '')[:60],
+        'daerah':      (daerah_m.group(1).strip() if daerah_m else '')[:60],
+        'ownership':   own_chunk,
+        'beneficiary': bene_chunk,
+    }
 
 
 # ╔════════════════════════════════════════════════════════════════════════╗
