@@ -106,7 +106,9 @@ def _format_gift_property(gift) -> str:
 
 
 def _allocations_phrase(gift, beneficiaries_index: dict) -> str:
-    """Render '<X> and <Y> in equal shares' (or single ben) for a gift.
+    """Render the trailing 'unto X (and Y in equal shares)' phrase for a gift.
+    🔒 Phek format: gift body comes FIRST, then 'unto <beneficiary>'.
+    Returns the 'unto …' suffix WITHOUT a leading space; caller joins with ' '.
     beneficiaries_index maps name → (nric, relationship, nationality).
     """
     allocs = getattr(gift, 'allocations', None) or []
@@ -149,15 +151,18 @@ def _index_beneficiaries(will_data) -> dict:
 # ─── Specific-gift clause renderers ────────────────────────────────────────
 
 def _render_property_clause(clause_num: int, gift, beneficiaries_index: dict) -> str:
-    """Property gift clause — Phek format §10x.24:
-        "I hereby devise and bequeath unto X all my ¼ undivided shares in the
-         property known as ... held under Geran No. ..., Lot No. ..., Mukim ...,
-         District of ..., State of ....
+    """Property gift — Phek format §10x.24:
+        "I hereby devise and bequeath all my ¼ undivided shares in the
+         property known as <ADDRESS> held under Geran No. ..., Lot No. ...,
+         Mukim ..., District of ..., State of ... unto my sister X
+         (MALAYSIA NRIC No. ...) and my sister Y (...) in equal shares.
 
          Unless specifically stated to the contrary in this Will, I direct
          that any sums required to discharge a charge or to withdraw a
          private caveat or lien attached to this property shall be paid out
          of my residuary estate."
+
+    🔒 Word order: gift BODY first, then 'unto <beneficiary>'.
     """
     desc = _format_gift_property(gift)        # body w/o trailing punctuation
     bens = _allocations_phrase(gift, beneficiaries_index)
@@ -165,7 +170,9 @@ def _render_property_clause(clause_num: int, gift, beneficiaries_index: dict) ->
         body = (f"{clause_num}.  I hereby devise and bequeath {desc} "
                 f"[BENEFICIARIES TO BE CONFIRMED].")
     else:
-        body = f"{clause_num}.  I hereby devise and bequeath {bens} {desc}."
+        # 🔒 Phek order: <body> unto <ben>.  e.g.
+        # "...all my ¼ undivided shares in the property... unto my sister X..."
+        body = f"{clause_num}.  I hereby devise and bequeath {desc} {bens}."
     # Phek attaches the discharge clause directly under each property gift
     discharge = (
         "Unless specifically stated to the contrary in this Will, I direct "
@@ -176,15 +183,17 @@ def _render_property_clause(clause_num: int, gift, beneficiaries_index: dict) ->
 
 
 def _render_financial_clause(clause_num: int, gift, beneficiaries_index: dict) -> str:
-    """Banks / insurance / EPF / mutual fund — financial assets.
-    The Phek phrasing comes from models/gift.py::FinancialDetails.to_formatted_description.
-    Ends with "." per Phek format.
+    """Bank / mutual fund / insurance / EPF — Phek format word order:
+        "I hereby devise and bequeath the monies in my UOB Saving Account
+         No. ... together with all interests/dividends already accrued due
+         or accruing thereon unto my sister X ... in equal shares."
     """
     desc = _format_gift_property(gift)
     bens = _allocations_phrase(gift, beneficiaries_index)
     if not bens:
         return f"{clause_num}.  I hereby devise and bequeath {desc} [BENEFICIARIES TO BE CONFIRMED]."
-    return f"{clause_num}.  I hereby devise and bequeath {bens} {desc}."
+    # 🔒 Phek order: <body> unto <ben>.
+    return f"{clause_num}.  I hereby devise and bequeath {desc} {bens}."
 
 
 def _render_other_clause(clause_num: int, gift, beneficiaries_index: dict) -> str:
@@ -192,7 +201,7 @@ def _render_other_clause(clause_num: int, gift, beneficiaries_index: dict) -> st
     bens = _allocations_phrase(gift, beneficiaries_index)
     if not bens:
         return f"{clause_num}.  I hereby devise and bequeath {desc} [BENEFICIARIES TO BE CONFIRMED]."
-    return f"{clause_num}.  I hereby devise and bequeath {bens} {desc}."
+    return f"{clause_num}.  I hereby devise and bequeath {desc} {bens}."
 
 
 def _render_substitute_clause(clause_num: int, ref_clause: int, gift,

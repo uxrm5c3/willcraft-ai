@@ -137,12 +137,27 @@ class FinancialDetails(BaseModel):
         acct = (self.account_number or '').strip()
 
         if kind == 'bank' or 'bank' in kind:
-            # "the monies in my POSB Bank Account No. 030-25917-3 together
-            #  with all interests/dividends already accrued due or accruing
-            #  thereon"
+            # 🔒 Phek format example:
+            # "the monies in my United Overseas Bank Saving Account
+            #  No. 9613005435 together with all interests/dividends
+            #  already accrued due or accruing thereon"
+            # The account type ("Saving"/"Current"/"Fixed Deposit") is
+            # injected between the institution name and "Account No.".
+            acct_type = (self.description or '').strip()
+            # Common normalisations
+            if acct_type:
+                _t_map = {'saving': 'Saving', 'savings': 'Saving',
+                           'current': 'Current',
+                           'fixed deposit': 'Fixed Deposit',
+                           'fixed_deposit': 'Fixed Deposit',
+                           'fd': 'Fixed Deposit',
+                           'plus saving': 'Plus Saving'}
+                acct_type = _t_map.get(acct_type.lower(), acct_type)
             if ownership_prefix and 'joint' in ownership_prefix.lower():
                 # joint-account variant
                 base = f'{ownership_prefix} {inst}' if inst else ownership_prefix
+                if acct_type:
+                    base += f' {acct_type}'
                 if acct:
                     base += f' Account No. {acct}'
                 return base + (
@@ -152,6 +167,8 @@ class FinancialDetails(BaseModel):
             base = "the monies in my"
             if inst:
                 base += f' {inst}'
+            if acct_type:
+                base += f' {acct_type}'
             if acct:
                 base += f' Account No. {acct}'
             return base + (
