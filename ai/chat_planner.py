@@ -3559,23 +3559,16 @@ def _validate_property_format(ex: Dict[str, Any],
     if not negeri:
         missing_critical.append('**Negeri**')
     if missing_critical:
+        # 🔥 §10x.45 UI — terse, single-line warnings. Verbose probate
+        # explanations were cluttering every property card.
         if addr:
-            # We have something to identify the property, but probate
-            # cannot proceed. Prompt the writer to chase the client for
-            # the Geran scan.
             warnings.append(
-                "🚨  **Cannot probate without these — ask the client to "
-                "provide a clearer Geran/Hakmilik scan:**\n     "
-                + ', '.join(missing_critical)
-                + "\n     _Reason: the lawyer needs these fields on Borang 14A "
-                "/ Deed of Transmission to transfer this property to the "
-                "beneficiary at the Pejabat Tanah._"
+                f"⚠️ Missing: {', '.join(missing_critical)} — request a "
+                f"clearer Geran/Hakmilik scan for probate filing."
             )
         else:
-            # No address either → re-OCR or get a different doc.
             warnings.append(
-                "⚠️  Address AND title number both blank — re-OCR or ask "
-                "client for a clearer scan."
+                "⚠️ Address AND title both blank — re-OCR or request a clearer scan."
             )
 
     # If we have a title NUMBER, check that EITHER title_type OR the
@@ -4028,20 +4021,21 @@ def _walkthrough_property_card(p: Dict[str, Any], seq_num: int,
                 f"If wrong, tap ✏️ Edit to correct it._"
             )
 
-    # Full NLC identifiers — required by National Land Code for will description
-    nlc_lines = []
+    # 🔥 §10x.45 UI — compact one-line registry summary instead of a
+    # 5-bullet block. Skips fields that are empty.
+    nlc_inline = []
     for label, key in (
-        ('Title No.',  'title_number'),
-        ('Lot No.',    'lot_number'),
-        ('Mukim',      'mukim'),
-        ('Daerah',     'daerah'),
-        ('Negeri',     'negeri'),
+        ('Title',  'title_number'),
+        ('Lot',    'lot_number'),
+        ('Mukim',  'mukim'),
+        ('Daerah', 'daerah'),
+        ('Negeri', 'negeri'),
     ):
         v = (ex.get(key) or '').strip()
         if v:
-            nlc_lines.append(f"  • **{label}:** {v}")
-    if nlc_lines:
-        parts.append("📋 **Land Registry Details:**\n" + '\n'.join(nlc_lines))
+            nlc_inline.append(f"**{label}** {v}")
+    if nlc_inline:
+        parts.append("📋 " + ' · '.join(nlc_inline))
 
     # ── 🔥 BURN-IN — TWO-HINT EVIDENCE BLOCK (§10hb) ─────────────────────
     # When the matcher used the two-hint test (same mukim + close timing)

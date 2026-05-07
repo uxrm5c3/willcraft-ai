@@ -3881,6 +3881,7 @@ Each entry has:
 | 23 | "When new identity added mid-flow, re-run downstream (named beneficiary auto-added)" | §10x.42 | `_reconcile_downstream_for_new_identity`; verifier #23 |
 | 24 | "When new image/message provided midway, MUST re-run AI Summary → Image Analysis → Identity Match → Role Match → Asset Match (3 layers)" | §10x.43 | Inbound webhook → watchdog re-fire (§10x.29) → walker re-emit pending → reconciler |
 | 25 | "New identity can also be executor / guardian / trustee — must reconcile into ANY step that names them" | §10x.44 | `_step2/3/4/7_add_*` dispatchers fire per will-role pattern in message |
+| 26 | "Improve the UI — looks cluttered / confusing" | §10x.45 | One-line registry, terse warnings, ≤6 sections per card, no triple-stack transition msgs |
 
 ### Maintenance rule
 
@@ -4384,6 +4385,82 @@ Q: Walkthrough complete for KOID. User uploads new IC for "Aunt Mary"
 If a person's will-role is named in the message but the corresponding
 step doesn't include them, the bug is in the reconciler dispatch.
 Fix at the dispatcher pattern matching, not in DB.
+
+---
+
+### 10x.45  🔥🔥 BURN-IN — UI compactness on chat cards 🔥🔥
+
+**Chat cards are READ. Every line costs the user attention. Default
+to compact, condensed layouts. Verbose explanations belong in tool-
+tips or footnotes, not in the card body.**
+
+### Hard rules
+
+1. **Land Registry Details** — render as a one-line summary with
+   `·` separators, NOT a 5-bullet block:
+   ```
+   📋 Title 251041 · Lot 127082 · Mukim Plentong · Daerah Johor Bahru · Negeri Johor
+   ```
+   (skip empty fields silently)
+
+2. **Probate-missing warning** — single line, ≤120 chars:
+   ```
+   ⚠️ Missing: title number, lot number — request a clearer Geran scan.
+   ```
+   NO 4-line explanation of "Borang 14A / Deed of Transmission /
+   Pejabat Tanah" inline. The lawyer already knows.
+
+3. **Per-card structure** — at most 6 visual blocks, in this order:
+   1. Title bar (`### 🏠 Property N of M`)
+   2. Property body (formatted from `models/gift.py`)
+   3. 📨 _from your message:_ snippet (per §10x.36)
+   4. 📋 Registry one-liner (if available)
+   5. ⚠️ Warnings (if any) — terse single lines
+   6. Buttons (per §10x.40 — HIGH=1 / MEDIUM-LOW=3)
+
+   Anything more is bloat — move to a "Show more" expander or kill.
+
+4. **Confidence-tiered buttons** (§10x.40):
+   - HIGH: 1 confirm + 1 manual + skip + remove
+   - MEDIUM: 3 alternatives + manual + skip + remove
+   - LOW: 3 distribution options + manual + skip + remove
+
+5. **NEVER stack three transition messages in one turn** (§10x.37):
+   ```
+   ❌ "Saved X" + "Step 1 COMPLETE" + "moving to Step 2" + Step 6 card
+   ✓  Single ack: "✅ Saved X — Step 1 done. Step 6 below 👇" + Step 6 card
+   ```
+
+### Why this rule exists
+
+User explicit feedback:
+> "improve the UI. very confusing"
+> "improve the UI. looks cluttered"
+
+A 6-section card with 5 buttons = wall of text. The user's eye has
+to scan through "Land Registry / Cannot probate / 5 NLC bullets /
+3-line probate explanation" before finding the action. Decisions get
+slower; trust drops.
+
+### Where this is enforced
+
+| File | Function | What changed |
+|------|----------|--------------|
+| `ai/chat_planner.py` | `_step6_property_question` | NLC details one-line; warnings terse; §10x.40 button tiers |
+| `ai/chat_planner.py` | `_format_property_walkthrough_card` | Same compact rules |
+| Card style guide | this rule | 6-section max; verbose explanations move to tooltips |
+
+### Litmus test
+
+```
+Q: Visual scan of any chat card.
+   - Title + body + 📨 snippet + buttons + ≤2 inline warnings  → ✓
+   - 5+ bulleted lists / >3-line probate explanations          → ✗ §10x.45 broke
+```
+
+If a future card builder adds a 4-line block of legal explanation,
+move it to a footnote OR cut it. Cards are decision tools, not
+training material.
 
 ---
 
