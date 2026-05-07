@@ -176,18 +176,13 @@ def plan_turn(
     n_executors = len((s2.get('executors') or []))
     n_beneficiaries = len(current_will_data.get('step4') or [])
 
-    # Announce Step 1 completion only if we just finished an IDENTITY
-    # assignment AND there are no more pending ICs.
-    # 🔥 §7 — DON'T hardcode "Step 2" — the planner may already be past it
-    # (e.g. testator confirmed, executor confirmed, etc.). Compute the
-    # ACTUAL next step the planner will land on so the announcement
-    # matches the card that follows.
+    # 🔥 §10x.37/§10x.45 — single concise ack. Earlier we stacked
+    # "Saved X" + "Step 1 COMPLETE" + "moving to Step N" + the next
+    # card — three transition lines in one assistant turn confused
+    # users. Keep it to ONE line so the next card stands out.
     if just_assigned and not pending_ics and just_kind == 'identity':
         next_label = _compute_next_step_label(current_will_data)
-        reply_parts.append(
-            f"🎉 **Step 1: Identities — COMPLETE.** All ICs assigned.\n\n"
-            f"Now moving to **{next_label}**."
-        )
+        reply_parts.append(f"🎉 Step 1 done — moving to **{next_label}** below 👇")
 
     # ── 3. STEP 2: confirm Testator details ─────────────────────────────
     # 🔥 §7 — must run BEFORE Step 6 (Specific Gifts) walkthrough.
@@ -4501,9 +4496,32 @@ def _step6_property_question(pending_props, recent_text, will_data):
             if total != 100:
                 deduced = []
 
+    # 🔥 §10x.45 — compute progress across ALL gift kinds (not just
+    # properties) so the user sees TRUE walkthrough position.
+    _client_id_local = (will_data or {}).get('client_id') or ''
+    n_total_pending = len(pending_props)
+    progress_suffix = ''
+    if _client_id_local:
+        try:
+            from services.gift_walker import get_pending_gift_documents as _gpd
+            pg = _gpd(_client_id_local) or {}
+            n_props_total = len(pg.get('property') or [])
+            n_banks_total = len(pg.get('bank') or [])
+            n_ins_total   = len(pg.get('insurance') or [])
+            n_total_all = n_props_total + n_banks_total + n_ins_total
+            this_idx = max(1, n_props_total - len(pending_props) + 1)
+            progress_suffix = (
+                f" — Property {this_idx} of {n_props_total}"
+                f" ({n_total_all} total: {n_props_total} props · "
+                f"{n_banks_total} banks · {n_ins_total} insurance)")
+        except Exception:
+            progress_suffix = f" — {len(pending_props)} property left"
+
     quick: List[Dict[str, str]] = []
+    # 🔥 §10x.45 — header carries position; body skips re-stating address
+    # (property name already in `formatted` below).
     parts = [
-        f"### 🏠 Specific Gift ({len(pending_props)} left) — {addr_label}",
+        f"### 🏠 Specific Gift{progress_suffix}",
         formatted,
     ]
 
