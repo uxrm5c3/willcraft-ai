@@ -1,6 +1,6 @@
 """§10x.39 FUCK LIST verification — programmatically check each entry.
 Runs against KOID test fixture. Exit code 0 = all pass, !=0 = regression."""
-import sys, json, re
+import sys, json, re, os
 sys.path.insert(0, '/app')
 from app import app, Client, Document, Person, Will, _current_stage_num
 
@@ -159,19 +159,27 @@ with app.app_context():
     check('template_filler.py exists',
           os.path.isfile('/app/documents/template_filler.py'))
 
-    # #19 §10x.9 + §10x.28 — no duplicate cards
-    print('\n#19 §10x.9 + §10x.28 no duplicate cards')
+    # #19 §10x.9 + §10x.28 — no DUPLICATE cards (1 per inbound email)
+    # Each inbound email may produce up to 1 intake + 1 AI summary.
+    # Multiple emails = multiple cards is correct (1 per email).
+    print('\n#19 §10x.9 + §10x.28 no duplicate cards (1 per email)')
     from app import ChatSession, ChatMessage
     sess = ChatSession.query.filter_by(client_id=c.id).first()
     if sess:
+        msgs_with_att = [m for m in ChatMessage.query.filter_by(
+            session_id=sess.id, role='user').all()
+            if json.loads(m.attachments_json or '[]')]
+        n_emails = len(msgs_with_att)
         intakes = ChatMessage.query.filter_by(session_id=sess.id, role='assistant'
                   ).filter(ChatMessage.content.ilike('%exhibits received%')
                   ).count()
         sums = ChatMessage.query.filter_by(session_id=sess.id, role='assistant'
                   ).filter(ChatMessage.content.ilike('%AI Summary of your message%')
                   ).count()
-        check(f'intake cards {intakes} ≤ 1', intakes <= 1)
-        check(f'AI summary cards {sums} ≤ 1', sums <= 1)
+        check(f'intake cards {intakes} ≤ inbound emails {n_emails}',
+              intakes <= n_emails)
+        check(f'AI summary cards {sums} ≤ inbound emails {n_emails}',
+              sums <= n_emails)
 
     # #20 §10x.26 — vision retry terminal state
     print('\n#20 §10x.26 vision retry terminal state')
@@ -184,6 +192,14 @@ with app.app_context():
     print('\n#21 §10x.33 audit script in REPO')
     check('services/asset_audit.py committed',
           os.path.isfile('/app/services/asset_audit.py'))
+
+    # #22 §10x.41 — Person rows MUST have a relationship
+    print('\n#22 §10x.41 every Person has a non-empty relationship')
+    bad_persons = [p for p in persons if not (p.relationship or '').strip()]
+    check(f'no Person with empty relationship',
+          len(bad_persons) == 0,
+          detail=f'ghosts: {[p.full_name for p in bad_persons]}'
+                 if bad_persons else 'all roles set')
 
     # ── Summary ──────────────────────────────────────────────────
     print('\n' + '═' * 72)

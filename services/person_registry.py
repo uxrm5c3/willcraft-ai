@@ -24,34 +24,56 @@ def ensure_person(client_id, name, nric='', address='', relationship='',
                   dob='', nationality='Malaysian', document_id=None):
     """Create or update a Person for this client and return its id.
 
-    Matches existing persons by exact full_name (per client). Empty fields
-    on the existing row are filled in opportunistically; existing values
-    are never overwritten.
+    🔥 §10x.41 — RELATIONSHIP IS REQUIRED FOR NEW PERSONS.
+    A Person must have a role (Testator / Spouse / Son / Daughter /
+    Father / Mother / Brother / Sister / Sister-in-law / Brother-in-law
+    / etc.). Saving a Person with `relationship=None` produces ghost
+    identities the chat / wizard / will can't bind to anything.
+
+    For NEW rows: if relationship is empty, the function REFUSES to
+    create the Person and returns None. Caller must ask the user for
+    the role first.
+    For EXISTING rows: opportunistic fill remains — empty fields get
+    populated, populated fields stay (never overwrite).
     """
     if not name or not name.strip():
         return None
     nric = (nric or '').strip()
     clean_name = name.strip()
+    rel = (relationship or '').strip()
     existing = Person.query.filter_by(client_id=client_id, full_name=clean_name).first()
     if existing:
         if not existing.nric_passport and nric:
             existing.nric_passport = nric
         if not existing.address and address:
             existing.address = address
-        if not existing.relationship and relationship:
-            existing.relationship = relationship
+        if not existing.relationship and rel:
+            existing.relationship = rel
         if not existing.date_of_birth and dob:
             existing.date_of_birth = normalise_dob(dob)
         if document_id and not existing.document_id:
             existing.document_id = document_id
         db.session.flush()
         return existing.id
+    # 🔥 §10x.41 — REFUSE to create a new Person without a role.
+    # Returning None forces the caller to surface a role-question card
+    # to the user instead of silently creating a ghost identity.
+    if not rel:
+        try:
+            from flask import current_app
+            current_app.logger.warning(
+                f"§10x.41 ensure_person REFUSED: no relationship for {clean_name!r} "
+                f"(client_id={client_id}). Caller must ask user for role first."
+            )
+        except Exception:
+            pass
+        return None
     new_p = Person(
         client_id=client_id,
         full_name=clean_name,
         nric_passport=nric,
         address=address or None,
-        relationship=relationship or None,
+        relationship=rel,
         date_of_birth=normalise_dob(dob) or None,
         nationality=nationality or 'Malaysian',
         document_id=document_id,

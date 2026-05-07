@@ -3990,6 +3990,66 @@ For every gift card displayed:
 
 ---
 
+### 10x.41  🔥🔥 BURN-IN — Person rows MUST have a relationship 🔥🔥
+
+**`ensure_person` REFUSES to create a new Person with empty
+`relationship`. A role is required. No exceptions. Ghost identities
+(rows with name but no role) corrupt the wizard, the chat, and the
+generated will.**
+
+### Why this rule exists
+
+User report: identity list showed "ESTHER KOID EN HUI / JOSHUA KOID
+TECK SENG" with no role displayed. The Person rows themselves had
+roles (Daughter / Son), but a different code path was capable of
+creating future Person rows WITHOUT a role — a silent footgun.
+
+### Enforcement
+
+`services/person_registry.py::ensure_person`:
+
+```python
+if not rel:                     # NEW Person with no relationship
+    log.warning(f"§10x.41 REFUSED: no relationship for {name}")
+    return None
+# Existing rows: opportunistic fill of empty fields (never overwrite)
+```
+
+A `None` return tells the caller "I would not save this — ask the
+user for the role first." The chat planner should react by surfacing
+a role-pick card; the wizard should re-prompt.
+
+### Hard rules
+
+1. **Every NEW Person row has a non-empty `relationship`.** Period.
+2. **EXISTING rows: never overwrite a non-empty role**, but DO fill
+   in empty fields opportunistically.
+3. **If a caller can't determine the role**, it MUST ask the user
+   first. Never call `ensure_person(..., relationship='')` and hope.
+4. **Log when refused** — silent skips are debt. The warning trail
+   helps catch new code paths that violate the rule.
+
+### Where this is enforced
+
+| File | Function | Mechanism |
+|------|----------|-----------|
+| `services/person_registry.py` | `ensure_person` | Returns `None` on empty relationship for NEW rows |
+| `app.py` | callers of `ensure_person` | Must check return for None and act on it |
+
+### Litmus test
+
+```sql
+SELECT id, full_name, relationship FROM persons
+ WHERE relationship IS NULL OR relationship = '';
+-- Expected: 0 rows
+```
+
+If any rows are returned, §10x.41 has been violated. Either the role
+was lost in update, or a code path bypassed `ensure_person`. Trace
+back to source and fix.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
