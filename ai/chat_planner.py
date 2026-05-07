@@ -727,10 +727,20 @@ def _parse_ai_summary_text(text: str) -> List[Dict[str, Any]]:
     # "Property N — / -". Sub-bullets that begin a sub-field don't
     # qualify; they're lines that start with "-" but follow a parent
     # block.
+    # Markers we recognise (any of these starts a NEW property block):
+    #   "•" bullet, "*" bullet (markdown), "**Property N:" markdown-bold,
+    #   "Property N:" plain, "Property N —" em-dash.
     blocks = re.split(
-        r'(?:\n\s*•\s+|\n\s*\*\s+|\n\s*Property\s+\d+\s*[:\-—]\s+)',
+        r'\n\s*(?:'
+        r'•\s+'
+        r'|\*\*\s*Property\s+\d+\s*[:\-—]\s*'
+        r'|\*\s+'
+        r'|Property\s+\d+\s*[:\-—]\s+'
+        r')',
         '\n' + body,
     )
+    # Drop residual markdown bold markers
+    blocks = [re.sub(r'\*\*', '', b).strip() for b in blocks]
     out: List[Dict[str, Any]] = []
     for blk in blocks:
         blk = (blk or '').strip()
