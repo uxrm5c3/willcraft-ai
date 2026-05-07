@@ -4506,34 +4506,98 @@ def _step6_property_question(pending_props, recent_text, will_data):
     ]
 
     # 🔥 §10x.36 / §10x.35 / §9 — ALWAYS show the message line that names
-    # this property so the user can see what they wrote about it. Even
-    # when no beneficiary deduction was possible, the snippet anchors
-    # the card to the user's own words.
+    # this property so the user can see what they wrote about it.
     msg_snippet = _find_property_message_snippet(p, recent_text or '')
     if msg_snippet:
         parts.append(f"📨 _from your message:_\n> {msg_snippet}")
 
     if evidence_block:
         parts.append(f"**📎 Based on these uploads:**\n{evidence_block}")
-    parts.append("**Who is the main beneficiary for this property?**")
 
+    # 🔥 §10x.40 — Confidence-driven beneficiary buttons.
+    # HIGH    : ONE pre-suggested button + manual override + skip/remove.
+    # MEDIUM  : 3 alternative distributions (top suggestion + 2 alternates).
+    # LOW     : 3 distribution options (no auto-suggestion possible).
+    # User MUST always confirm — we NEVER auto-save.
+    confidence = 'low'
     if deduced:
-        primary_value = ', '.join(f"{d['name']} {d['share']}" for d in deduced)
-        primary_label = '✓ ' + ', '.join(f"{d['name'].title()} {d['share']}" for d in deduced)
-        ev_lines = '\n'.join(f"  • _{d['evidence']}_" for d in deduced)
-        parts.append(f"📧 **Suggested from email:**\n{ev_lines}")
-        quick.append({'label': primary_label, 'value': primary_value})
+        deduced_names = {d['name'].upper() for d in deduced}
+        candidate_set = {c.upper() for c in candidates}
+        # HIGH: every deduced beneficiary is in our candidate list AND
+        # the total share is exactly 100% (after testator-share rescale)
+        all_in_candidates = deduced_names.issubset(candidate_set)
+        try:
+            total = sum(int(d['share'].rstrip('%')) for d in deduced)
+        except Exception:
+            total = 0
+        if all_in_candidates and total == 100:
+            confidence = 'high'
+        else:
+            confidence = 'medium'
 
-    for n in candidates[:4]:
-        if deduced and any(d['name'].upper() == n.upper() for d in deduced):
-            continue
-        quick.append({'label': f"{n.title()} 100%", 'value': f"{n} 100%"})
-    if len(candidates) >= 2 and not deduced:
-        a, b = candidates[0], candidates[1]
-        quick.append({'label': f"{a.title()} 50% + {b.title()} 50%",
-                      'value': f"{a} 50%, {b} 50%"})
-    quick.append({'label': '⏭ Skip this gift', 'value': 'skip'})
-    quick.append({'label': '🗑 Remove', 'value': 'delete'})
+    if confidence == 'high':
+        primary_value = ', '.join(f"{d['name']} {d['share']}" for d in deduced)
+        primary_label = '✓ Confirm — ' + ', '.join(
+            f"{d['name'].title()} {d['share']}" for d in deduced)
+        ev_lines = '\n'.join(f"  • _{d['evidence']}_" for d in deduced)
+        parts.append(
+            f"🎯 **HIGH confidence** — your message clearly states:\n"
+            f"{ev_lines}\n\n"
+            f"_Click Confirm to save this distribution. You can still "
+            f"override with a different split if needed._")
+        quick.append({'label': primary_label, 'value': primary_value})
+        quick.append({'label': '✏️ Different — type manually',
+                      'value': 'manual'})
+        quick.append({'label': '⏭ Skip this gift', 'value': 'skip'})
+        quick.append({'label': '🗑 Remove', 'value': 'delete'})
+
+    elif confidence == 'medium':
+        # Show suggested + 2 alternates
+        primary_value = ', '.join(f"{d['name']} {d['share']}" for d in deduced)
+        primary_label = '⭐ ' + ', '.join(
+            f"{d['name'].title()} {d['share']}" for d in deduced) + ' (suggested)'
+        ev_lines = '\n'.join(f"  • _{d['evidence']}_" for d in deduced)
+        parts.append(
+            f"⚠️ **MEDIUM confidence** — partial match from your message:\n"
+            f"{ev_lines}\n\n"
+            f"_Pick the option that matches your intent — confirm before "
+            f"we save._")
+        quick.append({'label': primary_label, 'value': primary_value})
+        # Alt 1: equal split between top 2 candidates
+        if len(candidates) >= 2:
+            a, b = candidates[0], candidates[1]
+            quick.append({'label': f"{a.title()} 50% + {b.title()} 50% (equal)",
+                          'value': f"{a} 50%, {b} 50%"})
+        # Alt 2: 100% to first non-deduced candidate
+        deduced_upper = {d['name'].upper() for d in deduced}
+        for n in candidates:
+            if n.upper() not in deduced_upper:
+                quick.append({'label': f"{n.title()} 100%",
+                              'value': f"{n} 100%"})
+                break
+        quick.append({'label': '✏️ Type manually', 'value': 'manual'})
+        quick.append({'label': '⏭ Skip', 'value': 'skip'})
+        quick.append({'label': '🗑 Remove', 'value': 'delete'})
+
+    else:   # LOW — no clean deduction
+        parts.append(
+            "🤔 **No clear distribution in your message** for this "
+            "property. Pick the most likely option — your confirmation "
+            "is required before we save:")
+        if len(candidates) >= 2:
+            a, b = candidates[0], candidates[1]
+            quick.append({'label': f"{a.title()} 50% + {b.title()} 50% (equal)",
+                          'value': f"{a} 50%, {b} 50%"})
+            quick.append({'label': f"{a.title()} 100%",
+                          'value': f"{a} 100%"})
+            quick.append({'label': f"{b.title()} 100%",
+                          'value': f"{b} 100%"})
+        elif candidates:
+            quick.append({'label': f"{candidates[0].title()} 100%",
+                          'value': f"{candidates[0]} 100%"})
+        quick.append({'label': '✏️ Type manually', 'value': 'manual'})
+        quick.append({'label': '⏭ Skip', 'value': 'skip'})
+        quick.append({'label': '🗑 Remove', 'value': 'delete'})
 
     text = '\n\n'.join(parts) + _qr_marker(quick)
     return {'text': text, 'focus_doc_id': p.get('document_id')}

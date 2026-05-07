@@ -3894,6 +3894,102 @@ Audits + permanent rules are the only way to keep bugs DEAD.
 
 ---
 
+### 10x.40  🔥🔥 BURN-IN — Confidence-driven buttons + USER MUST CONFIRM 🔥🔥
+
+**Cards NEVER auto-save. The user must click to confirm. Number of
+options shown depends on confidence:**
+- **HIGH**: ONE pre-suggested button (default) + manual-override escape
+- **MEDIUM**: 3 options (suggested + 2 alternates)
+- **LOW**: 3 distribution options (no auto-suggestion possible)
+
+### Why this rule exists
+
+User explicitly said:
+> "MUST VERIFY, Give the most likely option as default option first,
+>  MUST ALWAYS GET USER TO CONFIRM. if confidence very high, no need
+>  to give other option but must still confirm by user. If confidence
+>  is medium or low, must give 3 options"
+
+### Confidence definition
+
+For property/bank/insurance gift cards (Layer 2 — main beneficiary):
+
+| Tier | Trigger |
+|------|---------|
+| **HIGH** | Deduced beneficiaries from message ALL appear in candidate list AND total share rescales to exactly 100% per §10x.13 |
+| **MEDIUM** | Partial deduction — some beneficiaries match but total != 100%, or names not in candidate set |
+| **LOW** | No deduction at all; message text is silent on this property's distribution |
+
+### Card layout per tier
+
+**HIGH:**
+```
+🎯 HIGH confidence — your message clearly states:
+  • Joshua Koid Teck Seng 50% — _from "Joshua...25percent"_
+  • Esther Koid En Hui 50% — _from "...25percent to Esther"_
+
+Click Confirm to save this distribution. You can still override.
+
+[ ✓ Confirm — Joshua 50%, Esther 50% ]
+[ ✏️ Different — type manually ]
+[ ⏭ Skip this gift ]   [ 🗑 Remove ]
+```
+
+**MEDIUM:**
+```
+⚠️ MEDIUM confidence — partial match from your message:
+  • Joshua Koid Teck Seng 50%
+
+Pick the option that matches your intent — confirm before we save.
+
+[ ⭐ Joshua 50%, Esther 50% (suggested) ]
+[ Joshua 50% + Esther 50% (equal) ]
+[ Joshua 100% ]
+[ ✏️ Type manually ]
+[ ⏭ Skip ]   [ 🗑 Remove ]
+```
+
+**LOW:**
+```
+🤔 No clear distribution in your message for this property. Pick the
+most likely option — your confirmation is required before we save:
+
+[ Joshua 50% + Esther 50% (equal) ]
+[ Joshua 100% ]
+[ Esther 100% ]
+[ ✏️ Type manually ]
+[ ⏭ Skip ]   [ 🗑 Remove ]
+```
+
+### Hard rules
+
+1. **NEVER auto-save.** Even HIGH-confidence cards REQUIRE a user click.
+2. **HIGH = 1 primary button** to keep the path obvious. Override is
+   one click away ("Different — type manually") but isn't competing
+   for attention with 4 distractor buttons.
+3. **MEDIUM/LOW = 3 distribution options** so the user has real
+   choice without typing.
+4. **Manual-type escape always available** — if our buttons don't
+   match what they want, one click to type freely.
+
+### Where this is enforced
+
+| File | Function | Mechanism |
+|------|----------|-----------|
+| `ai/chat_planner.py` | `_step6_property_question` | Confidence classification + tiered button layout |
+| `ai/chat_planner.py` | bank/insurance Layer-2 cards | Same pattern (TODO: extend) |
+
+### Litmus test
+
+```
+For every gift card displayed:
+  - Is the # of beneficiary buttons {1, 3, 4} based on confidence tier?  → ✓
+  - Is HIGH-confidence card showing 4+ buttons distractors?               → ✗ §10x.40 broke
+  - Did anything auto-save without a user click?                          → ✗ §10x.40 broke
+```
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
