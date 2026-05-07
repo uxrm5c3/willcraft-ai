@@ -39,6 +39,23 @@ ssh ubuntu@47.130.249.28 "cd ~/willcraft && \
   docker compose up -d web"
 ```
 
+### 🔥 §10x.49 — POST-DEPLOY AUDIT GATE (mandatory for matching code)
+
+Every deploy that touches `services/asset_pipeline.py`,
+`services/gift_walker.py`, `ai/chat_planner.py`, or any `app.py` saver
+MUST end with the audit gate:
+
+```bash
+ssh ubuntu@47.130.249.28 "docker exec willcraft-web python /app/tests/step6/run_audit.py"
+# Exit 0 = all fixtures pass §10x.48 + §10x.49
+# Exit 1 = ROLLBACK — do NOT consider the deploy done
+```
+
+If audit fails, the next step is `git revert <bad-commit>` + redeploy
+or fix the matcher and re-run audit. Never declare "deployed" with a
+red audit. This is the rule that prevents "I tested it locally" from
+shipping a regression.
+
 ### Why restart fails
 The Docker image is **baked at build time**. `docker compose restart` reuses the existing image — your code change is not in it. You MUST rebuild.
 
