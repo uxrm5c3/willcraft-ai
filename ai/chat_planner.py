@@ -753,13 +753,15 @@ def _parse_ai_summary_text(text: str) -> List[Dict[str, Any]]:
     # block.
     # Markers we recognise (any of these starts a NEW property block):
     #   "•" bullet, "*" bullet (markdown), "**Property N:" markdown-bold,
-    #   "Property N:" plain, "Property N —" em-dash.
+    #   "Property N:" plain, "Property N —" em-dash, "Property N –" en-dash.
+    # Note: dash chars include hyphen "-", em-dash "—" U+2014, en-dash "–"
+    # U+2013, minus "−" U+2212. Claude/AI summary may use any of these.
     blocks = re.split(
         r'\n\s*(?:'
         r'•\s+'
-        r'|\*\*\s*Property\s+\d+\s*[:\-—]\s*'
+        r'|\*\*\s*Property\s+\d+\s*[:\-—–−]\s*'
         r'|\*\s+'
-        r'|Property\s+\d+\s*[:\-—]\s+'
+        r'|Property\s+\d+\s*[:\-—–−]\s+'
         r')',
         '\n' + body,
     )
