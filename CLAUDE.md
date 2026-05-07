@@ -2842,6 +2842,70 @@ the chat-planner.
 
 ---
 
+### 10x.31  🔥🔥 BURN-IN — Skip is a NO-OP. Only Yes / Delete advance. 🔥🔥
+
+**Rule from user (May 2026): "if skip, show back again until user
+select delete. then only go to next step"**.
+
+The Step 1 IC walkthrough has THREE buttons:
+```
+[ ✓ Yes — <role> ]   [ Skip ]   [ 🗑 Delete ]
+```
+
+Each button does exactly one thing:
+
+| Click | Effect | Walkthrough advances? |
+|-------|--------|------------------------|
+| **✓ Yes** | Creates the Person row with the chosen family relationship; the Document is linked. | ✓ YES — IC removed from pending |
+| **Skip** | NO-OP. Just bumps `_skip_count` in extracted_data. The SAME IC is asked AGAIN on the next turn. | ✗ NO — same card re-shows |
+| **🗑 Delete** | Soft-deletes the Document (`category='deleted'`) and any duplicates of the same person. | ✓ YES — IC removed from pending |
+
+### Why this rule exists
+
+Earlier behaviour wrote `_chat_skipped=True` on Skip click and dismissed
+the IC FOREVER. One mis-click would silently drop a family member from
+the will. That's a probate-critical data loss — not acceptable.
+
+New behaviour: Skip means "I saw the card but I'm not ready to decide."
+The IC stays in queue. The user MUST consciously choose between
+"this is a real family member" (Yes) or "this is the wrong upload"
+(Delete) before advancing. No silent dismissal.
+
+### Chat ack copy
+
+After a Skip:
+- Skips < 3:  `🔁 Asking again about <NAME> — click ✓ Yes to confirm
+              the relationship or 🗑 Delete to remove this IC.`
+- Skips ≥ 3:  `🔁 You've skipped <NAME> 3 times. To move past this card,
+              click ✓ Yes to assign a relationship or 🗑 Delete if it's
+              the wrong upload.`
+
+The increased nag at 3+ skips signals that the user is stuck and
+needs to pick one of the two productive paths.
+
+### Where this is enforced
+
+| File | Function | Mechanism |
+|------|----------|-----------|
+| `services/identity_walker.py` | `skip_pending_ic_document` | Sets `_skip_count` only; does NOT set `_chat_skipped` |
+| `services/identity_walker.py` | `get_pending_ic_documents` | Filter respects `_chat_skipped` for legacy/Delete-companion docs only |
+| `app.py` | `_try_skip_pending_identity` | Returns `kind='identity_skipped'` + `skip_count` |
+| `ai/chat_planner.py` | `_wrap` ack | "Asking again about X" copy with escalating language at ≥3 skips |
+
+### The litmus test
+
+```
+Q: User clicks Skip 5 times on Joshua's IC card.
+   - Joshua's card re-renders 5 times       → ✓ ship
+   - Joshua disappears from queue           → ✗ §10x.31 regressed
+```
+
+If a Skip ever causes an IC to leave the queue, the bug is in
+`skip_pending_ic_document` (it shouldn't write `_chat_skipped`) or
+in `get_pending_ic_documents` (it shouldn't add a new exclusion gate).
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

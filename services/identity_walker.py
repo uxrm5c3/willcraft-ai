@@ -176,7 +176,9 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
       - it's already linked to a Person (document_id match), OR
       - any Person already exists with the same extracted name, OR
       - any Person already exists with the same extracted NRIC, OR
-      - user already skipped it this session (_chat_skipped flag in extracted_data).
+      - user soft-deleted it via the chat 🗑 button (_chat_skipped flag —
+        kept in code for backward compat with old skipped docs; new Skip
+        clicks no longer set this flag, see §10x.31).
 
     🔥 §10e (identity edition) — pending list is sorted by deduction
     confidence DESC: ICs whose relationship is OBVIOUS from the message
@@ -303,9 +305,18 @@ def _outsider_eliminated_names(client_id: str) -> set:
 
 
 def skip_pending_ic_document(client_id: str) -> Optional[Dict[str, Any]]:
-    """Mark the next pending IC document as skipped so the walkthrough
-    moves past it. Sets extracted_data['_chat_skipped'] = True.
-    Returns {'name', 'action': 'skipped'} or None if nothing pending."""
+    """🔥 §10x.31 — Skip is now a NO-OP that just acknowledges the user
+    saw the card. The same IC is shown AGAIN on the next turn until the
+    user either:
+        (a) confirms a relationship  ✓ Yes — <role>
+        (b) deletes the IC           🗑 Delete
+
+    Earlier behaviour wrote `_chat_skipped=True` and dismissed the IC
+    forever, which let users accidentally drop family members from the
+    will (one mis-click → that person is gone). Per user instruction
+    (May 2026): "if skip, show back again until user select delete.
+    then only go to next step".
+    """
     pending = get_pending_ic_documents(client_id)
     if not pending:
         return None
@@ -319,28 +330,17 @@ def skip_pending_ic_document(client_id: str) -> Optional[Dict[str, Any]]:
         ex = _json.loads(doc.extracted_data) if doc.extracted_data else {}
     except (ValueError, TypeError):
         ex = {}
-    ex['_chat_skipped'] = True
+    # 🔒 §10x.31 — DO NOT set _chat_skipped. Same IC shows again next turn.
+    # We DO bump a "skip count" so the chat can offer extra hints after
+    # repeated skips ("Are you sure? Click Delete if this is the wrong upload").
+    ex['_skip_count'] = int(ex.get('_skip_count') or 0) + 1
     doc.extracted_data = _json.dumps(ex)
-    # Also mark any other nric docs with same name or nric as skipped
-    name_key = (ex.get('full_name') or '').strip().upper()
-    nric_key = (ex.get('nric_number') or '').strip().upper()
-    if name_key or nric_key:
-        all_nric = Document.query.filter_by(client_id=client_id, category='nric').all()
-        for d in all_nric:
-            if d.id == doc.id:
-                continue
-            try:
-                dex = _json.loads(d.extracted_data) if d.extracted_data else {}
-            except (ValueError, TypeError):
-                dex = {}
-            d_name = (dex.get('full_name') or '').strip().upper()
-            d_nric = (dex.get('nric_number') or '').strip().upper()
-            if (name_key and d_name and name_key == d_name) or \
-               (nric_key and d_nric and nric_key == d_nric):
-                dex['_chat_skipped'] = True
-                d.extracted_data = _json.dumps(dex)
+    # 🔒 §10x.31 — Do NOT skip duplicate ICs either. Skip = no-op.
+    # The user must Confirm or Delete to advance.
     label = (ex.get('full_name') or target.get('original_filename', 'this IC')).strip()
-    return {'name': label, 'action': 'skipped', 'document_id': target['document_id']}
+    return {'name': label, 'action': 'skipped',
+             'document_id': target['document_id'],
+             'skip_count': ex.get('_skip_count', 1)}
 
 
 def link_duplicate_ic_documents(client_id: str, person):

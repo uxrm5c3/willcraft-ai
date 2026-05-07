@@ -9011,6 +9011,7 @@ def _try_skip_pending_identity(client_id: str, user_text: str):
         'name': result['name'],
         'role': 'skipped',
         'kind': 'identity_skipped',
+        'skip_count': result.get('skip_count', 1),
     }
 
 

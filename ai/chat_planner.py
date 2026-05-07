@@ -115,9 +115,23 @@ def plan_turn(
                 "✅ Kept all supporting docs as-is. Back to the property:"
             )
         elif just_kind == 'identity_skipped':
-            reply_parts.append(
-                f"⏭ Skipped **{just_assigned.get('name','')}** — moving to next."
-            )
+            # 🔥 §10x.31 — Skip is a no-op. Same IC reappears below.
+            # Phrase the ack so the user understands they need to either
+            # confirm or delete to actually move on.
+            sc = int(just_assigned.get('skip_count') or 1)
+            if sc >= 3:
+                reply_parts.append(
+                    f"🔁 You've skipped **{just_assigned.get('name','')}** "
+                    f"{sc} times. To move past this card, click **✓ Yes** "
+                    f"to assign a relationship or **🗑 Delete** if it's the "
+                    f"wrong upload."
+                )
+            else:
+                reply_parts.append(
+                    f"🔁 Asking again about **{just_assigned.get('name','')}** "
+                    f"— click **✓ Yes** to confirm the relationship or "
+                    f"**🗑 Delete** to remove this IC."
+                )
         else:
             reply_parts.append(
                 f"✅ Saved **{just_assigned.get('name','')}** as **{just_assigned.get('role','')}**."
