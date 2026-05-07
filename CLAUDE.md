@@ -4878,6 +4878,102 @@ violated. The verifier MUST fail on the corresponding invariant.
 
 ---
 
+### 10x.49  🔥🔥🔥🔥🔥 BURN-IN — SELF-VALIDATING PIPELINE + AUDIT GATE 🔥🔥🔥🔥🔥
+
+**The §10x.48 pipeline validates its own output at runtime via
+`services/asset_pipeline.py::ContractViolation`. The audit gate
+(`tests/step6/run_audit.py`) runs the pipeline + reset+walk+verifier
+against every committed fixture. NO DEPLOY of matching code is allowed
+without `run_audit.py` exiting 0.**
+
+### Why this exists
+
+Across this session I declared "PASS" three separate times on runs that
+did not exercise the matching path. Each PASS was technically true for
+the assertion it checked but missed the bigger contract. §10x.49 makes
+it impossible to silently violate §10x.48 — the runtime catches the
+breach, the audit catches the broken fixture, the pre-deploy gate
+refuses to ship.
+
+### Three layers
+
+1. **Runtime — `ContractViolation`**
+   Each Stage's output is asserted via `_assert_stageN(...)` before
+   the next Stage runs. Specific violations:
+     - Stage 0: duplicate `ai_index`, invalid kind
+     - Stage 1: a Document in two DocGroups, orphan Document, empty group
+     - Stage 2: more bindings than AssetItems, group_id bound twice
+       (one-claim-only), tier D with non-null group_id, tier A/B/C with
+       null group_id
+     - Stage 4: gift count mismatch, address dropped when message stated
+       it, lot/title dropped, missing `_match_via`
+   Production code that catches `ContractViolation` and silently swallows
+   it is itself a contract violation — surface it to the chat / audit /
+   user. (`except Exception:` near a pipeline call is forbidden — narrow
+   the except.)
+
+2. **Audit — `tests/step6/run_audit.py`**
+   For every fixture in the `FIXTURES` list:
+     a. `run_pipeline(client_id)` — must complete without ContractViolation
+     b. `reset_step6.py` — clean state
+     c. `walk_step6.py` — drive the chat to completion
+     d. `verify_step6.py` — branched on fixture_mode, R1-R12 strict
+   Audit exits 0 only if ALL fixtures pass ALL stages.
+
+3. **Deploy gate — call run_audit before docker compose build**
+   The autonomous /loop's success condition is `run_audit.py exit 0`,
+   not just `verify_step6.py exit 0`. Anyone deploying matching code
+   manually MUST run:
+   ```bash
+   ssh ubuntu@... "docker exec willcraft-web python /app/tests/step6/run_audit.py"
+   ```
+   and confirm exit 0. A green `verify_step6.py` on one fixture proves
+   nothing.
+
+### Adding a new fixture
+
+A new fixture must:
+1. Live in `tests/step6/fixtures/<name>.py` with a `seed_fixture(client_id)` function
+2. Be added to `FIXTURES` in `run_audit.py` with its expected `fixture_mode`
+3. Pass on first audit run before the PR is merged. If it fails on first
+   run, either the fixture is wrong or the matcher is broken — fix the
+   broken side, never relax the verifier.
+
+### Why narrow except clauses matter
+
+Many bugs in this session stemmed from `try: ... except Exception: pass`
+near pipeline calls. The classifier's H3 false-match (§10x.46 R6),
+the saver's silent address drop, the parser's bogus 6th property — all
+would have been caught earlier if a `ContractViolation` had been allowed
+to surface. From now on, around any `services.asset_pipeline` call:
+
+```python
+# WRONG — swallows ContractViolation, hides §10x.48 bugs
+try:
+    r = run_pipeline(cid)
+except Exception:
+    r = None
+
+# RIGHT — narrow except keeps contract violations visible
+from services.asset_pipeline import ContractViolation
+try:
+    r = run_pipeline(cid)
+except ContractViolation:
+    raise              # ALWAYS re-raise — let it surface
+except (DatabaseError, ConnectionError):
+    r = None           # only catch genuinely transient errors
+```
+
+### What the user said that anchored this rule
+
+> "make sure implementation is robust and NEVER FUCK THIS UP AGAIN"
+
+The only way to guarantee that is to make the system enforce the
+contract itself. Code review forgets, Claude sessions forget, but the
+pipeline raises every time bad data flows through it.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

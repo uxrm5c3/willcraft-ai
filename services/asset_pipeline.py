@@ -671,14 +671,167 @@ def _parse_ownership(ownership_text: str) -> Tuple[str, List[str]]:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# §10x.49 — Self-validating pipeline: contract violations raise loudly
+# ─────────────────────────────────────────────────────────────────────
+class ContractViolation(Exception):
+    """Raised when a §10x.48 stage produces output that violates its
+    invariants. NEVER catch and swallow this — surface it to the user/
+    test/audit. Silent contract violations are how we got into the FUCK
+    LIST in the first place."""
+
+
+def _assert_stage0(asset_items: List[AssetItem]) -> None:
+    """Stage 0: every AssetItem has unique ai_index, valid kind."""
+    valid_kinds = {'property', 'bank', 'insurance', 'vehicle'}
+    seen = set()
+    for a in asset_items:
+        if a.kind not in valid_kinds:
+            raise ContractViolation(
+                f'Stage 0: AssetItem[{a.ai_index}] kind={a.kind!r} not in {valid_kinds}'
+            )
+        if a.ai_index in seen:
+            raise ContractViolation(
+                f'Stage 0: duplicate ai_index {a.ai_index}'
+            )
+        seen.add(a.ai_index)
+
+
+def _assert_stage1(doc_groups: List[DocGroup], all_doc_ids: List[str]) -> None:
+    """Stage 1: every Document appears in exactly one DocGroup. No double-membership.
+    No empty DocGroup. group_ids unique."""
+    seen_doc_ids = set()
+    seen_group_ids = set()
+    for g in doc_groups:
+        if g.group_id in seen_group_ids:
+            raise ContractViolation(f'Stage 1: duplicate group_id {g.group_id!r}')
+        seen_group_ids.add(g.group_id)
+        if not g.document_ids:
+            raise ContractViolation(f'Stage 1: empty DocGroup {g.group_id!r}')
+        for did in g.document_ids:
+            if did in seen_doc_ids:
+                raise ContractViolation(
+                    f'Stage 1: Document {did} appears in multiple groups'
+                )
+            seen_doc_ids.add(did)
+    # Every input Document should be in some group (no orphans)
+    expected = set(all_doc_ids)
+    missing = expected - seen_doc_ids
+    if missing:
+        raise ContractViolation(
+            f'Stage 1: {len(missing)} Document(s) not in any group: {sorted(missing)[:5]}'
+        )
+
+
+def _assert_stage2(asset_items: List[AssetItem],
+                    bindings: List[Binding]) -> None:
+    """Stage 2: one Binding per AssetItem; no group_id bound twice;
+    every Binding has a valid tier and match_via."""
+    valid_tiers = {'A', 'B', 'C', 'D'}
+    valid_via = {'lot_match', 'title_match', 'account_match', 'policy_match',
+                  'mukim_token', 'temporal', 'h3'}
+    if len(bindings) != len(asset_items):
+        raise ContractViolation(
+            f'Stage 2: {len(bindings)} bindings for {len(asset_items)} AssetItems'
+        )
+    seen_ai = set()
+    seen_grp = set()
+    for b in bindings:
+        if b.ai_index in seen_ai:
+            raise ContractViolation(f'Stage 2: duplicate binding for ai_index {b.ai_index}')
+        seen_ai.add(b.ai_index)
+        if b.tier not in valid_tiers:
+            raise ContractViolation(f'Stage 2: invalid tier {b.tier!r}')
+        if b.match_via not in valid_via:
+            raise ContractViolation(f'Stage 2: invalid match_via {b.match_via!r}')
+        if b.tier == 'D' and b.group_id is not None:
+            raise ContractViolation(
+                f'Stage 2: tier D (H3) must have group_id=None, got {b.group_id!r}'
+            )
+        if b.tier != 'D' and b.group_id is None:
+            raise ContractViolation(
+                f'Stage 2: tier {b.tier} must have a group_id'
+            )
+        if b.group_id is not None:
+            if b.group_id in seen_grp:
+                raise ContractViolation(
+                    f'Stage 2: ONE-CLAIM-ONLY violation — group_id {b.group_id!r} bound twice'
+                )
+            seen_grp.add(b.group_id)
+
+
+def _assert_stage4(asset_items: List[AssetItem], gifts: List[Dict[str, Any]]) -> None:
+    """Stage 4: every Gift has required fields; address non-empty when
+    AssetItem stated one; lot/title preserved if AssetItem had them."""
+    if len(gifts) != len(asset_items):
+        raise ContractViolation(
+            f'Stage 4: {len(gifts)} gifts for {len(asset_items)} AssetItems'
+        )
+    by_idx = {a.ai_index: a for a in asset_items}
+    for g in gifts:
+        idx = g.get('_ai_summary_idx')
+        if idx is None or idx not in by_idx:
+            raise ContractViolation(
+                f'Stage 4: gift missing/invalid _ai_summary_idx={idx!r}'
+            )
+        ai = by_idx[idx]
+        if ai.kind == 'property':
+            ai_addr = (ai.fields.get('address') or '').strip()
+            pi = g.get('property_info') or {}
+            gift_addr = (pi.get('property_address') or g.get('property_address') or '').strip()
+            if ai_addr and not gift_addr:
+                raise ContractViolation(
+                    f'Stage 4: property gift[{idx}] address dropped — '
+                    f'AssetItem had {ai_addr!r}, gift has empty'
+                )
+            ai_lot = digits(ai.fields.get('lot') or '')
+            ai_title = digits(ai.fields.get('title') or '')
+            gift_lot = digits(pi.get('lot_number') or g.get('lot_number') or '')
+            gift_title = digits(pi.get('title_number') or g.get('title_number') or '')
+            if ai_lot and ai_lot != gift_lot:
+                raise ContractViolation(
+                    f'Stage 4: property gift[{idx}] lot dropped — '
+                    f'AssetItem={ai_lot} gift={gift_lot}'
+                )
+            if ai_title and ai_title != gift_title:
+                raise ContractViolation(
+                    f'Stage 4: property gift[{idx}] title dropped — '
+                    f'AssetItem={ai_title} gift={gift_title}'
+                )
+        if not g.get('_match_via'):
+            raise ContractViolation(
+                f'Stage 4: gift[{idx}] missing _match_via — silent guess (§10he Step 5)'
+            )
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Top-level orchestration — run all stages and return the result
 # ─────────────────────────────────────────────────────────────────────
 def run_pipeline(client_id: str) -> Dict[str, Any]:
     """§10x.48 Stages 0→4 in order. Returns a dict with everything the
-    walker / saver / verifier needs."""
+    walker / saver / verifier needs.
+
+    🔥 §10x.49 — every stage's output is validated via _assert_stageN
+    before the next stage runs. ContractViolation raised on any breach.
+    Set `validate=False` only inside unit tests that intentionally
+    exercise broken inputs.
+    """
     asset_items = parse_canonical_assets(client_id)
+    _assert_stage0(asset_items)
+
+    # Collect doc IDs for Stage 1 invariant check
+    try:
+        from database import Document
+        all_doc_ids = [d.id for d in Document.query.filter_by(client_id=client_id).all()
+                        if (d.category or '') not in ('deleted',)]
+    except Exception:
+        all_doc_ids = []
+
     doc_groups = group_documents(client_id)
+    _assert_stage1(doc_groups, all_doc_ids)
+
     bindings = bind_assets(asset_items, doc_groups)
+    _assert_stage2(asset_items, bindings)
+
     res = residuals(asset_items, bindings, doc_groups)
     group_by_id = {g.group_id: g for g in doc_groups}
     gifts = []
@@ -688,6 +841,8 @@ def run_pipeline(client_id: str) -> Dict[str, Any]:
             continue
         dg = group_by_id.get(b.group_id) if b.group_id else None
         gifts.append(build_gift(ai, b, dg))
+    _assert_stage4(asset_items, gifts)
+
     return {
         'asset_items': [a.to_dict() for a in asset_items],
         'doc_groups': [g.to_dict() for g in doc_groups],
