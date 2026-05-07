@@ -3231,6 +3231,115 @@ patch the Person row directly without also fixing the upstream gate.
 
 ---
 
+### 10x.33  🔥🔥🔥 BURN-IN — Pre-Deploy Asset Audit MUST PASS 🔥🔥🔥
+
+**Every deploy that touches `services/gift_walker.py`,
+`ai/chat_planner.py`, the property/bank/insurance handlers in `app.py`,
+or the Phek-format clause emitters MUST first run
+`services/asset_audit.py` against the KOID test client and confirm
+ZERO reconciliation errors. If any §10b / §10e / §10x.12 violation is
+flagged, the deploy is BLOCKED until the gift_walker / chat_planner
+code is fixed at source.**
+
+### Why this rule exists
+
+The user repeatedly said:
+> "this issues should have been burn, why keep resurfacing"
+
+§10b, §10e, §10x.12 were already in CLAUDE.md, but the CODE regressed
+silently between sessions. There was no automated pre-deploy gate
+checking that the rules were actually being followed. So bugs slipped
+through commits, lived in production, and only surfaced when the user
+spotted a wrong UI.
+
+### The audit script — `services/asset_audit.py`
+
+A single-file deterministic check. Takes a client NRIC or UUID,
+verifies:
+
+| Check | Rule | Failure means |
+|-------|------|---------------|
+| AI Summary property count = pending group count | §10b | Grouper over-merging or under-surfacing |
+| AI Summary bank count = pending bank group count | §10x.12 | Banks not emitted as H3 placeholders when no image uploaded |
+| AI Summary insurance count = pending insurance group count | §10x.12 | Insurance not emitted as H3 placeholders |
+| Pending property scores monotonically decrease | §10e | Sort path regressed |
+| Address-claim greedy uniqueness | §10g | Two cards bound to same address |
+| Each step5_data gift has L1+L2+L3 layers | §10x.23 | Gift not fully walked |
+
+Output:
+```
+[1] AI SUMMARY ASSET COUNTS (canonical)
+    Properties: 5  Banks: 4  Insurance: 3
+[2] PENDING GIFT WALKTHROUGH GROUPS
+    property: <N> groups (sorted by score DESC)
+    bank: <N> groups
+    insurance: <N> groups
+[3] STEP5_DATA SAVED GIFTS
+[4] RECONCILIATION CHECKS — pass/fail per rule
+```
+
+### How to run
+
+```bash
+# Locally (will use your dev DB)
+docker exec willcraft-web python /app/services/asset_audit.py 631204-07-5743
+
+# As pre-deploy gate (server)
+ssh ubuntu@47.130.249.28 "docker exec willcraft-web python \
+  /app/services/asset_audit.py 631204-07-5743" | grep -E '❌|✅'
+```
+
+The audit fixture client should be KOID BENG SUN (NRIC 631204-07-5743)
+because it has the highest variety of asset types (5 properties × 3
+strata + 2 landed, 4 banks across 2 countries, 3 insurance, sister-in-law
+executor via outsider-elimination, co-owner not in family registry).
+
+### Hard rules
+
+1. **The audit script is committed in the repo at
+   `services/asset_audit.py` — it is part of the project, NOT a
+   one-off `/tmp/` script.** If it lives only in `/tmp` it gets lost
+   between sessions. This is what kept happening before.
+
+2. **Run the audit AFTER every deploy that touches asset code.**
+   If `[4] RECONCILIATION CHECKS` reports any `❌`, file an issue with
+   the failing rule (e.g. "§10b regressed: 5 → 3 groups"). Do NOT call
+   the deploy "done" until reconciliation is clean.
+
+3. **When a new bug is found, add the check to `asset_audit.py`.**
+   Don't fix in chat-planner only — the audit MUST be the canonical
+   set of checks so future regressions are caught.
+
+4. **The audit reads from the SAME functions the chat planner uses**
+   (`get_pending_gift_documents`, `_extract_ai_summary_*`,
+   `_score_property_confidence`). If the audit passes but the chat
+   shows wrong order, the bug is in how the chat planner CALLS those
+   functions — fix at chat planner, then add a new check.
+
+### Litmus test
+
+```
+Run asset_audit.py. Either:
+  ✅ All checks pass        → deploy can ship
+  ❌ Any check fails        → deploy is blocked, fix at source first
+```
+
+Failure must include the rule (`§10b`, `§10e`, etc.), the expected
+value, and the actual value. Vague "something's wrong" failures are
+banned — every check must be explicit.
+
+### Where this rule must be referenced
+
+| Trigger | Action |
+|---------|--------|
+| Touched `services/gift_walker.py` | Run audit before commit |
+| Touched `ai/chat_planner.py` (any walkthrough fn) | Run audit before commit |
+| Touched `app.py::_try_save_*_gift` | Run audit before commit |
+| Touched `models/gift.py` (Phek format) | Run audit AND `sim_will_gen.py` |
+| New burn-in rule added | Add a check to audit |
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
