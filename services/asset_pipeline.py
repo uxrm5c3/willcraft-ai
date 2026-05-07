@@ -669,101 +669,408 @@ def _claude_semantic_match(unbound_props: List[AssetItem],
 
 
 # ─────────────────────────────────────────────────────────────────────
+# §10x.51 — Unified multi-signal candidate scorer
+# ─────────────────────────────────────────────────────────────────────
+# Replaces the rigid Tier A→B→C→D cascade with a single fused score that
+# combines: lot/title direct match + web-verified mukim/daerah + OCR
+# token overlap + owner name + temporal proximity + WhatsApp-text
+# references-OCR-fragment. Output is ranked candidates per AssetItem so
+# the chat can either auto-bind (HIGH score) or surface candidate-with-
+# confirm card (MEDIUM score, §10he Step 4) instead of silent H3.
+
+# Score weights (out of 100). Tune over time.
+_WEIGHTS = {
+    'lot_match':         50,
+    'title_match':       50,
+    'lot_AND_title':     20,   # bonus when both match
+    'account_match':     50,
+    'policy_match':      50,
+    'mukim_match':       20,
+    'daerah_match':       5,
+    'unit_token':         8,   # per unit-like token (e.g. b-05-11)
+    'generic_token':      3,   # per generic distinctive token
+    'token_max':         20,
+    'owner_testator':    10,
+    'temporal_close':    15,   # ≤ 5 min
+    'temporal_med':       7,   # ≤ 30 min
+    'msg_text_ref':      15,   # OCR address fragment appears in raw text
+    'web_building_in_ocr': 15,
+    # Penalties
+    'daerah_conflict':  -50,
+    'foreign_owner':     -8,   # owner_name has someone NOT in family
+}
+
+# Decision thresholds
+AUTO_BIND_THRESHOLD = 50   # ≥ HIGH confidence — bind without asking
+CANDIDATE_THRESHOLD = 25   # MEDIUM — surface as candidate-with-confirm
+# Below CANDIDATE_THRESHOLD → no signal, H3
+
+
+def _score_pair(ai: 'AssetItem',
+                g: 'DocGroup',
+                raw_forward_text: str = '',
+                ai_msg_ts: Optional[Any] = None,
+                testator_name: str = '',
+                family_names: Optional[set] = None) -> Dict[str, Any]:
+    """Score a single (AssetItem, DocGroup) pair across ALL signals.
+
+    Returns:
+        {'score': int, 'components': {weight_key: value, ...}, 'evidence': str}
+
+    Components are kept verbose so the candidate card can show the user
+    exactly WHY this is a likely match.
+    """
+    components: Dict[str, int] = {}
+    evidence: List[str] = []
+
+    af = ai.fields or {}
+    ge = g.merged_extracted or {}
+
+    # ── Direct identifier matches (Tier A signals) ──
+    ai_lot   = digits(af.get('lot') or '')
+    ai_title = digits(af.get('title') or '')
+    ai_acct  = digits(af.get('account_number') or '')
+    ai_pol   = digits(af.get('policy_number') or '')
+    g_lot    = digits(ge.get('lot_number') or '')
+    g_title  = digits(ge.get('title_number') or '')
+    g_acct   = digits(ge.get('account_number') or '')
+    g_pol    = digits(ge.get('policy_number') or '')
+
+    lot_hit = bool(ai_lot and g_lot and len(ai_lot) >= 3 and ai_lot == g_lot)
+    title_hit = bool(ai_title and g_title and len(ai_title) >= 4 and ai_title == g_title)
+    if lot_hit:
+        components['lot_match'] = _WEIGHTS['lot_match']
+        evidence.append(f'lot {ai_lot} matches OCR')
+    if title_hit:
+        components['title_match'] = _WEIGHTS['title_match']
+        evidence.append(f'title {ai_title} matches OCR')
+    if lot_hit and title_hit:
+        components['lot_AND_title'] = _WEIGHTS['lot_AND_title']
+    if ai_acct and g_acct and len(ai_acct) >= 6 and ai_acct == g_acct:
+        components['account_match'] = _WEIGHTS['account_match']
+        evidence.append(f'account {ai_acct} matches OCR')
+    if ai_pol and g_pol and len(ai_pol) >= 4 and ai_pol == g_pol:
+        components['policy_match'] = _WEIGHTS['policy_match']
+        evidence.append(f'policy {ai_pol} matches OCR')
+
+    # ── Mukim / daerah agreement ──
+    ai_mukim = (af.get('mukim') or '').strip().lower()
+    ai_daerah = (af.get('daerah') or '').strip().lower()
+    g_mukim = (ge.get('mukim') or '').strip().lower()
+    g_daerah = (ge.get('daerah') or '').strip().lower()
+    if ai_mukim and g_mukim and ai_mukim == g_mukim:
+        components['mukim_match'] = _WEIGHTS['mukim_match']
+        evidence.append(f'Mukim {ai_mukim.title()} agrees')
+    if ai_daerah and g_daerah:
+        # 'johor bahru' may appear with extra junk like 'johor bahru, johor'
+        ai_d = re.sub(r'[,;].*$', '', ai_daerah).strip()
+        g_d  = re.sub(r'[,;].*$', '', g_daerah).strip()
+        if ai_d and g_d and ai_d == g_d:
+            components['daerah_match'] = _WEIGHTS['daerah_match']
+        elif ai_d and g_d and ai_d != g_d and 'johor' in (ai_d + g_d):
+            # Different daerah within Johor — might be wrong region
+            components['daerah_conflict'] = _WEIGHTS['daerah_conflict']
+            evidence.append(f'⚠ daerah conflict ({ai_d} vs {g_d})')
+
+    # ── Token overlap (web clues + AI Summary fields ↔ OCR blob) ──
+    web_blob = ' '.join([
+        af.get('_web_building') or '',
+        af.get('_web_locality') or '',
+        af.get('_web_postcode') or '',
+    ])
+    ai_tokens = distinctive_tokens(
+        (af.get('address') or '') + ' ' + (af.get('name') or '') + ' ' + web_blob
+    )
+    g_blob = ' '.join([
+        ge.get('property_address') or '',
+        ge.get('description') or '',
+        ge.get('building_name') or '',
+        ge.get('township') or '',
+    ])
+    g_tokens = distinctive_tokens(g_blob)
+    overlap = ai_tokens & g_tokens
+    if overlap:
+        unit_re = re.compile(r'^[a-z]?-?\d+(?:[-/]\d+)+$')
+        unit_hits = [t for t in overlap if unit_re.match(t)]
+        score_add = (len(unit_hits) * _WEIGHTS['unit_token'] +
+                     (len(overlap) - len(unit_hits)) * _WEIGHTS['generic_token'])
+        score_add = min(score_add, _WEIGHTS['token_max'])
+        components['token_overlap'] = score_add
+        evidence.append(f'tokens: {sorted(overlap)[:3]}')
+
+    # ── Web building name appears verbatim in OCR ──
+    web_building = (af.get('_web_building') or '').strip().lower()
+    if web_building and web_building in g_blob.lower():
+        components['web_building_in_ocr'] = _WEIGHTS['web_building_in_ocr']
+        evidence.append(f'web building "{web_building}" in OCR')
+
+    # ── Owner name (testator) ──
+    g_owner = (ge.get('owner_name') or '').upper()
+    if testator_name and testator_name.upper() in g_owner:
+        components['owner_testator'] = _WEIGHTS['owner_testator']
+        evidence.append(f'owner contains testator')
+    elif g_owner and family_names:
+        # Owner contains a non-family name → possible different person's property
+        owner_tokens = re.findall(r'[A-Z][A-Z\']+', g_owner)
+        if owner_tokens and not any(
+            any(t in fn.upper() for t in owner_tokens) for fn in family_names
+        ):
+            components['foreign_owner'] = _WEIGHTS['foreign_owner']
+
+    # ── Temporal proximity ──
+    if ai_msg_ts and g.created_at_min:
+        try:
+            from datetime import datetime
+            t_msg = ai_msg_ts if hasattr(ai_msg_ts, 'timestamp') else \
+                    datetime.fromisoformat(str(ai_msg_ts).replace('Z', '+00:00'))
+            t_grp = datetime.fromisoformat(g.created_at_min.replace('Z', '+00:00')) \
+                    if isinstance(g.created_at_min, str) else g.created_at_min
+            if t_msg and t_grp:
+                gap = abs((t_msg - t_grp).total_seconds())
+                if gap <= 300:
+                    components['temporal_close'] = _WEIGHTS['temporal_close']
+                    evidence.append(f'image within 5 min of message')
+                elif gap <= 1800:
+                    components['temporal_med'] = _WEIGHTS['temporal_med']
+                    evidence.append(f'image within 30 min of message')
+        except Exception:
+            pass
+
+    # ── Message-text-references-OCR-fragment ──
+    if raw_forward_text and g_blob:
+        # Find non-trivial OCR address fragments (≥6 chars, alphanumeric)
+        # that appear in raw_forward_text. This catches the case where
+        # the user typed a fragment of the address that the OCR also has.
+        rt_lc = raw_forward_text.lower()
+        for frag in re.findall(r'[a-z][a-z0-9\s/\-]{5,40}', g_blob.lower()):
+            f = frag.strip()
+            if len(f) >= 6 and f in rt_lc and f not in ('mukim plentong',
+                                                          'mukim pulai',
+                                                          'mukim tebrau',
+                                                          'johor bahru',
+                                                          'lot lot'):
+                components['msg_text_ref'] = _WEIGHTS['msg_text_ref']
+                evidence.append(f'OCR fragment "{f[:30]}" in message text')
+                break
+
+    score = sum(components.values())
+    return {
+        'score': score,
+        'components': components,
+        'evidence': '; '.join(evidence)[:240],
+    }
+
+
+def rank_candidates(asset_items: List[AssetItem],
+                     doc_groups: List[DocGroup],
+                     *,
+                     raw_forward_text: str = '',
+                     ai_msg_timestamps: Optional[Dict[int, Any]] = None,
+                     testator_name: str = '',
+                     family_names: Optional[set] = None) -> Dict[int, List[Dict[str, Any]]]:
+    """For each AssetItem, return a list of (group_id, score, evidence)
+    sorted by score DESC. The top candidate is the most likely match;
+    subsequent ones may still be plausible.
+
+    Caller decides binding via thresholds:
+      - score ≥ AUTO_BIND_THRESHOLD → auto-bind
+      - score ≥ CANDIDATE_THRESHOLD → surface as candidate-with-confirm
+      - else                        → no signal
+    """
+    out: Dict[int, List[Dict[str, Any]]] = {}
+    ai_msg_timestamps = ai_msg_timestamps or {}
+    family_names = family_names or set()
+    for ai in asset_items:
+        ai_ts = ai_msg_timestamps.get(ai.ai_index)
+        cands: List[Dict[str, Any]] = []
+        for g in doc_groups:
+            if g.kind and ai.kind and g.kind != ai.kind:
+                continue
+            res = _score_pair(ai, g,
+                              raw_forward_text=raw_forward_text,
+                              ai_msg_ts=ai_ts,
+                              testator_name=testator_name,
+                              family_names=family_names)
+            if res['score'] > 0:
+                cands.append({
+                    'group_id': g.group_id,
+                    'score': res['score'],
+                    'evidence': res['evidence'],
+                    'components': res['components'],
+                })
+        cands.sort(key=lambda c: c['score'], reverse=True)
+        out[ai.ai_index] = cands
+    return out
+
+
+def _gather_assetitem_msg_timestamps(client_id: str,
+                                       asset_items: List[AssetItem]
+                                       ) -> Dict[int, Any]:
+    """For each AssetItem, find the timestamp of the user message line
+    that names it (used for temporal proximity scoring).
+
+    Heuristic: scan recent user ChatMessages, find the one whose content
+    contains the AssetItem's address (or distinctive token), use its
+    created_at as the message timestamp for that AssetItem. Fall back
+    to the Will record's most-recent inbound timestamp.
+    """
+    out: Dict[int, Any] = {}
+    if not client_id:
+        return out
+    try:
+        from database import ChatMessage, ChatSession
+        sess_ids = [s.id for s in ChatSession.query.filter_by(client_id=client_id).all()]
+        if not sess_ids:
+            return out
+        msgs = ChatMessage.query.filter(
+            ChatMessage.session_id.in_(sess_ids),
+            ChatMessage.role == 'user',
+        ).all()
+        # Map content lower → timestamp
+        for ai in asset_items:
+            f = ai.fields or {}
+            addr = (f.get('address') or '').lower()
+            name = (f.get('name') or '').lower()
+            best_ts = None
+            best_match_len = 0
+            for m in msgs:
+                mc = (m.content or '').lower()
+                # Try address substring (first 30 chars)
+                key = addr[:30] or name[:30]
+                if key and len(key) >= 5 and key in mc:
+                    if best_ts is None or m.created_at > best_ts:
+                        if len(key) > best_match_len:
+                            best_ts = m.created_at
+                            best_match_len = len(key)
+            if best_ts:
+                out[ai.ai_index] = best_ts
+    except Exception:
+        pass
+    return out
+
+
+def _gather_match_context(client_id: str) -> Dict[str, Any]:
+    """Pull raw_forward_text, testator name, family names from DB once
+    so rank_candidates doesn't keep re-fetching."""
+    ctx: Dict[str, Any] = {
+        'raw_forward_text': '',
+        'testator_name': '',
+        'family_names': set(),
+    }
+    if not client_id:
+        return ctx
+    try:
+        from database import Will, Person
+        w = (Will.query.filter_by(client_id=client_id, status='draft')
+             .filter(Will.deleted_at.is_(None))
+             .order_by(Will.updated_at.desc()).first())
+        if w and w.step6_data:
+            try:
+                s6 = json.loads(w.step6_data)
+                ctx['raw_forward_text'] = (s6.get('_raw_forward_text') or '')[:8000]
+            except Exception:
+                pass
+        for p in Person.query.filter_by(client_id=client_id).all():
+            if (p.relationship or '').lower() == 'testator':
+                ctx['testator_name'] = p.full_name or ''
+            ctx['family_names'].add((p.full_name or '').upper())
+    except Exception:
+        pass
+    return ctx
+
+
+# ─────────────────────────────────────────────────────────────────────
 # STAGE 2 — Bind AssetItem ↔ DocGroup
 # ─────────────────────────────────────────────────────────────────────
 def bind_assets(asset_items: List[AssetItem],
-                doc_groups: List[DocGroup]) -> List[Binding]:
-    """§10x.48 Stage 2 — Tier A → B → C → D priority cascade. One-claim-only.
-    Greedy by confidence: ALL Tier-A bindings resolve before any Tier-B,
-    etc. Returns one Binding per AssetItem (Tier D = no binding / H3)."""
+                doc_groups: List[DocGroup],
+                *,
+                client_id: str = '') -> List[Binding]:
+    """§10x.48 Stage 2 + §10x.51 — unified multi-signal scorer + greedy
+    global one-claim-only.
+
+    Algorithm:
+      1. For each AssetItem, score every DocGroup via _score_pair (combines
+         lot/title direct + mukim/daerah + token overlap + owner + temporal
+         + msg-text-reference + web-building-in-OCR).
+      2. Build a flat list of (ai_index, group_id, score) triples.
+      3. Sort DESC by score.
+      4. Greedy assign: walk the list; bind each pair if neither side is
+         already claimed. Tier:
+            A = score ≥ AUTO_BIND_THRESHOLD AND has direct identifier match
+            B = score ≥ AUTO_BIND_THRESHOLD without direct identifier
+            C = CANDIDATE_THRESHOLD ≤ score < AUTO_BIND_THRESHOLD
+                (rendered as candidate-with-confirm card per §10he Step 4)
+            D = no signal — H3 placeholder
+    """
     bindings: Dict[int, Binding] = {}
     claimed: set = set()
 
-    def free_groups(kind: str) -> List[DocGroup]:
-        return [g for g in doc_groups
-                if g.group_id not in claimed
-                and (not kind or g.kind == kind or not g.kind)]
+    # Gather context (raw text, testator name, family names) once
+    ctx = _gather_match_context(client_id) if client_id else {
+        'raw_forward_text': '', 'testator_name': '', 'family_names': set()
+    }
 
-    # ── Tier A: direct identifier match ───────────────────────────────
-    for ai in asset_items:
-        if ai.ai_index in bindings:
-            continue
-        ai_lot = digits(ai.fields.get('lot') or '')
-        ai_title = digits(ai.fields.get('title') or '')
-        ai_acct = digits(ai.fields.get('account_number') or '')
-        ai_pol = digits(ai.fields.get('policy_number') or '')
-        for g in free_groups(ai.kind):
-            ge = g.merged_extracted
-            g_lot = digits(ge.get('lot_number') or '')
-            g_title = digits(ge.get('title_number') or '')
-            g_acct = digits(ge.get('account_number') or '')
-            g_pol = digits(ge.get('policy_number') or '')
-            tier_a_via = None
-            if ai_lot and g_lot and len(ai_lot) >= 3 and ai_lot == g_lot:
-                tier_a_via = 'lot_match'
-            elif ai_title and g_title and len(ai_title) >= 4 and ai_title == g_title:
-                tier_a_via = 'title_match'
-            elif ai_acct and g_acct and len(ai_acct) >= 6 and ai_acct == g_acct:
-                tier_a_via = 'account_match'
-            elif ai_pol and g_pol and len(ai_pol) >= 4 and ai_pol == g_pol:
-                tier_a_via = 'policy_match'
-            if tier_a_via:
-                bindings[ai.ai_index] = Binding(
-                    ai_index=ai.ai_index, group_id=g.group_id,
-                    tier='A', match_via=tier_a_via, confidence='high',
-                    evidence=f'{tier_a_via}: {ai_lot or ai_title or ai_acct or ai_pol}',
-                )
-                claimed.add(g.group_id)
-                break
+    # Build per-AssetItem msg timestamp map (when the user mentioned this
+    # AssetItem in the chat — used for temporal proximity)
+    ai_ts = _gather_assetitem_msg_timestamps(client_id, asset_items) if client_id else {}
 
-    # ── Tier B: mukim + token (property only) ─────────────────────────
-    # 🔥 §10x.50 — token set now includes web-derived clues (building name,
-    # locality, postcode) from §10hf so the message ↔ OCR vocabulary gap
-    # gets bridged. Real example: AssetItem 'Marina Cove' + web clue
-    # building_name='Pangsapuri Tepian Bayu' → matches OCR group whose
-    # property_address contains 'Pangsapuri Tepian Bayu'.
-    for ai in asset_items:
-        if ai.kind != 'property' or ai.ai_index in bindings:
+    # Compute ranked candidates per AssetItem
+    ranked = rank_candidates(
+        asset_items, doc_groups,
+        raw_forward_text=ctx['raw_forward_text'],
+        ai_msg_timestamps=ai_ts,
+        testator_name=ctx['testator_name'],
+        family_names=ctx['family_names'],
+    )
+
+    # Flatten to (score, ai_idx, group_id, evidence) triples and sort DESC
+    flat = []
+    for ai_idx, cands in ranked.items():
+        for c in cands:
+            flat.append((c['score'], ai_idx, c['group_id'], c['evidence'], c['components']))
+    flat.sort(key=lambda x: x[0], reverse=True)
+
+    # Greedy assign. Each AssetItem and DocGroup binds at most once.
+    for score, ai_idx, group_id, evidence, components in flat:
+        if ai_idx in bindings:
             continue
-        ai_addr = (ai.fields.get('address') or '').lower()
-        ai_mukim = (ai.fields.get('mukim') or '').strip().lower()
-        if not ai_mukim:
-            bridged = resolve_mukim_from_address(ai_addr) or resolve_mukim_from_address(
-                (ai.fields.get('name') or '').lower())
-            if bridged:
-                ai_mukim = bridged[0].lower()
-        if not ai_mukim:
+        if group_id in claimed:
             continue
-        # Token blob = address + name + ALL web clues (building, locality, postcode)
-        web_blob = ' '.join([
-            (ai.fields.get('_web_building') or ''),
-            (ai.fields.get('_web_locality') or ''),
-            (ai.fields.get('_web_postcode') or ''),
-        ])
-        ai_tokens = distinctive_tokens(
-            ai_addr + ' ' + (ai.fields.get('name') or '') + ' ' + web_blob
+        if score < CANDIDATE_THRESHOLD:
+            break  # rest are below floor
+        # Determine tier
+        has_direct_id = any(k in components for k in
+                             ('lot_match', 'title_match', 'account_match', 'policy_match'))
+        if score >= AUTO_BIND_THRESHOLD:
+            tier = 'A' if has_direct_id else 'B'
+            confidence = 'high'
+            match_via = ('lot_match' if 'lot_match' in components else
+                          'title_match' if 'title_match' in components else
+                          'account_match' if 'account_match' in components else
+                          'policy_match' if 'policy_match' in components else
+                          'mukim_token')
+        else:
+            tier = 'C'
+            confidence = 'medium'  # candidate — needs user confirm
+            match_via = 'multi_signal'
+        bindings[ai_idx] = Binding(
+            ai_index=ai_idx, group_id=group_id,
+            tier=tier, match_via=match_via, confidence=confidence,
+            evidence=f'score={score} | {evidence}',
         )
-        for g in free_groups('property'):
-            ge = g.merged_extracted
-            g_mukim = (ge.get('mukim') or '').strip().lower()
-            if g_mukim != ai_mukim:
-                continue
-            g_blob = ' '.join([ge.get('property_address') or '',
-                                ge.get('description') or '',
-                                ge.get('building_name') or '',
-                                ge.get('township') or '']).lower()
-            g_tokens = distinctive_tokens(g_blob)
-            overlap = ai_tokens & g_tokens
-            if overlap:
-                bindings[ai.ai_index] = Binding(
-                    ai_index=ai.ai_index, group_id=g.group_id,
-                    tier='B', match_via='mukim_token', confidence='medium-high',
-                    evidence=f'Mukim {ai_mukim.title()} + tokens: {sorted(overlap)[:3]}',
-                )
-                claimed.add(g.group_id)
-                break
+        claimed.add(group_id)
 
-    # ── Tier C: Claude-semantic match (§10x.50 — replaces lexical-only ceiling) ──
+    # Stash ranked candidates so Stage 5 (chat) can render candidate-with-
+    # confirm cards for AssetItems that DIDN'T auto-bind (score < AUTO).
+    # The chat planner reads this dict via run_pipeline()['ranked_candidates'].
+    bind_assets._last_ranked_candidates = ranked
+
+    # Legacy Tier-C Claude semantic fallback — kept for AssetItems still
+    # unbound after the multi-signal scoring (in case the scorer missed
+    # something Claude can spot). Strict prompt unchanged.
+    free_property_groups = [g for g in doc_groups
+                             if g.group_id not in claimed and g.kind == 'property']
     # For each unbound AssetItem of property kind, give Claude the
     # AssetItem fields and the unclaimed property DocGroups, ask which
     # one (if any) is the match. Strict prompt: must cite reasoning,
@@ -1033,7 +1340,7 @@ def _assert_stage2(asset_items: List[AssetItem],
     valid_tiers = {'A', 'B', 'C', 'D'}
     valid_via = {'lot_match', 'title_match', 'account_match', 'policy_match',
                   'mukim_token', 'temporal', 'claude_semantic',
-                  'user_confirmed', 'h3'}
+                  'multi_signal', 'user_confirmed', 'h3'}
     if len(bindings) != len(asset_items):
         raise ContractViolation(
             f'Stage 2: {len(bindings)} bindings for {len(asset_items)} AssetItems'
@@ -1134,7 +1441,7 @@ def run_pipeline(client_id: str) -> Dict[str, Any]:
     doc_groups = group_documents(client_id)
     _assert_stage1(doc_groups, all_doc_ids)
 
-    bindings = bind_assets(asset_items, doc_groups)
+    bindings = bind_assets(asset_items, doc_groups, client_id=client_id)
     _assert_stage2(asset_items, bindings)
 
     res = residuals(asset_items, bindings, doc_groups)
@@ -1148,10 +1455,14 @@ def run_pipeline(client_id: str) -> Dict[str, Any]:
         gifts.append(build_gift(ai, b, dg))
     _assert_stage4(asset_items, gifts)
 
+    # Pull ranked candidates that bind_assets stashed for the chat
+    # walker to render candidate-with-confirm cards (Path Y / §10he Step 4).
+    ranked = getattr(bind_assets, '_last_ranked_candidates', {}) or {}
     return {
         'asset_items': [a.to_dict() for a in asset_items],
         'doc_groups': [g.to_dict() for g in doc_groups],
         'bindings': [b.to_dict() for b in bindings],
         'residuals': [g.to_dict() for g in res],
         'gifts': gifts,
+        'ranked_candidates': ranked,
     }
