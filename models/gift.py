@@ -103,11 +103,20 @@ class PropertyDetails(BaseModel):
             # available below for cases where the firm explicitly wants
             # the honorific, but DEFAULT is plain.
             title_parts.append(f"State of {negeri_val}")
+        # 🔒 Phek format: address is followed by " held under" (SPACE, no
+        # comma). The remaining title-parts are then comma-joined together
+        # AFTER "held under". Verbatim:
+        #   "...80150 JOHOR BAHRU, JOHOR held under Geran No. 433036,
+        #    Lot No. 12058, Mukim Plentong, District of Johor Bahru,
+        #    State of Johor"
         if title_parts:
-            parts.extend(title_parts)
-        # 🔒 No trailing punctuation — caller decides ('.' for terminal,
-        # ';' for list-of-properties bullet).
-        return ", ".join(parts)
+            # First item carries "held under <type> No. N"; subsequent items
+            # are simple "Lot No. N" / "Mukim X" / etc. comma-joined.
+            head = title_parts[0]   # "held under <type> No. N"
+            rest = title_parts[1:]
+            joined = head + (", " + ", ".join(rest) if rest else '')
+            return f"{parts[0]} {joined}"
+        return parts[0]
 
 
 class FinancialDetails(BaseModel):
