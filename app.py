@@ -2254,9 +2254,16 @@ def client_delete(client_id):
     db.session.delete(client)
     db.session.commit()
 
-    # Clear session if we deleted the currently loaded client
+    # Clear loaded-client / loaded-will references — but NEVER the whole
+    # session. session.clear() also wipes user_id, which kicks the user
+    # back to the login page mid-task. Only pop the keys that point to
+    # the now-deleted client.
     if session.get('client_id') == client_id:
-        session.clear()
+        for _k in ('client_id', 'will_id', 'completed_steps',
+                   'identities', 'step1', 'step2', 'step3', 'step4',
+                   'step5_gifts', 'step6_residuary', 'step7_trust',
+                   'step8_others', 'step9_witnesses', 'witnesses'):
+            session.pop(_k, None)
 
     flash(f'Client "{client.full_name}" and all associated data deleted.', 'info')
     return redirect(url_for('will_list'))
