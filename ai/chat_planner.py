@@ -1501,12 +1501,13 @@ def _ai_props_already_handled(client_id: str,
         elif paddr and ('addr', paddr) in handled_sigs:
             out[i] = True
 
-    # ── Pass 3: token / classify match against saved gifts ──────────────
-    # Reconstruct synthetic image_groups from saved property gifts and run
-    # _classify_property_match against each unhandled AI prop. This catches
-    # cases where the saved gift's lot/title/address doesn't strictly equal
-    # the AI prop's, but the distinctive tokens match (e.g. saved address is
-    # the full street form, AI prop is the building/unit form).
+    # ── Pass 3: STRICT classify match against saved gifts ──────────────
+    # 🔥 BURN-IN §10x.22 — for synthetic groups (built from saved step5
+    # gifts), require a UNIT-LIKE token match — NEVER mark as handled
+    # via mere generic-token overlap (e.g. "marina cove" alone is not
+    # enough to say C-05-01 is the same as already-saved C-30-08).
+    # The H1b "2 generic tokens" path is OK for image groups but too
+    # loose for synthetic groups when same building has multiple units.
     synth_groups = []
     for g in s5:
         if not isinstance(g, dict):
@@ -1530,17 +1531,56 @@ def _ai_props_already_handled(client_id: str,
             },
         })
     claimed = set()
+    # §10x.22 — require a UNIT-LIKE token match for synthetic groups.
+    # The standard classifier accepts 2 generic tokens (e.g. "marina"
+    # + "cove") which would falsely flag distinct units in the same
+    # building. We tighten that here: only count synthetic-group H1
+    # matches when a unit-number token (e.g. "c-05-01") is shared.
+    _unit_re = re.compile(r'^[a-z]?-?\d+[\-/]\d+(?:[\-/]\d+)?$')
+
+    def _ai_unit_tokens(p: Dict[str, Any]) -> set:
+        blob = ' '.join([
+            (p.get('name') or ''),
+            (p.get('address') or ''),
+        ]).lower()
+        return {m.group(0) for m in re.finditer(
+            r'\b[a-z]?-?\d+[\-/]\d+(?:[\-/]\d+)?\b', blob)}
+
+    def _g_unit_tokens(g: Dict[str, Any]) -> set:
+        ex = g.get('extracted') or {}
+        blob = ' '.join([
+            ex.get('property_address', ''),
+            ex.get('description', ''),
+            ex.get('property_description', ''),
+        ]).lower()
+        return {m.group(0) for m in re.finditer(
+            r'\b[a-z]?-?\d+[\-/]\d+(?:[\-/]\d+)?\b', blob)}
+
     for i, p in enumerate(ai_props):
         if out[i]:
             continue
-        avail = [g for g in synth_groups if g['document_id'] not in claimed]
-        try:
-            cls = _classify_property_match(p, avail)
-        except Exception:
-            cls = {'variant': 'h3', 'group': None}
-        if cls.get('variant') in ('h1', 'h2') and cls.get('group'):
-            out[i] = True
-            claimed.add(cls['group']['document_id'])
+        ai_units = _ai_unit_tokens(p)
+        for g in synth_groups:
+            if g['document_id'] in claimed:
+                continue
+            g_units = _g_unit_tokens(g)
+            # ONLY mark handled when at least one UNIT token matches —
+            # generic-token overlap (e.g. "marina cove") is not enough.
+            if ai_units and g_units and (ai_units & g_units):
+                out[i] = True
+                claimed.add(g['document_id'])
+                break
+            # Fallback: identical lot+title digit-strip
+            ex = g.get('extracted') or {}
+            g_lot = _digits(ex.get('lot_number') or '')
+            g_title = _digits(ex.get('title_number') or '')
+            ai_lot = _digits(p.get('lot') or '')
+            ai_title = _digits(p.get('title') or '')
+            if (ai_lot and g_lot and len(ai_lot) >= 3 and ai_lot == g_lot) \
+                    or (ai_title and g_title and len(ai_title) >= 4 and ai_title == g_title):
+                out[i] = True
+                claimed.add(g['document_id'])
+                break
     return out
 
 

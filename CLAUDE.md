@@ -2461,6 +2461,40 @@ Fix the matcher, don't paper over the symptom.
 
 ---
 
+### 10x.22  ⚡ Same-building distinct-unit handling ⚡
+
+**The bug this rule prevents:** when AI Summary lists multiple units in
+the same building (e.g. C-30-08 AND C-05-01 in Marina Cove), saving
+the first as a step5 gift caused `_ai_props_already_handled` to falsely
+flag the second as ALREADY HANDLED — because the classifier's "2 generic
+tokens" path matched on "marina" + "cove".
+
+### Rule
+
+In `_ai_props_already_handled` Pass 3, when matching AI Summary
+properties against **synthetic groups** built from saved step5 gifts,
+require a **UNIT-LIKE** token match. Generic-token overlap is not enough.
+
+A unit token has the shape `[a-z]?-?\d+[\-/]\d+(?:[\-/]\d+)?` —
+e.g. `c-30-08`, `b-05-11`, `a/12/3`.
+
+### Why image groups CAN use the looser path but synthetic groups CANNOT
+
+Image groups have OCR'd identifiers (lot, title number from the title
+deed). When those collide with an AI Summary entry's tokens, it's a
+real binding. But synthetic groups built from already-saved step5
+entries don't have this anchor — they're literally other AI Summary
+items lifted into gift form. Two AI props in the same building would
+share generic tokens but mean different units.
+
+### Symptom of regression
+
+User has 3 properties in the same condominium (B-05-11, C-30-08,
+C-05-01) — wizard shows only 1 saved instead of 3. That's §10x.22
+loosened too far.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
