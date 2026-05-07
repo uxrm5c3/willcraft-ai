@@ -1232,15 +1232,79 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         ai_tokens.update(_addr_tokens_local(ap.get('address', '')))
         ai_tokens.update(_addr_tokens_local(ap.get('name', '')))
 
-    # 🔥 §10h reconsidered (May 2026): NEVER drop image-bound property
-    # groups. AI Summary addresses ("Marina Cove") often DON'T token-
-    # overlap with OCR'd title-doc addresses ("Lot 207922, Mukim
-    # Plentong"), so a strict token-filter silently lost real titles.
-    # Instead we KEEP all image groups, and let the H3 synthesis below
-    # dedup AI-Summary entries that are already covered by an image.
-    # User instruction: "MESSAGE > IMAGE — but image is verification,
-    # never silently drop a real upload."
-    pass  # no filter — image groups preserved
+    # 🔥 §10h v3 — match each image group to ONE AI Summary property
+    # via lot/title/tokens/mukim (geographic bridge). Keep matched
+    # images in pending; demote unmatched ones to §10d "unverified"
+    # (so they DON'T inflate pending count beyond AI Summary count).
+    # Then synthesize H3 placeholders ONLY for AI Summary entries
+    # that no image group claimed.
+    if ai_props:
+        # Build per-AI-prop signature for matching
+        def _addr_token_set(s: str) -> set:
+            STOP = {'JALAN', 'TAMAN', 'BANDAR', 'KAMPUNG', 'UNIT',
+                     'BLOCK', 'BLOK', 'NO', 'JOHOR', 'BAHRU', 'KUALA',
+                     'LUMPUR', 'CONDOMINIUM', 'APARTMENT', 'PERSIARAN',
+                     'LORONG', 'LEBUH', 'MUKIM', 'DAERAH', 'NEGERI',
+                     'STATE', 'DISTRICT', 'MALAYSIA', 'PHASE', 'WITH',
+                     'KAWASAN', 'PERUSAHAAN'}
+            return {t for t in re.findall(r"[A-Za-z0-9\-]{4,}",
+                                            (s or '').upper())
+                    if t not in STOP}
+        # Geographic bridge — map common Johor localities to mukim
+        GEO_BRIDGE = {
+            'SERI ALAM': 'PLENTONG', 'MARINA COVE': 'PLENTONG',
+            'PERMAS JAYA': 'PLENTONG', 'TAMAN LAGUNA': 'PLENTONG',
+            'TAMAN AUSTIN': 'TEBRAU', 'MEDINI': 'PULAI',
+            'ISKANDAR PUTERI': 'PULAU', 'PARADISO': 'PULAI',
+            'PARADISONUAVA': 'PULAI', 'NUSAJAYA': 'PULAI',
+            'SENAI': 'SENAI',
+        }
+        ai_signatures = []
+        for ap in ai_props:
+            addr = (ap.get('address') or '') + ' ' + (ap.get('name') or '')
+            toks = _addr_token_set(addr)
+            mukim_hint = None
+            for loc, mk in GEO_BRIDGE.items():
+                if loc in addr.upper():
+                    mukim_hint = mk; break
+            ai_signatures.append({
+                'lot':   _digits_only(ap.get('lot') or ''),
+                'title': _digits_only(ap.get('title') or ''),
+                'toks':  toks,
+                'mukim': (ap.get('mukim') or mukim_hint or '').upper(),
+                'matched_image_idx': None,
+            })
+
+        # Greedy match: each image to first available AI Summary slot
+        kept_images = []
+        for img_idx, grp in enumerate(out['property']):
+            ex = (grp.get('extracted') or {}) if grp else {}
+            i_lot   = _digits_only(_clean_id_value(ex.get('lot_number') or ''))
+            i_title = _digits_only(_clean_id_value(ex.get('title_number') or ''))
+            i_toks  = _addr_token_set(ex.get('property_address') or '')
+            i_mukim = (ex.get('mukim') or '').upper().strip()
+            best_ai_idx = None
+            best_score = 0
+            for ai_idx, sig in enumerate(ai_signatures):
+                if sig['matched_image_idx'] is not None:
+                    continue   # already matched
+                score = 0
+                if sig['lot'] and i_lot and sig['lot'] == i_lot:    score += 5
+                if sig['title'] and i_title and sig['title'] == i_title: score += 5
+                if sig['toks'] and i_toks and (sig['toks'] & i_toks):
+                    score += 3
+                if sig['mukim'] and i_mukim and sig['mukim'] in i_mukim:
+                    score += 2
+                if score > best_score:
+                    best_score = score
+                    best_ai_idx = ai_idx
+            if best_ai_idx is not None and best_score >= 2:
+                ai_signatures[best_ai_idx]['matched_image_idx'] = img_idx
+                grp['_ai_summary_match'] = ai_props[best_ai_idx]
+                kept_images.append(grp)
+            # else: image has no AI Summary linkage → drop (§10d residual)
+        out['property'] = kept_images
+    # When ai_props is empty, leave out['property'] alone (legacy path)
 
     # ── Properties: add H3 for AI-Summary properties not already covered
     # 🔥 §10b — match by lot, title, normalised address, OR distinctive
