@@ -839,32 +839,44 @@ def _score_pair(ai: 'AssetItem',
             pass
 
     # ── Message-text-references-OCR-fragment ──
-    # The fragment must appear NEAR this AssetItem's address mention in
-    # the raw text (within ±200 chars). Otherwise we'd credit AssetItem 4
-    # for an OCR fragment that's actually about AssetItem 1.
+    # Window is FORWARD-ONLY from the AssetItem's address anchor (the
+    # user's pattern is "Address, ownership, share, beneficiary" — info
+    # follows the address). Window ends at the next property mention.
     if raw_forward_text and g_blob:
         rt_lc = raw_forward_text.lower()
         ai_addr_lc = (af.get('address') or '').lower()
-        # Find AssetItem's address position in raw text
         anchor_idx = -1
+        anchor_len = 0
         if ai_addr_lc:
-            # Try first 30 chars of address as anchor
             for probe_len in (50, 30, 20, 15):
                 if len(ai_addr_lc) >= probe_len:
                     probe = ai_addr_lc[:probe_len]
                     pos = rt_lc.find(probe)
                     if pos >= 0:
                         anchor_idx = pos
+                        anchor_len = probe_len
                         break
-            # Fall back to distinctive token from AssetItem
             if anchor_idx < 0:
                 for tok in re.findall(r'[a-z]?-?\d+(?:[-/]\d+)+', ai_addr_lc):
                     pos = rt_lc.find(tok)
                     if pos >= 0:
                         anchor_idx = pos
+                        anchor_len = len(tok)
                         break
         if anchor_idx >= 0:
-            window = rt_lc[max(0, anchor_idx - 200):anchor_idx + 400]
+            # Forward window ends at next "Unit", "Our house", "Property N:",
+            # or postcode boundary, max 250 chars
+            window_start = anchor_idx + anchor_len
+            window_end = min(len(rt_lc), window_start + 250)
+            # Find next property boundary marker
+            for m in re.finditer(
+                r'\b(?:unit\s+[a-z\d]|our\s+(?:house|shop|condo)|property\s+\d+\s*[:\-]|'
+                r'apartment\s+[a-z\d])',
+                rt_lc[window_start:window_end]
+            ):
+                window_end = window_start + m.start()
+                break
+            window = rt_lc[window_start:window_end]
             for frag in re.findall(r'[a-z][a-z0-9\s/\-]{5,40}', g_blob.lower()):
                 f = frag.strip()
                 if len(f) >= 6 and f in window and f not in (
