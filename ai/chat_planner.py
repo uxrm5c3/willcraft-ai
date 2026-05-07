@@ -2190,19 +2190,27 @@ def _next_step_cta(will_data: dict) -> dict:
     """Return {'label': str, 'value': str} for the ▶️ next-step button.
 
     🔥 §7 — STEP 1 IDENTITY ALWAYS COMES FIRST.
-    Per CLAUDE.md §7 the chat-flow order is:
-      Step 1: Receive WhatsApp
-      Step 2: AI Summary
-      Step 3: Decipher images
-      Step 4: Identity match  (THIS is where the user-facing walkthrough begins)
-      → then asset walkthrough → executor → beneficiaries → gifts → generate.
-
-    The intake-card CTA after AI Summary MUST therefore be "verify
-    identities" whenever ANY IC document is still unmatched. Earlier
-    we checked `identities` from will_data (which is populated after
-    Step 4, not before), so the CTA jumped straight to "describe your
-    assets" before Step 1 was even prompted.
+    🔥 §10x.53 — When ANY Document is still 'chat_inbox' (vision
+    classification in progress), return a non-actionable status label
+    instead of the start button. The chat watchdog will refresh and
+    the real button will appear once classification completes.
     """
+    # 🔥 §10x.53 — gate while analysing
+    client_id = (will_data or {}).get('client_id') or ''
+    if client_id:
+        try:
+            from database import Document as _Doc
+            in_progress = _Doc.query.filter_by(
+                client_id=client_id, category='chat_inbox'
+            ).count()
+            if in_progress > 0:
+                return {
+                    'label': f'🔍 Analysing {in_progress} exhibit(s) — please wait',
+                    'value': 'inbox start',   # click intercepted by guard handler
+                }
+        except Exception:
+            pass
+
     if not will_data:
         return {'label': '▶️ Start — verify identities', 'value': 'inbox start'}
 

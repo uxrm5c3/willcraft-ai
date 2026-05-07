@@ -5784,6 +5784,28 @@ def _try_handle_inbox_action(client_id: str, user_text: str):
     t = user_text.strip().lower()
 
     if t == 'inbox start':
+        # 🔥 §10x.53 — guard against premature 'inbox start' clicks while
+        # vision classification is still in progress. If any Document for
+        # this client is still 'chat_inbox' (not yet classified), tell
+        # the user to wait — don't advance the walkthrough.
+        try:
+            in_progress = Document.query.filter_by(
+                client_id=client_id, category='chat_inbox'
+            ).count()
+        except Exception:
+            in_progress = 0
+        if in_progress > 0:
+            return {
+                'name': 'still analysing',
+                'role': 'inbox_not_ready',
+                'kind': 'inbox_not_ready',
+                'reply_override': (
+                    f"🔍 Still analysing **{in_progress}** exhibit(s) — "
+                    "please wait a moment. The chat will post a 'Ready' "
+                    "message and the verify button once classification "
+                    "is complete."
+                ),
+            }
         # User clicked "▶️ Start matching" — nothing to save, just let
         # plan_turn proceed to the normal walkthrough.
         return {
@@ -10152,14 +10174,37 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                         summary = _summarise_message(cleaned)
                         if not summary:
                             summary = '_Could not generate summary — review exhibits above._'
-                        _quick = _json.dumps([
-                            {'label': '▶️ Start — verify identities', 'value': 'inbox start'}
-                        ])
-                        reply = (
-                            "### 📨 AI Summary of your message\n\n"
-                            + summary
-                            + f"\n\n<!--quickreplies:{_quick}-->"
-                        )
+                        # 🔥 §10x.53 — omit the verify-identities button while
+                        # docs are still being analysed. Post button later as a
+                        # follow-up "Ready" message once classification is done.
+                        _in_progress = 0
+                        try:
+                            _in_progress = Document.query.filter_by(
+                                client_id=client.id, category='chat_inbox'
+                            ).count()
+                        except Exception:
+                            _in_progress = 0
+                        if _in_progress > 0:
+                            tail = (
+                                f"\n\n🔍 _Analysing {_in_progress} exhibit(s) — "
+                                "the verify-identities button will appear once "
+                                "classification completes._"
+                            )
+                            reply = (
+                                "### 📨 AI Summary of your message\n\n"
+                                + summary
+                                + tail
+                            )
+                        else:
+                            _quick = _json.dumps([
+                                {'label': '▶️ Start — verify identities',
+                                 'value': 'inbox start'}
+                            ])
+                            reply = (
+                                "### 📨 AI Summary of your message\n\n"
+                                + summary
+                                + f"\n\n<!--quickreplies:{_quick}-->"
+                            )
                         summary_msg = ChatMessage(
                             session_id=cs.id, role='assistant',
                             content=reply,
@@ -10187,6 +10232,47 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
             )
             db.session.add(asst_msg)
             db.session.commit()
+
+            # 🔥 §10x.53 — post a "Ready to verify" follow-up message so the
+            # user gets an actionable button AFTER classification completes,
+            # even though the intake card / AI Summary may have been posted
+            # earlier with an "🔍 Analysing..." status.
+            try:
+                _remaining = Document.query.filter_by(
+                    client_id=client.id, category='chat_inbox'
+                ).count()
+                if _remaining == 0:
+                    # Don't post duplicate "Ready" — check if one already exists
+                    _ready_exists = (ChatMessage.query
+                                     .filter_by(session_id=cs.id, role='assistant')
+                                     .filter(ChatMessage.created_at >= user_msg.created_at)
+                                     .filter(ChatMessage.content.ilike('%Analysis complete%'))
+                                     .first())
+                    # Only post if there are pending IC docs (otherwise nothing to verify)
+                    _has_pending_ic = False
+                    try:
+                        from services.identity_walker import get_pending_ic_documents
+                        _has_pending_ic = bool(get_pending_ic_documents(client.id))
+                    except Exception:
+                        pass
+                    if not _ready_exists and _has_pending_ic:
+                        _ready_quick = json.dumps([
+                            {'label': '▶️ Start — verify identities',
+                             'value': 'inbox start'}
+                        ])
+                        _ready = ChatMessage(
+                            session_id=cs.id, role='assistant',
+                            content=(
+                                "✅ **Analysis complete.** All exhibits "
+                                "classified — ready to verify identities."
+                                f"\n\n<!--quickreplies:{_ready_quick}-->"
+                            ),
+                            attachments_json='[]',
+                        )
+                        db.session.add(_ready)
+                        db.session.commit()
+            except Exception:
+                pass   # non-critical
         except Exception:
             traceback.print_exc()
             try:
