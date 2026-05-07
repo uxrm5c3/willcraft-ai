@@ -3462,10 +3462,16 @@ def api_chat_history(client_id):
             # (3) intake card already posted = processor finished, the
             # remaining chat_inbox docs are likely permanent failures
             # (corrupt files, vision API hard-error). Do not re-fire.
+            # Match both "exhibits received" (with attachments) and
+            # "Asset inventory" (text-only forwards) — see §10x.28.
+            from sqlalchemy import or_ as _or
             _intake_done = (ChatMessage.query
                             .filter_by(session_id=cs.id, role='assistant')
                             .filter(ChatMessage.created_at >= _m.created_at)
-                            .filter(ChatMessage.content.ilike('%exhibits received%'))
+                            .filter(_or(
+                                ChatMessage.content.ilike('%exhibits received%'),
+                                ChatMessage.content.ilike('%Asset inventory%'),
+                            ))
                             .first())
             if _intake_done:
                 continue
@@ -9657,16 +9663,23 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
             _persist_property_enrichment(client.id, recent_text)
 
             # ── §10x.9 idempotency check ────────────────────────────
-            # If an intake card was already posted for this user_msg's
-            # session (any assistant message containing "📋 N exhibits
-            # received" with timestamp >= user_msg.created_at), do NOT
-            # post another one. The watchdog must not produce duplicates.
+            # If a planner reply was already posted for this user_msg's
+            # session, do NOT post another one. The watchdog must not
+            # produce duplicates. Match BOTH:
+            #   - "📋 N exhibits received" (with attachments)
+            #   - "📋 Asset inventory"     (text-only forwards, §10x.28)
+            # Either string proves the planner already ran for this
+            # user_msg and posted its reply.
             _intake_already_posted = False
             try:
+                from sqlalchemy import or_ as _or
                 _existing = (ChatMessage.query
                              .filter_by(session_id=cs.id, role='assistant')
                              .filter(ChatMessage.created_at >= user_msg.created_at)
-                             .filter(ChatMessage.content.ilike('%exhibits received%'))
+                             .filter(_or(
+                                 ChatMessage.content.ilike('%exhibits received%'),
+                                 ChatMessage.content.ilike('%Asset inventory%'),
+                             ))
                              .first())
                 if _existing:
                     _intake_already_posted = True
