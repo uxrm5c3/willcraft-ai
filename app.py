@@ -426,16 +426,41 @@ def mark_step_complete(step):
 
 
 def ensure_client():
-    """Ensure a Client record exists for the current session. Returns client_id."""
+    """Ensure a Client record exists for the current session. Returns client_id.
+
+    🔥 §10x.61 — NRIC is COMPULSORY for new clients.
+    The inbox address is `<name5char><ic_last4>@...` per CLAUDE.md §4.
+    Without an IC the inbox can't be uniquely addressed and the strict-
+    match routing (also §10x.61) will reject inbound emails. Plus a
+    client without an IC can't be probated — IC is on every Malaysian
+    legal document.
+
+    Raises ValueError if NRIC is missing/blank when creating a new client.
+    Existing clients without IC stay accessible for backward compat but
+    the chat / wizard nags the user to fill it in.
+    """
     client_id = session.get('client_id')
     if client_id:
         existing = db.session.get(Client, client_id)
         if existing:
             return client_id
     step1 = session.get('step1', {})
+    full_name = (step1.get('full_name') or '').strip()
+    nric = (step1.get('nric_passport') or '').strip()
+    if not full_name or full_name == 'New Client':
+        raise ValueError(
+            "§10x.61: cannot create client without a full name. "
+            "Fill in Step 1 (Testator) before proceeding."
+        )
+    if not nric:
+        raise ValueError(
+            "§10x.61: NRIC/passport is COMPULSORY when creating a new client. "
+            "The inbox address routing (<name><ic4>@...) requires it, and "
+            "every Malaysian probate document requires the testator's IC."
+        )
     client = Client(
-        full_name=step1.get('full_name', 'New Client'),
-        nric_passport=step1.get('nric_passport', ''),
+        full_name=full_name,
+        nric_passport=nric,
         email=step1.get('email'),
         phone=step1.get('phone'),
     )

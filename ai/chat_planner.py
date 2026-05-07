@@ -2230,15 +2230,17 @@ def _ai_props_already_handled(client_id: str,
 
 
 def _next_step_cta(will_data: dict) -> dict:
-    """Return {'label': str, 'value': str} for the ▶️ next-step button.
+    """Return {'label': str, 'value': str, '_masked': bool} for the
+    ▶️ next-step button. When `_masked=True`, callers MUST NOT include
+    the button in quickreplies — render label as text-only status.
 
     🔥 §7 — STEP 1 IDENTITY ALWAYS COMES FIRST.
-    🔥 §10x.53 — When ANY Document is still 'chat_inbox' (vision
-    classification in progress), return a non-actionable status label
-    instead of the start button. The chat watchdog will refresh and
-    the real button will appear once classification completes.
+    🔥 §10x.53 / §10x.62 — When ANY Document is still 'chat_inbox'
+    (vision classification in progress), return a MASKED button so
+    the user can't click it. The intake card watchdog will re-render
+    the button once classification completes.
     """
-    # 🔥 §10x.53 — gate while analysing
+    # 🔥 §10x.62 — gate while analysing; return masked button
     client_id = (will_data or {}).get('client_id') or ''
     if client_id:
         try:
@@ -2249,7 +2251,8 @@ def _next_step_cta(will_data: dict) -> dict:
             if in_progress > 0:
                 return {
                     'label': f'🔍 Analysing {in_progress} exhibit(s) — please wait',
-                    'value': 'inbox start',   # click intercepted by guard handler
+                    'value': 'inbox start',
+                    '_masked': True,   # caller must NOT render as clickable
                 }
         except Exception:
             pass
@@ -2340,22 +2343,44 @@ def _intake_email_card(artifacts: List[Dict[str, Any]], user_text: str,
     has_text = bool(_clean_email_body(user_text or ''))
 
     cta = _next_step_cta(current_will_data or {})
-    quick = [cta]
-    qr = f'<!--quickreplies:{json.dumps(quick)}-->'
+    # 🔥 §10x.62 — mask the button while analysing. When _masked=True,
+    # the cta is shown as text-only status — no clickable quickreply.
+    is_masked = bool(cta.get('_masked'))
+    if is_masked:
+        # Strip the internal flag and render label as inline status text
+        quick: list = []
+        qr = ''
+        status_text = cta['label']
+    else:
+        quick = [{'label': cta['label'], 'value': cta['value']}]
+        qr = f'<!--quickreplies:{json.dumps(quick)}-->'
+        status_text = f"**{cta['label']}**"
 
     lines = [
         f"## 📋 {n} exhibit{'s' if n != 1 else ''} received{warn_note}",
     ]
     if has_text:
-        lines.append(
-            f"_Analysing your message — summary will appear below in a moment. "
-            f"Review exhibits then tap **{cta['label']}** when ready._"
-        )
+        if is_masked:
+            lines.append(
+                f"_Analysing your message — summary will appear below in a moment. "
+                f"{status_text} (button will appear when ready)._"
+            )
+        else:
+            lines.append(
+                f"_Analysing your message — summary will appear below in a moment. "
+                f"Review exhibits then tap {status_text} when ready._"
+            )
     else:
-        lines.append(
-            f"_No message text — only attachments received. "
-            f"Tap **{cta['label']}** when ready._"
-        )
+        if is_masked:
+            lines.append(
+                f"_Only attachments received. {status_text} "
+                "(button will appear when ready)._"
+            )
+        else:
+            lines.append(
+                f"_No message text — only attachments received. "
+                f"Tap {status_text} when ready._"
+            )
 
     return '\n'.join(lines) + qr
 
