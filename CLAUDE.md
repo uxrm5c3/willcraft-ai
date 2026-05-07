@@ -2731,6 +2731,244 @@ gift model are the only authority on clause shape.
 
 ---
 
+### 10x.26  🔥 BURN-IN — Vision retry has a TERMINAL state 🔥
+
+**After 3 failed vision-classification attempts OR an explicit
+`manual_review=True` verdict, the Document is promoted from `chat_inbox`
+to `needs_review`. The watchdog only re-fires for `chat_inbox` docs,
+so `needs_review` is the loop-exit guarantee. Without this, the
+watchdog re-classified the same unreadable docs every 5 seconds
+forever — burning API tokens and never advancing the UI past 96%.**
+
+### Implementation
+
+In `app.py::_process_inbound_message_async_inner` after each per-doc
+classification:
+
+```python
+if kind != 'other':
+    doc.category = kind
+elif doc.category in (None, '', 'chat_inbox', 'other'):
+    if extracted is None:
+        extracted = {}
+    prev = int((json.loads(doc.extracted_data or '{}') or {})
+               .get('_classify_attempts', 0) or 0)
+    new = prev + 1
+    extracted['_classify_attempts'] = new
+    is_unreadable = bool(classification.get('manual_review')) \
+                    or 'unreadable' in (classification.get('reason') or '').lower()
+    if new >= 3 or is_unreadable:
+        doc.category = 'needs_review'
+        extracted['_terminal_reason'] = (
+            'unreadable_after_retry' if new >= 3
+            else 'vision_marked_unreadable')
+    else:
+        doc.category = 'chat_inbox'
+```
+
+### Hard rules
+
+1. **`extracted is None` MUST be guarded** before assignment. The first
+   regression of this rule was a `TypeError: 'NoneType' object does
+   not support item assignment` that killed every "other"-kind worker.
+2. **The retry counter is monotonic** — each attempt increments. Never
+   reset on doc reload; reset only when user explicitly retries the doc.
+3. **The watchdog must NEVER iterate `needs_review` docs** for re-firing.
+   Only `chat_inbox` triggers re-fire.
+
+### UI
+
+`static/js/chat.js::categoryLabel` maps `needs_review` to
+`⚠️ Needs your review`. The progress banner counts only `chat_inbox`
+as "still analysing", so a doc in `needs_review` no longer pegs the
+counter at < 100%.
+
+### Litmus test
+
+```
+Q: 5 docs return manual_review=True. Watchdog runs 100 times.
+   - All 5 promote to needs_review after 1-3 attempts → ✓
+   - Loop fires forever, intake/summary cards duplicate → ✗ §10x.26 broke
+```
+
+---
+
+### 10x.27  🔥 BURN-IN — Vision fallback when Tesseract fails 🔥
+
+**Tesseract is BLIND to:**
+- Malaysian MyKad (NRIC) holographic security patterns
+- Photos of cards on contrasting backgrounds with glare
+- Strata title plans with embossed text
+- Old typewritten property documents with faded ink
+
+**When Tesseract returns < 50 chars (its threshold for "unreadable"),
+DO NOT short-circuit to `manual_review=True`. CALL CLAUDE VISION FIRST.**
+
+### The bug this rule prevents
+
+Real example from KOID test: 4 IC photos (LIM LAY CHENG, Joshua, Esther,
+duplicates) were CRYSTAL CLEAR JPEGs but Tesseract returned <50 chars
+because it can't read MyKad. The classifier short-circuited to
+"Image unreadable — manual review needed". 4 family ICs got buried.
+Identity matching had nothing to work with.
+
+### Implementation
+
+`ai/file_classifier.py::classify_file` Stage 2a:
+
+```python
+if fields['raw_text_len'] < 50:
+    vision_result = _vision_classify_fallback(file_path, group_context, testator_profile)
+    if vision_result is not None:
+        return vision_result
+    # Vision ALSO failed → THEN flag manual_review
+    return {**fallback, "manual_review": True, ...}
+```
+
+The fallback uses Sonnet vision with a category list and parses a
+simple `{"kind": "..."}` JSON response. ~$0.005 per call, only fires
+on Tesseract failure (rare).
+
+### Hard rules
+
+1. **Never assume Tesseract is the truth on image classification.**
+   It's a fast first-pass; vision is the fallback.
+2. **The fallback prompt must include all KINDS** (nric/property_title/
+   property_spa/property_tax/loan_agreement/bank_statement/insurance/
+   vehicle/will/death_certificate/unrelated/other) so vision picks
+   from the same vocabulary.
+3. **Cost-track every vision-fallback call** via `track_context()`.
+
+### Where this is enforced
+
+| File | Function | Role |
+|------|----------|------|
+| `ai/file_classifier.py` | `_vision_classify_fallback` | Sonnet vision call, returns classify-shape dict or None |
+| `ai/file_classifier.py` | `classify_file` Stage 2a | Calls fallback before flagging unreadable |
+| `ai/ocr.py` | `_make_content_block` | Image → base64 (used by fallback) |
+
+### Litmus test
+
+```
+Q: User uploads 4 clear MyKad photos. Tesseract returns <50 chars on each.
+   - All 4 classified as 'nric' via vision fallback → ✓
+   - All 4 marked 'manual_review' / 'Image unreadable'  → ✗ §10x.27 broke
+```
+
+---
+
+### 10x.28  🔥 BURN-IN — AI Summary (Step 2) fires on TEXT ALONE 🔥
+
+**Per CLAUDE.md §7, Step 2 (AI Summary) must run on the text body
+regardless of attachments. Earlier the gate was `if artifacts and text`
+which dropped Step 2 for text-only forwards. Now it's `if text` only.**
+
+### Why this rule exists
+
+The KOID test forward CONTAINS the asset list in the body text alone
+(5 properties, 4 banks, 3 insurance). Even a text-only forward (no
+attachments) must show the user "what we deduced" so they can verify
+the parser was correct. Without Step 2 the chat jumps straight to
+"Asset inventory: please upload documents" — confusing the user
+because they DID describe their assets in the email body.
+
+### Order of cards in the chat
+
+After the inbound webhook processes a forwarded email, exactly TWO
+assistant cards must appear in this exact order:
+
+```
+[user]      <forwarded email body>
+[assistant] 📨 AI Summary of your message     ← Step 2 (verify parsing)
+[assistant] 📋 Asset inventory  OR  📋 N exhibits received   ← Step 3+
+```
+
+Order matters: the user reads what the AI deduced FIRST, then sees
+the action prompt. Reverse order causes confusion.
+
+### §10x.9 idempotency check (widened)
+
+The check that prevents duplicate cards on watchdog re-fires must
+match BOTH possible Step 3+ headlines:
+
+```python
+filter_(_or(
+    ChatMessage.content.ilike('%exhibits received%'),  # with attachments
+    ChatMessage.content.ilike('%Asset inventory%'),    # text-only
+))
+```
+
+Earlier the check only matched "exhibits received", so text-only
+forwards got duplicate "Asset inventory" cards every 5s.
+
+### Where this is enforced
+
+| File | Function | Change |
+|------|----------|--------|
+| `app.py::_process_inbound_message_async_inner` | AI Summary block | `if text and not _summary_already_posted` (was `if artifacts and text`) |
+| `app.py::_process_inbound_message_async_inner` | Card ordering | AI Summary block precedes `plan_turn()` call |
+| `app.py::_process_inbound_message_async_inner` | `_intake_already_posted` check | OR-match both card headlines |
+| `app.py::api_chat_history` watchdog | `_intake_done` check | Same OR-match |
+
+### Litmus test
+
+```
+Q: Send a text-only forward (no attachments) to the inbound inbox.
+   - Chat shows: user → AI Summary → Asset inventory (3 messages)  → ✓
+   - Chat shows: user → Asset inventory (only)                      → ✗ §10x.28 broke
+```
+
+---
+
+### 10x.29  🔥 BURN-IN — Watchdog re-fires for STUCK DOCS even if intake card exists 🔥
+
+**The watchdog at `api_chat_history` MUST re-fire the processor
+whenever `chat_inbox` docs remain — even if the intake card was
+already posted. Earlier the watchdog blocked re-fires once "Asset
+inventory" / "exhibits received" appeared in chat, leaving stuck
+docs un-retried forever.**
+
+### Why this rule exists
+
+The §10x.26 retry-counter caps attempts at 3 → terminal `needs_review`.
+For that cap to actually fire, the watchdog must KEEP firing. If the
+watchdog short-circuits on intake-card-exists, the doc sits in
+`chat_inbox` forever and never reaches its 3rd attempt → never
+promotes to `needs_review` → progress UI stuck at < 100%.
+
+### The watchdog gates (correct order)
+
+```
+(1) skip if processor lock is held (in-flight)
+(2) skip if no docs are still chat_inbox  (nothing to do)
+(3) [REMOVED in §10x.29]
+```
+
+Old gate (3) said "skip if intake card already posted". That was wrong
+— intake-card-exists is NOT proof that all docs finished classifying.
+Card-duplication is prevented INSIDE the processor (at the moment of
+posting), NOT in the watchdog.
+
+### Hard rules
+
+1. **The retry-counter (§10x.26) bounds the watchdog's iterations.**
+   After 3 attempts, the doc is no longer `chat_inbox` → gate (2) fires
+   → watchdog exits naturally. No infinite loop.
+2. **The processor's `_intake_already_posted` check is what prevents
+   duplicate cards** — not the watchdog's pre-check.
+3. **Don't add a "skip if X already done" gate to the watchdog.** Always
+   let it re-fire if there are stuck docs.
+
+### Litmus test
+
+```
+Q: 1 doc stuck at attempt=2 in chat_inbox after intake card posted.
+   - Watchdog re-fires → attempt=3 → promotes to needs_review → ✓
+   - Watchdog blocks because intake card exists → doc stuck forever → ✗ §10x.29 broke
+```
+
+---
+
 ### 10x.30  🔥🔥🔥 BURN-IN — Identity Matching: HIGH → LOW Confidence 🔥🔥🔥
 
 **Same rule as §10e for asset matching, applied to identities. The IC
@@ -2903,6 +3141,93 @@ Q: User clicks Skip 5 times on Joshua's IC card.
 If a Skip ever causes an IC to leave the queue, the bug is in
 `skip_pending_ic_document` (it shouldn't write `_chat_skipped`) or
 in `get_pending_ic_documents` (it shouldn't add a new exclusion gate).
+
+---
+
+### 10x.32  🔥🔥 BURN-IN — Step 1 IC walk only assigns FAMILY relations 🔥🔥
+
+**The Step 1 IC walkthrough creates Person rows tagged with FAMILY
+relationship words ONLY. Will-roles (Executor / Trustee / Guardian /
+Witness / Beneficiary) are set in LATER steps (3 / 4 / 5). If the LLM
+deducer returns a will-role for an IC, it MUST be silently mapped back
+to the family relation via outsider-elimination (§10x.21).**
+
+### The bug this rule prevents
+
+KOID test: LIM LAY CHENG's IC was extracted, role-deducer Claude saw
+"My Executor: My Sister in law" in the message and returned
+`{role: 'Executor', evidence: 'My Sister in law'}` for her name. The
+Step 1 handler accepted "Executor" → saved Person with
+`relationship='Executor'`.
+
+This corrupted the wizard:
+- Step 1 family registry showed her as "Executor" (a will-role, not
+  family — visually wrong)
+- Step 3 (Executor selection) couldn't pick her up because the
+  family-filter excluded "Executor" relationship
+- The will document's family list was incomplete
+
+### Implementation
+
+`app.py::_try_assign_pending_identity` rejects will-roles from
+`parse_relationship` and `deduce_roles`:
+
+```python
+_WILL_ROLES = {'Executor', 'Trustee', 'Guardian', 'Witness',
+                'Beneficiary'}
+rel = parse_relationship(user_text)
+chosen_role = None
+if rel and rel not in _WILL_ROLES:
+    chosen_role = rel
+elif rel in _WILL_ROLES:
+    pass   # fall through to deducer/elimination
+if not chosen_role and any(...confirm tokens...):
+    ded = deduce_roles(recent, [name])
+    ded_role = (ded.get(name) or {}).get('role') or ''
+    if ded_role and ded_role not in _WILL_ROLES:
+        chosen_role = ded_role
+    else:
+        # role_matcher outsider-elimination → returns family_relation
+        ...
+        chosen_role = m.get('family_relation') or 'sister-in-law'
+```
+
+The fallback's `family_relation` field is FAMILY only by construction
+(role_matcher splits role from family_relation: `role='executor'`
+WILL role, `family_relation='sister-in-law'` family).
+
+### Hard rules
+
+1. **`_WILL_ROLES` set is the gate.** Any role in this set returned by
+   any source (parse_relationship / deduce_roles) MUST be discarded
+   in Step 1 context.
+2. **The fallback returns `family_relation`, not `role`.** Don't accidentally
+   use `m['role']` from `extract_role_mentions` — that's the will-role.
+3. **Casing: persons table stores Title-Case** (`Sister-in-law`,
+   `Daughter`). Lower-case input from outsider-elim must be normalised:
+   ```python
+   '-'.join(p.capitalize() for p in fam.split('-'))
+   ```
+
+### Where this is enforced
+
+| File | Function | Mechanism |
+|------|----------|-----------|
+| `app.py` | `_try_assign_pending_identity` | `_WILL_ROLES` filter on both `parse_relationship` and `deduce_roles` outputs |
+| `services/role_matcher.py` | `extract_role_mentions` | Returns `role='executor'` AND `family_relation='sister-in-law'` separately |
+| `ai/role_deducer.py` | `CANONICAL_ROLES` | Includes will-roles for OTHER contexts (Step 3+); Step 1 must filter |
+
+### Litmus test
+
+```
+Q: KOID forward; LIM LAY CHENG IC; user clicks "✓ Yes — sister-in-law".
+   - Person row: relationship='Sister-in-law'  → ✓
+   - Person row: relationship='Executor'       → ✗ §10x.32 regressed
+```
+
+If a Person row ever has relationship in `_WILL_ROLES` after a Step 1
+walk, the bug is in `_try_assign_pending_identity`. Fix THERE, never
+patch the Person row directly without also fixing the upstream gate.
 
 ---
 
