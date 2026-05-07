@@ -62,6 +62,7 @@
       death_certificate: '⚠️ Death Cert',
       unrelated: '⚠️ Unrelated',
       chat_inbox: 'Analysing…',
+      needs_review: '⚠️ Needs your review',
       other: 'Unclassified',
     };
     return map[cat] || cat || 'File';
