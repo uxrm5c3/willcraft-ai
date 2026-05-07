@@ -4050,6 +4050,113 @@ back to source and fix.
 
 ---
 
+### 10x.42  🔥🔥🔥 BURN-IN — Mid-flow add MUST trigger downstream reconciliation 🔥🔥🔥
+
+**When a NEW identity (Step 1) or NEW asset (Step 6) is added AFTER
+later steps already completed, the system MUST replay all relevant
+downstream steps for the new entity. Never silently leave them
+half-integrated.**
+
+### Why this rule exists
+
+User report: Lim Bee Yan was added mid-flow as **Wife** AFTER Steps
+2-5 had already completed. Her Person row was created correctly with
+`relationship='Wife'`, but `step4_data` (Beneficiaries) was NOT
+updated to include her — even though the message clearly says:
+
+> "All my Bank Savings go my wife 100percent."
+> "All Insurance go to my wife (Lim Bee Yan) 100percent."
+
+Result: she's an identity but not a beneficiary in the wizard. When
+the will is generated, banks + insurance would have NO beneficiary
+because step4 doesn't list her. Probate-critical data loss.
+
+### What the reconciliation MUST do
+
+When a new Person is added via `_try_assign_pending_identity`:
+
+1. **Step 3 (Executor) check** — if the new person matches a
+   role-only mention ("My Executor My Sister in law"), auto-promote
+   them to executor candidate (already handled by §10x.21 outsider
+   elimination).
+
+2. **Step 5 (Beneficiaries) check** — if the AI Summary text names
+   this person (or their role: "wife", "son", etc.) as the
+   beneficiary of any asset, ADD them to `step4_data`.
+
+3. **Step 6 (Specific Gifts) check** — if any saved gift in
+   `step5_data` has empty beneficiary AND the message names this
+   person for that asset class (e.g. "all banks → wife"), update
+   the gift's `beneficiaries` field to include them.
+
+4. **Layer 3 (Substitute) re-derive** — if substitute defaults per
+   §10x.14 reference family roles ("spouse → both children"), and
+   the spouse was just added, the defaults should now include them.
+
+### Same rule for ASSETS
+
+When a new asset (property / bank / insurance) is uploaded mid-flow:
+
+1. **Layer 1 (Confirm Asset)** — render confirm card per §10hg
+2. **Layer 2 (Main Beneficiary)** — pre-suggest from message per §10x.36
+3. **Layer 3 (Substitute Beneficiary)** — pre-suggest per §10x.14
+
+The walkthrough must NOT skip these layers just because Step 5 / Step
+6 was previously marked complete. Per-asset confirmation is required.
+
+### Hard rules
+
+1. **Never assume "later steps complete" means new entities are
+   processed.** Each new entity walks through its own validation chain.
+2. **Run downstream reconciliation INSIDE the save handler**, not as
+   a separate pass — atomic with the save.
+3. **Log every auto-update** with `_added_by: '§10x.42'` so a future
+   reviewer can see why a row appeared.
+4. **Don't overwrite user-set fields.** If user manually overrode a
+   beneficiary, reconciliation NEVER stomps it.
+
+### Implementation
+
+`app.py::_try_assign_pending_identity` calls
+`_reconcile_downstream_for_new_identity(client_id, name, role)` after
+saving the new Person:
+
+```python
+ensure_person(...)
+db.session.commit()
+_reconcile_downstream_for_new_identity(client_id, name, chosen_role)
+```
+
+The reconciliation function:
+- Reads the AI Summary / raw text
+- Detects whether this person is named as a beneficiary (via name OR role)
+- If yes, appends to `step4_data` (with `_added_by` marker)
+- Commits
+
+### Where this is enforced
+
+| File | Function | Mechanism |
+|------|----------|-----------|
+| `app.py` | `_try_assign_pending_identity` | Calls reconciler post-save |
+| `app.py` | `_reconcile_downstream_for_new_identity` | The reconciler itself |
+| `services/fuck_list_verify.py` | future check | Verify every named-beneficiary in message has a step4 row |
+
+### Litmus test
+
+```
+Q: KOID forwards a 2nd email with Lim Bee Yan's IC after Steps 2-5 done.
+   - User clicks Yes — Wife on her IC card
+   - step4_data NOW contains Lim Bee Yan as beneficiary       → ✓
+   - step4_data still has only Esther + Joshua                → ✗ §10x.42 broke
+```
+
+If a person is in the Person table as Wife but not in step4 as
+beneficiary despite the message saying "all to my wife", the
+reconciler is broken. Fix at the reconciler, not by manually editing
+step4 in the DB.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

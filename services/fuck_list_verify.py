@@ -201,6 +201,51 @@ with app.app_context():
           detail=f'ghosts: {[p.full_name for p in bad_persons]}'
                  if bad_persons else 'all roles set')
 
+    # #23 §10x.42 — Every named-in-message beneficiary is in step4
+    print('\n#23 §10x.42 named beneficiaries reconciled into step4')
+    s4 = []
+    try:
+        s4 = json.loads(w.step4_data) if w.step4_data else []
+    except Exception:
+        s4 = []
+    s4_names = {(b.get('full_name') or '').upper() for b in s4 if isinstance(b, dict)}
+    # Spot-check: if AI Summary mentions "wife" and there's a Wife in
+    # Person table, she MUST be in step4.
+    text_low = text.lower()
+    expected_in_step4 = []
+    role_mentions = (
+        ('wife',     'Wife'),
+        ('husband',  'Husband'),
+        ('spouse',   'Spouse'),
+    )
+    for trigger_word, person_role in role_mentions:
+        if not re.search(rf'(?:go(?:es)?\s+(?:to\s+)?my\s+{trigger_word}|'
+                         rf'to\s+my\s+{trigger_word}|'
+                         rf'for\s+my\s+{trigger_word})', text_low):
+            continue
+        for p in persons:
+            if (p.relationship or '').lower() == person_role.lower():
+                expected_in_step4.append(p.full_name.upper())
+    # Also: any Person whose name appears with "go to" within proximity
+    for p in persons:
+        if (p.relationship or '').lower() == 'testator':
+            continue
+        if p.full_name.upper() in expected_in_step4:
+            continue
+        nm_l = p.full_name.lower()
+        if nm_l in text_low:
+            for trigger in ('go to', 'goes to', 'to my', 'for my'):
+                ti = text_low.find(trigger)
+                ni = text_low.find(nm_l)
+                if ti >= 0 and ni >= 0 and abs(ti - ni) < 120:
+                    expected_in_step4.append(p.full_name.upper())
+                    break
+    missing_from_step4 = set(expected_in_step4) - s4_names
+    check(f'all message-named beneficiaries are in step4',
+          len(missing_from_step4) == 0,
+          detail=f'missing: {missing_from_step4}'
+                 if missing_from_step4 else f'in step4: {s4_names}')
+
     # ── Summary ──────────────────────────────────────────────────
     print('\n' + '═' * 72)
     if fails:

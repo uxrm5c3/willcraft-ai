@@ -9063,7 +9063,95 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
         document_id=target['document_id'],
     )
     db.session.commit()
+    # 🔥 §10x.42 — Mid-flow identity add MUST trigger downstream
+    # reconciliation. If this person is named as a beneficiary in the
+    # message (e.g. "All my Bank Savings go my wife (Lim Bee Yan)"),
+    # auto-add them to step4 (Beneficiaries) and re-evaluate any
+    # already-saved gifts that should reference them.
+    try:
+        _reconcile_downstream_for_new_identity(client_id, name, chosen_role)
+    except Exception:
+        import traceback as _tb
+        app.logger.error(
+            f'§10x.42 reconciliation failed for {name}: {_tb.format_exc()}')
     return {'name': name, 'role': chosen_role, 'kind': 'identity'}
+
+
+def _reconcile_downstream_for_new_identity(client_id: str, name: str,
+                                             role: str) -> None:
+    """🔥 §10x.42 — When a new identity is added mid-flow, walk back
+    through downstream steps and inject this person where the message
+    text already names them as a beneficiary / executor / guardian.
+
+    For now: handles Step 5 (Beneficiaries). Could extend to executors
+    (Step 3) when a candidate emerges, etc.
+    """
+    if not name or not role:
+        return
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return
+    person = Person.query.filter_by(client_id=client_id, full_name=name).first()
+    if not person:
+        return
+    # ── Step 5 reconciliation: is this person named as a beneficiary
+    # in the message? Most common patterns:
+    #   "All my Bank Savings go my wife"           → wife is beneficiary
+    #   "All Insurance go to my wife (Lim Bee Yan)" → Lim Bee Yan beneficiary
+    #   "go to my son Joshua"                       → Joshua beneficiary
+    from ai.chat_planner import _gather_summary_source_text
+    text = (_gather_summary_source_text(client_id) or '').lower()
+    name_l = name.lower()
+    role_l = (role or '').lower()
+    is_named_beneficiary = False
+    if name_l and name_l in text:
+        # Explicit name appears in beneficiary context
+        # Check for nearby trigger words: "go to", "to my", "for my", "100%"
+        for trigger in ('go to', 'goes to', 'to my', 'for my'):
+            if trigger in text:
+                # rough proximity: name within 80 chars of trigger
+                ti = text.find(trigger)
+                ni = text.find(name_l)
+                if ti >= 0 and ni >= 0 and abs(ti - ni) < 120:
+                    is_named_beneficiary = True
+                    break
+    if not is_named_beneficiary and role_l:
+        # Role-based beneficiary mention: "go my wife", "to my son", etc.
+        if re.search(rf'(?:go(?:es)?\s+(?:to\s+)?my\s+{re.escape(role_l)}|'
+                      rf'to\s+my\s+{re.escape(role_l)}|'
+                      rf'for\s+my\s+{re.escape(role_l)})',
+                      text):
+            is_named_beneficiary = True
+    if not is_named_beneficiary:
+        return
+    # Add to step4_data if not already present
+    try:
+        s4 = json.loads(will.step4_data) if will.step4_data else []
+    except (json.JSONDecodeError, TypeError):
+        s4 = []
+    if not isinstance(s4, list):
+        s4 = []
+    already = any(
+        (b.get('full_name') or '').upper() == name.upper()
+        for b in s4 if isinstance(b, dict)
+    )
+    if already:
+        return
+    s4.append({
+        'full_name':              name,
+        'nric_passport_birthcert': person.nric_passport or '',
+        'relationship':           role,
+        'person_id':              person.id,
+        'nationality':            person.nationality or 'Malaysian',
+        '_added_by':              '§10x.42 mid-flow reconciliation',
+    })
+    will.step4_data = json.dumps(s4)
+    db.session.commit()
+    app.logger.info(
+        f'§10x.42 added {name} ({role}) to step4 beneficiaries '
+        f'(client_id={client_id}) — message named them as beneficiary')
 
 
 def _try_skip_pending_identity(client_id: str, user_text: str):
