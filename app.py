@@ -9079,12 +9079,15 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
 
 def _reconcile_downstream_for_new_identity(client_id: str, name: str,
                                              role: str) -> None:
-    """🔥 §10x.42 — When a new identity is added mid-flow, walk back
-    through downstream steps and inject this person where the message
-    text already names them as a beneficiary / executor / guardian.
-
-    For now: handles Step 5 (Beneficiaries). Could extend to executors
-    (Step 3) when a candidate emerges, etc.
+    """🔥 §10x.42 + §10x.44 — When a new identity is added mid-flow,
+    walk back through ALL downstream steps and inject this person where
+    the message text names them in any will-role:
+        Step 3: Executor / Substitute Executor
+        Step 4: Guardian (only relevant if minor children)
+        Step 5: Beneficiary
+        Step 8: Trustee
+    Each step has its own dispatcher; only fires if message contains
+    the trigger pattern.
     """
     if not name or not role:
         return
@@ -9096,48 +9099,73 @@ def _reconcile_downstream_for_new_identity(client_id: str, name: str,
     person = Person.query.filter_by(client_id=client_id, full_name=name).first()
     if not person:
         return
-    # ── Step 5 reconciliation: is this person named as a beneficiary
-    # in the message? Most common patterns:
-    #   "All my Bank Savings go my wife"           → wife is beneficiary
-    #   "All Insurance go to my wife (Lim Bee Yan)" → Lim Bee Yan beneficiary
-    #   "go to my son Joshua"                       → Joshua beneficiary
     from ai.chat_planner import _gather_summary_source_text
-    text = (_gather_summary_source_text(client_id) or '').lower()
+    text = (_gather_summary_source_text(client_id) or '')
+    text_l = text.lower()
     name_l = name.lower()
     role_l = (role or '').lower()
-    is_named_beneficiary = False
-    if name_l and name_l in text:
-        # Explicit name appears in beneficiary context
-        # Check for nearby trigger words: "go to", "to my", "for my", "100%"
-        for trigger in ('go to', 'goes to', 'to my', 'for my'):
-            if trigger in text:
-                # rough proximity: name within 80 chars of trigger
-                ti = text.find(trigger)
-                ni = text.find(name_l)
-                if ti >= 0 and ni >= 0 and abs(ti - ni) < 120:
-                    is_named_beneficiary = True
-                    break
-    if not is_named_beneficiary and role_l:
-        # Role-based beneficiary mention: "go my wife", "to my son", etc.
+
+    # ── Helper: does message name this person/role with given will-role keyword?
+    def _named_with(will_role_kw: str) -> bool:
+        """e.g. will_role_kw='executor' — check if message has
+        'my executor X', 'executor: Y', 'my <role> as executor', etc."""
+        kw = will_role_kw.lower()
+        # Pattern A: "my <role> X" or "X (my <role>)" — name proximity
+        if name_l and name_l in text_l:
+            ni = text_l.find(name_l)
+            ki = text_l.find(kw)
+            if ki >= 0 and ni >= 0 and abs(ki - ni) < 120:
+                return True
+        # Pattern B: "my <kw> my <family-role>" — KOID-style
+        # ("My Executor My Sister in law")
+        if role_l and re.search(
+            rf'\bmy\s+{re.escape(kw)}[^\.\n]{{0,40}}my\s+{re.escape(role_l)}',
+            text_l):
+            return True
+        # Pattern C: "my <family-role> as <kw>" / "<family-role> as my <kw>"
+        if role_l and re.search(
+            rf'\b(?:my\s+)?{re.escape(role_l)}[^\.\n]{{0,40}}\bas\s+(?:my\s+)?{re.escape(kw)}',
+            text_l):
+            return True
+        return False
+
+    # ── Step 5 (Beneficiaries): "go to my X", "to my X", "for my X"
+    is_beneficiary = False
+    if name_l and name_l in text_l:
+        for trig in ('go to', 'goes to', 'to my', 'for my'):
+            ti = text_l.find(trig); ni = text_l.find(name_l)
+            if ti >= 0 and ni >= 0 and abs(ti - ni) < 120:
+                is_beneficiary = True; break
+    if not is_beneficiary and role_l:
         if re.search(rf'(?:go(?:es)?\s+(?:to\s+)?my\s+{re.escape(role_l)}|'
                       rf'to\s+my\s+{re.escape(role_l)}|'
-                      rf'for\s+my\s+{re.escape(role_l)})',
-                      text):
-            is_named_beneficiary = True
-    if not is_named_beneficiary:
-        return
-    # Add to step4_data if not already present
+                      rf'for\s+my\s+{re.escape(role_l)})', text_l):
+            is_beneficiary = True
+    if is_beneficiary:
+        _step4_add_beneficiary(will, person, name, role)
+
+    # ── Step 3 (Executor) — auto-add when message names them as executor
+    if _named_with('executor'):
+        _step2_add_executor(will, person, name, role)
+
+    # ── Step 4 (Guardian) — auto-add when message names them as guardian
+    if _named_with('guardian'):
+        _step3_add_guardian(will, person, name, role)
+
+    # ── Step 8 (Trustee) — auto-add when message names them as trustee
+    if _named_with('trustee'):
+        _step7_add_trustee(will, person, name, role)
+
+
+def _step4_add_beneficiary(will, person, name, role):
     try:
         s4 = json.loads(will.step4_data) if will.step4_data else []
     except (json.JSONDecodeError, TypeError):
         s4 = []
     if not isinstance(s4, list):
         s4 = []
-    already = any(
-        (b.get('full_name') or '').upper() == name.upper()
-        for b in s4 if isinstance(b, dict)
-    )
-    if already:
+    if any((b.get('full_name') or '').upper() == name.upper()
+            for b in s4 if isinstance(b, dict)):
         return
     s4.append({
         'full_name':              name,
@@ -9145,13 +9173,88 @@ def _reconcile_downstream_for_new_identity(client_id: str, name: str,
         'relationship':           role,
         'person_id':              person.id,
         'nationality':            person.nationality or 'Malaysian',
-        '_added_by':              '§10x.42 mid-flow reconciliation',
+        '_added_by':              '§10x.42 reconcile (Step 5: Beneficiary)',
     })
     will.step4_data = json.dumps(s4)
     db.session.commit()
-    app.logger.info(
-        f'§10x.42 added {name} ({role}) to step4 beneficiaries '
-        f'(client_id={client_id}) — message named them as beneficiary')
+    app.logger.info(f'§10x.42/44 added {name} ({role}) to step4 (Beneficiary)')
+
+
+def _step2_add_executor(will, person, name, role):
+    try:
+        s2 = json.loads(will.step2_data) if will.step2_data else {}
+    except (json.JSONDecodeError, TypeError):
+        s2 = {}
+    if not isinstance(s2, dict):
+        s2 = {}
+    execs = s2.get('executors') or []
+    if any((e.get('full_name') or '').upper() == name.upper() for e in execs):
+        return
+    is_first = len(execs) == 0
+    execs.append({
+        'full_name':     name,
+        'nric_passport': person.nric_passport or '',
+        'relationship':  role,
+        'address':       person.address or '',
+        'role':          'Primary' if is_first else 'Substitute',
+        'person_id':     person.id,
+        'nationality':   person.nationality or 'Malaysian',
+        '_added_by':     '§10x.44 reconcile (Step 3: Executor)',
+    })
+    s2['executors'] = execs
+    will.step2_data = json.dumps(s2)
+    db.session.commit()
+    app.logger.info(f'§10x.44 added {name} ({role}) to step2 (Executor)')
+
+
+def _step3_add_guardian(will, person, name, role):
+    try:
+        s3 = json.loads(will.step3_data) if will.step3_data else {}
+    except (json.JSONDecodeError, TypeError):
+        s3 = {}
+    if not isinstance(s3, dict):
+        s3 = {}
+    guardians = s3.get('guardians') or []
+    if any((g.get('full_name') or '').upper() == name.upper() for g in guardians):
+        return
+    guardians.append({
+        'full_name':     name,
+        'nric_passport': person.nric_passport or '',
+        'relationship':  role,
+        'address':       person.address or '',
+        'person_id':     person.id,
+        'nationality':   person.nationality or 'Malaysian',
+        '_added_by':     '§10x.44 reconcile (Step 4: Guardian)',
+    })
+    s3['guardians'] = guardians
+    will.step3_data = json.dumps(s3)
+    db.session.commit()
+    app.logger.info(f'§10x.44 added {name} ({role}) to step3 (Guardian)')
+
+
+def _step7_add_trustee(will, person, name, role):
+    try:
+        s7 = json.loads(will.step7_data) if will.step7_data else {}
+    except (json.JSONDecodeError, TypeError):
+        s7 = {}
+    if not isinstance(s7, dict):
+        s7 = {}
+    trustees = s7.get('trustees') or []
+    if any((t.get('full_name') or '').upper() == name.upper() for t in trustees):
+        return
+    trustees.append({
+        'full_name':     name,
+        'nric_passport': person.nric_passport or '',
+        'relationship':  role,
+        'address':       person.address or '',
+        'person_id':     person.id,
+        'nationality':   person.nationality or 'Malaysian',
+        '_added_by':     '§10x.44 reconcile (Step 8: Trustee)',
+    })
+    s7['trustees'] = trustees
+    will.step7_data = json.dumps(s7)
+    db.session.commit()
+    app.logger.info(f'§10x.44 added {name} ({role}) to step7 (Trustee)')
 
 
 def _try_skip_pending_identity(client_id: str, user_text: str):

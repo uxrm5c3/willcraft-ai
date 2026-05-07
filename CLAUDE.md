@@ -3880,6 +3880,7 @@ Each entry has:
 | 22 | "Identity must have a role — never ghost identities" | §10x.41 | `ensure_person` refuses on empty role; verifier #22 |
 | 23 | "When new identity added mid-flow, re-run downstream (named beneficiary auto-added)" | §10x.42 | `_reconcile_downstream_for_new_identity`; verifier #23 |
 | 24 | "When new image/message provided midway, MUST re-run AI Summary → Image Analysis → Identity Match → Role Match → Asset Match (3 layers)" | §10x.43 | Inbound webhook → watchdog re-fire (§10x.29) → walker re-emit pending → reconciler |
+| 25 | "New identity can also be executor / guardian / trustee — must reconcile into ANY step that names them" | §10x.44 | `_step2/3/4/7_add_*` dispatchers fire per will-role pattern in message |
 
 ### Maintenance rule
 
@@ -4287,6 +4288,102 @@ If a new inbound email is silently dropped, or Steps 1-5 don't
 re-engage when new entities appear, §10x.43 has been violated.
 The fix is at the inbound handler / walkthrough gates — never patch
 by manually editing DB rows.
+
+---
+
+### 10x.44  🔥🔥🔥 BURN-IN — New identity reconciles into ANY step that names them 🔥🔥🔥
+
+**Extends §10x.42. When a new identity is added, the reconciler MUST
+check ALL downstream will-role assignments — not just Beneficiary.
+The new person can map to:**
+
+| Step | Will-role | Trigger pattern in message |
+|------|-----------|---------------------------|
+| **3** | Executor / Substitute Executor | "my executor X", "X (executor)", "my <role> as executor" |
+| **4** | Guardian | "my guardian X", "X (guardian)", "my <role> as guardian" |
+| **5** | Beneficiary | "go to my X", "to my X", "for my X" |
+| **8** | Trustee | "my trustee X", "X (trustee)", "my <role> as trustee" |
+
+### Why this rule exists
+
+User explicitly said:
+> "the new identity can also be executor or guardian or trustee. can
+>  be any of the earlier step"
+
+§10x.42 only handled Step 5 (Beneficiary). §10x.44 widens this to
+all 4 will-role steps. When a new IC arrives mid-flow, the reconciler
+runs the SAME pattern check for each will-role and auto-populates the
+matching wizard step.
+
+### Hard rules
+
+1. **All 4 step dispatchers run for every new identity.** Skipping a
+   step because "the message probably doesn't name them as that role"
+   is forbidden. Run the check; let the regex decide.
+2. **Each step's add-helper is idempotent** — name dedup before append.
+   Re-running the reconciler must NOT create duplicate rows.
+3. **First executor is Primary; second is Substitute.** Subsequent
+   adds are Substitute. The role-matcher (§10x.21) determines the
+   ordering when KOID's "My Executor My Sister in law" pattern triggers.
+4. **Guardian add gated on minor children.** If no minors per Step 4,
+   the guardian list stays empty even if message says "X is guardian".
+   (TODO: enforce this gate; currently always adds.)
+5. **Trustee defaults to executor.** Per §10x.24 + Phek format, "my
+   Executor(s) shall also act as my Trustee(s)" unless overridden.
+   So Step 8 trustee population is rare — only fires when message
+   explicitly names a different trustee.
+6. **Every auto-add carries `_added_by: '§10x.44 reconcile (Step N: …)'`
+   marker** for audit trail.
+
+### Implementation
+
+`app.py::_reconcile_downstream_for_new_identity` now dispatches to
+four step-specific helpers:
+
+```python
+def _reconcile_downstream_for_new_identity(client_id, name, role):
+    # ... resolve will + person + message text ...
+    if _named_with('executor'):
+        _step2_add_executor(will, person, name, role)
+    if _named_with('guardian'):
+        _step3_add_guardian(will, person, name, role)
+    if _is_named_beneficiary(...):
+        _step4_add_beneficiary(will, person, name, role)
+    if _named_with('trustee'):
+        _step7_add_trustee(will, person, name, role)
+```
+
+Each step helper:
+1. Reads the relevant `will.stepN_data`
+2. Dedups by name
+3. Appends with `_added_by` marker
+4. Commits
+
+### Where this is enforced
+
+| File | Function |
+|------|----------|
+| `app.py` | `_reconcile_downstream_for_new_identity` |
+| `app.py` | `_step2_add_executor` / `_step3_add_guardian` / `_step4_add_beneficiary` / `_step7_add_trustee` |
+| `services/fuck_list_verify.py` | check #23 (beneficiary) — TODO extend to executor/guardian/trustee |
+
+### Litmus test
+
+```
+Q: Walkthrough complete for KOID. User uploads new IC for "Aunt Mary"
+   and message says: "I appoint Aunt Mary as my Trustee".
+   - Aunt Mary IC classified, family role assigned (Aunt)
+   - §10x.42/44 reconciler fires:
+     • Beneficiary check: no "go to my aunt" — skipped
+     • Executor check: no "my executor my aunt" — skipped
+     • Guardian check: no "my guardian my aunt" — skipped
+     • Trustee check: "I appoint Aunt Mary as my Trustee" → step7 ✓
+   - step7_data.trustees has Aunt Mary with _added_by marker  → ✓
+```
+
+If a person's will-role is named in the message but the corresponding
+step doesn't include them, the bug is in the reconciler dispatch.
+Fix at the dispatcher pattern matching, not in DB.
 
 ---
 
