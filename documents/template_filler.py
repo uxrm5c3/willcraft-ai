@@ -328,25 +328,32 @@ def fill_will(will_data) -> str:
     parts.append('')
     clause_num += 1
     res = will_data.residuary_estate
-    res_bens = list(res.beneficiaries) if (res and res.beneficiaries) else []
-    if len(res_bens) >= 2:
+    res_main = list(res.main_beneficiaries) if (
+        res and res.main_beneficiaries) else []
+    # Resolve names against beneficiaries_index (residuary entries don't carry
+    # NRIC / relationship; we look those up so the clause renders with full IDs)
+    if len(res_main) >= 2:
         ben_phrases = []
-        for rb in res_bens:
+        for rb in res_main:
+            nm = (rb.beneficiary_name or '').strip()
+            info = bidx.get(nm.upper(), {})
             ben_phrases.append(_ben_phrase(
-                rb.full_name, rb.nric_passport_birthcert,
-                getattr(rb, 'nationality', 'Malaysian'),
-                with_relationship=rb.relationship))
+                nm, info.get('nric', ''),
+                info.get('nationality', 'Malaysian'),
+                with_relationship=info.get('relationship', '')))
         ben_text = (" and ".join(ben_phrases) if len(ben_phrases) == 2
                     else ", ".join(ben_phrases[:-1]) + ", and " + ben_phrases[-1])
         parts.append(RESIDUARY_MULTIPLE_TEMPLATE.format(
             clause_num=clause_num, beneficiary_list_text=ben_text))
-    elif len(res_bens) == 1:
-        rb = res_bens[0]
+    elif len(res_main) == 1:
+        rb = res_main[0]
+        nm = (rb.beneficiary_name or '').strip()
+        info = bidx.get(nm.upper(), {})
         parts.append(RESIDUARY_TEMPLATE.format(
             clause_num=clause_num,
-            relationship=(rb.relationship or '').lower(),
-            beneficiary_name=rb.full_name,
-            nric=rb.nric_passport_birthcert,
+            relationship=(info.get('relationship', '') or '').lower(),
+            beneficiary_name=nm,
+            nric=info.get('nric', ''),
         ))
     else:
         parts.append(f"{clause_num}.  [RESIDUARY BENEFICIARY TO BE CONFIRMED]")
