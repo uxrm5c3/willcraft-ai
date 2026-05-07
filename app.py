@@ -3925,9 +3925,13 @@ def _api_chat_message_impl(client_id):
                             if not just_residuary_skip:
                                 just_benef = _try_save_beneficiaries(client_id, user_text)
                                 if not just_benef:
-                                    # §10x.21 role-match handler runs FIRST so its
+                                    # §10x.18 mismatch handler runs FIRST so 'mismatch ...'
+                                    # quickreplies don't fall to other handlers.
+                                    just_mm = _try_handle_mismatch(client_id, user_text)
+                                    # §10x.21 role-match handler runs next so its
                                     # 'role_match confirm <id>' quickreplies route correctly.
-                                    just_role = _try_handle_role_match(client_id, user_text)
+                                    just_role = (None if just_mm
+                                                  else _try_handle_role_match(client_id, user_text))
                                     just_gift_deleted = (None if just_role
                                                           else _try_delete_pending_gift(client_id, user_text))
                                     if not just_role and not just_gift_deleted:
@@ -6779,14 +6783,35 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
     ap = ai_props[h3_idx]
     # 🔥 BURN-IN §10x.19 — extract co-owner names from the ownership clause
     # so they're recorded inside the gift WITHOUT becoming Person rows.
-    # "joint with Chai Mei Fun, share 1/2"  →  co_owners = ["Chai Mei Fun"]
-    # "joint with wife Lim Bee Yan"          →  co_owners = ["Lim Bee Yan"]
-    # "sole"                                  →  co_owners = []
+    # 🔥 BURN-IN §10x.13 — also extract testator_share (e.g. '1/2' for
+    # joint, '1/1' for sole) so the will clause can say "my undivided
+    # 1/2 share" not "the whole property".
     own = (ap.get('ownership') or '').strip()
+    own_lc = own.lower()
     co_owners = []
-    if own and 'sole' not in own.lower():
-        # Match "with <Name1> [, <Name2>]" — names are 1-4 capitalised words,
-        # may include "Bin"/"Bte"/"A/L"/"A/P" etc.
+    testator_share = '1/1'   # default sole ownership
+    if 'sole' in own_lc:
+        testator_share = '1/1'
+    elif 'joint' in own_lc or 'share' in own_lc or 'with' in own_lc:
+        # Try to find a fraction pattern: "1/2", "share 1/2", "50/50",
+        # "share 1/3" — testator's share = numerator/denominator.
+        _share_re = re.compile(
+            r'(?:share\s+)?(?P<num>\d+)\s*/\s*(?P<den>\d+)',
+            re.IGNORECASE,
+        )
+        # Prefer "1/2" form over "50/50" form. The "50/50" idiom means
+        # split equally between 2 owners → testator's share = 1/2.
+        m = _share_re.search(own)
+        if m:
+            num, den = int(m.group('num')), int(m.group('den'))
+            if num == den and den >= 2:
+                testator_share = '1/' + str(den)   # "50/50" → 1/2
+            elif num < den:
+                testator_share = f'{num}/{den}'    # "share 1/2" → 1/2
+        else:
+            # No fraction found but joint → assume 1/2
+            testator_share = '1/2'
+        # Match "with <Name1> [, <Name2>]" — names are 1-4 capitalised words.
         _name_re = re.compile(
             r'\bwith\s+(?:my\s+wife\s+|my\s+husband\s+|my\s+spouse\s+'
             r'|my\s+son\s+|my\s+daughter\s+)?'
@@ -6796,11 +6821,9 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
         )
         for m in _name_re.finditer(own):
             nm = m.group(1).strip()
-            # Drop common stop-words at the end
             nm = re.sub(r'\s+(share|fun|with)\s*$', '', nm, flags=re.IGNORECASE).strip()
             if nm and len(nm) > 2 and nm.lower() not in ('share', 'with'):
                 co_owners.append(nm[:80])
-        # Dedup, preserve order
         seen_co = set()
         co_owners = [c for c in co_owners
                      if not (c.lower() in seen_co or seen_co.add(c.lower()))]
@@ -6814,8 +6837,11 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
             'title_number':     ap.get('title') or '',
             'mukim':            ap.get('mukim') or '',
             'daerah':           ap.get('daerah') or '',
-            'co_owners':        co_owners,   # §10x.19
+            'co_owners':        co_owners,        # §10x.19
+            'testator_share':   testator_share,   # §10x.13
+            'ownership_type':   'joint' if testator_share != '1/1' else 'sole',
         },
+        'testator_share':       testator_share,   # §10x.13 (top-level for verifier)
         'address':            ap.get('address') or '',
         'beneficiaries':      [],   # not yet assigned — Layer 2 still pending
         'ownership_intent':   ap.get('ownership') or '',
@@ -7447,6 +7473,97 @@ def _try_save_insurance_h3_gift(client_id, user_text):
     return {'name': target.get('insurer'),
             'role': f'{main_bens[0]["name"]} {main_bens[0]["share"]}',
             'kind': 'gift_insurance_h3'}
+
+
+def _try_handle_mismatch(client_id: str, user_text: str):
+    """🔥 BURN-IN §10x.18 — handle the text-vs-image clarification card.
+
+    Quickreplies:
+        'mismatch use_text   <gift_idx> <field>'  — keep text value
+        'mismatch use_image  <gift_idx> <field>'  — overwrite gift with image value
+        'mismatch type_manually <gift_idx> <field>' — fall through to manual entry
+        'mismatch remove_image <gift_idx>'        — unbind document
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    if not t.lower().startswith('mismatch '):
+        return None
+    parts = t.split()
+    if len(parts) < 3:
+        return None
+    action = parts[1].lower()
+    try:
+        gi = int(parts[2])
+    except ValueError:
+        return None
+    field = parts[3] if len(parts) > 3 else ''
+
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        s5 = json.loads(will.step5_data or '[]')
+        if not isinstance(s5, list):
+            return None
+    except Exception:
+        return None
+    if not (0 <= gi < len(s5)):
+        return None
+    g = s5[gi]
+    doc_id = g.get('document_id')
+
+    if action == 'use_text':
+        # Mark resolved — text wins, no change to gift, just unblock the gate
+        pass
+    elif action == 'use_image':
+        # Overwrite the gift's field with the image's value
+        if doc_id:
+            doc = db.session.get(Document, doc_id)
+            try:
+                ex = json.loads(doc.extracted_data) if doc and doc.extracted_data else {}
+            except Exception:
+                ex = {}
+            new_v = (ex.get(field) or '').strip()
+            if new_v:
+                if g.get('kind') == 'property':
+                    g.setdefault('property_info', {})[field] = new_v
+                    g[field] = new_v
+                elif g.get('kind') == 'bank':
+                    g[field] = new_v
+                    g.setdefault('financial_details', {})['account_number' if field == 'account_number' else field] = new_v
+                elif g.get('kind') == 'insurance':
+                    g[field] = new_v
+                s5[gi] = g
+                will.step5_data = json.dumps(s5)
+    elif action == 'type_manually':
+        # The user will type the correct value in the next message;
+        # for now, mark resolved so the gate doesn't keep firing.
+        # Future enhancement: capture a follow-up free-text input.
+        pass
+    elif action == 'remove_image':
+        # Drop the document_id from the gift
+        g.pop('document_id', None)
+        s5[gi] = g
+        will.step5_data = json.dumps(s5)
+    else:
+        return None
+
+    # Mark resolved in completed_steps so the gate doesn't refire.
+    try:
+        cs = json.loads(will.completed_steps or '[]')
+        if not isinstance(cs, list):
+            cs = []
+    except Exception:
+        cs = []
+    marker = f'mismatch_resolved_{gi}_{field}' if field else f'mismatch_resolved_{gi}'
+    if marker not in cs:
+        cs.append(marker)
+        will.completed_steps = json.dumps(cs)
+    db.session.commit()
+    return {'name': f'gift[{gi}]', 'role': action, 'kind': 'mismatch_resolved'}
 
 
 def _try_handle_role_match(client_id: str, user_text: str):

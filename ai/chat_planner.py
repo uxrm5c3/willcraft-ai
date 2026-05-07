@@ -183,6 +183,30 @@ def plan_turn(
         if not has_any_assets:
             reply_parts.append(_assets_prompt_for_uploads())
             return _wrap(reply_parts, questions, patch, advice)
+        # 🔥 BURN-IN §10x.18 — text-vs-image conflict gate. If any saved
+        # gift has an identifier that disagrees with its bound Document's
+        # OCR, ASK the user before proceeding to walkthrough or save.
+        try:
+            from services.conflict_detector import detect_text_image_mismatches
+            cid_for_conflict = (current_will_data or {}).get('client_id') or ''
+            if cid_for_conflict:
+                conflicts = detect_text_image_mismatches(cid_for_conflict)
+                # Show only the FIRST unresolved conflict per turn
+                resolved = set()
+                for c in (current_will_data.get('completed_steps') or []):
+                    if isinstance(c, str) and c.startswith('mismatch_resolved_'):
+                        resolved.add(c[len('mismatch_resolved_'):])
+                for cf in conflicts:
+                    key = f'{cf["gift_idx"]}_{cf["field"]}'
+                    if key in resolved:
+                        continue
+                    card = _walkthrough_text_image_conflict_card(cf)
+                    reply_parts.append(card['text'])
+                    focus = [card['focus_doc_id']] if card.get('focus_doc_id') else []
+                    return _wrap(reply_parts, questions, patch, advice,
+                                 focus_attachments=focus)
+        except Exception:
+            pass   # detector is best-effort
         # Interleave Layer 2: if any inventoried property still needs beneficiary
         # assignment, handle that BEFORE showing the next Layer 1 card so we
         # complete both layers per property before moving to the next property.
@@ -1845,6 +1869,37 @@ def find_executor_candidate(identities, executors, role, recent_text=''):
                         'evidence': f"adult {rel} — common substitute choice",
                         'document_id': i.get('document_id') or None}
     return None
+
+
+def _walkthrough_text_image_conflict_card(conflict: Dict[str, Any]) -> Dict[str, Any]:
+    """🔥 BURN-IN §10x.18 — when text-stated and image-OCR'd identifiers
+    disagree, ASK the user which is correct. Don't auto-pick."""
+    asset = conflict.get('asset_label', 'an asset')
+    field = conflict.get('field_label', conflict.get('field', 'field'))
+    text_v = conflict.get('text_value', '')
+    image_v = conflict.get('image_value', '')
+
+    parts = [
+        f"### ⚠️ Mismatch — please verify {asset}",
+        f"For **{field}**:",
+        f"  📝 You said: **{text_v}**",
+        f"  📎 Image shows: **{image_v}**",
+        "These don't match. Which is correct?",
+    ]
+    quick = [
+        {'label': f"📝 Use what I said ({text_v[:30]})",
+         'value': f'mismatch use_text {conflict["gift_idx"]} {conflict["field"]}'},
+        {'label': f"📎 Use what the image shows ({image_v[:30]})",
+         'value': f'mismatch use_image {conflict["gift_idx"]} {conflict["field"]}'},
+        {'label': '✏️ Type the correct value',
+         'value': f'mismatch type_manually {conflict["gift_idx"]} {conflict["field"]}'},
+        {'label': '🗑 Wrong upload — remove image',
+         'value': f'mismatch remove_image {conflict["gift_idx"]}'},
+    ]
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+        'focus_doc_id': conflict.get('document_id'),
+    }
 
 
 def _walkthrough_role_match_card(role_mention: Dict[str, Any],
