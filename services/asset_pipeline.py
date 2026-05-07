@@ -963,22 +963,44 @@ def _gather_assetitem_msg_timestamps(client_id: str,
             ChatMessage.session_id.in_(sess_ids),
             ChatMessage.role == 'user',
         ).all()
-        # Map content lower → timestamp
+        # Find timestamp of message that mentions this AssetItem.
+        # Strategy: try multiple probes (full address, distinctive token,
+        # building/street name) — first hit wins. Loosened from rigid
+        # 30-char prefix to catch user typos and run-on paragraphs.
         for ai in asset_items:
             f = ai.fields or {}
-            addr = (f.get('address') or '').lower()
-            name = (f.get('name') or '').lower()
+            addr_lc = (f.get('address') or '').lower()
+            name_lc = (f.get('name') or '').lower()
+            # Build probes ranked most-distinctive first
+            probes: List[str] = []
+            # 1. Unit-like tokens (b-05-11, c-30-08)
+            for tok in re.findall(r'[a-z]?-?\d+(?:[-/]\d+)+', addr_lc + ' ' + name_lc):
+                if len(tok) >= 5:
+                    probes.append(tok)
+            # 2. Web-derived locality / building name (citation-backed)
+            for k in ('_web_building', '_web_locality'):
+                v = (f.get(k) or '').lower().strip()
+                if v and len(v) >= 5:
+                    probes.append(v)
+            # 3. First 20 chars of address
+            if addr_lc and len(addr_lc) >= 5:
+                probes.append(addr_lc[:20])
+            # 4. Distinctive multi-word fragments from address
+            for m in re.finditer(r'(?:jalan|taman|lorong|bandar|kampung)\s+[a-z][a-z\s\-]{2,30}',
+                                   addr_lc):
+                probes.append(m.group(0))
             best_ts = None
-            best_match_len = 0
-            for m in msgs:
-                mc = (m.content or '').lower()
-                # Try address substring (first 30 chars)
-                key = addr[:30] or name[:30]
-                if key and len(key) >= 5 and key in mc:
-                    if best_ts is None or m.created_at > best_ts:
-                        if len(key) > best_match_len:
+            for probe in probes:
+                p = probe.strip()
+                if not p or len(p) < 5:
+                    continue
+                for m in msgs:
+                    mc = (m.content or '').lower()
+                    if p in mc:
+                        if best_ts is None or m.created_at < best_ts:
                             best_ts = m.created_at
-                            best_match_len = len(key)
+                if best_ts:
+                    break  # first probe that hits is enough
             if best_ts:
                 out[ai.ai_index] = best_ts
     except Exception:

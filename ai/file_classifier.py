@@ -351,15 +351,61 @@ def classify_file(file_path: str, group_context: dict = None,
     # ── Stage 2b: High-confidence regex match → no AI needed ─────────────────
     if fields['confidence'] >= 0.70 and fields['doc_type']:
         result = _build_from_fields(fields, group_context, testator_profile)
+        result = _maybe_vision_enrich_property(file_path, result)
         return result
 
     # ── Stage 2c: Has text but ambiguous → Haiku text-only classify (~$0.001) ─
     if fields['raw_text_len'] >= 50:
         result = _haiku_classify(raw_text, fields, group_context, testator_profile)
+        result = _maybe_vision_enrich_property(file_path, result)
         return result
 
     return {**fallback, "manual_review": True,
             "reason": "Could not determine document type"}
+
+
+def _maybe_vision_enrich_property(file_path: str, result: dict) -> dict:
+    """🔥 §10x.52 — When the document is property-related but the field
+    extraction is sparse (no street address, OR no lot/title), call
+    vision_extract_property_fields to read directly from the image.
+
+    The existing Tesseract+Haiku pipeline often misses critical fields
+    on property docs because:
+      • Title docs have street address only on cover page (small print)
+      • SPA documents have address scattered across the body
+      • Photos of title docs are angled/low-contrast for Tesseract
+    Vision reads the image directly and fills in what's missing.
+
+    Vision values NEVER overwrite existing non-empty fields — only fill
+    empties — so trust order is: existing → vision.
+    """
+    if not isinstance(result, dict):
+        return result
+    kind = (result.get('kind') or '').strip()
+    PROPERTY_KINDS = {'property_title', 'property_spa', 'property_tax',
+                       'property_transfer', 'loan_agreement'}
+    if kind not in PROPERTY_KINDS:
+        return result
+    # Sparse if street address empty OR (lot AND title both empty)
+    has_address = bool((result.get('property_address') or '').strip())
+    has_lot = bool((result.get('lot_number') or '').strip())
+    has_title = bool((result.get('title_number') or '').strip())
+    if has_address and (has_lot or has_title):
+        return result   # already enough info
+    try:
+        vision_fields = vision_extract_property_fields(file_path)
+    except Exception:
+        return result
+    if not vision_fields:
+        return result
+    # Fill empty fields only
+    for k in ('property_address', 'lot_number', 'title_number',
+              'mukim', 'daerah', 'negeri', 'owner_name', 'building_name',
+              'postcode'):
+        if not (result.get(k) or '').strip() and vision_fields.get(k):
+            result[k] = vision_fields[k]
+    result['_vision_enriched'] = True
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -651,6 +697,104 @@ def _vision_classify_fallback(file_path: str, group_context: dict = None,
         }
     except Exception:
         return None
+
+
+def vision_extract_property_fields(file_path: str) -> dict:
+    """🔥 §10x.52 — Vision-based property field extractor.
+
+    Tesseract OCR routinely fails to extract critical property fields:
+      • Street address (Jalan X, Taman Y) embedded in property docs
+      • PTD/HSD numbers in low-contrast or rotated images
+      • Mukim/Daerah/Negeri buried in structured layouts
+
+    This sends the image directly to Claude vision with a strict prompt
+    asking for ONLY the probate-relevant fields. Returns dict with same
+    shape as classify_file's extracted fields. Caller merges over any
+    Tesseract-extracted values (vision wins for empty fields).
+
+    Returns {} on any error — caller falls back to existing fields.
+    """
+    import os as _os
+    if not file_path or not _os.path.isfile(file_path):
+        return {}
+    ext = file_path.rsplit('.', 1)[-1].lower()
+    if ext not in ('jpg', 'jpeg', 'png', 'gif', 'webp', 'pdf', 'heic', 'heif',
+                    'bmp', 'tiff', 'tif'):
+        return {}
+    try:
+        from config import CLAUDE_MODEL_FAST as _MODEL
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        content_block = _make_content_block(file_path)
+    except Exception:
+        return {}
+
+    prompt = (
+        "Look at this Malaysian property document image and extract the "
+        "probate-relevant fields. Read EVERY visible address line, lot "
+        "number, title number, mukim, daerah, owner name from the image.\n\n"
+        "HARD RULES:\n"
+        "1. Read directly from the image — do NOT use general knowledge.\n"
+        "2. If a field is not visible in the image, return empty string.\n"
+        "3. The street address is the postal address line(s) — usually has "
+        "'Jalan', 'Lorong', 'Taman', or a numbered street. NOT the legal "
+        "Mukim/Daerah designation.\n"
+        "4. Lot number: PTD/Lot/HSD/HSM/H.S.(D)/Hakmilik number. Strip any "
+        "'VALUE:' / 'LOT' prefix the OCR may have added.\n"
+        "5. Title number: Geran/Hakmilik/strata title reference.\n"
+        "6. Mukim: official NLC mukim only (e.g. 'Plentong', 'Pulai', "
+        "'Tebrau', 'Bandar Johor Bahru'). Strip 'Mukim ' prefix.\n"
+        "7. Owner name: full registered owner name(s), uppercase.\n\n"
+        "Return ONLY this JSON (no preamble, no markdown):\n"
+        '{\n'
+        '  "property_address": "<street address visible on doc, or empty>",\n'
+        '  "lot_number": "<lot/PTD/HSD number, or empty>",\n'
+        '  "title_number": "<geran/hakmilik/strata title number, or empty>",\n'
+        '  "mukim": "<mukim, or empty>",\n'
+        '  "daerah": "<daerah, or empty>",\n'
+        '  "negeri": "<negeri/state, or empty>",\n'
+        '  "owner_name": "<owner name(s), or empty>",\n'
+        '  "building_name": "<for strata/condo only, or empty>",\n'
+        '  "postcode": "<5-digit postcode if visible, or empty>",\n'
+        '  "confidence": "high|medium|low"\n'
+        '}'
+    )
+    try:
+        msg = client.messages.create(
+            model=_MODEL, max_tokens=600,
+            messages=[{"role": "user", "content": [
+                content_block,
+                {"type": "text", "text": prompt}]}]
+        )
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='ai.file_classifier.vision_extract_property_fields')
+        except Exception:
+            pass
+        text = msg.content[0].text if msg.content else ''
+        import re as _re
+        m = _re.search(r'\{[\s\S]*\}', text)
+        if not m:
+            return {}
+        try:
+            data = json.loads(m.group(0))
+        except Exception:
+            return {}
+        # Sanitise
+        out = {}
+        for k in ('property_address', 'lot_number', 'title_number', 'mukim',
+                  'daerah', 'negeri', 'owner_name', 'building_name', 'postcode'):
+            v = (data.get(k) or '').strip()
+            # Reject AI-noise tokens per §10aa
+            if v and not _re.search(r'(?i)(unreadable|cannot\s+read|not\s+visible|n/?a)', v):
+                # Strip §10aa prefixes
+                v = _re.sub(r'^(?:VALUE\s*[:\-]?\s*|LOT\s+|PTD\s+|TITLE\s+|GERAN\s+|HAKMILIK\s+|HSD\s+|HSM\s+)',
+                            '', v, flags=_re.IGNORECASE).strip()
+                v = _re.sub(r'\([^)]*\)', '', v).strip()
+                if v:
+                    out[k] = v[:200]
+        return out
+    except Exception:
+        return {}
 
 
 def _testator_match(fields: dict, testator_profile: dict = None) -> dict:

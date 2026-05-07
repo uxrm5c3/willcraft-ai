@@ -4645,6 +4645,60 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
         )
         from services.gift_walker import get_pending_gift_documents
 
+        # 🔥 §10x.52 — vision-enrich sparse property docs once per process.
+        # When OCR missed the street address / lot / title, send the image
+        # directly to Claude vision for re-extraction. Persisted with
+        # `_vision_enriched=True` so this only runs once per doc.
+        try:
+            from ai.file_classifier import vision_extract_property_fields
+            sparse_docs = Document.query.filter(
+                Document.client_id == client_id,
+                Document.category.in_([
+                    'property_title', 'property_spa', 'property_tax',
+                    'property_transfer', 'loan_agreement',
+                ]),
+            ).all()
+            for d in sparse_docs:
+                try:
+                    ex = json.loads(d.extracted_data or '{}') or {}
+                except Exception:
+                    ex = {}
+                if ex.get('_vision_enriched'):
+                    continue   # already done
+                # Sparse if no street address OR (no lot AND no title)
+                has_addr = bool((ex.get('property_address') or '').strip())
+                has_lot = bool((ex.get('lot_number') or '').strip())
+                has_title = bool((ex.get('title_number') or '').strip())
+                if has_addr and (has_lot or has_title):
+                    ex['_vision_enriched'] = 'skipped_sufficient'
+                    d.extracted_data = json.dumps(ex)
+                    continue
+                if not d.file_path:
+                    continue
+                vf = vision_extract_property_fields(d.file_path) or {}
+                changed = False
+                for k in ('property_address', 'lot_number', 'title_number',
+                          'mukim', 'daerah', 'negeri', 'owner_name',
+                          'building_name', 'postcode'):
+                    if not (ex.get(k) or '').strip() and vf.get(k):
+                        ex[k] = vf[k]
+                        changed = True
+                ex['_vision_enriched'] = True
+                d.extracted_data = json.dumps(ex)
+                if changed:
+                    try:
+                        current_app.logger.info(
+                            f'§10x.52 vision-enriched doc {d.id[:8]}: '
+                            f'addr={ex.get("property_address","")[:40]!r} '
+                            f'lot={ex.get("lot_number","")!r} '
+                            f'title={ex.get("title_number","")!r}'
+                        )
+                    except Exception:
+                        pass
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
         pend = get_pending_gift_documents(client_id)
         props = pend.get('property') or []
 
