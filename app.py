@@ -9707,10 +9707,16 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                 pass
 
             # ── Post AI summary as a follow-up message ────────────────────
-            # The intake card says "summary will appear below in a moment" —
-            # deliver on that promise by generating the summary inline here
-            # (we're already in a background thread, no timeout risk).
-            if artifacts and text and not _summary_already_posted:
+            # 🔥 §7 / §10x.28 — AI Summary is STEP 2 of the chat flow per
+            # CLAUDE.md (Receive WhatsApp → Summarise → Decipher images →
+            # Identity match). It must fire on the TEXT body alone, even
+            # when the email has zero attachments. The body itself contains
+            # the asset list (5 properties, 4 banks, 3 insurance per KOID
+            # case) which the parser surfaces for user verification.
+            # Earlier requirement that `artifacts` be non-empty was a bug —
+            # text-only forwards skipped Step 2 and jumped straight to
+            # "asset inventory" placeholder.
+            if text and not _summary_already_posted:
                 try:
                     from ai.chat_planner import _summarise_message, _clean_email_body
                     import json as _json
