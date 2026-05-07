@@ -9524,7 +9524,30 @@ def _refresh_wizard_session_from_db():
             session['step3_trustees']      = s2.get('trustee_data', {'same_as_executor': True, 'trustees': [{}]})
         else:
             session['step2_executors']    = s2.get('executors', [])
-    session['step1'] = _j(w.step1_data, {})
+    s1 = _j(w.step1_data, {})
+    # 🔥 BURN-IN §10x.17 — If step1_data is empty but a Person with
+    # relationship='testator' exists, mirror that Person into step1
+    # so wizard Step 2 (Testator) auto-populates from the chat's
+    # identity walkthrough.
+    if not s1.get('full_name'):
+        try:
+            tp = (Person.query
+                  .filter_by(client_id=w.client_id, relationship='testator')
+                  .first())
+            if tp:
+                s1 = {
+                    'full_name':           tp.full_name or '',
+                    'nationality':         tp.nationality or 'Malaysian',
+                    'nric_passport':       tp.nric_passport or '',
+                    'date_of_birth':       tp.date_of_birth or '',
+                    'residential_address': tp.address or '',
+                    'person_id':           tp.id,
+                }
+                w.step1_data = json.dumps(s1)
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+    session['step1'] = s1
     s3 = _j(w.step3_data, {})
     session['step3_guardians']         = s3.get('guardians', []) if isinstance(s3, dict) else []
     session['step3_guardian_allowance'] = s3.get('guardian_allowance', {}) if isinstance(s3, dict) else {}
