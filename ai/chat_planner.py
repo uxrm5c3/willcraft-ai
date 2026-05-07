@@ -661,6 +661,7 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
     if not raw:
         return []
     seen = set()
+    seen_acct_digits: set = set()   # 🔥 also dedup by acct digits alone
     out: List[Dict[str, Any]] = []
     for m in _AI_BANK_LINE_RE.finditer(raw):
         inst = (m.group('inst') or '').strip()
@@ -673,7 +674,15 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
         key = (re.sub(r'\W+', '', inst).lower(), re.sub(r'\W+', '', acct))
         if key in seen:
             continue
+        # 🔥 §10x.12 dedup: same account-number digits = same account, even
+        # if the institution name varies between mentions (e.g. "POSB Bank
+        # (Singapore)" in body vs "POSB Bank, Singapore" in summary).
+        acct_digits = re.sub(r'\D', '', acct)
+        if acct_digits and acct_digits in seen_acct_digits:
+            continue
         seen.add(key)
+        if acct_digits:
+            seen_acct_digits.add(acct_digits)
         out.append({
             'bank_name':       _clean_bank_name(inst)[:80],
             'account_number':  acct[:40],

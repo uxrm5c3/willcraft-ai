@@ -1200,17 +1200,43 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         return re.sub(r'\D', '', s or '')
 
     # ── Properties: add H3 for AI-Summary properties not already covered
+    # 🔥 §10b — match by lot, title, normalised address, OR distinctive
+    # locality token (e.g. "Seri Alam", "Marina Cove", "Paradiso Nuova",
+    # "Sri Laguna", "Marsiling"). Image OCR addresses ("Phase 2D SERI
+    # ALAM") often differ from the AI Summary's verbatim user address
+    # ("No. 03 Jalan Gunung 4, Seri Alam Masai") for the same property —
+    # token overlap catches that.
     covered_lot_digits: set = set()
     covered_title_digits: set = set()
     covered_addr_norms: set = set()
+    covered_tokens: set = set()  # distinctive locality tokens
+
+    def _addr_tokens(addr: str) -> set:
+        """Return set of 4+ char alphabetic tokens (UPPER) excluding
+        common stop-words, useful for fuzzy property-address matching."""
+        STOP = {'JALAN', 'TAMAN', 'BANDAR', 'KAMPUNG', 'KAMPONG',
+                'UNIT', 'BLOCK', 'BLOK', 'NO', 'JOHOR', 'BAHRU',
+                'KUALA', 'LUMPUR', 'SELANGOR', 'CONDOMINIUM',
+                'APARTMENT', 'PERSIARAN', 'SOLOK', 'LORONG',
+                'LEBUH', 'MUKIM', 'DAERAH', 'NEGERI', 'STATE',
+                'DISTRICT', 'MALAYSIA', 'PHASE', 'WITH',
+                'KAWASAN', 'PERUSAHAAN', 'CONDOMINIUMS'}
+        out_t: set = set()
+        for t in re.findall(r"[A-Za-z]{4,}", (addr or '').upper()):
+            if t in STOP: continue
+            out_t.add(t)
+        return out_t
+
     for grp in out['property']:
         ex = (grp.get('extracted') or {}) if grp else {}
         ld = _digits_only(_clean_id_value(ex.get('lot_number') or ''))
         td = _digits_only(_clean_id_value(ex.get('title_number') or ''))
-        an = _norm_addr(ex.get('property_address') or '')[:60]
+        addr_raw = ex.get('property_address') or ''
+        an = _norm_addr(addr_raw)[:60]
         if ld:  covered_lot_digits.add(ld)
         if td:  covered_title_digits.add(td)
         if an:  covered_addr_norms.add(an)
+        covered_tokens.update(_addr_tokens(addr_raw))
     # Also mark properties already saved to step5_data as covered
     for sig in referenced_lot_addr_sigs:
         if sig[0]: covered_lot_digits.add(sig[0])
@@ -1219,13 +1245,18 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
     for ap in ai_props:
         a_lot = _digits_only(ap.get('lot') or '')
         a_title = _digits_only(ap.get('title') or '')
-        a_addr = _norm_addr(ap.get('address') or '')[:60]
-        # Match by ANY of: lot digits, title digits, normalised address
+        a_addr_raw = ap.get('address') or ''
+        a_addr = _norm_addr(a_addr_raw)[:60]
+        a_toks = _addr_tokens(a_addr_raw)
+        # Match by ANY of: lot digits, title digits, normalised address,
+        # OR ≥1 distinctive locality token in common with a covered group.
         if a_lot and a_lot in covered_lot_digits:
             continue
         if a_title and a_title in covered_title_digits:
             continue
         if a_addr and a_addr in covered_addr_norms:
+            continue
+        if a_toks and (a_toks & covered_tokens):
             continue
         # H3 placeholder per §10hg — confirm-then-complete card
         out['property'].append({
