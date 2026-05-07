@@ -1197,6 +1197,74 @@ def bind_assets(asset_items: List[AssetItem],
         if kept:
             filtered_ranked[ai_idx] = kept[:3]
 
+    # ── §10x.52 — Elimination signal (user directive May 2026) ────────
+    # "Use the elimination. The lowest confidence address with unmatch
+    # images that has PTD and HSD and close time proximity to the address."
+    #
+    # For each unbound AssetItem, find unclaimed property DocGroups that:
+    #   • have a non-empty PTD/Lot OR HSD/Title number
+    #   • were uploaded within 30 minutes of the user's message about
+    #     this AssetItem (using the timestamp from _gather_assetitem_msg_timestamps)
+    # Surface them as candidates with elevated score (40) so they pass the
+    # CANDIDATE_THRESHOLD and reach the user as candidate-with-confirm.
+    for ai in asset_items:
+        if ai.kind != 'property':
+            continue
+        b = bindings.get(ai.ai_index)
+        if b and b.tier != 'D':
+            continue
+        if filtered_ranked.get(ai.ai_index):
+            continue
+        ai_ts_for_ai = ai_ts.get(ai.ai_index)
+        if not ai_ts_for_ai:
+            continue
+        candidates_temporal: List[Dict[str, Any]] = []
+        for g in doc_groups:
+            if g.kind != 'property':
+                continue
+            if g.group_id in claimed:
+                continue
+            ge = g.merged_extracted
+            has_id = bool(digits(ge.get('lot_number') or '') or
+                          digits(ge.get('title_number') or ''))
+            if not has_id:
+                continue
+            if not g.created_at_min:
+                continue
+            try:
+                from datetime import datetime
+                t_msg = (ai_ts_for_ai if hasattr(ai_ts_for_ai, 'timestamp')
+                         else datetime.fromisoformat(str(ai_ts_for_ai).replace('Z', '+00:00')))
+                t_grp = (datetime.fromisoformat(g.created_at_min.replace('Z', '+00:00'))
+                         if isinstance(g.created_at_min, str) else g.created_at_min)
+                # Strip tz if mixed
+                if t_msg.tzinfo is not None and t_grp.tzinfo is None:
+                    t_msg = t_msg.replace(tzinfo=None)
+                elif t_grp.tzinfo is not None and t_msg.tzinfo is None:
+                    t_grp = t_grp.replace(tzinfo=None)
+                gap = abs((t_msg - t_grp).total_seconds())
+            except Exception:
+                continue
+            if gap > 1800:   # > 30 min — too far
+                continue
+            candidates_temporal.append({
+                'group_id': g.group_id,
+                'score': 40 if gap <= 300 else 30,
+                'evidence': (
+                    f"Has lot/title (lot {ge.get('lot_number','?')}, title "
+                    f"{ge.get('title_number','?')}) and uploaded "
+                    f"{int(gap)}s from message about this property"
+                ),
+                'components': {
+                    'temporal_close' if gap <= 300 else 'temporal_med':
+                        15 if gap <= 300 else 7,
+                    'has_id': 25,
+                },
+            })
+        if candidates_temporal:
+            candidates_temporal.sort(key=lambda c: c['score'], reverse=True)
+            filtered_ranked[ai.ai_index] = candidates_temporal[:3]
+
     # ── §10x.51 — "lone in mukim, lot not used elsewhere" suggestion ──
     # For AssetItems still H3 with no score-based candidates, find
     # unclaimed property DocGroups in the same mukim whose lot/title
