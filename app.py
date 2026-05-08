@@ -40,6 +40,16 @@ def _enable_sqlite_wal(dbapi_connection, connection_record):
         cur.execute('PRAGMA synchronous=NORMAL')
         cur.close()
 
+# 🔥 §10x.69 — install GLOBAL Anthropic kill switch BEFORE any other
+# import that may trigger anthropic.Anthropic() construction. Patches
+# Messages.create so EVERY call across the codebase (Haiku, Sonnet,
+# Opus, web search) checks DISABLE_VISION_CALLS=1.
+try:
+    from services.anthropic_killswitch import install_global_killswitch
+    install_global_killswitch()
+except Exception as _e:
+    print(f"WARNING: kill switch install failed: {_e}")
+
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
 app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URI

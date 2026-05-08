@@ -202,6 +202,33 @@ def test_strict_client_id_contract():
     check('RuntimeError raised on missing client_id', raised)
 
 
+def test_global_killswitch_blocks_all_anthropic_calls():
+    """🔥 §10x.69 — patched Messages.create returns fake response when
+    DISABLE_VISION_CALLS=1. Tests that EVERY Anthropic call is blocked,
+    not just the 3 functions that had per-callsite checks before."""
+    print('\n[9] Global kill switch blocks ANY anthropic.messages.create call')
+    from services.anthropic_killswitch import install_global_killswitch
+    install_global_killswitch()  # idempotent
+    os.environ['DISABLE_VISION_CALLS'] = '1'
+    try:
+        import anthropic
+        from config import ANTHROPIC_API_KEY
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        # Direct call to messages.create — would normally hit the API
+        msg = client.messages.create(
+            model='claude-haiku-4-5',
+            max_tokens=10,
+            messages=[{'role': 'user', 'content': 'hi'}],
+        )
+        check('returns killed sentinel', msg.model == 'killed-by-kill-switch',
+              f'model={msg.model!r}')
+        check('content is empty', msg.content == [], f'content={msg.content!r}')
+        check('zero input tokens', msg.usage.input_tokens == 0)
+        check('zero output tokens', msg.usage.output_tokens == 0)
+    finally:
+        os.environ.pop('DISABLE_VISION_CALLS', None)
+
+
 def test_global_warn_when_loose():
     print('\n[8] STRICT_CLIENT_ID off: missing client_id is a warning, not a raise')
     from ai.cost_tracker import log_usage
@@ -234,6 +261,7 @@ def main():
     test_ceiling_global_null_client()
     test_strict_client_id_contract()
     test_global_warn_when_loose()
+    test_global_killswitch_blocks_all_anthropic_calls()
 
     print()
     print('═' * 60)
