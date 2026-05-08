@@ -347,6 +347,8 @@ with app.app_context():
         ("probate_applications", "deleted_at", "DATETIME"),
         ("wills", "deleted_at", "DATETIME"),
         ("will_edit_logs", "details", "TEXT"),
+        # Multi-tenant isolation — every Client owned by a User
+        ("clients", "created_by", "VARCHAR(36)"),
     ]:
         try:
             with db.engine.connect() as conn:
@@ -354,6 +356,13 @@ with app.app_context():
                 conn.commit()
         except Exception:
             pass
+    # Index for the new clients.created_by — speeds up tenant-scoped queries
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(db.text("CREATE INDEX IF NOT EXISTS ix_clients_created_by ON clients(created_by)"))
+            conn.commit()
+    except Exception:
+        pass
     # Seed default users if none exist — detect tenant from WILLCRAFT_DOMAIN env var
     try:
         if User.query.count() == 0:
@@ -473,6 +482,12 @@ def ensure_client():
         nric_passport=nric,
         email=step1.get('email'),
         phone=step1.get('phone'),
+        # Multi-tenant isolation — owner is the user who created this client.
+        # Defaults to None for unauthenticated background tasks; the
+        # tenant-scoped query treats NULL as "legacy / globally visible"
+        # so background imports still work, but every chat/UI session
+        # populates this field.
+        created_by=session.get('user_id'),
     )
     db.session.add(client)
     db.session.commit()
@@ -2163,19 +2178,22 @@ def api_feedback():
 def will_list():
     """Unified client+wills page: list all clients with their wills grouped."""
     q = request.args.get('q', '').strip()
+    user_role = session.get('user_role', '')
+    user_id = session.get('user_id', '')
+    # 🔥 Multi-tenant isolation — Client list is now filtered by created_by
+    # for non-approver users. Approvers see all clients across the firm.
+    base_q = Client.query_for_user(user_id, user_role)
     if q:
-        all_clients = Client.query.filter(
+        all_clients = base_q.filter(
             db.or_(
                 Client.full_name.ilike(f'%{q}%'),
                 Client.nric_passport.ilike(f'%{q}%'),
             )
         ).order_by(Client.updated_at.desc()).all()
     else:
-        all_clients = Client.query.order_by(Client.updated_at.desc()).all()
+        all_clients = base_q.order_by(Client.updated_at.desc()).all()
 
     # Build grouped data: each client with their wills and stats
-    user_role = session.get('user_role', '')
-    user_id = session.get('user_id', '')
     client_groups = []
     for c in all_clients:
         wills_query = Will.query.filter_by(client_id=c.id).filter(Will.deleted_at.is_(None))

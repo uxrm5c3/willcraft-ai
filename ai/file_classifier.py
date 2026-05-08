@@ -629,6 +629,19 @@ def _vision_classify_fallback(file_path: str, group_context: dict = None,
                     'bmp', 'tiff', 'tif'):
         return None   # not an image — vision can't help
 
+    # 🔥 §10x.73 — one-shot vision. When UNIFIED_VISION=1 the unified pass
+    # already classifies AND extracts — no need for a separate
+    # classify-only fallback call. Adapt that result and return.
+    if _os.environ.get('UNIFIED_VISION', '').strip() == '1':
+        try:
+            from ai.unified_vision import extract_all, as_classify_result
+            unified = extract_all(file_path,
+                                   call_site='ai.file_classifier.fallback')
+            if not unified.get('_disabled_by_kill_switch'):
+                return as_classify_result(unified)
+        except Exception:
+            pass  # fall through to legacy classify-only call
+
     try:
         from config import CLAUDE_MODEL_FAST as _MODEL
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)

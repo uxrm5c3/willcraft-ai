@@ -71,6 +71,19 @@ def extract_nric_data(image_path: str) -> dict:
 
     Returns dict with keys: full_name, nric_number, date_of_birth, address, gender, nationality
     """
+    # 🔥 §10x.73 — one-shot vision shortcut. When UNIFIED_VISION=1 and the
+    # unified pass already extracted IC fields for this image, reuse them
+    # instead of paying for a second Sonnet vision call.
+    import os as _os_uv
+    if _os_uv.environ.get('UNIFIED_VISION', '').strip() == '1':
+        try:
+            from ai.unified_vision import extract_all, as_nric_result
+            unified = extract_all(image_path,
+                                   call_site='ai.ocr.extract_nric_data')
+            if not unified.get('_disabled_by_kill_switch'):
+                return as_nric_result(unified)
+        except Exception:
+            pass  # fall through to legacy path
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     content_block = _make_content_block(image_path)
 
@@ -585,6 +598,22 @@ def extract_asset_document(image_path: str, asset_type: str) -> dict:
 
     Returns dict with extracted fields matching the asset type.
     """
+    # 🔥 §10x.73 — one-shot vision. Reuse the unified pass result when
+    # the env flag is on. Asset types map to unified fields cleanly.
+    import os as _os_uv
+    if _os_uv.environ.get('UNIFIED_VISION', '').strip() == '1':
+        try:
+            from ai.unified_vision import extract_all, as_asset_result
+            unified = extract_all(image_path,
+                                   call_site=f'ai.ocr.extract_asset_document:{asset_type}')
+            if not unified.get('_disabled_by_kill_switch'):
+                if asset_type == 'property':
+                    # Property uses a richer schema — route via property shim
+                    from ai.unified_vision import as_property_result
+                    return as_property_result(unified)
+                return as_asset_result(unified, asset_type)
+        except Exception:
+            pass  # fall through to legacy path
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     content_block = _make_content_block(image_path)
 

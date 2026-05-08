@@ -53,12 +53,33 @@ class Client(db.Model):
     nric_passport = db.Column(db.String(50), nullable=False, default='')
     email = db.Column(db.String(200), nullable=True)
     phone = db.Column(db.String(50), nullable=True)
+    # 🔥 Multi-tenant isolation: every Client must be owned by the User who
+    # created it. Non-approver users can only see / edit / route-email-to
+    # clients where created_by == session.user_id. Approvers see all.
+    # NULL = legacy rows from before this column was added (treated as
+    # globally-visible until backfilled or re-assigned).
+    created_by = db.Column(db.String(36), db.ForeignKey('users.id'),
+                           nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     wills = db.relationship('Will', backref='client', lazy=True)
     documents = db.relationship('Document', backref='client', lazy=True)
     persons = db.relationship('Person', backref='client', lazy=True)
+    creator = db.relationship('User', foreign_keys=[created_by],
+                              backref='created_clients')
+
+    @classmethod
+    def query_for_user(cls, user_id, user_role=''):
+        """Tenant-scoped query. Approvers see ALL clients; everyone else
+        sees only their own (plus legacy NULL-owner rows for back-compat).
+
+        Use this everywhere Client.query is currently called for display."""
+        q = cls.query
+        if user_role != 'approver':
+            q = q.filter(db.or_(cls.created_by == user_id,
+                                 cls.created_by.is_(None)))
+        return q
 
     @property
     def folder_name(self):

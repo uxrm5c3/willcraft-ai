@@ -32,6 +32,19 @@ def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
     if not file_path or not os.path.isfile(file_path):
         return {}
 
+    # 🔥 §10x.73 — One-shot vision: when UNIFIED_VISION=1, skip the
+    # property-specific call and reuse the unified extractor's result.
+    # Cuts cost ~5× per image on multi-call pipelines.
+    if os.environ.get('UNIFIED_VISION', '').strip() == '1':
+        try:
+            from ai.unified_vision import extract_all, as_property_result
+            unified = extract_all(file_path,
+                                   call_site=f'ai.property_extractor:{doc_type}')
+            if not unified.get('_disabled_by_kill_switch'):
+                return as_property_result(unified)
+        except Exception:
+            pass  # fall through to legacy path
+
     # 🔥 §10x.67 — DB-backed cache survives docker rebuilds and is shared
     # across gunicorn workers. Same image won't be re-extracted ever.
     try:
