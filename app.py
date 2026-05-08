@@ -1591,6 +1591,14 @@ Rules:
                 'content': f"Clean up this edited will document. Renumber clauses, fix cross-references, fix grammar from any removed clauses. Output only the will text:\n\n{current_text}"
             }],
         )
+        # §10x.70 — track this previously-unaudited callsite
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(response, call_site='app.api_will_redraft',
+                      will_id=will_id,
+                      client_id=getattr(will_record, 'client_id', None))
+        except Exception:
+            pass
         cleaned_text = response.content[0].text.strip()
     except Exception as e:
         return jsonify({'ok': False, 'error': f'AI redraft failed: {str(e)}'}), 500
@@ -1659,6 +1667,14 @@ If the instruction cannot be applied (e.g., refers to something not in the will)
                 'content': f"Here is the current will text:\n\n{will_text}\n\n---\n\nUser's instruction: {instruction}"
             }],
         )
+        # §10x.70 — track this previously-unaudited callsite
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(response, call_site='app.api_will_ai_edit',
+                      will_id=will_id,
+                      client_id=getattr(will_record, 'client_id', None))
+        except Exception:
+            pass
         result_text = response.content[0].text.strip()
         if result_text.startswith('```'):
             result_text = result_text.split('\n', 1)[1].rsplit('```', 1)[0].strip()
@@ -13417,6 +13433,20 @@ HTML to translate:
 {html_content}"""
             }]
         )
+        # §10x.70 — track this previously-unaudited callsite
+        try:
+            from ai.cost_tracker import log_usage
+            # Resolve client_id via the probate record if available
+            _cid = None
+            try:
+                _pb = db.session.get(Probate, probate_id)
+                _cid = getattr(_pb, 'client_id', None) if _pb else None
+            except Exception:
+                pass
+            log_usage(response, call_site='app.probate_translate_form',
+                      client_id=_cid)
+        except Exception:
+            pass
         translated = response.content[0].text.strip()
         # Remove markdown code fences if present
         if translated.startswith('```'):
