@@ -293,6 +293,12 @@ def make_web_resolver(claude_client) -> Callable[[str], Optional[GeoResult]]:
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": f"Find the Malaysian Mukim for: {text}"}],
         )
+        # 🔥 §10x.70 — was MISSING, leaked $$ untracked. Added now.
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='services.geo_resolver.web_resolver')
+        except Exception:
+            pass
         # Pull JSON from the final text block
         try:
             blocks = [b for b in msg.content if getattr(b, "type", "") == "text"]

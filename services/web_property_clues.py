@@ -195,6 +195,12 @@ def search_property_clues(
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": f"Address: {address.strip()}"}],
         )
+        # 🔥 §10x.70 — was MISSING, leaked $$ untracked. Added now.
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='services.web_property_clues.search')
+        except Exception:
+            pass
     except Exception:
         return None
 

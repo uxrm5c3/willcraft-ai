@@ -202,6 +202,25 @@ def test_strict_client_id_contract():
     check('RuntimeError raised on missing client_id', raised)
 
 
+def test_web_search_cost_tracked():
+    """🔥 §10x.71 — Anthropic charges $10/1k web searches separately from
+    tokens. Today's $8.65 web_search was untracked. Verify it's now in
+    the cost calculation."""
+    print('\n[10] Web search cost: $0.01 per search added to total')
+    from ai.cost_tracker import estimate_cost
+    # 100 web searches = $1.00
+    cost = estimate_cost('claude-haiku-4-5', input_tokens=0, output_tokens=0,
+                          web_searches=100)
+    check('100 web searches = $1.00', float(cost) == 1.00, f'cost=${float(cost):.4f}')
+    # 1 web search + 1k token cost
+    cost = estimate_cost('claude-haiku-4-5', input_tokens=1000, output_tokens=100,
+                          web_searches=1)
+    expected = 0.001 + 0.0005 + 0.01  # haiku rates + 1 web search
+    check(f'1k tokens + 1 web search ≈ ${expected:.4f}',
+          abs(float(cost) - expected) < 0.0001,
+          f'cost=${float(cost):.4f} expected=${expected:.4f}')
+
+
 def test_global_killswitch_blocks_all_anthropic_calls():
     """🔥 §10x.69 — patched Messages.create returns fake response when
     DISABLE_VISION_CALLS=1. Tests that EVERY Anthropic call is blocked,
@@ -261,6 +280,7 @@ def main():
     test_ceiling_global_null_client()
     test_strict_client_id_contract()
     test_global_warn_when_loose()
+    test_web_search_cost_tracked()
     test_global_killswitch_blocks_all_anthropic_calls()
 
     print()

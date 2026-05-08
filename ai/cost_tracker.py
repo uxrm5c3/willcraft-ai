@@ -78,9 +78,15 @@ def _rates_for(model: str):
 
 def estimate_cost(model: str, input_tokens: int = 0, output_tokens: int = 0,
                   cache_read_tokens: int = 0,
-                  cache_creation_tokens: int = 0) -> Decimal:
+                  cache_creation_tokens: int = 0,
+                  web_searches: int = 0) -> Decimal:
     """Pure function — returns USD cost for a single call. No side effects.
-    Useful for unit tests and 'dry-run' projections."""
+    Useful for unit tests and 'dry-run' projections.
+
+    🔥 §10x.71 — web_searches now billed too. Anthropic charges
+    $10 per 1000 web searches separately from token cost. Today's
+    discrepancy: \$8.65 web search cost was untracked entirely.
+    """
     in_rate, out_rate, read_rate, write_rate = _rates_for(model)
     cents = (
         Decimal(input_tokens or 0) * Decimal(str(in_rate))
@@ -88,7 +94,10 @@ def estimate_cost(model: str, input_tokens: int = 0, output_tokens: int = 0,
         + Decimal(cache_read_tokens or 0) * Decimal(str(read_rate))
         + Decimal(cache_creation_tokens or 0) * Decimal(str(write_rate))
     )
-    return (cents / Decimal(1_000_000)).quantize(Decimal('0.000001'))
+    token_cost = (cents / Decimal(1_000_000)).quantize(Decimal('0.000001'))
+    # Web search: $10 per 1000 searches = $0.01 per search
+    web_cost = Decimal(web_searches or 0) * Decimal('0.01')
+    return token_cost + web_cost
 
 
 def log_usage(message_response, *, call_site: str,
@@ -131,8 +140,18 @@ def log_usage(message_response, *, call_site: str,
         out_tok = int(getattr(usage, 'output_tokens', 0) or 0)
         cache_read = int(getattr(usage, 'cache_read_input_tokens', 0) or 0)
         cache_write = int(getattr(usage, 'cache_creation_input_tokens', 0) or 0)
+        # 🔥 §10x.71 — web_search count from server_tool_use field.
+        # Anthropic returns this when web_search tool is used.
+        web_searches = 0
+        try:
+            stu = getattr(usage, 'server_tool_use', None)
+            if stu:
+                web_searches = int(getattr(stu, 'web_search_requests', 0) or 0)
+        except Exception:
+            pass
         model = getattr(message_response, 'model', '') or ''
-        cost = estimate_cost(model, in_tok, out_tok, cache_read, cache_write)
+        cost = estimate_cost(model, in_tok, out_tok, cache_read, cache_write,
+                             web_searches=web_searches)
         row = ApiCallLog(
             client_id=client_id, will_id=will_id, user_id=user_id,
             call_site=call_site[:80], model=model[:80],
