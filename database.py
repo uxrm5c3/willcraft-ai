@@ -394,3 +394,37 @@ class ApiCallLog(db.Model):
     cost_usd = db.Column(db.Numeric(12, 6), default=0)          # captured at write-time pricing
     duration_ms = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+
+
+class VisionExtractCache(db.Model):
+    """🔥 §10x.67 — DB-backed cache for expensive Sonnet vision calls.
+
+    Survives `docker compose build` (was the #1 leak: in-process cache
+    wiped on every redeploy → watchdog re-paid for everything). Shared
+    across gunicorn workers (was #2 leak: 4 workers × own cache → 4×
+    duplication on first hit).
+
+    Key: sha256(file content) + call_kind ('extract_property' /
+    'reocr_nric' / 'reocr_title' / 'reocr_lot' / 'classify_kind' /
+    'vision_extract_fields'). Two different ENDPOINTS for the same image
+    cache separately because they ask Claude different questions.
+
+    Stored result is the full JSON dict the function would have returned.
+    A miss → make the API call → write the cache. A hit → return the
+    cached result without any API call.
+
+    Empty/failed results ARE cached (with `_failed=True`) to prevent
+    retry storms on unreadable images. The image won't be re-tried
+    until the cache row is deleted (admin action).
+    """
+    __tablename__ = "vision_extract_cache"
+    id = db.Column(db.Integer, primary_key=True)
+    content_hash = db.Column(db.String(64), nullable=False, index=True)
+    call_kind = db.Column(db.String(40), nullable=False, index=True)
+    extracted_json = db.Column(db.Text, nullable=False, default='{}')
+    cost_paid_usd = db.Column(db.Numeric(12, 6), default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
+    __table_args__ = (
+        db.UniqueConstraint('content_hash', 'call_kind',
+                            name='uq_vision_cache_hash_kind'),
+    )

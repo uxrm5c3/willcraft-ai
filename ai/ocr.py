@@ -976,6 +976,22 @@ def reocr_critical_field(image_path: str, field_name: str) -> str:
     if _os.environ.get('DISABLE_VISION_CALLS', '').strip() == '1':
         return ''
 
+    # 🔥 §10x.67 — DB-backed cache. Same (image, field) → $0 on second call.
+    try:
+        from services.vision_cache import cached_vision
+        result = cached_vision(
+            file_path=image_path,
+            call_kind=f'reocr:{field_name}',
+            fn=lambda: {'value': _reocr_critical_field_inner(image_path, field_name)},
+        )
+        return (result or {}).get('value', '') or ''
+    except Exception:
+        # Fallback: in-process cache only
+        return _reocr_critical_field_inner(image_path, field_name)
+
+
+def _reocr_critical_field_inner(image_path: str, field_name: str) -> str:
+    """Actual API call. Wrapped by reocr_critical_field with DB cache."""
     cache_key = (image_path, field_name)
     if cache_key in _REOCR_CACHE:
         return _REOCR_CACHE[cache_key]

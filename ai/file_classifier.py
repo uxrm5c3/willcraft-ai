@@ -704,7 +704,16 @@ def vision_extract_property_fields(file_path: str) -> dict:
     import os as _os
     if _os.environ.get('DISABLE_VISION_CALLS', '').strip() == '1':
         return {}
-    return _vision_extract_property_fields_impl(file_path)
+    # 🔥 §10x.67 — DB-backed cache. Same image, same fields, $0 second time.
+    try:
+        from services.vision_cache import cached_vision
+        return cached_vision(
+            file_path=file_path,
+            call_kind='vision_extract_fields',
+            fn=lambda: _vision_extract_property_fields_impl(file_path),
+        )
+    except Exception:
+        return _vision_extract_property_fields_impl(file_path)
 
 
 def _vision_extract_property_fields_impl(file_path: str) -> dict:

@@ -17,6 +17,8 @@ _EXTRACT_CACHE: dict = {}
 def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
     """Extract property data from cukai tanah/cukai pintu, title document, or SPA.
 
+    🔥 §10x.65 kill switch + §10x.67 DB cache.
+
     Args:
         file_path: Path to the document image/PDF
         doc_type: One of 'title', 'cukai_harta', 'cukai_pintu', 'spa', 'general'
@@ -24,16 +26,29 @@ def extract_property_data(file_path: str, doc_type: str = 'general') -> dict:
     Returns dict with keys: property_address, title_type, lot_number,
     title_number, bandar_pekan, mukim, daerah, negeri, property_description
     """
-    # 🔥 §10x.65 EMERGENCY KILL SWITCH — disable expensive Sonnet vision
-    # calls when the env var is set. User reports run-away costs; this
-    # gives them the panic button while we fix the underlying leak.
     if os.environ.get('DISABLE_VISION_CALLS', '').strip() == '1':
         return {'_disabled_by_kill_switch': True}
 
-    # 🔥 §10x.56 — per-process cache. The same file_path getting extracted
-    # 30× during a single chat session burned $0.30 alone for ONE doc.
-    # Cache key includes doc_type so re-extraction with a different doc_type
-    # hint still works. Cache lives until process restart.
+    if not file_path or not os.path.isfile(file_path):
+        return {}
+
+    # 🔥 §10x.67 — DB-backed cache survives docker rebuilds and is shared
+    # across gunicorn workers. Same image won't be re-extracted ever.
+    try:
+        from services.vision_cache import cached_vision
+        return cached_vision(
+            file_path=file_path,
+            call_kind=f'extract_property:{doc_type}',
+            fn=lambda: _extract_property_data_inner(file_path, doc_type),
+        )
+    except Exception:
+        # If cache layer broken, fall back to direct call (in-process cache only)
+        return _extract_property_data_inner(file_path, doc_type)
+
+
+def _extract_property_data_inner(file_path: str, doc_type: str = 'general') -> dict:
+    """Actual API call — no caching, no kill-switch check. Always pays
+    for a Claude call when invoked. Wrap in cached_vision() above."""
     cache_key = (file_path, doc_type)
     if cache_key in _EXTRACT_CACHE:
         cached = _EXTRACT_CACHE[cache_key]
