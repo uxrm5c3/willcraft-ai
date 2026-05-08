@@ -9841,19 +9841,56 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                                   or is_audio(d.original_filename or ''))]
             batch_group_map: dict = {}   # doc index (into docs list) → group dict
 
-            if len(image_docs) >= 2:
+            # 🔥 §10x.66 — skip classify_batch when ≥80% of image docs
+            # are already classified. The watchdog re-fires on every
+            # 5-second chat poll, but classify_batch was at the TOP of
+            # the function — paying $0.05-$0.13 every time even when
+            # all docs were already done. Today: 76 batch calls = $0.59
+            # mostly redundant. Now: only call batch on FRESH chat_inbox
+            # docs, or on first run (when most are unclassified).
+            _SKIP_CATS = {'nric', 'property_title', 'property_spa',
+                           'property_tax', 'property_transfer',
+                           'loan_agreement', 'bank_statement', 'bank_letter',
+                           'utility_bill', 'insurance', 'epf_kwsp',
+                           'vehicle', 'will', 'death_certificate',
+                           'unrelated', 'needs_review', 'deleted',
+                           'duplicate', 'voice'}
+            unclassified = [d for d in image_docs
+                            if (d.category or '') not in _SKIP_CATS]
+            should_run_batch = (
+                len(image_docs) >= 2
+                and len(unclassified) >= max(2, int(len(image_docs) * 0.2))
+            )
+
+            if should_run_batch:
                 try:
+                    # Pass ONLY the unclassified images to the batch — saves
+                    # token cost when only a few docs are stuck.
                     image_paths = [os.path.join(UPLOAD_DIR, d.file_path)
-                                   for d in image_docs]
-                    # Use the email body as message context for the batch analysis.
-                    # WhatsApp text (lot numbers, beneficiary names) lives here.
-                    batch_msg_ctx = (user_msg.content or '')[:600]
-                    batch_result = classify_batch(image_paths, message_context=batch_msg_ctx)
-                    # Build doc → group lookup keyed by original image_docs index
+                                   for d in unclassified]
+                    # 🔥 §10x.65 — wrap in track_context so client_id is logged
+                    from ai.cost_tracker import track_context as _tc_batch, is_over_ceiling as _over
+                    if _over(client.id):
+                        try:
+                            current_app.logger.warning(
+                                f'§10x.65 ceiling hit for {client.id} — skip classify_batch')
+                        except Exception:
+                            pass
+                        batch_result = {'groups': []}
+                    else:
+                        with _tc_batch(client_id=client.id):
+                            # Use the email body as message context for the batch analysis.
+                            # WhatsApp text (lot numbers, beneficiary names) lives here.
+                            batch_msg_ctx = (user_msg.content or '')[:600]
+                            from ai.file_classifier import classify_batch as _classify_batch
+                            batch_result = _classify_batch(image_paths, message_context=batch_msg_ctx)
+                    # Build doc → group lookup. Indices in batch_result refer
+                    # to the `unclassified` list we passed in, not the full
+                    # image_docs list — translate via unclassified[idx].
                     for grp in (batch_result.get('groups') or []):
                         for img_idx in (grp.get('image_indices') or []):
-                            if 0 <= img_idx < len(image_docs):
-                                batch_group_map[id(image_docs[img_idx])] = grp
+                            if 0 <= img_idx < len(unclassified):
+                                batch_group_map[id(unclassified[img_idx])] = grp
                 except Exception:
                     pass   # batch analysis failed — fall through to individual classify
 

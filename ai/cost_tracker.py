@@ -196,7 +196,7 @@ def total_for_client(client_id: str) -> Decimal:
 #   • return None / empty for the requested AI call
 #   • surface a "manual review needed" status to the user
 #   • NEVER raise into Sentry-style noise — this is a defensive feature
-DEFAULT_CLIENT_DAILY_CEILING_USD = 2.00
+DEFAULT_CLIENT_DAILY_CEILING_USD = 1.50
 
 
 def cost_today_for_client(client_id: str) -> Decimal:
