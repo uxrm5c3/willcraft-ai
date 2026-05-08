@@ -107,6 +107,18 @@ def log_usage(message_response, *, call_site: str,
     if client_id is None: client_id = ctx.get('client_id')
     if will_id is None:   will_id   = ctx.get('will_id')
     if user_id is None:   user_id   = ctx.get('user_id')
+    # 🔥 §10x.65 — loud warning when client_id is missing. These calls
+    # bypass the per-client cost ceiling. Today: 724 calls without
+    # client_id burned $5.47. Logging makes the leak source visible
+    # in production logs so it can be fixed at the callsite.
+    if client_id is None:
+        log.warning(
+            "cost_tracker.log_usage: NO client_id (call_site=%s, will=%s) — "
+            "this call BYPASSES the per-client cost ceiling. Wrap the call "
+            "in `with track_context(client_id=...):` or pass client_id="
+            "explicitly.",
+            call_site, will_id,
+        )
     try:
         from database import db, ApiCallLog
         usage = getattr(message_response, 'usage', None)

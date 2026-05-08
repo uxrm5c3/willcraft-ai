@@ -4672,11 +4672,11 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
         from services.gift_walker import get_pending_gift_documents
 
         # 🔥 §10x.52 — vision-enrich sparse property docs once per process.
-        # When OCR missed the street address / lot / title, send the image
-        # directly to Claude vision for re-extraction. Persisted with
-        # `_vision_enriched=True` so this only runs once per doc.
+        # 🔥 §10x.65 — wrap each call in track_context so client_id is
+        # logged (otherwise these calls bypass the per-client cap).
         try:
             from ai.file_classifier import vision_extract_property_fields
+            from ai.cost_tracker import track_context, is_over_ceiling
             sparse_docs = Document.query.filter(
                 Document.client_id == client_id,
                 Document.category.in_([
@@ -4684,6 +4684,17 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                     'property_transfer', 'loan_agreement',
                 ]),
             ).all()
+            # 🔥 §10x.65 — STOP IMMEDIATELY if the client is over their
+            # cost ceiling. Don't call vision at all.
+            if is_over_ceiling(client_id):
+                try:
+                    current_app.logger.warning(
+                        f'§10x.65 cost ceiling hit for {client_id} — '
+                        'skipping vision enrichment.'
+                    )
+                except Exception:
+                    pass
+                sparse_docs = []
             for d in sparse_docs:
                 try:
                     ex = json.loads(d.extracted_data or '{}') or {}
@@ -4701,7 +4712,10 @@ def _persist_property_enrichment(client_id: str, recent_text: str) -> None:
                     continue
                 if not d.file_path:
                     continue
-                vf = vision_extract_property_fields(d.file_path) or {}
+                # 🔥 §10x.65 — wrap in track_context so the Claude call
+                # gets logged with the correct client_id (cap enforced).
+                with track_context(client_id=client_id, will_id=getattr(d, 'will_id', None)):
+                    vf = vision_extract_property_fields(d.file_path) or {}
                 changed = False
                 for k in ('property_address', 'lot_number', 'title_number',
                           'mukim', 'daerah', 'negeri', 'owner_name',
