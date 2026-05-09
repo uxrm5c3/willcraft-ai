@@ -2804,18 +2804,32 @@ def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
             pass
         # Also scan for bare role tokens (no associated name) — common
         # for executor named only by relation: "my sister in law".
+        # Order matters: more-specific roles FIRST so 'sister-in-law'
+        # is detected and 'sister' inside it is not counted again.
         import re as _re_role
-        bare_roles = [
+        rt_lower = recent_text.lower()
+        # Step 1: in-law variants (consume the matching ranges from
+        # the text so subsequent 'sister'/'brother' etc. don't re-match).
+        in_law_roles = [
             'sister-in-law', 'brother-in-law', 'mother-in-law',
             'father-in-law', 'son-in-law', 'daughter-in-law',
-            'spouse', 'wife', 'husband',
-            'son', 'daughter', 'father', 'mother', 'brother', 'sister',
         ]
-        rt_lower = recent_text.lower()
-        for r in bare_roles:
-            # Allow "sister in law" and "sister-in-law" forms
+        rt_consumed = rt_lower
+        for r in in_law_roles:
             r_pat = r.replace('-', '[ -]?')
-            if _re_role.search(rf'\b{r_pat}\b', rt_lower):
+            if _re_role.search(rf'\b{r_pat}\b', rt_consumed):
+                norm = _norm_role(r)
+                if norm and norm not in seen and norm not in filled:
+                    seen.add(norm); mentioned.append(norm)
+                # Strip out the in-law occurrence so plain 'sister'
+                # doesn't match the inner word.
+                rt_consumed = _re_role.sub(rf'\b{r_pat}\b', '', rt_consumed)
+        # Step 2: plain family roles on the leftover text.
+        plain_roles = ['spouse', 'wife', 'husband',
+                       'son', 'daughter', 'father', 'mother',
+                       'brother', 'sister']
+        for r in plain_roles:
+            if _re_role.search(rf'\b{r}\b', rt_consumed):
                 norm = _norm_role(r)
                 if norm and norm not in seen and norm not in filled:
                     seen.add(norm); mentioned.append(norm)
