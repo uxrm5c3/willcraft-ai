@@ -6115,7 +6115,34 @@ def _try_handle_restart_inbox(client_id: str, user_text: str):
                     try:
                         from ai.chat_planner import _summarise_message, _clean_email_body
                         cleaned = _clean_email_body(raw_ctx)
-                        summary = _summarise_message(cleaned) if cleaned else ''
+                        # 🔥 §10x.76 — inject extracted Document fields
+                        _df = []
+                        try:
+                            import json as _jsdf
+                            _props = (Document.query
+                                      .filter(Document.client_id == cid)
+                                      .filter(Document.category.in_([
+                                          'property_title','property_spa','property_tax',
+                                          'property_transfer','loan_agreement',
+                                          'bank_statement','insurance','vehicle','nric',
+                                      ])).all())
+                            for _d in _props:
+                                try:
+                                    _ex = _jsdf.loads(_d.extracted_data) if _d.extracted_data else {}
+                                except Exception:
+                                    _ex = {}
+                                _row = {'kind': _d.category}
+                                for _k in ('title_number','lot_number','mukim','daerah',
+                                           'negeri','property_address','owner_name','title_type',
+                                           'bank_name','account_number','currency',
+                                           'insurer','policy_number','full_name','nric_number'):
+                                    _v = _ex.get(_k)
+                                    if _v: _row[_k] = _v
+                                if len(_row) > 1:
+                                    _df.append(_row)
+                        except Exception:
+                            _df = []
+                        summary = _summarise_message(cleaned, doc_fields=_df) if cleaned else ''
                         if not summary:
                             summary = '_Could not generate summary — review exhibits below._'
                         import json as _json
@@ -10386,7 +10413,40 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                     import json as _json
                     cleaned = _clean_email_body(text)
                     if cleaned:
-                        summary = _summarise_message(cleaned)
+                        # 🔥 §10x.76 — collect extracted fields from every
+                        # property-class doc for this client and inject
+                        # into the summary prompt. Without this the AI
+                        # Summary asks the user to supply lot/title numbers
+                        # that the vision extractor already pulled.
+                        _doc_fields = []
+                        try:
+                            _prop_docs = (Document.query
+                                          .filter(Document.client_id == client.id)
+                                          .filter(Document.category.in_([
+                                              'property_title','property_spa',
+                                              'property_tax','property_transfer',
+                                              'loan_agreement','bank_statement',
+                                              'insurance','vehicle','nric',
+                                          ]))
+                                          .all())
+                            for _d in _prop_docs:
+                                try:
+                                    _ex = _json.loads(_d.extracted_data) if _d.extracted_data else {}
+                                except Exception:
+                                    _ex = {}
+                                _row = {'kind': _d.category}
+                                for _k in ('title_number','lot_number','mukim','daerah',
+                                           'negeri','property_address','owner_name','title_type',
+                                           'bank_name','account_number','currency','account_type',
+                                           'insurer','policy_number','full_name','nric_number'):
+                                    _v = (_ex.get(_k) or '').strip() if isinstance(_ex.get(_k), str) else _ex.get(_k)
+                                    if _v:
+                                        _row[_k] = _v
+                                if len(_row) > 1:   # has at least one extracted field
+                                    _doc_fields.append(_row)
+                        except Exception:
+                            _doc_fields = []
+                        summary = _summarise_message(cleaned, doc_fields=_doc_fields)
                         if not summary:
                             summary = '_Could not generate summary — review exhibits above._'
                         # 🔥 §10x.53 — omit the verify-identities button while

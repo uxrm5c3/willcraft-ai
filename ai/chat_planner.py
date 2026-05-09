@@ -486,7 +486,7 @@ def _clean_email_body(raw: str) -> str:
 _SUMMARY_CACHE: Dict[str, str] = {}
 
 
-def _summarise_message(raw_text: str) -> str:
+def _summarise_message(raw_text: str, *, doc_fields: list = None) -> str:
     """Use Claude Haiku to produce a two-part structured summary of a
     forwarded WhatsApp/email message in a will-writing context.
 
@@ -494,15 +494,31 @@ def _summarise_message(raw_text: str) -> str:
       **What was communicated** — coherent paraphrase of the message
       **What we deduce** — interpreted will-writing intent (assets, beneficiaries, etc.)
 
-    🔥 §10x.60 — caches by sha256(raw_text). Identical inputs return the
-    cached summary instantly (saves the $0.05/call Haiku roundtrip).
+    🔥 §10x.60 — caches by sha256(raw_text + doc_fields). Identical inputs
+    return the cached summary instantly (saves the $0.05/call Haiku roundtrip).
+
+    🔥 §10x.76 — `doc_fields` injects extracted Document fields (lot/title/
+    mukim/daerah/negeri/owner/property_address from each property doc) into
+    the prompt. Without this, the AI Summary asks the user to "obtain full
+    PTD/Lot numbers from property documents" even when those numbers were
+    already extracted from the uploaded title images. With this, the
+    summary fills those fields itself.
 
     Returns empty string on failure (caller falls back to blockquote).
     """
     if not raw_text or len(raw_text.strip()) < 30:
         return ''
     import hashlib
-    cache_key = hashlib.sha256(raw_text.encode('utf-8')).hexdigest()
+    # Cache key includes doc_fields so different image sets get different
+    # summaries even with the same text body.
+    _cache_input = raw_text
+    if doc_fields:
+        try:
+            import json as _json_ck
+            _cache_input = raw_text + '\n' + _json_ck.dumps(doc_fields, sort_keys=True)
+        except Exception:
+            pass
+    cache_key = hashlib.sha256(_cache_input.encode('utf-8')).hexdigest()
     if cache_key in _SUMMARY_CACHE:
         return _SUMMARY_CACHE[cache_key]
     # DB-backed cache: check for a prior assistant message with this same
@@ -549,6 +565,14 @@ def _summarise_message(raw_text: str) -> str:
             "Then list bank accounts, insurance, vehicles each as a separate bullet.\n\n"
             "IMPORTANT: always include the raw PTD/Lot number AND the Hakmilik/title number "
             "exactly as they appear in the message — these are used to match documents.\n\n"
+            "🔥 §10x.76 — when DOCUMENT EXTRACTS are provided below, USE THEM. "
+            "They contain the lot/title/mukim/daerah/negeri the user uploaded "
+            "via title docs / SPA / tax. Match each property to its docs by "
+            "address proximity / mukim, then FILL the PTD/Lot/Title fields "
+            "from the document extracts — do NOT ask the user to 'provide "
+            "PTD/Lot from property documents' when the docs are already "
+            "in front of you. Only flag '❓ Ambiguous' when the doc-derived "
+            "value contradicts the user's text or when no doc matches.\n\n"
             "Format exactly:\n"
             "**What was communicated:**\n"
             "<prose>\n\n"
@@ -557,6 +581,21 @@ def _summarise_message(raw_text: str) -> str:
             "• <item>\n\n"
             f"Message:\n{raw_text[:6000]}"
         )
+
+        # 🔥 §10x.76 — inject extracted Document fields when caller supplies them.
+        if doc_fields:
+            import json as _json_df
+            _doc_block = '\n\nDOCUMENT EXTRACTS (lot/title/mukim/etc already pulled from uploaded images):\n'
+            for i, d in enumerate(doc_fields[:30], 1):
+                _kind = d.get('kind') or d.get('category') or 'doc'
+                _line = f"  {i}. [{_kind}]"
+                for k in ('title_number', 'lot_number', 'mukim', 'daerah',
+                          'negeri', 'property_address', 'owner_name', 'title_type'):
+                    v = d.get(k)
+                    if v:
+                        _line += f"  {k}={v!r}"
+                _doc_block += _line + '\n'
+            prompt = prompt + _doc_block
         msg = client.messages.create(
             model=CLAUDE_MODEL_CHEAP,
             # 🔥 BURN-IN — DO NOT LOWER THIS BELOW 4000.
