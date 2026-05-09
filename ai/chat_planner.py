@@ -3054,84 +3054,134 @@ def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
     return mentioned
 
 
-# 🔥 §10x.123 — compulsory testator fields. Each entry is
-# (s1_key, label, prompt_value_prefix, example_text).
-# The planner walks these in order and asks for the first missing one.
-# 'address:' / 'dob:' / 'gender:' / 'marital:' / 'occupation:' are
-# the prompt prefixes user types (or button prefills); the corresponding
-# handlers parse and save.
+# 🔥 §10x.124 — Per Phek Yi Ting will template (CLAUDE.md §10x.24),
+# the ONLY testator field that must be typed is the residential address
+# (the will opens with "I [NAME] of [ADDRESS]"). Other fields can be
+# AUTO-DERIVED:
+#   DOB         → from NRIC YYMMDD prefix (Malaysian IC standard)
+#   Gender      → from NRIC last digit (odd=Male, even=Female)
+#   Marital     → from family identities (wife/husband present → Married)
+#   Occupation  → genuinely optional; defaults to omitted
+# So the Step 2 walker only blocks on a missing address.
+
+import re as _re_step2
+
+
+def _parse_nric_to_dob(nric: str) -> str:
+    """Extract DOB from Malaysian NRIC (YYMMDD-PB-####X).
+    Returns 'DD-MM-YYYY' or '' if not parseable.
+    Handles century by: YY > current 2-digit year → 19YY else 20YY.
+    """
+    if not nric:
+        return ''
+    m = _re_step2.match(r'^(\d{2})(\d{2})(\d{2})[-\s]?\d{2}[-\s]?\d{4}', nric.strip())
+    if not m:
+        return ''
+    yy, mm, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if mm < 1 or mm > 12 or dd < 1 or dd > 31:
+        return ''
+    from datetime import datetime
+    century = 1900 if yy > (datetime.utcnow().year % 100) else 2000
+    return f'{dd:02d}-{mm:02d}-{century + yy}'
+
+
+def _parse_nric_to_gender(nric: str) -> str:
+    """Last digit of Malaysian NRIC: odd → Male, even → Female."""
+    if not nric:
+        return ''
+    digits = _re_step2.sub(r'\D', '', nric)
+    if not digits:
+        return ''
+    last = digits[-1]
+    if last.isdigit():
+        return 'Male' if int(last) % 2 == 1 else 'Female'
+    return ''
+
+
+def _infer_marital_from_family(identities: List[Dict[str, Any]]) -> str:
+    """If a Wife/Husband/Spouse appears in identities, testator is Married.
+    Otherwise leave blank (let user pick or default to Single)."""
+    for i in (identities or []):
+        if not isinstance(i, dict):
+            continue
+        rel = (i.get('relationship') or '').lower()
+        if rel in ('wife', 'husband', 'spouse'):
+            return 'Married'
+    return ''
+
+
 _STEP2_REQUIRED_FIELDS = [
     ('residential_address', 'Residential address', 'address: ',
      '10 Jalan Sri Laguna 1/7, Taman Laguna, 81200 Johor Bahru, Johor'),
-    ('date_of_birth', 'Date of birth (DD-MM-YYYY)', 'dob: ',
-     '04-12-1963'),
-    ('gender', 'Gender', 'gender: ',
-     'Male  /  Female'),
-    ('marital_status', 'Marital status', 'marital: ',
-     'Married  /  Single  /  Widowed  /  Divorced'),
-    ('occupation', 'Occupation', 'occupation: ',
-     'Retired  /  Engineer  /  Teacher'),
 ]
 
 
 def _step2_question(s1: Dict[str, Any],
                     identities: Optional[List[Dict[str, Any]]] = None) -> str:
-    """🔥 §10x.122 + §10x.123 — testator info gate.
+    """🔥 §10x.124 — testator info card with auto-derived non-address fields.
 
-    Walks compulsory fields one at a time. Address / DOB / gender are
-    REQUIRED for a Phek-format probate will. Marital status and
-    occupation are SOFT-required (used in clause boilerplate but
-    defaulted if missing).
+    Per Phek Yi Ting template (CLAUDE.md §10x.24), the only typed-by-user
+    compulsory field is the **residential address**. DOB / gender /
+    marital can be auto-derived from the NRIC and family identities;
+    occupation is genuinely optional.
 
-    Refuses '✓ Confirm' until ALL required fields are present.
-    Renders the FIRST missing field's prompt card; user types one
-    value at a time; planner re-runs after each save and asks for
-    the next missing field (or shows the full Confirm card when done).
+    Card layout:
+      - Name, NRIC: from Person row (already known)
+      - DOB: auto-extracted from NRIC YYMMDD prefix (with source note)
+      - Gender: auto-inferred from NRIC last digit (odd=Male, even=Female)
+      - Marital: auto-inferred from family (wife/husband present → Married)
+      - Occupation: optional, default omitted
+      - Address: ⚠️ REQUIRED — typed/clicked
+
+    User clicks ✓ Confirm once address is set; auto-derived values
+    are saved at confirmation time.
     """
     name = (s1.get('full_name') or '').strip()
     nric = (s1.get('nric_passport') or '').strip()
     addr = (s1.get('residential_address') or '').strip()
-    dob  = (s1.get('date_of_birth') or '').strip()
-    gender = (s1.get('gender') or '').strip()
-    marital = (s1.get('marital_status') or '').strip()
+    dob_saved  = (s1.get('date_of_birth') or '').strip()
+    gender_saved = (s1.get('gender') or '').strip()
+    marital_saved = (s1.get('marital_status') or '').strip()
     occupation = (s1.get('occupation') or '').strip()
 
-    # Find the FIRST missing required field
-    REQUIRED_KEYS = ('residential_address', 'date_of_birth', 'gender')
-    SOFT_KEYS     = ('marital_status', 'occupation')
-    missing_required = []
-    missing_soft     = []
-    for key, label, prefix, example in _STEP2_REQUIRED_FIELDS:
-        if not (s1.get(key) or '').strip():
-            (missing_required if key in REQUIRED_KEYS
-             else missing_soft).append((key, label, prefix, example))
+    # Auto-derive missing fields
+    dob_derived = dob_saved or _parse_nric_to_dob(nric)
+    gender_derived = gender_saved or _parse_nric_to_gender(nric)
+    marital_derived = marital_saved or _infer_marital_from_family(identities or [])
 
     parts = ["### 👔 Step 2: Confirm Testator"]
     parts.append(
         f"- **Name:** {name or '_(missing)_'}\n"
         f"- **NRIC:** {nric or '_(missing)_'}\n"
-        f"- **Address:** {addr or '⚠️ _**MISSING**_'}\n"
-        f"- **DOB:** {dob or '⚠️ _**MISSING**_'}\n"
-        f"- **Gender:** {gender or '⚠️ _**MISSING**_'}\n"
-        f"- **Marital status:** {marital or '_(default: Single)_'}\n"
-        f"- **Occupation:** {occupation or '_(default: omitted)_'}"
+        f"- **DOB:** "
+        + (f"{dob_derived} _(auto-extracted from NRIC)_" if dob_derived and not dob_saved
+           else (dob_derived if dob_derived else '_(unknown — NRIC not parseable)_')) + "\n"
+        f"- **Gender:** "
+        + (f"{gender_derived} _(auto-inferred from NRIC last digit)_"
+           if gender_derived and not gender_saved
+           else (gender_derived if gender_derived else '_(unknown)_')) + "\n"
+        f"- **Marital status:** "
+        + (f"{marital_derived} _(auto-inferred from your family list)_"
+           if marital_derived and not marital_saved
+           else (marital_derived if marital_derived else '_(default: Single)_')) + "\n"
+        f"- **Occupation:** {occupation or '_(optional — omitted)_'}\n"
+        f"- **Address:** "
+        + (addr if addr else '⚠️ _**REQUIRED — please provide.**_')
     )
 
-    if missing_required:
-        # Walk one at a time — ask for the FIRST missing required field
-        key, label, prefix, example = missing_required[0]
+    if not addr:
+        # Address is the ONLY typed-required field. Walk it.
         parts.append(
-            f"⚠️ **{label} is required** to draft the will.\n\n"
-            f"Reply with `{prefix}<your value>` — for example:\n"
-            f"  `{prefix}{example}`"
+            "⚠️ **Your residential address is required** to draft the will. "
+            "The will document opens with _\"I [NAME] of [ADDRESS]\"_ — "
+            "without it, the will cannot be generated."
         )
         quick: List[Dict[str, str]] = []
 
-        # 🔥 §10x.123 — for the address field, surface family-member
-        # addresses (spouse / son / daughter / parent) as one-click
-        # options. Most testators live with their spouse/children at
-        # the same address.
-        if key == 'residential_address' and identities:
+        # §10x.124 — surface family-member addresses (spouse / children /
+        # parent) as one-click options. Most testators live with their
+        # spouse / children, so 'Same as wife' is usually correct.
+        if identities:
             seen_addrs = set()
             family_rels = ('spouse', 'wife', 'husband', 'son', 'daughter',
                            'father', 'mother')
@@ -3144,7 +3194,6 @@ def _step2_question(s1: Dict[str, Any],
                 addr_i = (i.get('address') or '').strip()
                 if not addr_i:
                     continue
-                # Normalise for dedup (address can have multiline newlines)
                 addr_one_line = ' '.join(addr_i.split())
                 if addr_one_line in seen_addrs:
                     continue
@@ -3155,49 +3204,18 @@ def _step2_question(s1: Dict[str, Any],
                     'value': f'address: {addr_one_line}',
                 })
 
-        # Gender field — offer Male / Female buttons
-        if key == 'gender':
-            quick.extend([
-                {'label': '👨 Male',   'value': 'gender: Male'},
-                {'label': '👩 Female', 'value': 'gender: Female'},
-            ])
-        # Marital status — common options
-        elif key == 'marital_status':
-            quick.extend([
-                {'label': '💍 Married',  'value': 'marital: Married'},
-                {'label': '◯ Single',   'value': 'marital: Single'},
-                {'label': '⚭ Widowed',  'value': 'marital: Widowed'},
-                {'label': '✕ Divorced', 'value': 'marital: Divorced'},
-            ])
-
-        # Always include the typed-prefix button as a fallback
         quick.append({
-            'label': f'✏️ Type {label.split(" ")[0].lower()}',
-            'value': prefix,
+            'label': '✏️ Type my own address',
+            'value': 'address: ',
         })
         return '\n\n'.join(parts) + _qr_marker(quick)
 
-    # All REQUIRED fields filled. Ask about SOFT fields if any are
-    # missing — but allow Confirm now since soft fields have defaults.
-    if missing_soft:
-        parts.append(
-            "**All required fields complete.** You can confirm now or add "
-            "marital status / occupation for a more complete will record."
-        )
-        quick: List[Dict[str, str]] = [
-            {'label': '✓ Confirm — proceed',
-             'value': 'confirm'},
-        ]
-        for key, label, prefix, example in missing_soft:
-            short = label.split(' ')[0].lower()
-            quick.append({'label': f'✏️ Add {short}', 'value': prefix})
-        return '\n\n'.join(parts) + _qr_marker(quick)
-
-    # All fields complete
-    parts.append("**All correct?**")
+    # Address is set — show Confirm. Auto-derived fields are saved
+    # by the Confirm handler.
+    parts.append("**All correct? Auto-derived values will be saved.**")
     quick = [
         {'label': '✓ Confirm', 'value': 'confirm'},
-        {'label': '✏️ Edit address', 'value': f'address: {addr}'},
+        {'label': '✏️ Change address', 'value': 'address: '},
     ]
     return '\n\n'.join(parts) + _qr_marker(quick)
 
@@ -6007,10 +6025,10 @@ def _is_confirmed(will_data: Dict[str, Any], section: str) -> bool:
     Will.completed_steps in the future; for now treat as un-confirmed
     once and re-ask if user provides corrections — keeps the flow simple.
     """
-    # 🔥 §10x.123 — for 'testator' section, require all COMPULSORY fields:
-    # name + NRIC + address + DOB + gender. Without these, the will
-    # cannot be drafted (opening line needs name/address; pronouns need
-    # gender; probate verification needs DOB). Any missing → re-prompt.
+    # 🔥 §10x.124 — testator confirmed when name + NRIC + address are
+    # set. DOB/gender are auto-derived from NRIC at confirm time;
+    # marital is inferred from family. Address is the only typed-
+    # compulsory field per Phek Yi Ting template.
     s1 = will_data.get('step1') or {}
     if section == 'testator':
         completed = will_data.get('completed_steps') or []
@@ -6018,7 +6036,6 @@ def _is_confirmed(will_data: Dict[str, Any], section: str) -> bool:
             return True
         return all((s1.get(k) or '').strip() for k in (
             'full_name', 'nric_passport', 'residential_address',
-            'date_of_birth', 'gender',
         ))
     return False
 

@@ -10503,27 +10503,60 @@ def _try_confirm_testator(client_id: str, user_text: str):
     testator = Person.query.filter_by(client_id=client_id, relationship='Testator').first()
     if not testator:
         return None
-    # 🔥 §10x.122 + §10x.123 — refuse plain Confirm when ANY required
-    # field is missing. The will document opens with 'I [NAME] of
-    # [ADDRESS]', and probate clauses use gender pronouns + DOB.
-    # Force the user to provide each missing field before advancing.
+    # 🔥 §10x.124 — refuse plain Confirm only when ADDRESS is missing.
+    # DOB/gender/marital are AUTO-DERIVED here:
+    #   DOB     ← NRIC YYMMDD prefix
+    #   Gender  ← NRIC last digit (odd=Male, even=Female)
+    #   Marital ← family identities (Wife/Husband present → Married)
+    # Per Phek Yi Ting template (§10x.24), only address is typed-required.
     addr = (testator.address or '').strip() or (s1.get('residential_address') or '').strip()
-    dob = (testator.date_of_birth or '').strip() or (s1.get('date_of_birth') or '').strip()
-    gender = (testator.gender or '').strip() or (s1.get('gender') or '').strip()
-    missing = []
-    if not addr:   missing.append('address')
-    if not dob:    missing.append('date_of_birth')
-    if not gender: missing.append('gender')
-    if missing:
+    if not addr:
         return {
-            'kind': 'testator_field_required',
+            'kind': 'testator_address_required',
             'name': testator.full_name or 'testator',
-            'role': f'blocked — missing: {", ".join(missing)}',
+            'role': 'blocked — address missing',
         }
+    nric = testator.nric_passport or s1.get('nric_passport', '')
+    # DOB from NRIC
+    dob = (testator.date_of_birth or '').strip() or (s1.get('date_of_birth') or '').strip()
+    if not dob and nric:
+        import re as _re_dob
+        m = _re_dob.match(r'^(\d{2})(\d{2})(\d{2})[-\s]?\d{2}[-\s]?\d{4}', nric.strip())
+        if m:
+            yy, mm, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if 1 <= mm <= 12 and 1 <= dd <= 31:
+                from datetime import datetime as _dt
+                century = 1900 if yy > (_dt.utcnow().year % 100) else 2000
+                dob = f'{dd:02d}-{mm:02d}-{century + yy}'
+                if hasattr(testator, 'date_of_birth'):
+                    testator.date_of_birth = dob
+    # Gender from NRIC last digit
+    gender = (testator.gender or '').strip() or (s1.get('gender') or '').strip()
+    if not gender and nric:
+        import re as _re_g
+        digits = _re_g.sub(r'\D', '', nric)
+        if digits:
+            last = digits[-1]
+            if last.isdigit():
+                gender = 'Male' if int(last) % 2 == 1 else 'Female'
+                if hasattr(testator, 'gender'):
+                    testator.gender = gender
+    # Marital from family
+    marital = (s1.get('marital_status') or '').strip()
+    if not marital:
+        family = Person.query.filter_by(client_id=client_id).all()
+        for p in family:
+            if (p.relationship or '').lower() in ('wife', 'husband', 'spouse'):
+                marital = 'Married'
+                break
+        if not marital:
+            marital = 'Single'  # safe default
     s1.update({
         'full_name':           testator.full_name or '',
         'nric_passport':       testator.nric_passport or '',
-        'date_of_birth':       testator.date_of_birth or '',
+        'date_of_birth':       dob,
+        'gender':              gender,
+        'marital_status':      marital,
         'residential_address': testator.address or s1.get('residential_address', ''),
         'nationality':         testator.nationality or 'Malaysian',
         'gender':              testator.gender or '',
@@ -12458,13 +12491,11 @@ def _refresh_wizard_session_from_db():
             completed_nums.append(1)
     except Exception:
         pass
-    # Step 2: Testator — REQUIRES name + NRIC + address + DOB + gender
-    # (per §10x.123). Without all five the will document can't be
-    # drafted (opening line uses name/address; pronouns need gender;
-    # probate verification needs DOB).
+    # Step 2: Testator — REQUIRES name + NRIC + address (per §10x.124).
+    # DOB/gender are auto-derived from NRIC; marital from family.
+    # Per Phek Yi Ting template, only address is typed-compulsory.
     if all((s1.get(k) or '').strip() for k in (
-            'full_name', 'nric_passport', 'residential_address',
-            'date_of_birth', 'gender')):
+            'full_name', 'nric_passport', 'residential_address')):
         completed_nums.append(2)
     # Step 3: Executors — ≥ 1 executor saved
     if isinstance(s2, dict) and len(s2.get('executors') or []) >= 1:
