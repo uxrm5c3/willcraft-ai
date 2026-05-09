@@ -625,6 +625,13 @@ def _claude_semantic_match(unbound_props: List[AssetItem],
         msg = client.messages.create(
             model=CLAUDE_MODEL_CHEAP,
             max_tokens=2000,
+            # 🔥 §10x.99 — deterministic matching. Default temperature 1.0
+            # produced different bindings across runs for ambiguous cases
+            # (e.g. C-30-08 vs C-05-01 in the same building, or Sri Laguna
+            # with sparse OCR evidence). temperature=0 makes Claude pick
+            # the highest-probability answer every time — same prompt →
+            # same answer. Required by §10x.48/§10x.49 determinism contract.
+            temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
         try:
