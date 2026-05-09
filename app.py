@@ -7209,6 +7209,7 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                 # this same AI Summary property and appends a duplicate
                 # gift. See bug table entry on phantom property gifts.
                 _ai_idx_for_placeholder = None
+                _doc_in_orphan_group = False
                 try:
                     from services.asset_pipeline import (parse_canonical_assets,
                                                           group_documents,
@@ -7227,8 +7228,31 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                         )
                         if _b and _b.tier in ('A', 'B', 'C'):
                             _ai_idx_for_placeholder = _b.ai_index
+                        elif _b and _b.tier == 'D':
+                            # 🔥 §10x.105 — pipeline says this group is
+                            # orphan (Tier D = no AI Summary slot bound).
+                            # Refuse to save the placeholder; mark the doc
+                            # _inventoried so it doesn't reappear in pending.
+                            # Otherwise we'd save a phantom property gift
+                            # with no AI-Summary anchor (the Marina Cove
+                            # `3b89a4a2` orphan-group case).
+                            _doc_in_orphan_group = True
                 except Exception:
                     pass
+
+                if _doc_in_orphan_group:
+                    # Mark inventoried so walker advances past this doc;
+                    # skip the step5_data placeholder insert. The doc
+                    # remains attached to the chat for evidence but
+                    # doesn't pollute the gift list with a phantom entry.
+                    try:
+                        ex['_inventoried'] = True
+                        ex['_orphan_group_skipped'] = True
+                        doc.extracted_data = json.dumps(ex)
+                        db.session.commit()
+                    except Exception:
+                        try: db.session.rollback()
+                        except Exception: pass
 
                 placeholder = {
                     'document_id':      doc.id,
@@ -7261,7 +7285,11 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                 # so it doesn't falsely claim a slot.
                 if _ai_idx_for_placeholder is not None:
                     placeholder['_ai_summary_idx'] = _ai_idx_for_placeholder
-                gifts_ph.append(placeholder)
+                # 🔥 §10x.105 — orphan groups (Tier D) skip placeholder
+                # insert. Doc was marked _inventoried above; walker
+                # advances past it without polluting step5_data.
+                if not _doc_in_orphan_group:
+                    gifts_ph.append(placeholder)
                 will_for_ph.step5_data = json.dumps(gifts_ph)
                 try:
                     db.session.commit()
