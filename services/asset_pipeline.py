@@ -620,29 +620,71 @@ def _claude_semantic_match(unbound_props: List[AssetItem],
         '"reasoning": "<one sentence>"}]}\n'
     )
 
+    # 🔥 §10x.104 — DB cache for Tier C semantic match. Even with
+    # temperature=0 and stable inputs, repeated runs were flipping the
+    # AI[2]/AI[3] binding. Hashing the prompt and caching the result
+    # locks the verdict for as long as the inputs don't change.
+    import hashlib
+    prompt_hash = hashlib.sha256(prompt.encode('utf-8')).hexdigest()[:32]
     try:
-        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-        msg = client.messages.create(
-            model=CLAUDE_MODEL_CHEAP,
-            max_tokens=2000,
-            # 🔥 §10x.99 — deterministic matching. Default temperature 1.0
-            # produced different bindings across runs for ambiguous cases
-            # (e.g. C-30-08 vs C-05-01 in the same building, or Sri Laguna
-            # with sparse OCR evidence). temperature=0 makes Claude pick
-            # the highest-probability answer every time — same prompt →
-            # same answer. Required by §10x.48/§10x.49 determinism contract.
-            temperature=0,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        try:
-            from ai.cost_tracker import log_usage
-            log_usage(msg, call_site='services.asset_pipeline._claude_semantic_match')
-        except Exception:
-            pass
+        from database import db, VisionExtractCache
+        row = db.session.query(VisionExtractCache).filter_by(
+            content_hash=f'semantic:{prompt_hash}',
+            call_kind='asset_pipeline_semantic_v1',
+        ).first()
+        if row:
+            cached_text = row.extracted_json or ''
+            if cached_text:
+                # Skip the LLM call — feed the cached text into the
+                # JSON parser below.
+                msg = None
+                text = cached_text
+                _from_cache = True
+            else:
+                _from_cache = False
+        else:
+            _from_cache = False
     except Exception:
-        return {}
+        _from_cache = False
 
-    text = (msg.content[0].text or '').strip() if msg.content else ''
+    if not _from_cache:
+        try:
+            client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+            msg = client.messages.create(
+                model=CLAUDE_MODEL_CHEAP,
+                max_tokens=2000,
+                # 🔥 §10x.99 — deterministic matching. Default temperature 1.0
+                # produced different bindings across runs for ambiguous cases
+                # (e.g. C-30-08 vs C-05-01 in the same building, or Sri Laguna
+                # with sparse OCR evidence). temperature=0 makes Claude pick
+                # the highest-probability answer every time — same prompt →
+                # same answer. Required by §10x.48/§10x.49 determinism contract.
+                temperature=0,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            try:
+                from ai.cost_tracker import log_usage
+                log_usage(msg, call_site='services.asset_pipeline._claude_semantic_match')
+            except Exception:
+                pass
+        except Exception:
+            return {}
+        text = (msg.content[0].text or '').strip() if msg.content else ''
+        # Persist to cache so next call with same prompt returns same result
+        try:
+            from database import db, VisionExtractCache
+            row = VisionExtractCache(
+                content_hash=f'semantic:{prompt_hash}',
+                call_kind='asset_pipeline_semantic_v1',
+                extracted_json=text,
+            )
+            db.session.merge(row)
+            db.session.commit()
+        except Exception:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
     # Extract JSON
     import re as _re
     m = _re.search(r'\{[\s\S]*\}', text)
