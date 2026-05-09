@@ -9059,48 +9059,6 @@ def _try_save_property_gift(client_id: str, user_text: str):
 
     doc_id = target['document_id']
 
-    # 🔥 §10x.105 — orphan-group gate. If the target's DocGroup has no
-    # binding to any AI Summary slot (Tier D / no binding), refuse to
-    # save a property gift for it. Mirrors the same check in
-    # `_try_handle_inventory_action`. Without this, Phase A would
-    # create a fresh gift even after the placeholder save was skipped.
-    if doc_id and not str(doc_id).startswith('_h3_synth_'):
-        try:
-            from services.asset_pipeline import (parse_canonical_assets,
-                                                  group_documents,
-                                                  bind_assets)
-            _items_orph = parse_canonical_assets(client_id)
-            _groups_orph = group_documents(client_id)
-            _bindings_orph = bind_assets(_items_orph, _groups_orph)
-            _grp_orph = next(
-                (g for g in _groups_orph if doc_id in g.document_ids), None
-            )
-            if _grp_orph:
-                _b_orph = next(
-                    (b for b in _bindings_orph
-                     if b.group_id == _grp_orph.group_id),
-                    None,
-                )
-                if not _b_orph or _b_orph.tier == 'D':
-                    # Mark inventoried so walker advances; refuse save.
-                    try:
-                        from database import Document as _Doc
-                        _d_orph = db.session.get(_Doc, doc_id)
-                        if _d_orph:
-                            _ex_orph = (json.loads(_d_orph.extracted_data or '{}')
-                                         if _d_orph.extracted_data else {})
-                            if not _ex_orph.get('_inventoried'):
-                                _ex_orph['_inventoried'] = True
-                                _ex_orph['_orphan_group_skipped'] = True
-                                _d_orph.extracted_data = json.dumps(_ex_orph)
-                                db.session.commit()
-                    except Exception:
-                        try: db.session.rollback()
-                        except Exception: pass
-                    return None
-        except Exception:
-            pass
-
     # ╔════════════════════════════════════════════════════════════════╗
     # ║ 🔥 BURN-IN §10hg — H3 SYNTHETIC TARGET (no Document)             ║
     # ║ When target represents a step5 H3 placeholder (no Document row),  ║
