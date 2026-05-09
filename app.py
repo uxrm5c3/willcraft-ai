@@ -9064,6 +9064,15 @@ def _try_save_property_gift(client_id: str, user_text: str):
             'document_id':    doc_id,
             'kind':           'property',
             'gift_type':      'property',
+            # 🔥 §10x.96 — preserve _match_via on Phase B upsert per
+            # verifier R12 (§10he Step 5). The original placeholder set
+            # this when the user clicked 'inventory confirm'; Phase B
+            # MUST carry it through or the gift gets flagged as a
+            # silent guess.
+            '_match_via':         'user_confirmed',
+            '_match_tier':        'A',
+            '_match_confidence':  'high',
+            '_layer1_confirmed':  True,
             'property_details': {
                 'property_address': ex_t.get('property_address', ''),
                 'title_number':     ex_t.get('title_number', ''),
