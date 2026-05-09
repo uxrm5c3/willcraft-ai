@@ -2610,8 +2610,18 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
     # ── (b) Outsider-elimination via role_matcher (§10x.21) ───────────
     # If this IC is the only candidate that ISN'T a family member named
     # in the message, suggest the executor's family-relation directly.
+    #
+    # 🔥 §10x.84 — Two-pass widening so mid-flow uploads get auto-
+    # deduced. First try HIGH-confidence (sole outsider). If that fails,
+    # accept MEDIUM-confidence outsider matches BUT only when the role
+    # has no other plausible IC (i.e. no other unidentified IC could
+    # possibly fit this role). This catches the common KOID case: 2
+    # unidentified ICs left (sister-in-law + son's photo whose name
+    # didn't extract). Without this widening, role_matcher gives both
+    # MEDIUM and the planner shows generic buttons.
     out_role = None
     out_snippet = ''
+    out_confidence = ''
     if not deduction and client_id:
         try:
             from services.role_matcher import (extract_role_mentions,
@@ -2619,21 +2629,50 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
                                                 match_role_to_candidates)
             mentions = extract_role_mentions(client_id) or []
             cands = find_unassigned_ic_candidates(client_id) or []
-            # Find a HIGH-confidence outsider match for THIS pending IC
             this_doc_id = next_ic.get('document_id') or next_ic.get('id') or ''
             this_nric_digits = ''.join(ch for ch in nric if ch.isdigit())
+
+            def _candidate_matches_this(c) -> bool:
+                cnric = ''.join(ch for ch in (c.get('nric') or '') if ch.isdigit())
+                return (c.get('document_id') == this_doc_id
+                        or (cnric and this_nric_digits and cnric == this_nric_digits))
+
+            # Pass 1: HIGH-confidence (sole outsider)
             for m in mentions:
                 ranked = match_role_to_candidates(m, cands, client_id=client_id)
                 for c, conf, reason in ranked:
-                    if conf != 'high':
-                        continue
-                    cnric = ''.join(ch for ch in (c.get('nric') or '') if ch.isdigit())
-                    if (c.get('document_id') == this_doc_id
-                            or (cnric and this_nric_digits and cnric == this_nric_digits)):
+                    if conf == 'high' and _candidate_matches_this(c):
                         out_role = m.get('family_relation') or 'sister-in-law'
                         out_snippet = m.get('evidence_snippet', '')[:200]
+                        out_confidence = 'high'
                         break
                 if out_role:
+                    break
+
+            # Pass 2 (§10x.84): MEDIUM widening. For each role mention,
+            # check if THIS IC is one of multiple outsider candidates.
+            # Only auto-suggest if the OTHER outsiders have an NRIC
+            # year-of-birth band that doesn't match this role's
+            # implied generation (e.g. son ≈ 20-40yo, sister-in-law ≈
+            # 50-70yo). Otherwise still ambiguous → leave for buttons.
+            if not out_role:
+                import datetime as _dt
+                this_year = _nric_birth_year(nric)
+                for m in mentions:
+                    role_name = (m.get('family_relation') or '').lower()
+                    ranked = match_role_to_candidates(m, cands, client_id=client_id)
+                    matches_this = [c for c, conf, _ in ranked
+                                     if conf in ('medium', 'high')
+                                     and _candidate_matches_this(c)]
+                    if not matches_this:
+                        continue
+                    # Age heuristic — does this IC's birth year match
+                    # this role's expected generation?
+                    if this_year and not _year_matches_role(this_year, role_name):
+                        continue
+                    out_role = role_name or 'sister-in-law'
+                    out_snippet = m.get('evidence_snippet', '')[:200]
+                    out_confidence = 'medium'
                     break
         except Exception:
             out_role = None
@@ -2706,6 +2745,43 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
         quick.append({'label': '⏭ Skip', 'value': 'skip'})
         quick.append({'label': '🗑 Delete', 'value': 'delete'})
     return '\n\n'.join(parts) + _qr_marker(quick)
+
+
+def _nric_birth_year(nric: str) -> Optional[int]:
+    """Pull YYYY birth year from a Malaysian NRIC. First 6 digits = YYMMDD.
+    Returns None on parse failure."""
+    if not nric:
+        return None
+    import re as _re_yr
+    m = _re_yr.search(r'(\d{6})', nric)
+    if not m:
+        return None
+    yy = int(m.group(1)[:2])
+    # MyKad post-1980 → 19YY for 31-99, 20YY for 00-30 (per §4a)
+    return 1900 + yy if yy >= 31 else 2000 + yy
+
+
+def _year_matches_role(birth_year: int, role: str) -> bool:
+    """🔥 §10x.84 — heuristic: does an NRIC birth year fit a family role's
+    expected generation? Used to disambiguate when multiple outsider ICs
+    are mentioned with different generation roles (e.g. son vs sister-
+    in-law). Lenient — only RULES OUT obviously-wrong matches.
+    """
+    from datetime import datetime
+    age = datetime.utcnow().year - birth_year
+    role_l = (role or '').lower()
+    # Children of the testator — 5 to 60 yo (allow adult children)
+    if role_l in ('son', 'daughter', 'son-in-law', 'daughter-in-law'):
+        return 5 <= age <= 60
+    # Spouse / siblings / siblings-in-law — adult, not too old
+    if role_l in ('spouse', 'wife', 'husband', 'brother', 'sister',
+                   'brother-in-law', 'sister-in-law'):
+        return 18 <= age <= 90
+    # Parents / parents-in-law — older
+    if role_l in ('father', 'mother', 'father-in-law', 'mother-in-law'):
+        return 35 <= age <= 110
+    # Default: allow
+    return True
 
 
 def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
