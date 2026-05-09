@@ -2729,11 +2729,22 @@ def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
         from services.identity_walker import _extract_family_name_role_pairs
     except Exception:
         return []
-    # Roles already filled
+    # Roles already filled. Normalise wife/husband → spouse and
+    # collapse hyphens so 'sister-in-law' and 'sister in law' compare
+    # as the same role. Without this, an unfilled-role check sees
+    # "spouse" mentioned in message + "wife" in the filled set as
+    # different keys and surfaces the Spouse button after Wife is
+    # already confirmed.
+    def _norm_role(r: str) -> str:
+        r = (r or '').strip().lower().replace('-', ' ').replace('_', ' ')
+        r = ' '.join(r.split())
+        if r in ('wife', 'husband'):
+            return 'spouse'
+        return r
     filled = set()
     try:
         for p in db.session.query(Person).filter_by(client_id=client_id).all():
-            r = (p.relationship or '').strip().lower()
+            r = _norm_role(p.relationship)
             if r and r != 'testator':
                 filled.add(r)
     except Exception:
@@ -2745,7 +2756,7 @@ def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
     if recent_text:
         try:
             for _, role in _extract_family_name_role_pairs(recent_text):
-                k = (role or '').strip().lower()
+                k = _norm_role(role)
                 if k and k not in seen and k not in filled:
                     seen.add(k); mentioned.append(k)
         except Exception:
@@ -2764,11 +2775,8 @@ def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
             # Allow "sister in law" and "sister-in-law" forms
             r_pat = r.replace('-', '[ -]?')
             if _re_role.search(rf'\b{r_pat}\b', rt_lower):
-                key = r if r in ('wife', 'husband') else r
-                # Normalise wife/husband → spouse for the dedup; UI
-                # still shows the friendlier label below.
-                norm = 'spouse' if key in ('wife', 'husband') else key
-                if norm not in seen and norm not in filled:
+                norm = _norm_role(r)
+                if norm and norm not in seen and norm not in filled:
                     seen.add(norm); mentioned.append(norm)
     return mentioned
 
