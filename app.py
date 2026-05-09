@@ -4473,8 +4473,17 @@ def api_chat_replan(client_id, message_id):
     recent_text = _gather_recent_chat_text(client.id)
     # On replan we want the planner to skip the "intake" stage — pass
     # empty artifacts so it goes straight to walk-through / next step.
-    plan = plan_turn(user_msg.content or '', [], _will_data_snapshot(active_will),
-                     pending_ics=pending_ics, recent_text=recent_text)
+    # 🔥 §10x.103 — wrap with track_context so log_usage in nested
+    # pipeline calls (asset_pipeline, web_property_clues, geo_resolver,
+    # property_locale_verifier) auto-attaches client_id/will_id. Without
+    # this every Claude call inside plan_turn fired a §10x.68 contract
+    # violation and cost rows had will_id=None.
+    from ai.cost_tracker import track_context as _track_ctx_replan
+    with _track_ctx_replan(client_id=client.id,
+                            will_id=active_will.id if active_will else None,
+                            user_id=session.get('user_id')):
+        plan = plan_turn(user_msg.content or '', [], _will_data_snapshot(active_will),
+                         pending_ics=pending_ics, recent_text=recent_text)
 
     asst_msg = ChatMessage(
         session_id=cs.id, role='assistant',
