@@ -4926,12 +4926,35 @@ def _get_layer2_pending_props(client_id: str) -> list:
                             continue
                         if g.get('beneficiaries'):
                             continue   # already has beneficiaries
+                        # 🔥 §10x.127 — skipped / removed gifts MUST NOT
+                        # come back through the s5 synthesis loop.
+                        if (g.get('skipped')
+                                or g.get('_ai_summary_skipped')
+                                or g.get('_user_removed')
+                                or g.get('_skipped_not_in_will')):
+                            continue
                         # Image-bound gifts have a real document_id already in
                         # `seen_doc_ids` from the Document loop above. Skip
                         # those — they're handled normally.
                         gid = g.get('document_id')
                         if gid and gid in seen_doc_ids:
                             continue
+                        # Also skip if the bound Document itself is
+                        # _skipped_not_in_will / _user_removed.
+                        if gid:
+                            try:
+                                _gd = db.session.get(Document, gid)
+                                if _gd:
+                                    try:
+                                        _gex = json.loads(_gd.extracted_data or '{}')
+                                    except Exception:
+                                        _gex = {}
+                                    if (_gex.get('_skipped_not_in_will')
+                                            or _gex.get('_user_removed')
+                                            or _gex.get('_orphan_group_skipped')):
+                                        continue
+                            except Exception:
+                                pass
                         # Synthetic entry — backed by step5 gift, not a Document.
                         pi = g.get('property_info') or g.get('property_details') or {}
                         synth_ex = {
