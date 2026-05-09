@@ -12454,10 +12454,13 @@ def _refresh_wizard_session_from_db():
             completed_nums.append(1)
     except Exception:
         pass
-    # Step 2: Testator — name + NRIC populated (address is a separate
-    # warning, doesn't block sidebar completion check; address gap
-    # surfaces via Step 1's "Address required" inline warning)
-    if (s1.get('full_name') or '').strip() and (s1.get('nric_passport') or '').strip():
+    # Step 2: Testator — REQUIRES name + NRIC + address + DOB + gender
+    # (per §10x.123). Without all five the will document can't be
+    # drafted (opening line uses name/address; pronouns need gender;
+    # probate verification needs DOB).
+    if all((s1.get(k) or '').strip() for k in (
+            'full_name', 'nric_passport', 'residential_address',
+            'date_of_birth', 'gender')):
         completed_nums.append(2)
     # Step 3: Executors — ≥ 1 executor saved
     if isinstance(s2, dict) and len(s2.get('executors') or []) >= 1:
