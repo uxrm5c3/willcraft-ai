@@ -7694,6 +7694,26 @@ def _try_handle_assets_check(client_id: str, user_text: str):
 
     # ── YES — bulk-skip all isolated property images ────────────────
     if action == 'yes':
+        # Compute the set of doc IDs the asset_pipeline successfully binds
+        # to AI Summary entries. ANY doc NOT in a bound group is "isolated"
+        # (either fully unreadable or in an orphan group) and gets skipped.
+        bound_doc_ids: set = set()
+        try:
+            from services.asset_pipeline import (parse_canonical_assets,
+                                                  group_documents,
+                                                  bind_assets)
+            items = parse_canonical_assets(client_id)
+            groups = group_documents(client_id)
+            bindings = bind_assets(items, groups)
+            bound_group_ids = {b.group_id for b in bindings
+                               if b.tier in ('A', 'B', 'C')}
+            for g in groups:
+                if g.group_id in bound_group_ids:
+                    for did in g.document_ids:
+                        bound_doc_ids.add(did)
+        except Exception:
+            pass
+
         all_docs = Document.query.filter_by(
             client_id=client_id, category='property_title'
         ).all()
@@ -7711,8 +7731,10 @@ def _try_handle_assets_check(client_id: str, user_text: str):
             title = (ex.get('title_number') or '').strip()
             lot = (ex.get('lot_number') or '').strip()
             mukim = (ex.get('mukim') or '').strip()
-            if addr or title or lot or mukim:
-                continue   # identifiable — leave for normal walkthrough
+            fully_unreadable = not (addr or title or lot or mukim)
+            is_orphan = (bound_doc_ids and d.id not in bound_doc_ids)
+            if not (fully_unreadable or is_orphan):
+                continue   # legitimately bound — leave for normal walkthrough
             ex['_inventoried'] = True
             ex['_skipped_not_in_will'] = True
             ex['_auto_skipped_reason'] = (

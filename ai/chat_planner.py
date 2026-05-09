@@ -4845,6 +4845,15 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         # this as a confirmed property — the chat must ASK the client where
         # this came from. See CLAUDE.md §10d.
         if _is_property_isolated(target, recent_text, all_props):
+            # 🔥 §10x.127 — gate before the per-image identify card
+            try:
+                _gate = _maybe_inventory_gate_card(
+                    target, _client_id, _ai_props, will_data
+                )
+                if _gate:
+                    return _gate
+            except Exception:
+                pass
             return _walkthrough_property_unverified_card(target)
         # ── §10x.108 ORPHAN-GROUP GUARD ──────────────────────────────────
         # Doc is in a DocGroup that the asset_pipeline can't bind to any
@@ -4856,6 +4865,15 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         try:
             _orphan_card = _maybe_orphan_group_card(target, _client_id, _ai_props)
             if _orphan_card:
+                # 🔥 §10x.127 — gate before the orphan-group card
+                try:
+                    _gate = _maybe_inventory_gate_card(
+                        target, _client_id, _ai_props, will_data
+                    )
+                    if _gate:
+                        return _gate
+                except Exception:
+                    pass
                 return _orphan_card
         except Exception:
             pass
@@ -5722,10 +5740,60 @@ def _match_isolated_docs_to_description(
     return scored[:6]
 
 
+def _maybe_inventory_gate_card(
+        target: Dict[str, Any],
+        client_id: str,
+        ai_props: List[Dict[str, Any]],
+        will_data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """🔥 §10x.127 — wrap any "can't identify this image" card behind the
+    inventory-completeness gate.
+
+    Called from `_asset_walkthrough_question` before the per-image
+    identify, orphan-group, or §10d unverified cards. Returns:
+      • the gate card if the user hasn't answered yet
+      • the describe-asset prompt or the match card if user said NO
+      • None if user said YES (allow the wrapped card to render)
+    """
+    if not (client_id and ai_props):
+        return None
+    completed = (will_data or {}).get('completed_steps') or []
+    if 'assets_inventory_confirmed' in completed:
+        return None  # user said YES; let the caller render its own card
+
+    ex = target.get('extracted') or {} if target else {}
+    fname = (target.get('original_filename') if target else '') or 'this image'
+    purpose = ((target.get('purpose') if target else '')
+               or (ex.get('purpose') if isinstance(ex, dict) else '')
+               or '').strip()
+    isolated_count = _count_isolated_property_docs(client_id)
+
+    if 'assets_inventory_describing' in completed:
+        desc = _latest_user_description(client_id)
+        if desc:
+            candidates = _match_isolated_docs_to_description(client_id, desc)
+            show_alternates = ('assets_describe_alternates' in completed)
+            if show_alternates and len(candidates) >= 2:
+                return _step6_describe_match_card(None, candidates, desc)
+            if candidates:
+                return _step6_describe_match_card(candidates[0], [], desc)
+            return _step6_describe_match_card(None, [], desc)
+        return _step6_describe_asset_prompt_card(
+            fname, purpose, isolated_count, ai_props
+        )
+
+    # First time — ask the gate question
+    return _step6_assets_complete_gate_card(
+        fname, purpose, isolated_count, ai_props, will_data
+    )
+
+
 def _count_isolated_property_docs(client_id: str) -> int:
-    """Return the number of property_title Documents whose extracted_data
-    has NO usable identifier (no address / title / lot / mukim) and are
-    not yet inventoried/skipped/removed.
+    """Return the number of property_title Documents that are 'isolated'
+    — i.e. they're either fully unreadable OR they're in a DocGroup the
+    asset_pipeline can't bind to a unique AI Summary slot.
+
+    Excludes docs already marked `_inventoried` / `_skipped_not_in_will`
+    / `_user_removed`.
     """
     if not client_id:
         return 0
@@ -5739,6 +5807,28 @@ def _count_isolated_property_docs(client_id: str) -> int:
         ).all()
     except Exception:
         return 0
+    if not docs:
+        return 0
+
+    # Determine which DocGroups bound to AI Summary entries via the
+    # canonical pipeline. Anything NOT in a bound group is isolated.
+    bound_doc_ids: set = set()
+    try:
+        from services.asset_pipeline import (parse_canonical_assets,
+                                              group_documents,
+                                              bind_assets)
+        items = parse_canonical_assets(client_id)
+        groups = group_documents(client_id)
+        bindings = bind_assets(items, groups)
+        bound_group_ids = {b.group_id for b in bindings
+                           if b.tier in ('A', 'B', 'C')}
+        for g in groups:
+            if g.group_id in bound_group_ids:
+                for did in g.document_ids:
+                    bound_doc_ids.add(did)
+    except Exception:
+        pass  # if pipeline fails, fall back to fully-unreadable check
+
     n = 0
     for d in docs:
         try:
@@ -5750,11 +5840,15 @@ def _count_isolated_property_docs(client_id: str) -> int:
         if (ex.get('_inventoried') or ex.get('_skipped_not_in_will')
                 or ex.get('_user_removed')):
             continue
+        # Fully-unreadable check
         addr = (ex.get('property_address') or '').strip()
         title = (ex.get('title_number') or '').strip()
         lot = (ex.get('lot_number') or '').strip()
         mukim = (ex.get('mukim') or '').strip()
-        if not (addr or title or lot or mukim):
+        fully_unreadable = not (addr or title or lot or mukim)
+        # Orphan-group check (has fields, but no pipeline binding)
+        is_orphan = (d.id not in bound_doc_ids) if bound_doc_ids else False
+        if fully_unreadable or is_orphan:
             n += 1
     return n
 
