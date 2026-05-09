@@ -5205,6 +5205,61 @@ list if needed.
 
 ---
 
+### 10x.87  🔥🔥 BURN-IN — IC walkthrough order: HIGH-confidence FIRST 🔥🔥
+
+**Same rule as §10e/§10x.30 but extended for cases when both ICs have
+empty extracted names. The IC the testator NAMED in the message MUST
+sort before the outsider IC, even when Tesseract can't read either
+photo's name field.**
+
+### Why this matters
+
+Two ICs arrive in different emails:
+- IC A (front): name='', NRIC=960525 (Joshua, mentioned by name in message)
+- IC B (back): name='', NRIC=650629 (Lim Lay Cheng, mentioned only as "sister-in-law")
+
+Both score 0 under the original rule because empty name → no name match
+in message. Tiebreaker is upload-time → arbitrary order. The OUTSIDER
+(Lim Lay Cheng) often gets uploaded first → surfaces first → user
+walks through it before the named family member, which feels wrong.
+
+### The score grid
+
+| Score | Trigger |
+|-------|---------|
+| 5 | name in message + family-role word adjacent (HIGH) |
+| 4 | name in message + co-owner phrase preceding (HIGH) |
+| 3 | name in message, no role adjacent (MEDIUM) |
+| **2** | **§10x.87 — empty name, but NRIC year-of-birth fits a CHILD/SPOUSE band (5–60yo) AND message mentions son/daughter/spouse/wife/husband** |
+| 1 | name not in message; outsider-elimination (sister-in-law / brother-in-law / friend) |
+| 0 | no signal |
+
+### Why score 2 (not 5) for the NRIC-age case
+
+The age heuristic is INFERRED, not verified. We can't prove this IC
+is Joshua just because it's a 29-year-old NRIC near a "(son)"
+mention — it could also be a friend or cousin. So it scores HIGHER
+than the outsider (1) but LOWER than a real name match (3).
+
+### Where enforced
+
+`services/identity_walker.py::_score_ic_confidence` — accepts
+optional `nric=` param and applies the §10x.87 band check when
+`name=''`. Caller in `get_pending_ic_documents` passes both name
+and NRIC.
+
+### Litmus
+
+For 2 ICs both with empty names:
+  - Joshua's NRIC 960525 → age 29 → fits child band → score 2
+  - Lim Lay Cheng's NRIC 650629 → age 60 → does NOT fit → score 0
+  - Sort: Joshua FIRST (named family), Lim Lay Cheng LAST (outsider)
+
+If the order ever inverts, check that NRIC is being passed and that
+the message actually mentions a child/spouse role.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
