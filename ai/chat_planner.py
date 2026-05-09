@@ -5668,12 +5668,13 @@ def _step6_property_question(pending_props, recent_text, will_data):
     # PHASE A — main beneficiary prompt
     # ═══════════════════════════════════════════════════════════════
 
-    # 🔥 §10x.125 — when ALL identifying fields are unreadable, don't
-    # ask "who inherits?" — that question makes no sense without
-    # knowing WHICH property this is. Instead surface an "identify
-    # this image" card listing the AI Summary properties for one-click
-    # claim. Same shape as the §10x.108 orphan-group disambiguation
-    # card, but for individual fully-unreadable docs.
+    # 🔥 §10x.125 + §10x.126 — when ALL identifying fields are unreadable,
+    # don't ask "who inherits?" — that question makes no sense without
+    # knowing WHICH property this is.
+    #
+    # If all AI Summary properties are already saved in step5_data
+    # (every slot has its own gift entry), the unreadable doc isn't
+    # critical — auto-skip it without bothering the user.
     addr_raw = (ex.get('property_address') or '').strip()
     title_raw = (ex.get('title_number') or '').strip()
     lot_raw = (ex.get('lot_number') or '').strip()
@@ -5686,6 +5687,56 @@ def _step6_property_question(pending_props, recent_text, will_data):
             ai_props = _extract_ai_summary_properties(client_id_id) or []
         except Exception:
             pass
+
+        # 🔥 §10x.126 auto-skip — if every AI Summary property already
+        # has a saved gift, this image is redundant. Mark inventoried
+        # and let planner advance without rendering the identify card.
+        # Coarser check: count property gifts (with OR without
+        # _ai_summary_idx) — if >= AI prop count, all are accounted for.
+        if ai_props:
+            _step5 = (will_data or {}).get('step5') or []
+            saved_property_gifts = 0
+            if isinstance(_step5, list):
+                for g in _step5:
+                    if isinstance(g, dict) and g.get('kind') == 'property' \
+                       and not g.get('_ai_summary_skipped') \
+                       and not g.get('skipped'):
+                        saved_property_gifts += 1
+            if saved_property_gifts >= len(ai_props):
+                # All AI props covered — auto-skip this orphan doc.
+                doc_id_skip = p.get('document_id') or ''
+                if doc_id_skip:
+                    try:
+                        from database import db as _db, Document as _Doc
+                        _d = _db.session.get(_Doc, doc_id_skip)
+                        if _d:
+                            try:
+                                _ex = (json.loads(_d.extracted_data)
+                                       if _d.extracted_data else {})
+                            except Exception:
+                                _ex = {}
+                            if not isinstance(_ex, dict):
+                                _ex = {}
+                            _ex['_inventoried'] = True
+                            _ex['_skipped_not_in_will'] = True
+                            _ex['_auto_skipped_reason'] = (
+                                'all AI Summary properties already saved')
+                            _d.extracted_data = json.dumps(_ex)
+                            try:
+                                _db.session.commit()
+                            except Exception:
+                                _db.session.rollback()
+                    except Exception:
+                        pass
+                # Skip → caller (asset walkthrough) will pick the next
+                # pending property on its next iteration.
+                return {
+                    'text': (f"_(auto-skipped extra image — all "
+                             f"{len(ai_props)} properties from your "
+                             f"message are already saved)_"),
+                    'focus_doc_id': p.get('document_id'),
+                    '_auto_skipped': True,
+                }
         if ai_props:
             doc_id = p.get('document_id') or ''
             fname = p.get('original_filename') or 'this image'
