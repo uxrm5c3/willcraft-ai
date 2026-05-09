@@ -4192,7 +4192,12 @@ def _api_chat_message_impl(client_id):
                     if not just_trust:
                         just_others = _try_handle_others_action(client_id, user_text)
                         if not just_others:
-                            just_residuary_skip = _try_handle_residuary_skip(client_id, user_text)
+                            # 🔥 §10x.114 — try to save a real residuary main
+                            # beneficiary FIRST (e.g. "wife 100%"). If it
+                            # doesn't apply, fall through to skip handler.
+                            just_residuary_skip = _try_save_residuary_main(client_id, user_text)
+                            if not just_residuary_skip:
+                                just_residuary_skip = _try_handle_residuary_skip(client_id, user_text)
                             if not just_residuary_skip:
                                 just_benef = _try_save_beneficiaries(client_id, user_text)
                                 if not just_benef:
@@ -8878,6 +8883,187 @@ def _try_handle_role_match(client_id: str, user_text: str):
     db.session.commit()
 
     return {'name': p.full_name, 'role': 'executor', 'kind': 'role_match_confirmed'}
+
+
+def _try_save_residuary_main(client_id: str, user_text: str):
+    """🔥 §10x.114 — Step 7 (Residuary Estate) main-beneficiary saver.
+
+    Parses natural-language replies to the residuary question:
+      'wife 100%'                           → spouse, 100%
+      'Joshua 50%, Esther 50%'              → 2 beneficiaries
+      'LIM BEE YAN equal, JOSHUA equal'     → 2 beneficiaries equal split
+      'Joshua, Esther equal'                → 2 beneficiaries equal split
+      '<all-listed-equal-shares default>'   → handled when label clicked
+
+    Writes to will.step6_data:
+      {
+        'beneficiaries': [{'name': '...', 'share': '...'}],
+        'residuary_beneficiary_name': '...',  # legacy compat
+      }
+
+    Returns dict on success, None if the input doesn't look like a
+    residuary main-beneficiary reply (so the chain falls through to
+    _try_handle_residuary_skip / generic handlers).
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    low = t.lower()
+
+    # Don't intercept SKIP — let _try_handle_residuary_skip handle it
+    if low == 'residuary skip':
+        return None
+    # Don't intercept asset-step replies like 'inventory confirm', 'orphan_*',
+    # 'bank_l*', 'insurance_l*', 'gift', 'substitute', 'trust *', 'others *'
+    _BAD_PREFIXES = ('inventory ', 'orphan_', 'bank_', 'insurance_',
+                     'gift ', 'substitute ', 'trust ', 'others ',
+                     'guardian ', 'role_match', 'address:', 'lot:',
+                     'title:', 'mukim:', 'daerah:', 'negeri:',
+                     'property ', 'change ', 'confirm assets',
+                     'confirm defaults', 'h3 ', 'unlink ', 'restart ',
+                     'inbox ', 'conflict ', 'i have more')
+    if any(low.startswith(p) for p in _BAD_PREFIXES):
+        return None
+    # Don't intercept "yes/skip/delete/confirm" alone — too generic
+    if low in ('yes', 'no', 'skip', 'delete', 'confirm', 'remove'):
+        return None
+
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+
+    # Gate: only fire when planner is at Step 7. Pre-conditions:
+    #   - step4_data (beneficiaries) populated
+    #   - step5_data (gifts) populated OR assets_confirmed
+    #   - step6_data residuary NOT yet saved
+    try:
+        s4 = json.loads(will.step4_data or '[]')
+        if not isinstance(s4, list): s4 = []
+    except Exception:
+        s4 = []
+    if len(s4) == 0:
+        return None  # not at Step 5+ yet
+    try:
+        s6 = json.loads(will.step6_data or '{}')
+        if not isinstance(s6, dict): s6 = {}
+    except Exception:
+        s6 = {}
+    # Already saved? Don't re-save.
+    if s6.get('beneficiaries') or s6.get('residuary_beneficiary_name'):
+        return None
+    # Need at least one specific gift OR assets_confirmed to be at Step 7.
+    try:
+        s5 = json.loads(will.step5_data or '[]')
+    except Exception:
+        s5 = []
+    if not isinstance(s5, list):
+        s5 = []
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+    except Exception:
+        completed = []
+    if len(s5) == 0 and 'assets_confirmed' not in completed:
+        return None  # not at Step 7
+
+    # Parse name + share from user text. Support:
+    #   'wife 100%' / 'spouse 100%'
+    #   'Joshua 50%, Esther 50%'
+    #   'LIM BEE YAN equal, JOSHUA equal'
+    #   'Joshua, Esther equal'
+    persons = Person.query.filter_by(client_id=client_id).all()
+    eligible = [p for p in persons
+                if (p.relationship or '').lower() not in ('testator', 'witness')]
+
+    def _resolve_name(token: str):
+        token_low = token.strip().lower().replace('-', ' ')
+        if not token_low:
+            return None
+        for p in eligible:
+            nm = (p.full_name or '').lower()
+            rel = (p.relationship or '').lower().replace('-', ' ')
+            # Exact name match
+            if nm and (token_low == nm or token_low in nm):
+                return p
+            # First-name token match
+            if nm and any(token_low == part for part in nm.split() if len(part) > 2):
+                return p
+            # Relationship match (wife / spouse / son / daughter / etc.)
+            if rel and (token_low == rel or token_low in rel):
+                return p
+            # Spouse synonyms
+            if token_low in ('wife', 'husband', 'spouse') and rel in ('spouse', 'wife', 'husband'):
+                return p
+        return None
+
+    # Split on commas / 'and' — each part is "name [share]"
+    parts = [p.strip() for p in re.split(r',|\band\b', t) if p.strip()]
+    parsed: List[Dict[str, str]] = []
+    for part in parts:
+        # Try to extract a share at the end (e.g. "Joshua 50%" or "wife 100%")
+        share_m = re.search(
+            r'\s+(\d{1,3})\s*%|\s+(equal|equally)\b|\s+(\d+/\d+)\s*$',
+            part, flags=re.IGNORECASE)
+        if share_m:
+            name_token = part[:share_m.start()].strip().rstrip(',')
+            if share_m.group(1):
+                share = f'{share_m.group(1)}%'
+            elif share_m.group(2):
+                share = 'equal'
+            else:
+                share = share_m.group(3) or ''
+        else:
+            name_token = part.strip()
+            share = 'equal'  # default when no share specified
+
+        person = _resolve_name(name_token)
+        if not person:
+            # If we can't resolve any name, give up — don't half-save
+            return None
+        parsed.append({
+            'name': person.full_name,
+            'share': share,
+            'person_id': person.id,
+            'relationship': person.relationship or '',
+        })
+
+    if not parsed:
+        return None
+
+    # Normalise shares: if any part says 'equal', distribute equally
+    if any(p.get('share') in ('equal', '') for p in parsed):
+        n = len(parsed)
+        for p in parsed:
+            p['share'] = '1/' + str(n) if n > 1 else '1/1'
+    else:
+        # If user gave percentages, convert to fractions
+        for p in parsed:
+            sh = p.get('share') or ''
+            pct_m = re.match(r'(\d+)\s*%', sh)
+            if pct_m:
+                p['share'] = f'{int(pct_m.group(1))}/100'
+
+    # Persist
+    s6['beneficiaries'] = parsed
+    s6['residuary_beneficiary_name'] = parsed[0]['name']  # legacy compat
+    s6.pop('skipped', None)
+    will.step6_data = json.dumps(s6)
+    try:
+        # Stamp residuary_confirmed so planner advances to Step 8
+        if 'residuary_confirmed' not in completed:
+            completed.append('residuary_confirmed')
+            will.completed_steps = json.dumps(completed)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+
+    return {
+        'kind': 'residuary_saved',
+        'name': ', '.join(p['name'] for p in parsed),
+        'role': f'{len(parsed)} residuary beneficiar' + ('y' if len(parsed) == 1 else 'ies'),
+    }
 
 
 def _try_handle_residuary_skip(client_id: str, user_text: str):
