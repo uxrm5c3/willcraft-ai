@@ -882,7 +882,28 @@
       sections.push(snapshotSection(stepData[i], i === currentIdx));
     }
 
+    // 🔥 §10x.98 — preserve user's manual <details> expand/collapse state
+    // across the 5-second poll re-render. Without this, clicking to
+    // expand Step 6 (or any non-current step) gets wiped by the next
+    // willPane.innerHTML = ... below, looking like the expander
+    // "auto-closes after ~5 seconds".
+    const userOpenSteps = new Set();
+    const userClosedSteps = new Set();
+    willPane.querySelectorAll('details[data-step]').forEach(d => {
+      if (d.open) userOpenSteps.add(d.dataset.step);
+      else userClosedSteps.add(d.dataset.step);
+    });
+
     willPane.innerHTML = sections.join('');
+
+    // Restore user's manual expand/collapse on the freshly-rendered
+    // sections. Manually-opened steps stay open even if not "current".
+    // Manually-closed current steps stay closed (user chose to collapse).
+    willPane.querySelectorAll('details[data-step]').forEach(d => {
+      const k = d.dataset.step;
+      if (userOpenSteps.has(k))   d.open = true;
+      if (userClosedSteps.has(k)) d.open = false;
+    });
 
     // Cost badge — async, best-effort, never blocks the snapshot render.
     if (will.will_id) {
@@ -970,7 +991,7 @@
       : '';
     const isOpen = isCurrent || !isFilled;
 
-    return `<details ${isOpen ? 'open' : ''} class="border-b border-gray-100 pb-1.5 last:border-b-0 group">
+    return `<details data-step="${n}" ${isOpen ? 'open' : ''} class="border-b border-gray-100 pb-1.5 last:border-b-0 group">
       <summary class="cursor-pointer flex items-center gap-1.5 select-none py-1">
         <svg class="w-3 h-3 text-gray-400 transition-transform group-open:rotate-90" fill="currentColor" viewBox="0 0 20 20"><path d="M6 5l8 5-8 5V5z"/></svg>
         ${headerInner}

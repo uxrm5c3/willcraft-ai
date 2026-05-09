@@ -3857,54 +3857,75 @@ the source of truth.
 
 ---
 
-### 10x.39  🔥🔥🔥🔥 BURN-IN — THE FUCK LIST 🔥🔥🔥🔥
+### 10x.39  🔥🔥🔥🔥 BURN-IN — UNIFIED BUG TABLE 🔥🔥🔥🔥
 
-**Bugs the user has explicitly called out as "must never resurface".
-This list exists because rules in CLAUDE.md alone weren't enough — the
-code regressed silently. Every entry below has a corresponding burn-in
-rule + an `asset_audit.py` / `identity_full_audit.py` check.**
+**Single source of truth. Combines what was historically the "FUCK list",
+the "Things NOT To Do" list, and the per-session bug tables. Every entry
+the user has called out as "must never resurface" lives here, with the
+fix and a confidence rating. Add a new row at the bottom when something
+new is reported. NEVER split into multiple tables again.**
 
-### The FUCK list
+### The unified bug table
 
-Each entry has:
-- The exact user complaint (verbatim where possible)
-- The rule that exists to prevent it
-- The audit check that catches its return
+Schema: **# | Rule | What user saw | Root cause | Fix | Confidence**
+(HIGH = verified live or has automated check; MEDIUM = fix shipped but
+not E2E-verified on fixture; LOW = rule documented, fix not yet applied
+or open).
 
-| # | What user said | Rule | Audit check |
-|---|---|---|---|
-| 1 | "EVERY SINGLE FUCKING UPDATE, SAVE IN CLAUDE.MD PERMANENTLY. DON'T FUCKING LOSE IT AGAIN" | §10x.33 + permanent burn-ins §10x.26-10x.39 | Pre-deploy `asset_audit.py` |
-| 2 | "MESSAGE > IMAGE. ALWAYS." | §10x.35 | Audit checks pending count == AI Summary count |
-| 3 | "MUST REFER TO MESSAGE: HIGHEST PRECEDENCE" | §10x.36 — every gift card MUST show 📨 message snippet | Visual check + CLAUDE.md §9 cross-reference |
-| 4 | "Wizard step and AI chat step MUST MATCH" | §10x.38 — `_current_stage_num` must match planner gate ordering | Side-by-side check: chat card + right-pane indicator |
-| 5 | "If skip, show back again until user select delete" | §10x.31 — Skip is no-op | `_chat_skipped` flag NEVER set on Skip click |
-| 6 | "Identity in message must take precedence even without image" | §10x.34 + §10x.35 | Lim Bee Yan H3 placeholder works |
-| 7 | "Step 1 IC walk only assigns family relations, not Executor" | §10x.32 | `_WILL_ROLES` filter in `_try_assign_pending_identity` |
-| 8 | "Asset matching: HIGH confidence first, LOW last" | §10e + §10x.30 | Audit: pending property scores monotonically decrease |
-| 9 | "Property count = AI Summary count, not 14, not 31" | §10b | Audit: `len(pending_props) == len(ai_props)` |
-| 10 | "Every AI-Summary item must result in a gift entry" | §10x.12 | Audit: 5 props + 4 banks + 3 ins for KOID fixture |
-| 11 | "Title docs do NOT show street addresses — get from message" | §10ha | `_persist_property_enrichment` matches by lot/title, not OCR addr |
-| 12 | "Strata: same lot ≠ same property — group by (lot, title)" | §10hd | `_group_property_documents` strata branch |
-| 13 | "Co-owner is NOT a family relationship" | §10x.19 | Co-owner stays in `property_info.co_owners`, never Person row |
-| 14 | "Beneficiary % is of testator's SHARE, not full property" | §10x.13 | Deduce path accepts totals in {25, 33, 50, 66, 75} and rescales |
-| 15 | "Substitute beneficiary defaults: spouse → both children, etc." | §10x.14 | `_default_substitute()` in walker |
-| 16 | "Image is verification only — text alone is sufficient" | §10x.15 + §10x.35 | H3 placeholders synthesised for AI-Summary-only items |
-| 17 | "Will-clause format MUST follow Phek Yi Ting standard" | §10x.24 | `sim_will_gen.py` snapshot test |
-| 18 | "AI follows the saved template STRICTLY — no creativity" | §10x.25 | `template_filler.py` is deterministic, no LLM |
-| 19 | "Watchdog must NEVER post duplicate cards" | §10x.9 + §10x.28 | Idempotency: 1 intake + 1 AI Summary, no dups |
-| 20 | "Vision retry has terminal state — no infinite analysing" | §10x.26 | `_classify_attempts >= 3` → `needs_review` |
-| 21 | "Pre-deploy asset audit MUST pass" | §10x.33 | `asset_audit.py` reconciliation checks |
-| 22 | "Identity must have a role — never ghost identities" | §10x.41 | `ensure_person` refuses on empty role; verifier #22 |
-| 23 | "When new identity added mid-flow, re-run downstream (named beneficiary auto-added)" | §10x.42 | `_reconcile_downstream_for_new_identity`; verifier #23 |
-| 24 | "When new image/message provided midway, MUST re-run AI Summary → Image Analysis → Identity Match → Role Match → Asset Match (3 layers)" | §10x.43 | Inbound webhook → watchdog re-fire (§10x.29) → walker re-emit pending → reconciler |
-| 25 | "New identity can also be executor / guardian / trustee — must reconcile into ANY step that names them" | §10x.44 | `_step2/3/4/7_add_*` dispatchers fire per will-role pattern in message |
-| 26 | "Improve the UI — looks cluttered / confusing" | §10x.45 | One-line registry, terse warnings, ≤6 sections per card, no triple-stack transition msgs |
-| 27 | "Layer 1 ASSET IDENTITY ONLY — no testator-share %, no beneficiary intent" | §10x.46 R1 | Strip Layer 2 fields from Layer 1 card |
-| 28 | "Do not show Confidence level — it's internal" | §10x.46 R2 | No "Confidence: HIGH/MEDIUM/LOW" labels on user-facing cards |
-| 29 | "HIGH confidence requires MESSAGE + IMAGE both confirm" | §10x.46 R3 | Tier definition tightened: HIGH = lot/title in image == AI Summary's |
-| 30 | "FIND THE ROOT CAUSE. DON'T JUST PATCH" | §10x.46 R4 | Document signal vocabularies before adding match logic; lexical → semantic layer |
-| 31 | "where are all the images" — declared PASS on a fixture with 0 Documents; matcher never ran | §10x.47 | Pre-flight: pass if text-only AND every text-stated detail lands on the gift; fail if Documents present but every gift is H3 |
-| 32 | "the whole flow is fucked up and need to reset the entire flow" | §10x.48 | SIX stages (Parse / Group / Bind / Residual / Build / Walkthrough), separated cleanly. No cross-stage shortcuts. AssetItem ← message ∪ AI Summary; DocGroup is the binding unit (not Document); Tier A→B→C→D priority; one-claim-only |
+| # | Rule | What user saw | Root cause | Fix | Confidence |
+|---|------|---------------|------------|-----|------------|
+| 1 | §10x.33 | Same bugs kept resurfacing across sessions | No automated audit gate; rules in CLAUDE.md alone weren't enforced | Pre-deploy `asset_audit.py` runs §10x.48 + §10x.49 invariants; deploy blocked on red | HIGH |
+| 2 | §10x.35 | Asset/identity stated in message disappeared because no image was uploaded | Walker only iterated `Document` rows, ignored message-only entities | Pending walker synthesises H3 placeholders from AI Summary; pending count == AI Summary count for every category | HIGH |
+| 3 | §10x.36 | Gift card asks "who inherits X?" when message already says it | Card builder skipped the message-snippet block when deduce path was confident | Every gift / executor / beneficiary card MUST include 📨 _from your message:_ block (`_find_property_message_snippet` etc.) | HIGH |
+| 4 | §10x.38 | Right-pane "current step" indicator shows Step 7 while chat is on Step 6 | `_current_stage_num` keyed off `assets_confirmed` flag; chat planner used different gate ordering | Both derive from same gate order; pending gifts > 0 → Step 6 always wins | HIGH |
+| 5 | §10x.31 | Clicking Skip on an IC card silently dropped that family member | `_chat_skipped=True` was being set on Skip click → walker filtered the IC out forever | Skip is now a no-op; only `_skip_count` increments. Same card re-shows until Yes or Delete | HIGH |
+| 6 | §10x.34 + §10x.35 | "my wife (Lim Bee Yan) 100%" — wife absent from identity registry | `get_pending_ic_documents` only iterated `Document.category='nric'` | H3 placeholders synthesised from `_extract_family_name_role_pairs` over message text | HIGH |
+| 7 | §10x.32 | Step 1 saved a Person with `relationship='Executor'` because LLM returned it | `parse_relationship` / `deduce_roles` returned will-roles in Step 1 context | `_WILL_ROLES` set filters will-roles out of Step 1 saver; falls through to outsider-elimination → family relation | HIGH |
+| 8 | §10e + §10x.30 | Outsider IC walked first, named family last | Sort by upload-time only; no confidence score | `_score_ic_confidence` (5/4/3/1/0) sort DESC; high-confidence walks first | HIGH |
+| 9 | §10b | 5-property message produced 14 / 31 walkthrough cards | Card-per-image grouping; OCR title drift (`564662` vs `504662`) split one property into many | Group by `(lot_digits, addr_sig)`; AI Summary count = walker N | HIGH |
+| 10 | §10x.12 | Banks lumped into one "all banks → wife" clause; insurance silently dropped | Walker had no `bank` / `insurance` category; gift_walker only knew `property` | Categories `bank`, `insurance`, `vehicle`, `epf`, `shares` each emit per-item gift entries | HIGH |
+| 11 | §10ha | Title-doc OCR address ("Phase 2D Seri Alam") used as canonical → wrong matches | Matcher trusted `extracted_data.property_address` on title docs | Title docs match by Lot/Title/Mukim only; address comes from message / AI Summary | HIGH |
+| 12 | §10hd | C-30-08 and C-05-01 (different units, same building) merged into one card | Group key was `lot_number` only; same lot = "same property" | Strata exception: group by `(lot, title)`. Sibling enrichment skips cross-title copies | HIGH |
+| 13 | §10x.19 | Chai Mei Fun (50/50 co-owner of B-05-11) appeared in Step 1 family registry | Co-owner mention triggered Person row creation | Co-owner stays in `property_info.co_owners` only; never a Person row | HIGH |
+| 14 | §10x.13 | "25% to Joshua, 25% to Esther" rejected because totals != 100% | Deduce path required totals == 100% of full property | Accept totals in {25, 33, 50, 66, 75}; rescale to 100% of testator's share | HIGH |
+| 15 | §10x.14 | Layer 3 substitute card empty, no default | Walker had no auto-default logic | `_default_substitute()`: surviving beneficiaries / other child / spouse → children | MEDIUM |
+| 16 | §10x.15 + §10x.35 | Bank gift parked as "pending — upload statement" because no image | Layer 1 confirmation gated on image presence | Text alone sufficient; H3 placeholder for any AI-Summary item without image | HIGH |
+| 17 | §10x.24 | Generated will didn't match Alan & Tan firm format | Drafter freely paraphrased clauses | Phek Yi Ting template patterns codified per asset kind; `sim_will_gen.py` snapshot test | MEDIUM |
+| 18 | §10x.25 | LLM-produced will-clauses drifted between runs | Drafter used Sonnet to compose clauses | `template_filler.py` deterministic; no LLM in clause emission | HIGH |
+| 19 | §10x.9 + §10x.28 | 12+ duplicate "📋 N exhibits received" cards on one chat | Watchdog re-fired processor every 5s; no in-process lock | 3-layer defence: `_PROCESSING_LOCK` + watchdog throttle + idempotency check on card content | HIGH |
+| 20 | §10x.26 | "Analysing..." UI banner stuck at 96% forever | Vision retry had no terminal state; watchdog kept re-firing on `chat_inbox` docs | `_classify_attempts >= 3` or `manual_review=True` → promote to `needs_review` (watchdog ignores) | HIGH |
+| 21 | §10x.33 | Bugs shipped to prod because "I tested it locally" | No pre-deploy gate | `asset_audit.py` runs reconciliation checks on every fixture; deploy blocked on fail | HIGH |
+| 22 | §10x.41 | Identity rows with empty `relationship` polluting registry | `ensure_person` accepted empty role | `ensure_person` returns None on empty role for NEW Person; caller must ask user | HIGH |
+| 23 | §10x.42 | Wife added mid-flow but bank/insurance gifts already saved had no beneficiary | New Person didn't trigger downstream re-evaluation | `_reconcile_downstream_for_new_identity` runs after every Person save → updates step4 / step5 | HIGH |
+| 24 | §10x.43 | Second forwarded email ignored because Steps 2-5 marked complete | Walkthrough gates trusted `completed_steps` flag | Inbound webhook → watchdog re-fire (§10x.29) → walker re-emits pending → reconciler closes loop | HIGH |
+| 25 | §10x.44 | Aunt Mary IC arrives mid-flow with "I appoint Aunt Mary as Trustee" — Step 8 not updated | Reconciler only handled Step 5 (Beneficiary) | Reconciler dispatches per will-role: `_step2/3/4/7_add_*` for Executor/Guardian/Beneficiary/Trustee | MEDIUM |
+| 26 | §10x.45 | Property card with 5 bulleted blocks of "Land Registry / Cannot probate / probate explanation" | Card builder dumped every field as its own bullet | One-line `📋 Title · Lot · Mukim · Daerah · Negeri`; ≤6 sections per card; terse warnings | MEDIUM |
+| 27 | §10x.46 R1 | Layer 1 confirm card showed "Beneficiary intent: Joshua 25%, Esther 25%" | Layer 1 builder included Layer 2 fields | Layer 1 = asset identity ONLY; testator share + beneficiary moved to Layer 2 | HIGH |
+| 28 | §10x.46 R2 | Card text said "Confidence: HIGH" — exposed internal scoring | Card builder echoed tier label | Tier label removed from text; only button count varies (HIGH=1 / MEDIUM=3 / LOW=3) | HIGH |
+| 29 | §10x.46 R3 | Message-only H3 cards labelled HIGH confidence (no image) | Tier definition was "user stated it" alone | HIGH = lot/title in image == AI Summary's; message-only is at best MEDIUM | HIGH |
+| 30 | §10x.46 R4 | Same matching bug recurred 3× because each fix patched the symptom | No documentation of signal vocabularies between sources | Document what each source contains BEFORE adding match logic; semantic layer (geo bridge) over lexical when overlap is rare | HIGH |
+| 31 | §10x.47 | Verifier said PASS on a fixture with 0 Documents — matcher never ran | Verifier only counted gift entries, didn't check whether matching was exercised | Pre-flight: text-only fixture passes only if every text-stated detail lands on the gift; mixed fixture fails if Documents exist but every gift is H3 | HIGH |
+| 32 | §10x.48 | Address dropped, lot/title lost, ghost properties — matching code drifted between sessions | One-stage matcher mixed parsing + grouping + binding + saving | SIX stages (Parse / Group / Bind / Residual / Build / Walkthrough); AssetItem ← message ∪ AI Summary; DocGroup is the binding unit; Tier A→B→C→D priority; one-claim-only; runtime `ContractViolation` checks each stage | HIGH |
+| 33 | §10x.97 | KOID's 5-property message produced 6 AI Summary properties | Narrative-fallback parser accepted "POSB Bank account 030-25917-3" as a property because `25917` matched `_POSTCODE_RE` (`\b\d{5}\b`) | Skip-hint check (`_RAW_SKIP_HINTS`) runs BEFORE postcode/property-hint test in `_parse_ai_summary_text` | HIGH |
+| 34 | §2 Test Pipeline | Claude said "tested" without actually verifying | No mandatory test ritual after deploy | Health check + real SMTP send + nginx access log grep — all 3 must pass | HIGH |
+| 35 | §1 Build & Deploy | Code change "deployed" but old image still served | Image baked at build time; `restart` reuses old image | MUST run `git pull && docker compose build web && docker compose up -d web` | HIGH |
+| 36 | §4 Inbox Address Format | `inbox.will.alantanjb.com` failed to receive mail | Subdomain MX wasn't configured; bare domain MX is the one that works | Address format is `<first5><ic_last4>@will.alantanjb.com` — no `inbox.` prefix | HIGH |
+| 37 | §10 UI Rules | AI Summary card showed exhibit thumbnails (already on intake card) | Default `attachments_json` carried the message attachments through | AI Summary card uses `attachments_json='[]'` so thumbnails aren't repeated | HIGH |
+| 38 | §8 | Click → nothing happens (button rendered but no handler) | Quick-reply `value` had no matching app.py handler | Every new button must be smoke-tested; handler for the `value` string is mandatory | MEDIUM |
+| 39 | §4a | Chat asked "what's your IC number?" when wizard already had it | Chat planner re-asked without dedup against Person table | Dedup checks against `Person.nric_passport` (canonical extract) and `Person.full_name` BEFORE rendering any walkthrough question | HIGH |
+| 40 | §2 | Deploy declared done without testing | No mandatory test ritual | (a) health, (b) real SMTP send, (c) verify webhook fired in nginx log | HIGH |
+| 41 | §2 + §10x.33 | "Fixed" claimed without exercising the buggy path | No reconciliation against actual client data | Pre-deploy `asset_audit.py` counts pending gifts + reconciliation per fixture | HIGH |
+| 42 | §10i | Image bound to property by adjacency but timestamps not shown | Card builder skipped the `[image_ts]` / `[message_ts]` line | Card MUST show 📎 image timestamp + 💬 message timestamp + the gap (visible evidence) | MEDIUM |
+| 43 | §10aa | "VALUE: GRN56662" stored as title number; "(unreadable)" stored as identifier | Saver trusted raw `extracted_data` strings | `_clean_id_value` strips `VALUE:` / `LOT` / `TITLE` prefixes; `_looks_like_garbage` rejects `UNREADABLE` / `CANNOT READ` | HIGH |
+| 44 | §10aa | Two doc rows with `lot='LOT 207922'` vs `lot='207922'` treated as different properties | Dedup compared raw strings | Every dedup / group-key / comparison MUST `_clean_id_value` first | HIGH |
+| 45 | §10d + §10x.35 | Isolated image got auto-rendered as a property card with hallucinated address ("10 Marsiling Lane Singapore") | Matcher fabricated address when extraction returned empty | Isolated image with no AI-Summary match → §10d unverified card asks user; NEVER invent property/address | HIGH |
+| 46 | §10g | Same address bound to two property cards | Multiple docs (title + SPA + photo) for same property each got their own card | One-claim-only: `claimed_addresses` set; non-title docs auto-link to title's group via `(lot_digits, addr_sig)` | HIGH |
+| 47 | §10h | Matcher re-deduced from raw message text after AI Summary already canonicalised | Matcher fell back to raw text first | AI Summary IS canonical; matcher reads from summary, not raw forward text | HIGH |
+| 48 | §10i | AI-Summary property with no content match left as summary-only card even though adjacent unclaimed image existed | No temporal-fallback logic | Adjacency window (4 lines before / 3 after / 5 min) mandatory before summary-only card | MEDIUM |
+| 49 | §10ha | Title doc says "Mukim Plentong"; AI Summary says "Seri Alam Masai" — system flagged mismatch instead of binding | Matcher didn't know "Seri Alam Masai" is in Mukim Plentong | `_GEO_BRIDGE` table maps street → mukim; matcher uses BOTH lot/title AND mukim signals | HIGH |
+| 50 | §10a + §10x.46 R1 | Property identity card showed "Client wants to give to X" | Card builder pulled from Step 5 / Step 6 fields | Layer 1 = asset identity ONLY; beneficiary lives in Layer 2 | HIGH |
+| 51 | §10x.93 | Wizard Step 6 → Gift Main Beneficiaries dropdown shows "-- Select Beneficiary --" (empty) even though chat saved Esther + Joshua 50/50 | Wizard `<select>` enumerates `step4_data`. Chat only added wife (via §10x.42 reconcile for banks); property-gift beneficiaries were saved on the gift entry only — never registered in step4 | `_try_save_property_gift` Phase B now ALSO appends every main + substitute beneficiary into `step4_data` (deduped by name; pulls NRIC + address + relationship from Person row) | HIGH (verified live: dropdown shows ESTHER KOID EN HUI Daughter) |
+| 52 | §10x.98 (new) | Expand Step 6 in wizard right pane → ~5s later expander auto-closes (looks like a "4-second timer") | `static/js/chat.js` line 1040 polls every 5s (`POLL_MS = 5000`). Each poll calls `renderWillSnapshot(will)` which at line 885 unconditionally does `willPane.innerHTML = sections.join('')`, wiping the user's manual expand state. Line 971 then recomputes `isOpen = isCurrent \|\| !isFilled`, which closes any step that's neither current nor empty. | Capture user's open-state into a Set before line 885 (`querySelectorAll('details[data-step]')`), set `innerHTML`, then re-apply via `d.open = userOpenSteps.has(...)`. Add `data-step="${n}"` to the `<details>` tag at line 973 so steps can be identified across re-renders. ~6 line change | MEDIUM (diagnosed, not yet shipped) |
 
 ### Maintenance rule
 
@@ -5310,6 +5331,96 @@ comment — it's wrong. Trace through.
 
 ---
 
+### 10x.97  🔥🔥 BURN-IN — AI Summary parser must SKIP banks/insurance bullets 🔥🔥
+
+**The narrative-format fallback in `_parse_ai_summary_text` MUST consult
+`_RAW_SKIP_HINTS` BEFORE deciding whether a bullet is a property. Without
+this, account numbers and policy numbers leak into the property list.**
+
+### The bug this rule prevents
+
+KOID test case. The §10x.77 narrative AI Summary contained:
+
+> • POSB Bank Singapore account 030-25917-3 — to wife Lim Bee Yan 100%.
+
+The narrative-fallback path accepts a bullet as a property when it
+matches ANY of:
+1. `_RAW_PROP_HINTS` (condominium / unit / house / shop / jalan / etc.)
+2. `_POSTCODE_RE` → `\b\d{5}\b` (5 digits between word boundaries)
+3. `\bLot\s+\d` inline
+
+The POSB bullet matched #2 because `030-25917-3` contains `25917` which
+is 5 digits between word boundaries (the dashes are non-word chars). So
+"POSB Bank Singapore account 030-25917-3" became Property 6.
+
+Result: `_extract_ai_summary_properties` returned 6 properties instead
+of 5; the walkthrough rendered a phantom 6th property card; step5_data
+got an extra property gift entry; verifier R1 mismatch.
+
+### Hard rule
+
+The `_RAW_SKIP_HINTS` tuple — already defined and already including
+`'bank '`, `'banking'`, `'insurance'`, `'policy'`, `'account no'`,
+`'account number'`, `'savings account'` — MUST be checked **first** in
+the narrative-fallback path. Any bullet matching ANY skip hint in EITHER
+the head OR the full block is rejected before the property-hint /
+postcode / Lot test runs.
+
+```python
+if any(s in head_low or s in blk_low for s in _RAW_SKIP_HINTS):
+    continue   # bank / insurance / policy / account → not a property
+```
+
+### Where this is enforced
+
+| File | Function | Mechanism |
+|------|----------|-----------|
+| `ai/chat_planner.py` | `_parse_ai_summary_text` (narrative fallback branch) | §10x.97 skip-hint gate runs BEFORE the property-hint / postcode / Lot test |
+
+### Why postcode-regex isn't enough on its own
+
+`\b\d{5}\b` is correct for Malaysian postcodes (5 digits) but matches
+ANY isolated 5-digit run. Bank account numbers, policy numbers, even
+phone numbers all contain 5+ digits. Tightening the regex to
+`(?<![-\d])\d{5}(?![-\d])` (exclude dashes and adjacent digits) helps
+but still produces false positives. The right fix is to reject by the
+strong negative signal (the word "bank"/"insurance"/"policy"/"account"
+is in the bullet) rather than try to make the positive signal perfect.
+
+### Litmus test
+
+```python
+from ai.chat_planner import _parse_ai_summary_text
+
+text = '''
+**Assets the testator wants in their will:**
+
+• Unit B-05-11, Condominium Paradisonuava — jointly owned 50/50.
+• POSB Bank Singapore account 030-25917-3 — to wife 100%.
+• NTUC Income Insurance Policy 1811500170 — to wife 100%.
+'''
+
+props = _parse_ai_summary_text(text)
+assert len(props) == 1
+assert 'Paradisonuava' in props[0]['name']
+```
+
+If the parser ever returns more than 1 entry from this fixture, §10x.97
+has been violated. Look at the narrative-fallback path and verify
+`_RAW_SKIP_HINTS` is checked first.
+
+### Related rules
+
+- §10b — Property count = AI Summary count (this rule prevents the
+  bloated count that §10b verifies)
+- §10h — AI Summary IS canonical asset list (skip-hint applies to ALL
+  asset categorisation, not just property)
+- §10x.12 — every AI-Summary item is its own gift (banks/insurance get
+  their own gifts via `_extract_ai_summary_banks` / `_extract_ai_summary_insurance`,
+  NOT by leaking into the property list)
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
@@ -5341,30 +5452,13 @@ If any of these fails, the deploy is not done. **Don't claim success.**
 
 ## 11. Things NOT To Do
 
-These are direct quotes / paraphrases of user feedback. Do not repeat these mistakes.
-
-- ❌ Saying **"tested"** without actually sending an email
-- ❌ Saying **"deployed"** after `docker compose restart` (image not rebuilt)
-- ❌ Adding `inbox.` prefix back to the email address
-- ❌ Putting **Executor / Witness** in the Step 1 Identity buttons
-- ❌ Showing **exhibit thumbnails** in the AI Summary card
-- ❌ Buttons that **render but do nothing** when clicked
-- ❌ Asking about ICs / data the wizard **already knows**
-- ❌ Skipping the **address-to-asset matching** during property review
-- ❌ Suggesting Executor/Beneficiary **without** showing the text evidence
-- ❌ Bypassing the test pipeline — every deploy ends with a real email test
-- ❌ Showing **beneficiary** ("Client wants to give to X") on the property identity card
-- ❌ Property count > AI Summary count — duplicate cards from OCR title-number drift
-- ❌ Matching addresses without ordering — must be HIGH confidence FIRST, claim greedily, never reuse a claimed address (see §10g)
-- ❌ Letting a non-title image (Image B) get its own property card when it shares an address with a title image (Image A) that already claimed it
-- ❌ **Identifying assets without first reading the AI Summary.** AI Summary is the canonical list — N properties in summary = N cards in walkthrough. NEVER invent a property whose address isn't in the summary. See §10h.
-- ❌ **Reasoning from "recent_text" / message body when an AI Summary exists.** The summary has already canonicalised the property list — use it. Don't go back to the raw text and re-deduce.
-- ❌ **Ignoring temporal proximity when content match fails.** If an AI-Summary property has no content-matching image, check the messages BEFORE/AFTER each unclaimed image. Adjacency is a strong link. See §10i.
-- ❌ **Treating an OCR'd "address" on a title doc as real.** Title docs (Geran/HSD/PTD) do NOT show street addresses. The address always comes from the message / AI Summary. See §10ha.
-- ❌ **Ignoring the mukim/daerah on the title doc when matching.** Mukim is the geographic bridge: e.g. Mukim Plentong contains Seri Alam Masai, Marina Cove, Taman Laguna, Permas Jaya. A title doc with Mukim=Plentong matches AI-Summary properties in any of those townships. See §10ha geographic bridge table.
-- ❌ **Merging two strata titles by lot number alone.** Same lot + different title number = different units in the same building. Group by `(lot, title)` for strata, never just lot. Sibling enrichment must check title equality. See §10hd.
-- ❌ **Hiding the WhatsApp timing on property cards.** When an image is bound to a property by adjacency, the card MUST show the timestamp of the image and the adjacent message so the user can verify the temporal link. See §10i.
-- ❌ Treating `VALUE: GRN56662` or `VALUE: (unreadable)` as a real title number
-- ❌ Trusting raw extracted_data without cleaning AI-noise prefixes first
-- ❌ Saying "this is fixed" without running `get_pending_gift_documents()` against the actual client and counting properties
-- ❌ **HALLUCINATING assets or beneficiaries when a document is isolated / unreadable / cannot be identified.** If the title number is unreadable, the address is missing, the lot is garbage, or the document cannot be tied to any property in the AI Summary — **STOP**. Do NOT invent a property. Do NOT invent a beneficiary. Do NOT fabricate an address (no "10 Marsiling Lane Singapore" pulled from thin air). Mark the document as **isolated / needs human review** and SKIP it from the walkthrough. The chat must say "couldn't identify this — review manually" rather than create a fictitious asset card.
+> **Merged into the unified FUCK list at §10x.39.** That table is now the
+> single source of truth for "user told us this should never happen
+> again". Every entry has a corresponding §10x rule and an audit/check.
+>
+> If you find a NEW bug worth burning in:
+> 1. Add a new row at the bottom of §10x.39 (verbatim user quote where
+>    possible)
+> 2. Write or extend the §10x rule it points to
+> 3. Add a check (audit script, verifier rule, or test)
+> 4. Commit code + rule + check together so they never separate

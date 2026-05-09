@@ -1168,6 +1168,16 @@ def _parse_ai_summary_text(text: str) -> List[Dict[str, Any]]:
                 head = _nar_split[0].strip().rstrip(',')
                 tail = _nar_split[1]
                 head_low = head.lower()
+                blk_low  = blk.lower()
+                # 🔥 §10x.97 — REJECT bank / insurance / EPF / policy /
+                # account bullets BEFORE the property-hint check.
+                # Without this, "POSB Bank Singapore account 030-25917-3"
+                # was accepted as a property because its account number
+                # 25917 matched _POSTCODE_RE (\b\d{5}\b). The skip hints
+                # are owned by the parser already — they just weren't
+                # being consulted in the narrative fallback path.
+                if any(s in head_low or s in blk_low for s in _RAW_SKIP_HINTS):
+                    continue
                 if (any(h in head_low for h in _RAW_PROP_HINTS)
                     or _POSTCODE_RE.search(head)
                     or re.search(r'\bLot\s+\d', head, re.IGNORECASE)):
