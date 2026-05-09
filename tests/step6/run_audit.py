@@ -98,6 +98,26 @@ def run_one(client_id: str, name: str, expected_mode: str) -> bool:
         print(f'❌ verifier FAIL (rc={res.returncode})')
         return False
 
+    # 3. 🔥 §10x.113 — Phek will-clause snapshot test. sim_will_gen.py
+    # builds the 12 KOID gifts, feeds through the drafter, and asserts
+    # the §10x.24 Phek Yi Ting format patterns appear:
+    #   - "all my X/Y undivided shares" for joint properties
+    #   - "moneys in my [BANK] account No. [N]" for banks
+    #   - "the benefits of my [INSURER] insurance policy No. [N]" for insurance
+    #   - co-owner names NOT in any clause (§10x.19)
+    # Catches drafter / models/gift.py format drift early.
+    sim_gen = os.path.join(repo_data, 'sim_will_gen.py')
+    if os.path.isfile(sim_gen):
+        res = subprocess.run(['python', sim_gen], capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f'❌ Phek-format snapshot FAIL (rc={res.returncode})')
+            print(res.stdout[-800:])
+            print(res.stderr[-400:])
+            return False
+        print('✓ Phek-format snapshot passes')
+    else:
+        print('⚠ sim_will_gen.py not found — Phek snapshot skipped')
+
     print('✓ fixture passed')
     return True
 
