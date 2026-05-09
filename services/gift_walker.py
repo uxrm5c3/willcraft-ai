@@ -475,6 +475,22 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         Document.client_id == client_id,
         Document.category.in_(all_kinds),
     ).order_by(Document.created_at.asc()).all())
+    # 🔥 §10x.126 — drop docs the user explicitly skipped or
+    # soft-deleted via the §10x.125 identify-image card. Their
+    # extracted_data carries _skipped_not_in_will=True (Skip click)
+    # or _user_removed=True. Without this filter, the planner
+    # re-renders the same identify card forever after Skip.
+    def _is_user_skipped(d):
+        try:
+            ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+        except Exception:
+            return False
+        if not isinstance(ex, dict):
+            return False
+        return bool(ex.get('_skipped_not_in_will')
+                    or ex.get('_user_removed')
+                    or ex.get('_orphan_group_skipped'))
+    docs = [d for d in docs if not _is_user_skipped(d)]
 
     # ── Retroactive message context lookup ────────────────────────────────
     # Old documents (processed before _message_context was added to
