@@ -7509,17 +7509,13 @@ def _try_handle_h3_user_match(client_id: str, user_text: str):
 
 
 def _try_handle_doc_assign(client_id: str, user_text: str):
-    """🔥 §10x.125 — handle the user's reply to the 'identify this
-    image' card surfaced when a property doc has fully-unreadable
-    fields (no address, no title, no lot, no mukim).
+    """🔥 §10x.125 + §10x.126 — handle the user's reply to the
+    'identify this image' card.
 
-    Quickreply format:
-      `doc_assign <doc_id> <ai_index>`
-
-    Stamps `_user_assigned_ai_idx` on the doc — same mechanism as
-    §10x.108 orphan_claim — so the next pipeline run binds this doc
-    to the chosen AI Summary property and the property card re-renders
-    with that property's already-saved beneficiary distribution.
+    Quickreply formats:
+      `doc_assign <doc_id> <ai_index>`  → bind to AI Summary property
+      `doc_assign skip <doc_id>`         → mark inventoried, skip
+      `doc_assign remove <doc_id>`       → soft-delete the doc
 
     Returns dict on save, None to fall through.
     """
@@ -7531,6 +7527,53 @@ def _try_handle_doc_assign(client_id: str, user_text: str):
     parts = t.split()
     if len(parts) < 3:
         return None
+
+    # Variants:
+    #   doc_assign <doc_id> <int>   → bind
+    #   doc_assign skip <doc_id>    → skip
+    #   doc_assign remove <doc_id>  → remove
+    action = parts[1]
+    if action == 'skip':
+        doc_id = parts[2]
+        d = db.session.get(Document, doc_id)
+        if not d:
+            return None
+        try:
+            ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+        except Exception:
+            ex = {}
+        ex['_inventoried'] = True
+        ex['_skipped_not_in_will'] = True
+        d.extracted_data = json.dumps(ex)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'kind': 'doc_skipped',
+            'name': (d.original_filename or doc_id)[:60],
+            'role': 'not in will',
+        }
+
+    if action == 'remove':
+        doc_id = parts[2]
+        d = db.session.get(Document, doc_id)
+        if not d:
+            return None
+        d.category = 'deleted'
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'kind': 'doc_removed',
+            'name': (d.original_filename or doc_id)[:60],
+            'role': 'wrong upload',
+        }
+
+    # Default: bind path → 'doc_assign <doc_id> <ai_index>'
     doc_id = parts[1]
     try:
         ai_idx = int(parts[2])

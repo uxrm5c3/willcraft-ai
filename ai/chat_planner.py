@@ -5708,14 +5708,42 @@ def _step6_property_question(pending_props, recent_text, will_data):
                     'label': f'🏠 {addr_label}',
                     'value': f'doc_assign {doc_id} {i}',
                 })
+            # 🔥 §10x.125 — distinct values so the dispatch handler
+            # can route Skip vs Remove correctly. Plain 'skip'/'delete'
+            # were too generic and fell through every handler.
             id_quick.append({
                 'label': '🗑 Wrong upload — remove',
-                'value': 'delete',
+                'value': f'doc_assign remove {doc_id}',
             })
             id_quick.append({
                 'label': '⏭ Skip — not in my will',
-                'value': 'skip',
+                'value': f'doc_assign skip {doc_id}',
             })
+
+            # 🔥 §10x.126 — check whether ALL AI Summary properties are
+            # already saved in step5_data. If yes, surface a HINT that
+            # this image isn't critical to identify — user can safely
+            # skip without losing data.
+            try:
+                _will = will_data
+                _step5 = (_will or {}).get('step5') or []
+                if isinstance(_step5, list):
+                    saved_ai_idx = {
+                        g.get('_ai_summary_idx')
+                        for g in _step5
+                        if isinstance(g, dict)
+                        and g.get('kind') == 'property'
+                        and isinstance(g.get('_ai_summary_idx'), int)
+                    }
+                    if len(saved_ai_idx) >= len(ai_props):
+                        id_parts.append(
+                            "💡 _All " + str(len(ai_props)) + " properties from your "
+                            "message are already saved. This image is **extra** "
+                            "(maybe a duplicate scan or different page) — you can "
+                            "safely **Skip** if it doesn't add new information._"
+                        )
+            except Exception:
+                pass
             return {
                 'text': '\n\n'.join(id_parts) + _qr_marker(id_quick),
                 'focus_doc_id': doc_id,
