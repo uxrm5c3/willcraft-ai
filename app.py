@@ -7194,6 +7194,33 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                         duplicate = True
                         break
             if not duplicate:
+                # 🔥 §10x.100 — stamp _ai_summary_idx on the placeholder
+                # so _ai_props_already_handled (Pass 1) sees this slot as
+                # taken. Without this tag, the H3 path later re-asks about
+                # this same AI Summary property and appends a duplicate
+                # gift. See bug table entry on phantom property gifts.
+                _ai_idx_for_placeholder = None
+                try:
+                    from services.asset_pipeline import (parse_canonical_assets,
+                                                          group_documents,
+                                                          bind_assets)
+                    _ai_items = parse_canonical_assets(client_id)
+                    _doc_groups = group_documents(client_id)
+                    _ai_bindings = bind_assets(_ai_items, _doc_groups)
+                    _doc_grp = next(
+                        (g for g in _doc_groups if doc.id in g.document_ids), None
+                    )
+                    if _doc_grp:
+                        _b = next(
+                            (b for b in _ai_bindings
+                             if b.group_id == _doc_grp.group_id),
+                            None,
+                        )
+                        if _b and _b.tier in ('A', 'B', 'C'):
+                            _ai_idx_for_placeholder = _b.ai_index
+                except Exception:
+                    pass
+
                 placeholder = {
                     'document_id':      doc.id,
                     'kind':             'property',
@@ -7220,6 +7247,11 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                     'allocations':   [],
                     'beneficiaries': [],
                 }
+                # Only set _ai_summary_idx when pipeline gave us a real
+                # binding (Tier A/B/C). Tier D or no binding → leave None
+                # so it doesn't falsely claim a slot.
+                if _ai_idx_for_placeholder is not None:
+                    placeholder['_ai_summary_idx'] = _ai_idx_for_placeholder
                 gifts_ph.append(placeholder)
                 will_for_ph.step5_data = json.dumps(gifts_ph)
                 try:
@@ -7527,7 +7559,32 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
     entry.setdefault('testator_share', pi.get('testator_share') or '1/1')
     entry.setdefault('address', pi.get('property_address') or '')
 
-    s5.append(entry)
+    # 🔥 §10x.100 — defence-in-depth dedup. Even with §10x.100 stamping
+    # _ai_summary_idx on inventory-confirm placeholders, an edge case
+    # (e.g. pipeline failed mid-flow, doc not yet grouped) could leave
+    # a placeholder un-tagged. Before appending, check whether ANY
+    # existing gift already covers this AI Summary slot and upsert
+    # instead of duplicate-appending.
+    _existing_idx = next(
+        (i for i, g in enumerate(s5)
+         if isinstance(g, dict)
+         and g.get('_ai_summary_idx') == h3_idx),
+        None,
+    )
+    if _existing_idx is not None:
+        # Upsert: merge new fields onto existing, keep the older entry
+        # in place (preserves user's prior layer1_confirmed / beneficiaries).
+        existing = s5[_existing_idx]
+        for k, v in entry.items():
+            # Don't overwrite already-populated user-facing fields.
+            if k in ('beneficiaries', 'allocations', 'substitute_specific',
+                     'substitute_mode', '_layer1_confirmed') \
+               and existing.get(k):
+                continue
+            existing[k] = v
+        s5[_existing_idx] = existing
+    else:
+        s5.append(entry)
     active_will.step5_data = json.dumps(s5)
     db.session.commit()
 
