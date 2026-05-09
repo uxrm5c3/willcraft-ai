@@ -462,6 +462,12 @@ def plan_turn(
     # ── 8. STEP 9: Other Matters (optional) ───────────────────────────
     if 'others_confirmed' not in completed:
         s8 = current_will_data.get('step8') or {}
+        # 🔥 §10x.117 — pending-change follow-up. User clicked
+        # ✏️ Set X → handler stamped `_pending_change=X` → ask for input.
+        pending = (s8.get('_pending_change') or '').strip() if isinstance(s8, dict) else ''
+        if pending:
+            reply_parts.append(_step9_pending_change_prompt(pending))
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
         reply_parts.append(_step9_others_question(s8))
         return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
@@ -6117,35 +6123,101 @@ def _step8_trust_question(s7: dict, minors: list, completed: list) -> Optional[s
     return None  # All trust fields filled — fall through to trust_confirmed mark
 
 
+# 🔥 §10x.117 — Step 9 clauses split into PERSONAL CHOICES vs BOILERPLATE.
+#   PERSONAL: things the user might want to set themselves (funeral wishes,
+#     organ donation, pets). Surface these as the focus of the card.
+#   BOILERPLATE: standard legal language that virtually every will uses
+#     unchanged (digital assets / debts / governing law). Roll into a
+#     single one-line summary to reduce visual noise.
+_PERSONAL_OTHER_CLAUSES = [
+    ('funeral_arrangements', 'Funeral wishes',
+     "executor's discretion"),
+    ('organ_donation', 'Organ donation',
+     'no specific instructions'),
+    ('pets', 'Pets',
+     'no specific instructions'),
+]
+_BOILERPLATE_OTHER_CLAUSES = [
+    ('digital_assets', 'Digital assets',
+     'Executor to deal with as deemed appropriate.'),
+    ('debts', 'Debts',
+     'All debts and expenses to be paid from estate before distribution.'),
+    ('governing_law', 'Governing law',
+     'This will is governed by the laws of Malaysia.'),
+]
+# Legacy alias for any other code that references the original list
 _DEFAULT_OTHER_CLAUSES = [
-    ('Funeral arrangements', 'No specific instructions — at executor\'s discretion.'),
-    ('Organ donation', 'No specific instructions.'),
-    ('Pets', 'No specific instructions.'),
-    ('Digital assets', 'Executor to deal with as deemed appropriate.'),
-    ('Debts', 'All debts and expenses to be paid from estate before distribution.'),
-    ('Governing law', 'This will is governed by the laws of Malaysia.'),
+    (label, default) for _, label, default in
+    _PERSONAL_OTHER_CLAUSES + _BOILERPLATE_OTHER_CLAUSES
 ]
 
+
+_PENDING_LABELS = {
+    'funeral_arrangements': 'funeral wishes',
+    'organ_donation': 'organ donation preference',
+    'pets': 'instructions about your pets',
+    'digital_assets': 'digital-assets instructions',
+    'debts': 'debt-handling instructions',
+    'governing_law': 'governing-law preference',
+}
+
+
+def _step9_pending_change_prompt(pending_key: str) -> str:
+    """🔥 §10x.117 — second-step prompt after user clicked ✏️ Set X.
+    Asks for free-text input. The reply is saved by
+    _try_handle_others_action's pending-change branch."""
+    label = _PENDING_LABELS.get(pending_key, pending_key.replace('_', ' '))
+    parts = [
+        f"### ✏️ Type your {label}",
+        f"Reply with your wishes — for example:",
+        f"  • _Buddhist rites at Nirvana memorial._",
+        f"  • _Cremation, ashes scattered at sea._",
+        f"  • _Family to decide on the day._",
+        "_(Or tap below to skip this clause and use the default.)_",
+    ]
+    quick = [
+        {'label': '⏭ Skip this — use default',
+         'value': f'change {pending_key.replace("_", " ")}: '},
+        {'label': '↩ Back to Step 9 list',
+         'value': 'others confirm'},
+    ]
+    return '\n\n'.join(parts) + _qr_marker(quick)
+
+
 def _step9_others_question(s8: dict) -> str:
-    """Show the default 'other matters' clauses. User can confirm defaults
-    or ask to change any one. Tapping 'Confirm defaults' marks
-    others_confirmed in completed_steps."""
+    """🔥 §10x.117 — cleaner Step 9 card.
+
+    Layout:
+      Step 9: Other Matters
+      Personal wishes (your call):
+        Funeral wishes:  <override OR 'executor's discretion'>
+        Organ donation:  <override OR 'no specific instructions'>
+        Pets:             <override OR 'no specific instructions'>
+      Standard clauses (auto-handled): debts, digital assets, governing law
+
+      [✅ Looks good — proceed to review] [✏️ Set funeral wishes]
+      [✏️ Set organ donation] [✏️ Skip]
+    """
     if s8 and s8.get('confirmed'):
         return ''  # already done
 
-    lines = ["**Step 9: Other Matters** _(optional)_\n"]
-    lines.append("Here are the standard clauses included in every will. You can confirm "
-                 "them or ask to change any of them:\n")
-    for clause, default in _DEFAULT_OTHER_CLAUSES:
-        override = (s8.get(clause.lower().replace(' ', '_')) or '').strip()
-        val = override if override else f'_(default)_ {default}'
-        lines.append(f"  • **{clause}:** {val}")
-    text = '\n'.join(lines)
+    s8 = s8 or {}
+    lines = ["### ⚖️ Step 9: Other Matters _(optional)_"]
+    lines.append("**Personal wishes** _(your call — defaults shown if no preference):_")
+    for key, label, default in _PERSONAL_OTHER_CLAUSES:
+        override = (s8.get(key) or '').strip()
+        if override:
+            lines.append(f"  • **{label}:** {override}")
+        else:
+            lines.append(f"  • **{label}:** _{default}_")
+    lines.append("**Standard legal clauses** _(auto-included — debts paid before "
+                 "distribution; digital assets at executor's discretion; governed "
+                 "by Malaysian law)._")
+    text = '\n\n'.join(lines)
     quick = [
-        {'label': '✅ Confirm defaults — proceed to review', 'value': 'others confirm'},
-        {'label': 'Change funeral instructions', 'value': 'change funeral'},
-        {'label': 'Change organ donation preference', 'value': 'change organ donation'},
-        {'label': 'Change digital assets instructions', 'value': 'change digital assets'},
-        {'label': '⏭ Skip — use all defaults', 'value': 'others skip'},
+        {'label': '✅ Looks good — proceed to review', 'value': 'others confirm'},
+        {'label': '✏️ Set funeral wishes',           'value': 'change funeral'},
+        {'label': '✏️ Set organ donation',           'value': 'change organ donation'},
+        {'label': '⏭ Skip — use all defaults',       'value': 'others skip'},
     ]
     return text + _qr_marker(quick)

@@ -8089,6 +8089,7 @@ def _try_handle_others_action(client_id: str, user_text: str):
     if t in ('others confirm', 'others skip', 'confirm defaults — proceed to review',
              'confirm defaults', 'skip — use all defaults'):
         s8['confirmed'] = True
+        s8.pop('_pending_change', None)
         will.step8_data = json.dumps(s8)
         try:
             db.session.commit()
@@ -8097,18 +8098,68 @@ def _try_handle_others_action(client_id: str, user_text: str):
         _mark_completed(will, 'others_confirmed')
         return {'name': 'other matters', 'role': 'confirmed with defaults', 'kind': 'others_confirmed'}
 
+    # 🔥 §10x.117 — handle bare 'change X' clicks (no colon/value yet).
+    # Stamp _pending_change on s8 so the planner renders a follow-up
+    # "Type your <X>" prompt; the user's free-text reply on the next
+    # turn is saved to that key (handled in the free-text branch below).
+    _CHANGE_BARE_KEYS = {
+        'change funeral': 'funeral_arrangements',
+        'change funeral instructions': 'funeral_arrangements',
+        'change funeral wishes': 'funeral_arrangements',
+        'change organ donation': 'organ_donation',
+        'change organ donation preference': 'organ_donation',
+        'change pets': 'pets',
+        'change digital assets': 'digital_assets',
+        'change digital assets instructions': 'digital_assets',
+        'change debts': 'debts',
+        'change governing law': 'governing_law',
+    }
+    if t in _CHANGE_BARE_KEYS:
+        s8['_pending_change'] = _CHANGE_BARE_KEYS[t]
+        will.step8_data = json.dumps(s8)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return {'name': _CHANGE_BARE_KEYS[t], 'role': 'awaiting input',
+                'kind': 'others_change_prompt'}
+
     # Pattern: 'change <clause>: <new value>'  e.g. "change funeral: Cremation preferred"
     m = re.match(r'^change\s+(.+?):\s*(.+)$', user_text.strip(), re.IGNORECASE)
     if m:
         clause_key = re.sub(r'\s+', '_', m.group(1).strip().lower())
         new_val = m.group(2).strip()
         s8[clause_key] = new_val
+        s8.pop('_pending_change', None)
         will.step8_data = json.dumps(s8)
         try:
             db.session.commit()
         except Exception:
             db.session.rollback()
         return {'name': clause_key, 'role': f'updated: {new_val[:60]}', 'kind': 'others_updated'}
+
+    # 🔥 §10x.117 — free-text reply when _pending_change is set.
+    # User clicked 'change funeral' on the previous turn → planner asked
+    # 'Type your funeral wishes' → user's reply lands here.
+    pending = (s8.get('_pending_change') or '').strip()
+    if pending and user_text and len(user_text) > 1:
+        # Don't capture obvious other-step replies
+        low_t = user_text.strip().lower()
+        if not low_t.startswith(('change ', 'others ', 'confirm', 'yes',
+                                 'no', 'skip', 'trust ', 'residuary',
+                                 'inventory', 'orphan_', 'bank_', 'insurance_',
+                                 'gift ', 'substitute ', 'beneficiaries ',
+                                 'role_match')):
+            s8[pending] = user_text.strip()[:500]
+            s8.pop('_pending_change', None)
+            will.step8_data = json.dumps(s8)
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            return {'name': pending,
+                    'role': f'updated: {user_text.strip()[:60]}',
+                    'kind': 'others_updated'}
 
     return None
 
