@@ -4155,6 +4155,11 @@ def _api_chat_message_impl(client_id):
                           or _try_handle_restart_inbox(client_id, user_text)
                           or _try_handle_restart_gifts(client_id, user_text)
                           or _try_handle_unlink_action(client_id, user_text)
+                          # §10x.127 — inventory-completeness gate (must
+                          # match the `assets_check ` prefix BEFORE the
+                          # general inventory handler that owns
+                          # `inventory `)
+                          or _try_handle_assets_check(client_id, user_text)
                           or _try_handle_inventory_action(client_id, user_text)
                           # §10hg — H3 placeholder confirm/skip when no pending image
                           or _try_handle_h3_user_match(client_id, user_text)
@@ -4165,7 +4170,11 @@ def _api_chat_message_impl(client_id):
                           or _try_handle_message_conflict(client_id, user_text)
                           or _try_handle_property_fill(client_id, user_text)
                           or _try_handle_ownership(client_id, user_text)
-                          or _try_handle_encumbrance(client_id, user_text))
+                          or _try_handle_encumbrance(client_id, user_text)
+                          # §10x.127 — free-text description while in
+                          # 'describing' mode. MUST run last so quickreply
+                          # paths above get first chance.
+                          or _try_handle_assets_describe(client_id, user_text))
         if not just_inventory:
             just_assets_gate = _try_handle_assets_gate(client_id, user_text)
     # If past Step 1, attempt executor save then beneficiaries save then
@@ -7627,6 +7636,349 @@ def _try_handle_doc_assign(client_id: str, user_text: str):
         'kind': 'doc_assigned',
         'name': (d.original_filename or doc_id)[:60],
         'role': f'AI[{ai_idx}]',
+    }
+
+
+def _try_handle_assets_check(client_id: str, user_text: str):
+    """🔥 §10x.127 — handle the inventory-completeness gate.
+
+    Quickreply values from `_step6_assets_complete_gate_card` and
+    `_step6_describe_match_card`:
+
+      • `assets_check yes`             → all assets accounted for; bulk-skip
+                                          every isolated property image
+      • `assets_check no`              → enter 'describing' mode; the next
+                                          free-text user message is matched
+                                          against isolated docs
+      • `assets_check match <doc_id>`  → user picked a specific isolated
+                                          image as the missing asset; assign
+                                          it (clears describing marker)
+      • `assets_check alternates`      → re-render the match card showing
+                                          all candidates instead of the top
+      • `assets_check noimage`         → none of the images match — show
+                                          upload-prompt card
+      • `assets_check text_only`       → save as a text-only asset (placeholder
+                                          gift entry); clears markers
+
+    Returns dict on success, None if not applicable.
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    if not t.startswith('assets_check '):
+        return None
+
+    parts = t.split()
+    if len(parts) < 2:
+        return None
+    action = parts[1]
+
+    will = Will.query.filter_by(client_id=client_id).first()
+    if not will:
+        return None
+
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+    except Exception:
+        completed = []
+    if not isinstance(completed, list):
+        completed = []
+
+    def _stamp(marker: str):
+        if marker not in completed:
+            completed.append(marker)
+
+    def _clear(marker: str):
+        while marker in completed:
+            completed.remove(marker)
+
+    # ── YES — bulk-skip all isolated property images ────────────────
+    if action == 'yes':
+        all_docs = Document.query.filter_by(
+            client_id=client_id, category='property_title'
+        ).all()
+        n_skipped = 0
+        for d in all_docs:
+            try:
+                ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+            except Exception:
+                ex = {}
+            if not isinstance(ex, dict):
+                ex = {}
+            if ex.get('_inventoried') or ex.get('_skipped_not_in_will'):
+                continue
+            addr = (ex.get('property_address') or '').strip()
+            title = (ex.get('title_number') or '').strip()
+            lot = (ex.get('lot_number') or '').strip()
+            mukim = (ex.get('mukim') or '').strip()
+            if addr or title or lot or mukim:
+                continue   # identifiable — leave for normal walkthrough
+            ex['_inventoried'] = True
+            ex['_skipped_not_in_will'] = True
+            ex['_auto_skipped_reason'] = (
+                'user confirmed all assets accounted for (§10x.127)')
+            d.extracted_data = json.dumps(ex)
+            n_skipped += 1
+        _stamp('assets_inventory_confirmed')
+        _clear('assets_inventory_describing')
+        # Drop any pending describe-state marker
+        completed = [c for c in completed
+                     if not (isinstance(c, str)
+                             and c.startswith('assets_describe_pending:'))]
+        will.completed_steps = json.dumps(completed)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'kind': 'assets_inventory_confirmed',
+            'name': '',
+            'role': f'auto-skipped {n_skipped} extra image(s)',
+        }
+
+    # ── NO — enter describing mode ──────────────────────────────────
+    if action == 'no':
+        _stamp('assets_inventory_describing')
+        _clear('assets_inventory_confirmed')
+        will.completed_steps = json.dumps(completed)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'kind': 'assets_inventory_describing',
+            'name': '',
+            'role': 'awaiting description',
+        }
+
+    # ── MATCH — user picked a specific image as the missing asset ──
+    if action == 'match' and len(parts) >= 3:
+        doc_id = parts[2]
+        d = db.session.get(Document, doc_id)
+        if not d:
+            return None
+        try:
+            ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+        except Exception:
+            ex = {}
+        if not isinstance(ex, dict):
+            ex = {}
+
+        # Pull the user's most recent description from chat history so
+        # we can populate the doc's address field (so the normal
+        # walkthrough no longer treats it as fully-unreadable).
+        try:
+            from ai.chat_planner import _latest_user_description as _lud
+            desc = _lud(client_id)
+        except Exception:
+            desc = ''
+        if desc and not (ex.get('property_address') or '').strip():
+            ex['property_address'] = desc[:200]
+            ex['_address_source'] = 'user_described'
+
+        # Tag this image as user-claimed; clear the skip/inventoried
+        # flags so the doc surfaces as a regular pending property.
+        ex['_user_claimed_via_describe'] = True
+        ex.pop('_inventoried', None)
+        ex.pop('_skipped_not_in_will', None)
+        ex.pop('_auto_skipped_reason', None)
+        d.extracted_data = json.dumps(ex)
+
+        # Bulk-skip remaining isolated docs (user already chose THIS one
+        # as the missing asset; the other isolated images are extras).
+        all_docs = Document.query.filter_by(
+            client_id=client_id, category='property_title'
+        ).all()
+        for od in all_docs:
+            if od.id == d.id:
+                continue
+            try:
+                oex = json.loads(od.extracted_data or '{}') if od.extracted_data else {}
+            except Exception:
+                oex = {}
+            if not isinstance(oex, dict):
+                oex = {}
+            if oex.get('_inventoried') or oex.get('_skipped_not_in_will'):
+                continue
+            addr_o = (oex.get('property_address') or '').strip()
+            tit_o = (oex.get('title_number') or '').strip()
+            lot_o = (oex.get('lot_number') or '').strip()
+            muk_o = (oex.get('mukim') or '').strip()
+            if addr_o or tit_o or lot_o or muk_o:
+                continue
+            oex['_inventoried'] = True
+            oex['_skipped_not_in_will'] = True
+            oex['_auto_skipped_reason'] = (
+                'user matched a different image; remaining are extras (§10x.127)')
+            od.extracted_data = json.dumps(oex)
+
+        # Clear describing markers
+        _stamp('assets_inventory_confirmed')
+        _clear('assets_inventory_describing')
+        _clear('assets_describe_alternates')
+        will.completed_steps = json.dumps(completed)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'kind': 'assets_inventory_matched',
+            'name': (d.original_filename or doc_id)[:60],
+            'role': ('matched: ' + (desc[:40] if desc else 'user-described')),
+        }
+
+    # ── ALTERNATES — show all candidates next turn ──────────────────
+    if action == 'alternates':
+        _stamp('assets_describe_alternates')
+        will.completed_steps = json.dumps(completed)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'kind': 'assets_inventory_alternates',
+            'name': '',
+            'role': 'show alternates',
+        }
+
+    # ── NOIMAGE — none of the images match; ask user to upload ──────
+    if action == 'noimage':
+        _clear('assets_describe_alternates')
+        # Stay in describing mode but hint that the user should upload
+        # a clearer image. Frontend handles the upload trigger.
+        return {
+            'kind': 'assets_inventory_noimage',
+            'name': '',
+            'role': 'awaiting upload',
+        }
+
+    # ── TEXT_ONLY — clear markers; user will type asset details ─────
+    if action == 'text_only':
+        _stamp('assets_inventory_confirmed')
+        _clear('assets_inventory_describing')
+        completed = [c for c in completed
+                     if not (isinstance(c, str)
+                             and c.startswith('assets_describe_pending:'))]
+        will.completed_steps = json.dumps(completed)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'kind': 'assets_inventory_text_only',
+            'name': '',
+            'role': 'text-only asset acknowledged',
+        }
+
+    return None
+
+
+def _try_handle_assets_describe(client_id: str, user_text: str):
+    """🔥 §10x.127 — match free-text user input against isolated property
+    docs when the user is in 'describing' mode.
+
+    Triggered ONLY when `assets_inventory_describing` is in
+    `Will.completed_steps`. Otherwise no-op.
+
+    Tokenises `user_text`, scores each isolated property doc by overlap
+    with extracted fields (lot / title / mukim / address / purpose /
+    filename), and stamps a marker `assets_describe_pending:<doc_id>`
+    so the planner renders the match card on the next turn.
+
+    Returns dict on success, None if not applicable.
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    # Skip quickreply prefixes — only free-text messages count as descriptions
+    low = t.lower()
+    qr_prefixes = ('assets_check', 'inventory ', 'doc_assign', 'orphan_',
+                   'unlink ', 'gift ', 'guardian ', 'trust ', 'others ',
+                   'residuary ', 'beneficiaries ', 'role_match', 'restart ',
+                   'conflict ', 'address:', 'dob:', 'gender:', 'marital:',
+                   'occupation:', 'daerah:', 'negeri:', 'mukim:', 'lot:',
+                   'title:', 'property ', 'change ', 'confirm ', 'h3 ',
+                   'bank_l1', 'bank_l2', 'bank_l3', 'bank_h3',
+                   'insurance_l1', 'insurance_l2', 'insurance_l3', 'insurance_h3',
+                   'banks generic', 'skip', 'delete', 'yes', 'no', 'remove',
+                   'substitute ', 'others ', 'open wizard', 'upload-ic',
+                   'walk one by one')
+    if any(low.startswith(p) for p in qr_prefixes):
+        return None
+    # Need at least a few characters of substantive text
+    if len(t) < 4:
+        return None
+
+    will = Will.query.filter_by(client_id=client_id).first()
+    if not will:
+        return None
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+    except Exception:
+        completed = []
+    if not isinstance(completed, list):
+        completed = []
+    if 'assets_inventory_describing' not in completed:
+        return None
+
+    # Tokenise the description
+    import re as _re
+    toks = set(_re.findall(r'[A-Za-z0-9]{3,}', t.upper()))
+    # Drop noise words
+    NOISE = {'AND', 'THE', 'FOR', 'WITH', 'FROM', 'INTO', 'THIS', 'THAT',
+             'GIVE', 'GIVE', 'PROPERTY', 'ASSET', 'ASSETS', 'WILL', 'NOT',
+             'YES', 'PLEASE', 'HOUSE', 'UNIT'}
+    toks = toks - NOISE
+    if not toks:
+        return None
+
+    # Score each isolated doc
+    docs = Document.query.filter_by(
+        client_id=client_id, category='property_title'
+    ).all()
+    scored = []
+    for d in docs:
+        try:
+            ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+        except Exception:
+            ex = {}
+        if not isinstance(ex, dict):
+            ex = {}
+        if (ex.get('_skipped_not_in_will') or ex.get('_user_removed')):
+            continue
+        # Build a text blob from this doc's fields + filename
+        bag = ' '.join(str(ex.get(k) or '') for k in (
+            'property_address', 'title_number', 'lot_number', 'mukim',
+            'daerah', 'negeri', 'purpose', 'owner_name', 'building_name',
+            'property_description'))
+        bag += ' ' + (d.original_filename or '')
+        bag_toks = set(_re.findall(r'[A-Za-z0-9]{3,}', bag.upper()))
+        overlap = toks & bag_toks
+        if not overlap:
+            continue
+        scored.append({
+            'document_id': d.id,
+            'original_filename': d.original_filename or '',
+            'purpose': (ex.get('purpose') or '')[:140],
+            '_match_score': len(overlap),
+            '_match_tokens': sorted(overlap),
+        })
+
+    scored.sort(key=lambda x: -x['_match_score'])
+
+    # The planner reads the most recent user message directly from chat
+    # history when 'assets_inventory_describing' is set, so we don't need
+    # to persist anything here — the matching is recomputed on every
+    # planner turn against the current set of isolated docs.
+    return {
+        'kind': 'assets_describe_received',
+        'name': (scored[0]['original_filename'] if scored else 'no match'),
+        'role': (f'{len(scored)} candidate(s)' if scored else 'no candidates'),
     }
 
 

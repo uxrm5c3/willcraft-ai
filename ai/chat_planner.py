@@ -5604,6 +5604,342 @@ def _assets_prompt_for_uploads() -> str:
     return '\n\n'.join(parts) + _qr_marker(quick)
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# §10x.127 — INVENTORY-COMPLETENESS GATE helpers
+# ──────────────────────────────────────────────────────────────────────────
+
+# Quickreply prefixes used as gating tokens — the describe-asset matcher
+# treats messages that start with any of these as quickreply responses
+# (NOT as a free-text description). Mirrors the list in
+# `_try_handle_assets_describe` in app.py.
+_DESCRIBE_QR_PREFIXES = (
+    'assets_check', 'inventory ', 'doc_assign', 'orphan_', 'unlink ',
+    'gift ', 'guardian ', 'trust ', 'others ', 'residuary ',
+    'beneficiaries ', 'role_match', 'restart ', 'conflict ',
+    'address:', 'dob:', 'gender:', 'marital:', 'occupation:',
+    'daerah:', 'negeri:', 'mukim:', 'lot:', 'title:',
+    'property ', 'change ', 'confirm ', 'h3 ',
+    'bank_l1', 'bank_l2', 'bank_l3', 'bank_h3',
+    'insurance_l1', 'insurance_l2', 'insurance_l3', 'insurance_h3',
+    'banks generic', 'skip', 'delete', 'yes', 'no', 'remove',
+    'substitute ', 'open wizard', 'upload-ic', 'walk one by one',
+)
+
+# Noise tokens that don't carry property-identifying signal
+_DESCRIBE_NOISE = {
+    'AND', 'THE', 'FOR', 'WITH', 'FROM', 'INTO', 'THIS', 'THAT',
+    'GIVE', 'PROPERTY', 'ASSET', 'ASSETS', 'WILL', 'NOT',
+    'YES', 'PLEASE', 'HOUSE', 'UNIT', 'IS', 'ARE', 'OF', 'IN',
+    'TO', 'MY', 'HAVE', 'HAS',
+}
+
+
+def _latest_user_description(client_id: str) -> str:
+    """Return the most recent free-text user chat message (one that does
+    NOT start with any quickreply prefix). Used by the describe-asset
+    matcher in §10x.127.
+    """
+    if not client_id:
+        return ''
+    try:
+        from database import db, ChatMessage, ChatSession
+    except Exception:
+        return ''
+    try:
+        cs = (ChatSession.query
+              .filter_by(client_id=client_id)
+              .order_by(ChatSession.created_at.desc())
+              .first())
+        if not cs:
+            return ''
+        msgs = (ChatMessage.query
+                .filter_by(session_id=cs.id, role='user')
+                .order_by(ChatMessage.created_at.desc())
+                .limit(20)
+                .all())
+    except Exception:
+        return ''
+    for m in msgs:
+        t = (m.content or '').strip()
+        if not t or len(t) < 4:
+            continue
+        low = t.lower()
+        if any(low.startswith(p) for p in _DESCRIBE_QR_PREFIXES):
+            continue
+        return t
+    return ''
+
+
+def _match_isolated_docs_to_description(
+        client_id: str, description: str) -> List[Dict[str, Any]]:
+    """Score every isolated property doc against `description` by token
+    overlap. Returns candidates sorted by descending score.
+    """
+    if not (client_id and description):
+        return []
+    try:
+        from database import db, Document
+    except Exception:
+        return []
+    import re as _re
+    toks = set(_re.findall(r'[A-Za-z0-9]{3,}', description.upper()))
+    toks = toks - _DESCRIBE_NOISE
+    if not toks:
+        return []
+    try:
+        docs = Document.query.filter_by(
+            client_id=client_id, category='property_title'
+        ).all()
+    except Exception:
+        return []
+    scored = []
+    for d in docs:
+        try:
+            ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+        except Exception:
+            ex = {}
+        if not isinstance(ex, dict):
+            ex = {}
+        if (ex.get('_skipped_not_in_will') or ex.get('_user_removed')):
+            continue
+        bag = ' '.join(str(ex.get(k) or '') for k in (
+            'property_address', 'title_number', 'lot_number', 'mukim',
+            'daerah', 'negeri', 'purpose', 'owner_name', 'building_name',
+            'property_description'))
+        bag += ' ' + (d.original_filename or '')
+        bag_toks = set(_re.findall(r'[A-Za-z0-9]{3,}', bag.upper()))
+        overlap = toks & bag_toks
+        if not overlap:
+            continue
+        scored.append({
+            'document_id': d.id,
+            'original_filename': d.original_filename or '',
+            'purpose': (ex.get('purpose') or '')[:140],
+            '_match_score': len(overlap),
+            '_match_tokens': sorted(overlap),
+        })
+    scored.sort(key=lambda x: -x['_match_score'])
+    return scored[:6]
+
+
+def _count_isolated_property_docs(client_id: str) -> int:
+    """Return the number of property_title Documents whose extracted_data
+    has NO usable identifier (no address / title / lot / mukim) and are
+    not yet inventoried/skipped/removed.
+    """
+    if not client_id:
+        return 0
+    try:
+        from database import db, Document
+    except Exception:
+        return 0
+    try:
+        docs = Document.query.filter_by(
+            client_id=client_id, category='property_title'
+        ).all()
+    except Exception:
+        return 0
+    n = 0
+    for d in docs:
+        try:
+            ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+        except Exception:
+            ex = {}
+        if not isinstance(ex, dict):
+            continue
+        if (ex.get('_inventoried') or ex.get('_skipped_not_in_will')
+                or ex.get('_user_removed')):
+            continue
+        addr = (ex.get('property_address') or '').strip()
+        title = (ex.get('title_number') or '').strip()
+        lot = (ex.get('lot_number') or '').strip()
+        mukim = (ex.get('mukim') or '').strip()
+        if not (addr or title or lot or mukim):
+            n += 1
+    return n
+
+
+def _step6_assets_complete_gate_card(
+        fname: str, purpose: str, isolated_count: int,
+        ai_props: List[Dict[str, Any]],
+        will_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """🔥 §10x.127 — One-time gate before the per-image identify card.
+
+    Asks the user: have you described all your specific gift assets?
+      • Yes → bulk-skip every isolated image (no per-image clicks).
+      • No  → enter 'describing' mode; user types details for the
+              missing asset and we match against isolated docs.
+    """
+    n_ai = len(ai_props) if ai_props else 0
+    # How many of the AI-Summary properties are already saved?
+    saved_property_gifts = 0
+    try:
+        s5 = (will_data or {}).get('step5') or []
+        if isinstance(s5, list):
+            for g in s5:
+                if (isinstance(g, dict) and g.get('kind') == 'property'
+                        and not g.get('_ai_summary_skipped')
+                        and not g.get('skipped')):
+                    saved_property_gifts += 1
+    except Exception:
+        pass
+
+    parts = [
+        "### 📋 Asset inventory check",
+    ]
+    if isolated_count <= 1:
+        parts.append(
+            f"I have **1 image** (`{fname[:50]}`) that doesn't clearly "
+            f"match any property in your message."
+        )
+    else:
+        parts.append(
+            f"I have **{isolated_count} images** that don't clearly "
+            f"match any property in your message — including `{fname[:50]}`."
+        )
+    if purpose:
+        parts.append(f"_What I see in this image:_ {purpose[:160]}")
+
+    if n_ai:
+        parts.append(
+            f"From your message I deduced **{n_ai} specific-gift "
+            f"properties** ({saved_property_gifts} of {n_ai} already "
+            f"saved)."
+        )
+
+    parts.append(
+        "**Have you described all the specific gift assets that "
+        "should be in your will?**"
+    )
+    parts.append(
+        "  • _Yes_ — these extra images are duplicates/spares; I'll "
+        "skip them all in one go.\n"
+        "  • _No_ — there's an asset I forgot to mention; let me "
+        "describe it and I'll match it to an image."
+    )
+
+    quick = [
+        {'label': '✅ Yes — all assets accounted for, skip extras',
+         'value': 'assets_check yes'},
+        {'label': '❌ No — let me describe a missing asset',
+         'value': 'assets_check no'},
+    ]
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+    }
+
+
+def _step6_describe_asset_prompt_card(
+        fname: str, purpose: str, isolated_count: int,
+        ai_props: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """🔥 §10x.127 — Describe-asset prompt shown after user clicks 'No'
+    on the inventory-completeness gate.
+
+    Free-text input; the next chat message is treated as the description
+    and matched against isolated property docs by `_try_handle_assets_describe`
+    in app.py.
+    """
+    parts = [
+        "### ✏️ Describe the missing asset",
+        ("Type details about the asset you forgot to mention — include any "
+         "of these:"),
+        ("  • Address or location (e.g. _\"Unit 5-08 Pangsapuri Bayu\"_)\n"
+         "  • Lot or title number (e.g. _\"Lot 207922\"_)\n"
+         "  • Mukim / Daerah / Negeri\n"
+         "  • Building or development name\n"
+         "  • Brief note about who you want to give it to"),
+        ("_I'll match what you type against the **" + str(isolated_count) +
+         "** unidentified image(s) and confirm before saving._"),
+    ]
+    quick = [
+        {'label': '↩ Cancel — these are all extras after all',
+         'value': 'assets_check yes'},
+    ]
+    return {
+        'text': '\n\n'.join(parts) + _qr_marker(quick),
+    }
+
+
+def _step6_describe_match_card(
+        match: Optional[Dict[str, Any]],
+        candidates: List[Dict[str, Any]],
+        description: str) -> Dict[str, Any]:
+    """🔥 §10x.127 — Render the result of matching the user's description
+    against isolated property docs.
+
+    `match` (best single match) is shown as a confirm card.
+    `candidates` (multiple plausible matches) is shown as a picker.
+    Empty → "no match" card with upload/skip buttons.
+    """
+    if match and not candidates:
+        # Single confident match
+        doc_id = match.get('document_id') or ''
+        fname = (match.get('original_filename') or '')[:50]
+        purpose = (match.get('purpose') or '')[:140]
+        score = match.get('_match_score') or 0
+        parts = [
+            "### 🎯 Found a likely match",
+            f"Your description: _\"{description[:140]}\"_",
+            ("I think this image is the asset you described:\n\n"
+             f"  • 📷 **`{fname}`**" + (f"\n  • _{purpose}_" if purpose else '')),
+            ("Confirm to attach it to a new specific-gift entry, or pick "
+             "a different image."),
+        ]
+        quick = [
+            {'label': '✅ Yes — this is the asset I described',
+             'value': f'assets_check match {doc_id}'},
+            {'label': '🔄 Show me other candidates',
+             'value': 'assets_check alternates'},
+            {'label': '🗑 None of my images match — request upload',
+             'value': 'assets_check noimage'},
+            {'label': '↩ Cancel',
+             'value': 'assets_check yes'},
+        ]
+        return {'text': '\n\n'.join(parts) + _qr_marker(quick)}
+
+    if candidates:
+        parts = [
+            "### 🤔 Multiple possible matches",
+            f"Your description: _\"{description[:140]}\"_",
+            "Pick the image that matches the asset you described:",
+        ]
+        quick: List[Dict[str, str]] = []
+        for c in candidates[:6]:
+            doc_id = c.get('document_id') or ''
+            fname = (c.get('original_filename') or 'image')[:40]
+            quick.append({
+                'label': f'📷 {fname}',
+                'value': f'assets_check match {doc_id}',
+            })
+        quick.append({
+            'label': '🗑 None of these — request upload',
+            'value': 'assets_check noimage',
+        })
+        quick.append({
+            'label': '↩ Cancel',
+            'value': 'assets_check yes',
+        })
+        return {'text': '\n\n'.join(parts) + _qr_marker(quick)}
+
+    # No match
+    parts = [
+        "### 🤷 No image matches that description",
+        f"Your description: _\"{description[:140]}\"_",
+        ("None of the unidentified images look like a match. You can:\n\n"
+         "  • Upload a clearer photo of the title document, or\n"
+         "  • Add the asset as text-only (we'll save it without an image)."),
+    ]
+    quick = [
+        {'label': '📎 Upload a new image',
+         'value': 'upload-ic'},
+        {'label': '✏️ Add as text-only asset',
+         'value': 'assets_check text_only'},
+        {'label': '↩ Cancel — these are all extras',
+         'value': 'assets_check yes'},
+    ]
+    return {'text': '\n\n'.join(parts) + _qr_marker(quick)}
+
+
 def _step6_property_question(pending_props, recent_text, will_data):
     """Walk one property at a time — two-phase per gift:
 
@@ -5738,9 +6074,74 @@ def _step6_property_question(pending_props, recent_text, will_data):
                     '_auto_skipped': True,
                 }
         if ai_props:
+            # 🔥 §10x.127 — INVENTORY-COMPLETENESS GATE
+            # Instead of asking the user to identify EACH unreadable image
+            # individually, ask ONCE:
+            #   "Are all your specific gift assets accounted for?"
+            #     YES → bulk-skip every isolated image (handler does the
+            #           bulk write; user clicks once)
+            #     NO  → enter "describing" mode; next free-text message is
+            #           parsed and matched against isolated docs
+            #
+            # The gate is gated by markers in `completed_steps`:
+            #   - 'assets_inventory_confirmed'  → user said YES (path skipped
+            #     because handler bulk-marked docs `_skipped_not_in_will`)
+            #   - 'assets_inventory_describing' → user said NO; show the
+            #     describe prompt and wait for free-text input
+            completed = (will_data or {}).get('completed_steps') or []
+            client_id_id = (will_data or {}).get('client_id') or ''
+
+            # Count isolated/unreadable property docs for this client so the
+            # gate copy can say "I have N image(s) that don't match…".
+            isolated_count = _count_isolated_property_docs(client_id_id)
+
             doc_id = p.get('document_id') or ''
             fname = p.get('original_filename') or 'this image'
             purpose = (p.get('purpose') or ex.get('purpose') or '').strip()
+
+            if 'assets_inventory_describing' in completed:
+                # User said NO — show describe-prompt OR if they've
+                # already typed a free-text description, show the match
+                # card. We read the description from the most recent
+                # non-quickreply user chat message (no persistence needed).
+                desc = _latest_user_description(client_id_id)
+                if desc:
+                    candidates = _match_isolated_docs_to_description(
+                        client_id_id, desc
+                    )
+                    show_alternates = ('assets_describe_alternates' in completed)
+                    if show_alternates and len(candidates) >= 2:
+                        # Show ALL candidates as a picker
+                        return _step6_describe_match_card(
+                            None, candidates, desc
+                        )
+                    if len(candidates) == 1:
+                        return _step6_describe_match_card(
+                            candidates[0], [], desc
+                        )
+                    if len(candidates) >= 2:
+                        # Top match shown first; "Show alternates" leads here
+                        return _step6_describe_match_card(
+                            candidates[0], [], desc
+                        )
+                    # No candidates → no-match card
+                    return _step6_describe_match_card(None, [], desc)
+
+                # Otherwise, render the describe-asset prompt
+                return _step6_describe_asset_prompt_card(
+                    fname, purpose, isolated_count, ai_props
+                )
+
+            if 'assets_inventory_confirmed' not in completed:
+                # First time — ask the gate question.
+                return _step6_assets_complete_gate_card(
+                    fname, purpose, isolated_count, ai_props, will_data
+                )
+
+            # Fall-through: user already confirmed the inventory once but
+            # this doc is somehow still pending (race / new upload after
+            # confirmation). Render the per-image identify card so the
+            # user can place it manually.
             id_parts = [
                 "### ❓ Property — please identify this image",
                 f"I have an image (`{fname[:50]}`) but **couldn't read** "
@@ -5759,9 +6160,6 @@ def _step6_property_question(pending_props, recent_text, will_data):
                     'label': f'🏠 {addr_label}',
                     'value': f'doc_assign {doc_id} {i}',
                 })
-            # 🔥 §10x.125 — distinct values so the dispatch handler
-            # can route Skip vs Remove correctly. Plain 'skip'/'delete'
-            # were too generic and fell through every handler.
             id_quick.append({
                 'label': '🗑 Wrong upload — remove',
                 'value': f'doc_assign remove {doc_id}',
@@ -5770,31 +6168,6 @@ def _step6_property_question(pending_props, recent_text, will_data):
                 'label': '⏭ Skip — not in my will',
                 'value': f'doc_assign skip {doc_id}',
             })
-
-            # 🔥 §10x.126 — check whether ALL AI Summary properties are
-            # already saved in step5_data. If yes, surface a HINT that
-            # this image isn't critical to identify — user can safely
-            # skip without losing data.
-            try:
-                _will = will_data
-                _step5 = (_will or {}).get('step5') or []
-                if isinstance(_step5, list):
-                    saved_ai_idx = {
-                        g.get('_ai_summary_idx')
-                        for g in _step5
-                        if isinstance(g, dict)
-                        and g.get('kind') == 'property'
-                        and isinstance(g.get('_ai_summary_idx'), int)
-                    }
-                    if len(saved_ai_idx) >= len(ai_props):
-                        id_parts.append(
-                            "💡 _All " + str(len(ai_props)) + " properties from your "
-                            "message are already saved. This image is **extra** "
-                            "(maybe a duplicate scan or different page) — you can "
-                            "safely **Skip** if it doesn't add new information._"
-                        )
-            except Exception:
-                pass
             return {
                 'text': '\n\n'.join(id_parts) + _qr_marker(id_quick),
                 'focus_doc_id': doc_id,

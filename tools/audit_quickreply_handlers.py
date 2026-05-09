@@ -59,6 +59,7 @@ CLIENT_SIDE_ONLY = {
 # name for the audit report.
 KNOWN_HANDLERS = {
     'inbox ': '_try_handle_inbox_action',
+    'assets_check ': '_try_handle_assets_check',
     'inventory ': '_try_handle_inventory_action',
     'inventory h3 ': '_try_handle_h3_property_action',
     'unlink ': '_try_handle_unlink_action',
