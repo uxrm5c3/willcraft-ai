@@ -6894,30 +6894,60 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                     + " — likely joint ownership._"
                 )
 
-            # 🔥 §10x.95 — auto-deduce from the AI Summary's ownership
-            # field for THIS property. The §10x.77 narrative summary says
-            # things like "jointly owned 50/50 with son Joshua Koid Teck
-            # Seng". Parse that and pre-fill the answer with a 1-click
-            # Confirm button instead of asking sole-vs-joint cold.
+            # 🔥 §10x.95 v2 — use the canonical asset_pipeline binding
+            # (per §10hf web-search + §10ha geo bridge + §10hc mukim
+            # resolver) to find which AI Summary entry this doc belongs
+            # to. The pipeline's bind_assets() runs the full Tier A/B/C
+            # cascade. v1 used lexical substring on `_gex_addr in _ap_addr`
+            # which silently failed for narrative-format AI Summaries
+            # that omit lot/title (user typed only addresses) — see
+            # §10x.46 R4 ("FIND THE ROOT CAUSE. DON'T JUST PATCH").
             _ai_hint = ''
             _ai_match_value = ''
             _ai_match_label = ''
             try:
                 from ai.chat_planner import _extract_ai_summary_properties
+                from services.asset_pipeline import (parse_canonical_assets,
+                                                       group_documents,
+                                                       bind_assets)
                 _ai_props = _extract_ai_summary_properties(client_id) or []
-                _gex_addr = (_gex.get('property_address') or '').strip().upper()
-                _gex_lot  = re.sub(r'\D', '', (_gex.get('lot_number') or ''))
-                _gex_title = re.sub(r'\D', '', (_gex.get('title_number') or ''))
+                _items   = parse_canonical_assets(client_id)
+                _groups  = group_documents(client_id)
+                _bindings = bind_assets(_items, _groups)
+                # Find the DocGroup containing this doc, then its Binding
+                _doc_group = next(
+                    (g for g in _groups if doc.id in g.document_ids), None
+                )
                 _matched_ai = None
-                for _ap in _ai_props:
-                    _ap_lot   = re.sub(r'\D', '', _ap.get('lot') or '')
-                    _ap_title = re.sub(r'\D', '', _ap.get('title') or '')
-                    _ap_addr  = (_ap.get('address') or '').upper()
-                    if (_gex_lot and _gex_lot == _ap_lot) \
-                       or (_gex_title and _gex_title == _ap_title) \
-                       or (_gex_addr and _ap_addr and (_gex_addr in _ap_addr or _ap_addr in _gex_addr)):
-                        _matched_ai = _ap
-                        break
+                _matched_via = ''
+                if _doc_group:
+                    _binding = next(
+                        (b for b in _bindings if b.group_id == _doc_group.group_id),
+                        None,
+                    )
+                    if _binding and _binding.tier in ('A', 'B', 'C'):
+                        if 0 <= _binding.ai_index < len(_ai_props):
+                            _matched_ai = _ai_props[_binding.ai_index]
+                            _matched_via = _binding.match_via
+                # Fallback for completeness: if pipeline didn't bind (Tier D
+                # or no group), keep the lexical substring as a last-resort
+                # signal so we don't strictly regress vs v1. This only
+                # fires when the pipeline already gave up.
+                if not _matched_ai:
+                    _gex_addr = (_gex.get('property_address') or '').strip().upper()
+                    _gex_lot  = re.sub(r'\D', '', (_gex.get('lot_number') or ''))
+                    _gex_title = re.sub(r'\D', '', (_gex.get('title_number') or ''))
+                    for _ap in _ai_props:
+                        _ap_lot   = re.sub(r'\D', '', _ap.get('lot') or '')
+                        _ap_title = re.sub(r'\D', '', _ap.get('title') or '')
+                        _ap_addr  = (_ap.get('address') or '').upper()
+                        if (_gex_lot and _gex_lot == _ap_lot) \
+                           or (_gex_title and _gex_title == _ap_title) \
+                           or (_gex_addr and _ap_addr and
+                               (_gex_addr in _ap_addr or _ap_addr in _gex_addr)):
+                            _matched_ai = _ap
+                            _matched_via = 'lexical_fallback'
+                            break
                 if _matched_ai:
                     own_text = ((_matched_ai.get('ownership') or '') + ' '
                                 + (_matched_ai.get('beneficiary') or '')).lower()
@@ -6927,13 +6957,16 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                         _ai_match_value = 'inventory ownership joint'
                         _ai_match_label = '🤝 Joint owner (per your message)'
                         _ai_hint = (
-                            f"\n\n📨 _from your message:_ \"{(_matched_ai.get('ownership') or _matched_ai.get('beneficiary') or '')[:140]}\""
+                            f"\n\n📨 _from your message:_ \""
+                            f"{(_matched_ai.get('ownership') or _matched_ai.get('beneficiary') or '')[:140]}\""
                         )
-                    elif 'sole' in own_text or '100%' in own_text or '100percent' in own_text or '1/1' in own_text:
+                    elif 'sole' in own_text or '100%' in own_text \
+                         or '100percent' in own_text or '1/1' in own_text:
                         _ai_match_value = 'inventory ownership sole'
                         _ai_match_label = '👤 Sole owner (per your message)'
                         _ai_hint = (
-                            f"\n\n📨 _from your message:_ \"{(_matched_ai.get('ownership') or _matched_ai.get('beneficiary') or '')[:140]}\""
+                            f"\n\n📨 _from your message:_ \""
+                            f"{(_matched_ai.get('ownership') or _matched_ai.get('beneficiary') or '')[:140]}\""
                         )
             except Exception:
                 pass
