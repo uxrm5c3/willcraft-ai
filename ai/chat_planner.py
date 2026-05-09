@@ -6005,12 +6005,21 @@ def _is_already_executor(identity, executors):
 def _is_confirmed(will_data: Dict[str, Any], section: str) -> bool:
     """Has the user confirmed a section in chat? We piggyback on
     Will.completed_steps in the future; for now treat as un-confirmed
-    once and re-ask if user provides corrections — keeps the flow simple."""
-    # TODO: persist a "chat_confirmations" set on the chat session
-    # For now: if step1 has full_name AND person_id, treat as confirmed
+    once and re-ask if user provides corrections — keeps the flow simple.
+    """
+    # 🔥 §10x.123 — for 'testator' section, require all COMPULSORY fields:
+    # name + NRIC + address + DOB + gender. Without these, the will
+    # cannot be drafted (opening line needs name/address; pronouns need
+    # gender; probate verification needs DOB). Any missing → re-prompt.
     s1 = will_data.get('step1') or {}
     if section == 'testator':
-        return bool(s1.get('full_name') and s1.get('person_id'))
+        completed = will_data.get('completed_steps') or []
+        if isinstance(completed, list) and 'testator_confirmed' in completed:
+            return True
+        return all((s1.get(k) or '').strip() for k in (
+            'full_name', 'nric_passport', 'residential_address',
+            'date_of_birth', 'gender',
+        ))
     return False
 
 
