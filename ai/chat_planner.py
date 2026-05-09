@@ -16,16 +16,24 @@ import json
 import re
 
 
-def _qr_marker(quick: List[Dict[str, str]]) -> str:
+def _qr_marker(quick: List[Dict[str, str]],
+               suppress_fallback: bool = False) -> str:
     """Encode quick-reply buttons as a comment marker the chat.js renderer
-    parses out and renders as a button row. Always appends a 'None — type
-    in chat' fallback so the user can free-form when buttons don't fit."""
+    parses out and renders as a button row.
+
+    🔥 §10x.86 — by default appends a 'None — type in chat' fallback so
+    the user can free-form when buttons don't fit. But for HIGH-confidence
+    deductions (name+role both match the message text exactly), the
+    fallback turns the card into 4-button noise and makes the user
+    second-guess a clean match. Pass suppress_fallback=True for those.
+    """
     if not quick:
         return ''
-    has_fallback = any((q.get('value') or '').lower() in ('other', 'none', 'type')
-                       for q in quick)
-    if not has_fallback:
-        quick = list(quick) + [{'label': '✏️ None of above — I\'ll type', 'value': 'other'}]
+    if not suppress_fallback:
+        has_fallback = any((q.get('value') or '').lower() in ('other', 'none', 'type')
+                           for q in quick)
+        if not has_fallback:
+            quick = list(quick) + [{'label': '✏️ None of above — I\'ll type', 'value': 'other'}]
     return f"\n\n<!--quickreplies:{_json.dumps(quick)}-->"
 
 
@@ -2744,7 +2752,17 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
         quick.append({'label': '✏️ Type relationship', 'value': 'type'})
         quick.append({'label': '⏭ Skip', 'value': 'skip'})
         quick.append({'label': '🗑 Delete', 'value': 'delete'})
-    return '\n\n'.join(parts) + _qr_marker(quick)
+    # 🔥 §10x.86 — suppress the auto-append "None of above" fallback for
+    # HIGH-confidence deductions. When name+role both come straight from
+    # the message text, the card should look like a 1-click confirmation:
+    #
+    #     [ ✓ Yes — Son ]   [Skip]   [Delete]
+    #
+    # not 4 buttons that imply uncertainty. For medium-confidence
+    # outsider matches (§10x.21) and the fall-through, the fallback
+    # stays — users may genuinely want to type something different.
+    is_high_conf = bool(deduction)
+    return '\n\n'.join(parts) + _qr_marker(quick, suppress_fallback=is_high_conf)
 
 
 def _nric_birth_year(nric: str) -> Optional[int]:
