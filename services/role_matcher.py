@@ -348,6 +348,20 @@ def _testator_family_names(client_id: str) -> set:
         nm = m.group('name').upper().strip()
         if _looks_like_real_name(nm):
             names.add(nm)
+    # 🔥 §10x.84 — Pattern 4: "<role> <NAME>" — role-before-name without
+    # 'my' prefix. The §10x.77 narrative AI Summary uses this form
+    # ("son Joshua Koid Teck Seng", "wife Lim Bee Yan", "daughter
+    # Esther Koid En Hui"). Without this pattern, family_names was
+    # empty for KOID and outsider elimination couldn't fire on the
+    # mid-flow IC upload.
+    for m in re.finditer(
+        r'\b(?:son|daughter|wife|husband|spouse|brother|sister'
+        r'|father|mother)\s+'
+        r'(?P<name>[A-Z][A-Za-z\-\']{1,}(?:\s+[A-Z][A-Za-z\-\']{1,}){1,4})\b',
+        text, re.IGNORECASE):
+        nm = m.group('name').upper().strip()
+        if _looks_like_real_name(nm):
+            names.add(nm)
     return names
 
 
