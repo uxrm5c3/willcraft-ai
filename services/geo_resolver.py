@@ -111,6 +111,71 @@ _GEO_BRIDGE: Dict[str, GeoResult] = {
 }
 
 
+# 🔥 §10x.110 — Postcode → mukim bridge.
+#
+# 5-digit Malaysian postcodes that map UNAMBIGUOUSLY to a single Mukim.
+# Each entry has a citable source (URL, title-doc reference, or
+# spelling-variant of an authoritative entry). When a postcode covers
+# MULTIPLE mukim (e.g. 81100 / 81200 / 80250 in JB city), it MUST NOT
+# appear here — the resolver falls through to web_search instead.
+#
+# Per CLAUDE.md §10hc: NEVER add a postcode → mukim mapping from
+# training memory. Each entry must cite a verifiable source. If you
+# can't find a citation, it doesn't belong here — leave it for the
+# web_search fallback.
+_POSTCODE_BRIDGE: Dict[str, GeoResult] = {
+    # ── Johor / Daerah Johor Bahru ─────────────────────────────────
+    "79100": GeoResult(  # Iskandar Puteri (formerly Nusajaya)
+        "Pulai", "Johor Bahru", "Johor",
+        "https://en.wikipedia.org/wiki/Iskandar_Puteri",
+    ),
+    "79150": GeoResult(  # Iskandar Puteri / Medini
+        "Pulai", "Johor Bahru", "Johor",
+        "https://en.wikipedia.org/wiki/Iskandar_Puteri",
+    ),
+    "79200": GeoResult(  # Iskandar Puteri (Educity area)
+        "Pulai", "Johor Bahru", "Johor",
+        "https://en.wikipedia.org/wiki/Iskandar_Puteri",
+    ),
+    "79250": GeoResult(  # Bandar Medini Iskandar
+        "Pulai", "Johor Bahru", "Johor",
+        "https://en.wikipedia.org/wiki/Iskandar_Puteri",
+    ),
+    "81300": GeoResult(  # Skudai
+        "Pulai", "Johor Bahru", "Johor",
+        "https://en.wikipedia.org/wiki/Skudai",
+    ),
+    "81310": GeoResult(  # Skudai
+        "Pulai", "Johor Bahru", "Johor",
+        "https://en.wikipedia.org/wiki/Skudai",
+    ),
+    "81700": GeoResult(  # Pasir Gudang
+        "Plentong", "Johor Bahru", "Johor",
+        "https://postcode.my/johor-johor-bahru-pasir-gudang-81700.html",
+    ),
+    "81750": GeoResult(  # Masai (Seri Alam, Jalan Gunung)
+        "Plentong", "Johor Bahru", "Johor",
+        "title-doc:946fb0e3/e2fbf193 (KOID Shop @ Jalan Gunung 4) confirmed Mukim Plentong",
+    ),
+    # ── Johor / Daerah Kulai ───────────────────────────────────────
+    "81400": GeoResult(  # Senai
+        "Senai", "Kulai", "Johor",
+        "https://en.wikipedia.org/wiki/Senai",
+    ),
+    "81500": GeoResult(  # Senai
+        "Senai", "Kulai", "Johor",
+        "https://en.wikipedia.org/wiki/Senai",
+    ),
+    "81550": GeoResult(  # Senai
+        "Senai", "Kulai", "Johor",
+        "https://en.wikipedia.org/wiki/Senai",
+    ),
+    # NOTE — postcodes 81100, 81200, 80100, 80200, 80250, 80300 are
+    # AMBIGUOUS (JB city core spans multiple mukim). Deliberately
+    # omitted; resolver falls through to web_search for these.
+}
+
+
 _VALID_CITATION_PREFIXES = ("http://", "https://", "title-doc:", "address-doc:",
                             "ai-summary:", "spelling variant ")
 
@@ -203,6 +268,17 @@ def resolve_mukim(
     for kw, gr in _GEO_BRIDGE.items():
         if kw in haystack:
             return gr
+
+    # ④b 🔥 §10x.110 — postcode bridge. 5-digit Malaysian postcodes that
+    # map unambiguously to a single Mukim are pre-populated above.
+    # Extract the postcode from the address text and look up. Free, fast,
+    # avoids the $0.05/call web_search for the common case.
+    import re as _re_pc
+    pc_match = _re_pc.search(r'\b(\d{5})\b', address_or_building or '')
+    if pc_match:
+        pc = pc_match.group(1)
+        if pc in _POSTCODE_BRIDGE:
+            return _POSTCODE_BRIDGE[pc]
 
     # ⑤ Live web search (caller-provided).
     if web_search_fn is not None:
