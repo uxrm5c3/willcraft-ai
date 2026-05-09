@@ -10401,15 +10401,16 @@ def _try_save_testator_address(client_id: str, user_text: str):
     except Exception:
         s1 = {}
 
-    # 🔥 §10x.122 — for 'address:' specifically, refuse if Step 6 already
-    # has saved gifts (property-fill is the real intent past that point).
+    # 🔥 §10x.124 — 'address:' disambiguation:
+    #   testator address EMPTY → save here (Step 2 stage)
+    #   testator address SET   → return None so _try_handle_property_fill
+    #                            can claim it (Step 6 stage)
+    # This handles the dispatch-chain order — testator handler runs
+    # FIRST but yields to property_fill when testator address already
+    # populated.
     if matched_prefix == 'address:':
-        try:
-            s5 = json.loads(will.step5_data or '[]')
-        except Exception:
-            s5 = []
-        if isinstance(s5, list) and len(s5) > 0:
-            return None
+        if (s1.get('residential_address') or '').strip():
+            return None  # testator already has address → property_fill takes over
 
     # Don't overwrite already-saved values silently. If user types a
     # field that's already set, let it pass — they're updating.
