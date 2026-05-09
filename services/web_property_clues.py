@@ -157,6 +157,27 @@ A confident-sounding wrong answer is worse than "unknown".
 #  PUBLIC API — search_property_clues
 # ─────────────────────────────────────────────────────────────────────────────
 
+# 🔥 §10x.104 — process-local cache. Same address never re-pays for a
+# web search within one process. Pairs with DB cache below for cross-
+# process / cross-deploy persistence.
+_CLUES_CACHE: Dict[str, Optional['PropertyClues']] = {}
+
+
+def _normalise_clues_cache_key(address: str) -> str:
+    """Same normalisation pattern as services/geo_resolver._normalise_address_for_cache:
+    lowercase, drop unit/block/level prefixes, strip punctuation, collapse
+    whitespace. Two slightly different spellings of the same address get
+    one cache slot."""
+    if not address:
+        return ''
+    import re
+    s = address.lower()
+    s = re.sub(r'\b(unit|block|level|floor|no\.?|tower|menara|blok)\b', '', s)
+    s = re.sub(r'[^a-z0-9 ]+', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s[:120]
+
+
 def search_property_clues(
     address: str,
     claude_client,
@@ -175,9 +196,54 @@ def search_property_clues(
       claude_client: an Anthropic client instance.
 
     Returns: PropertyClues (with at least one URL in sources) or None.
+
+    🔥 §10x.104 — Process-local + DB-backed cache by normalised address.
+    Without caching, the §10x.99 leftover non-determinism (web_search
+    tool returns different snippets across calls, even at temperature=0)
+    flipped Tier B mukim/clue verdicts run-to-run, cascading into
+    non-deterministic Tier C bindings. With cache: first call resolves
+    once, subsequent calls return the cached PropertyClues forever.
     """
     if not address or len(address.strip()) < 5:
         return None
+
+    # ── §10x.104 cache lookup (process-local + DB) ──────────────
+    cache_key = _normalise_clues_cache_key(address)
+    if cache_key and cache_key in _CLUES_CACHE:
+        return _CLUES_CACHE[cache_key]
+    if cache_key:
+        try:
+            from database import db, VisionExtractCache
+            row = db.session.query(VisionExtractCache).filter_by(
+                content_hash=f'clues:{cache_key}',
+                call_kind='web_property_clues_v1',
+            ).first()
+            if row:
+                cached = json.loads(row.extracted_json or 'null')
+                if cached is None:
+                    _CLUES_CACHE[cache_key] = None
+                    return None
+                # Reconstruct PropertyClues from cached dict
+                try:
+                    result = PropertyClues(
+                        address=cached.get('address', address.strip()),
+                        type=cached.get('type', 'unknown'),
+                        tenure=cached.get('tenure', 'unknown'),
+                        locality=cached.get('locality', ''),
+                        mukim=cached.get('mukim', ''),
+                        daerah=cached.get('daerah', ''),
+                        negeri=cached.get('negeri', ''),
+                        building_name=cached.get('building_name', ''),
+                        postcode=cached.get('postcode', ''),
+                        sources=tuple(cached.get('sources') or []),
+                    )
+                    _CLUES_CACHE[cache_key] = result
+                    return result
+                except (ValueError, TypeError):
+                    # Cached value rejected by __post_init__ — treat as miss
+                    pass
+        except Exception:
+            pass
 
     try:
         # 🔥 §10x.60 — prompt caching. Anthropic charges 10% of normal
@@ -216,12 +282,48 @@ def search_property_clues(
     except Exception:
         return None
 
+    # 🔥 §10x.104 — persist UNKNOWN to cache too, so we don't re-pay
+    # for an address we already determined is unresolvable.
+    def _store_in_cache(value: Optional[PropertyClues]):
+        if not cache_key:
+            return
+        _CLUES_CACHE[cache_key] = value
+        try:
+            from database import db, VisionExtractCache
+            payload = None
+            if value is not None:
+                payload = {
+                    'address': value.address,
+                    'type': value.type,
+                    'tenure': value.tenure,
+                    'locality': value.locality,
+                    'mukim': value.mukim,
+                    'daerah': value.daerah,
+                    'negeri': value.negeri,
+                    'building_name': value.building_name,
+                    'postcode': value.postcode,
+                    'sources': list(value.sources or []),
+                }
+            row = VisionExtractCache(
+                content_hash=f'clues:{cache_key}',
+                call_kind='web_property_clues_v1',
+                extracted_json=json.dumps(payload),
+            )
+            db.session.merge(row)
+            db.session.commit()
+        except Exception:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+
     if data.get("address_not_found"):
+        _store_in_cache(None)
         return None
 
     # Build PropertyClues — its __post_init__ rejects un-cited clues.
     try:
-        return PropertyClues(
+        result = PropertyClues(
             address=address.strip(),
             type=data.get("type") or "unknown",
             tenure=data.get("tenure") or "unknown",
@@ -234,9 +336,12 @@ def search_property_clues(
             sources=tuple(s for s in (data.get("sources") or [])
                           if isinstance(s, str) and s.startswith("http")),
         )
+        _store_in_cache(result)
+        return result
     except ValueError:
         # __post_init__ rejected the result (e.g. clues without sources).
         # That's the safety net — return None and force ASK USER path.
+        _store_in_cache(None)
         return None
 
 
