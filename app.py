@@ -7535,25 +7535,52 @@ def _try_handle_doc_assign(client_id: str, user_text: str):
     action = parts[1]
     if action == 'skip':
         doc_id = parts[2]
-        d = db.session.get(Document, doc_id)
-        if not d:
-            return None
-        try:
-            ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
-        except Exception:
-            ex = {}
-        ex['_inventoried'] = True
-        ex['_skipped_not_in_will'] = True
-        d.extracted_data = json.dumps(ex)
+        # 🔥 §10x.126 — single Skip click bulk-skips ALL fully-unreadable
+        # orphan docs for this client. User indicated they're not relevant
+        # ("not in my will") — likely the same intent applies to all
+        # similar unreadable images. Saves clicking Skip per orphan.
+        all_docs = Document.query.filter_by(
+            client_id=client_id, category='property_title',
+        ).all()
+        n_skipped = 0
+        primary_name = ''
+        for d in all_docs:
+            try:
+                ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+            except Exception:
+                ex = {}
+            if not isinstance(ex, dict):
+                ex = {}
+            # Skip THIS doc unconditionally
+            if d.id == doc_id:
+                primary_name = d.original_filename or doc_id
+            # Bulk-skip applies only to OTHER fully-unreadable docs
+            elif (ex.get('_inventoried') or ex.get('_skipped_not_in_will')):
+                continue  # already skipped
+            else:
+                # Other docs: only bulk-skip if also fully-unreadable
+                addr = (ex.get('property_address') or '').strip()
+                title = (ex.get('title_number') or '').strip()
+                lot = (ex.get('lot_number') or '').strip()
+                mukim = (ex.get('mukim') or '').strip()
+                if addr or title or lot or mukim:
+                    continue   # this doc is identifiable — don't auto-skip
+            ex['_inventoried'] = True
+            ex['_skipped_not_in_will'] = True
+            d.extracted_data = json.dumps(ex)
+            n_skipped += 1
         try:
             db.session.commit()
         except Exception:
             db.session.rollback()
             return None
+        role = 'not in will'
+        if n_skipped > 1:
+            role = f'not in will (+ {n_skipped - 1} similar unreadable)'
         return {
             'kind': 'doc_skipped',
-            'name': (d.original_filename or doc_id)[:60],
-            'role': 'not in will',
+            'name': primary_name[:60],
+            'role': role,
         }
 
     if action == 'remove':
