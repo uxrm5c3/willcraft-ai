@@ -68,6 +68,11 @@ def plan_turn(
     """
     current_will_data = current_will_data or {}
     pending_ics = pending_ics or []
+    # 🔥 §10x.80 — keep the ack ("✅ Saved X as Y") in its own bucket so the
+    # caller can post it as a SEPARATE chat bubble from the next walkthrough
+    # card. Mixing ack + next card in one bubble was confusing — the user
+    # couldn't tell the previous action's confirmation from the next prompt.
+    ack_parts: List[str] = []
     reply_parts: List[str] = []
     questions: List[str] = []
     advice: List[Dict[str, str]] = []
@@ -76,15 +81,17 @@ def plan_turn(
     # ── Acknowledge an assignment / deletion from the previous turn ─────
     just_kind = (just_assigned or {}).get('kind', 'identity')
     if just_assigned:
+        # 🔥 §10x.80 — ALL ack content goes to ack_parts so the caller can
+        # post it as a separate chat bubble from the next walkthrough card.
         # Special-case the asset-inventory gate so the ack reads as a
         # phase transition, not a "saved X as Y" line.
         if just_kind == 'assets_confirmed':
-            reply_parts.append(
+            ack_parts.append(
                 "✅ **Asset inventory locked in.** Now let's assign each one "
                 "to a beneficiary."
             )
         elif just_kind == 'assets_more':
-            reply_parts.append(
+            ack_parts.append(
                 "👍 Got it — drop the additional documents and I'll cluster "
                 "them in. Reply 'confirm' when you're done."
             )
@@ -102,16 +109,16 @@ def plan_turn(
                            'gifts_restart'):
             pass  # inbox/restart action — reply_override handles the message
         elif just_kind == 'inventory_unlink_pending':
-            reply_parts.append(
+            ack_parts.append(
                 f"✂️  Reviewing supporting docs for **{just_assigned.get('name','')}**…"
             )
         elif just_kind == 'unlink_one':
-            reply_parts.append(
+            ack_parts.append(
                 f"🗑 Unlinked **{just_assigned.get('name','')}** — moved to "
                 "the unclassified pool."
             )
         elif just_kind == 'unlink_done':
-            reply_parts.append(
+            ack_parts.append(
                 "✅ Kept all supporting docs as-is. Back to the property:"
             )
         elif just_kind == 'testator_confirmed':
@@ -123,7 +130,7 @@ def plan_turn(
                 _next_label = _compute_next_step_label(current_will_data or {})
             except Exception:
                 _next_label = 'Step 3: Executor'
-            reply_parts.append(
+            ack_parts.append(
                 f"✅ Testator confirmed: **{just_assigned.get('name','')}**.\n\n"
                 f"Now moving to **{_next_label}**."
             )
@@ -133,26 +140,26 @@ def plan_turn(
             # confirm or delete to actually move on.
             sc = int(just_assigned.get('skip_count') or 1)
             if sc >= 3:
-                reply_parts.append(
+                ack_parts.append(
                     f"🔁 You've skipped **{just_assigned.get('name','')}** "
                     f"{sc} times. To move past this card, click **✓ Yes** "
                     f"to assign a relationship or **🗑 Delete** if it's the "
                     f"wrong upload."
                 )
             else:
-                reply_parts.append(
+                ack_parts.append(
                     f"🔁 Asking again about **{just_assigned.get('name','')}** "
                     f"— click **✓ Yes** to confirm the relationship or "
                     f"**🗑 Delete** to remove this IC."
                 )
         else:
-            reply_parts.append(
+            ack_parts.append(
                 f"✅ Saved **{just_assigned.get('name','')}** as **{just_assigned.get('role','')}**."
             )
     if just_deleted:
         n = just_deleted.get('count', 1)
         suffix = f" ({n} duplicate{'s' if n != 1 else ''} removed)" if n > 1 else ''
-        reply_parts.append(
+        ack_parts.append(
             f"🗑 Removed **{just_deleted.get('name','')}** from this client's records{suffix}."
         )
 
@@ -167,7 +174,7 @@ def plan_turn(
         reply_parts.append(_intake_card)
         # Show ALL fresh attachment thumbnails in the carousel
         focus_ids = [a['document_id'] for a in artifacts if a.get('document_id')]
-        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus_ids)
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts, focus_attachments=focus_ids)
 
     # ── 2. IDENTITY WALK-THROUGH — pending IC? ──────────────────────────
     if pending_ics:
@@ -176,7 +183,7 @@ def plan_turn(
                                                 client_id=_cid_for_idq))
         # Show the IC photo for the one being asked about so user can verify
         focus = [pending_ics[0]['document_id']] if pending_ics[0].get('document_id') else []
-        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts, focus_attachments=focus)
 
     # No pending IC — Step 1 (Identities) is complete (or empty)
     s1 = current_will_data.get('step1') or {}
@@ -217,7 +224,7 @@ def plan_turn(
                     break
         if testator_info.get('full_name'):
             reply_parts.append(_step2_question(testator_info))
-            return _wrap(reply_parts, questions, patch, advice)
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 3.5 ASSET INVENTORY — walk one cleaned-up property at a time ───
     # Job-to-be-done: the WILL WRITER (chat user) gets messy image+message
@@ -251,10 +258,10 @@ def plan_turn(
                 q = _step6_property_question(layer2_pending_early, recent_text, current_will_data)
                 reply_parts.append(q['text'])
                 focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
-                return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
+                return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts, focus_attachments=focus)
         if not has_any_assets:
             reply_parts.append(_assets_prompt_for_uploads())
-            return _wrap(reply_parts, questions, patch, advice)
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
         # 🔥 BURN-IN §10x.18 — text-vs-image conflict gate. If any saved
         # gift has an identifier that disagrees with its bound Document's
         # OCR, ASK the user before proceeding to walkthrough or save.
@@ -275,7 +282,7 @@ def plan_turn(
                     card = _walkthrough_text_image_conflict_card(cf)
                     reply_parts.append(card['text'])
                     focus = [card['focus_doc_id']] if card.get('focus_doc_id') else []
-                    return _wrap(reply_parts, questions, patch, advice,
+                    return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts,
                                  focus_attachments=focus)
         except Exception:
             pass   # detector is best-effort
@@ -292,7 +299,7 @@ def plan_turn(
                 q = _step6_property_question(layer2_pending, recent_text, current_will_data)
                 reply_parts.append(q['text'])
                 focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
-                return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
+                return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts, focus_attachments=focus)
 
         # Walk one un-reviewed property at a time. When all properties
         # are reviewed, walk banks, then vehicles. _asset_walkthrough_*
@@ -306,10 +313,10 @@ def plan_turn(
                 "in the inventory and move to executor + beneficiary "
                 "assignment."
             )
-            return _wrap(reply_parts, questions, patch, advice)
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
         reply_parts.append(wt['text'])
         focus = wt.get('focus_doc_ids') or []
-        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts, focus_attachments=focus)
 
     # ── 4. STEP 3: Executor (main + substitute) ─────────────────────────
     # Walk through main first, then substitute. Only stop after both are
@@ -318,7 +325,7 @@ def plan_turn(
         q = _step3_executor_question(current_will_data, recent_text=recent_text)
         reply_parts.append(q['text'])
         focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
-        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts, focus_attachments=focus)
 
     # ── 4a. STEP 4: Guardians (mandatory if minor children present) ─────
     # Skip automatically when no minors. User can also tap ⏭ Skip to
@@ -332,7 +339,7 @@ def plan_turn(
             guardians = s3.get('guardians') or []
             q = _step4_guardian_question(s3, minors, recent_text)
             reply_parts.append(q['text'])
-            return _wrap(reply_parts, questions, patch, advice)
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
         else:
             # No minors — mark confirmed silently via completed marker.
             # (The app handler stamps 'guardians_confirmed' when it gets
@@ -345,7 +352,7 @@ def plan_turn(
     n_benef = len(s4) if isinstance(s4, list) else 0
     if n_benef == 0:
         reply_parts.append(_step5_beneficiaries_question(current_will_data, recent_text))
-        return _wrap(reply_parts, questions, patch, advice)
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 5. STEP 6: Specific Gifts (properties, then banks generic) ──────
     pending_gifts = current_will_data.get('pending_gifts') or {}
@@ -356,7 +363,7 @@ def plan_turn(
         q = _step6_property_question(pending_props, recent_text, current_will_data)
         reply_parts.append(q['text'])
         focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
-        return _wrap(reply_parts, questions, patch, advice, focus_attachments=focus)
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts, focus_attachments=focus)
 
     # Check if a BANK gift has been saved in step5 (vs property gift / skip).
     # The gate must fire while banks are pending AND no bank-specific gift is
@@ -378,14 +385,14 @@ def plan_turn(
         # If user wants per-account, they can name specific accounts in reply.
         q = _step6_bank_question(pending_banks, current_will_data)
         reply_parts.append(q['text'])
-        return _wrap(reply_parts, questions, patch, advice)
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 6. STEP 7: Residuary ───────────────────────────────────────────
     s6 = current_will_data.get('step6') or {}
     if not s6 or not (s6.get('beneficiaries') or s6.get('residuary_beneficiary_name')):
         s4_list = current_will_data.get('step4') or []
         reply_parts.append(_step7_residuary_question(s4_list))
-        return _wrap(reply_parts, questions, patch, advice)
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 7. STEP 8: Testamentary Trust (optional) ──────────────────────
     if 'trust_confirmed' not in completed:
@@ -395,13 +402,13 @@ def plan_turn(
         q = _step8_trust_question(s7, minors, completed)
         if q:
             reply_parts.append(q)
-            return _wrap(reply_parts, questions, patch, advice)
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 8. STEP 9: Other Matters (optional) ───────────────────────────
     if 'others_confirmed' not in completed:
         s8 = current_will_data.get('step8') or {}
         reply_parts.append(_step9_others_question(s8))
-        return _wrap(reply_parts, questions, patch, advice)
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 9. STEP 10: Review & Generate ─────────────────────────────────
     reply_parts.append(
@@ -413,14 +420,24 @@ def plan_turn(
             {'label': 'I need to change something', 'value': 'change something'},
         ])
     )
-    return _wrap(reply_parts, questions, patch, advice)
+    return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
-def _wrap(parts, questions, patch, advice, focus_attachments=None):
+def _wrap(parts, questions, patch, advice, focus_attachments=None,
+          ack_parts=None):
+    """Build the planner reply dict.
+
+    🔥 §10x.80 — `ack_parts` is the list of acknowledgement strings (e.g.
+    "✅ Saved X as Y") that confirm the previous turn's action. The
+    caller posts these as a SEPARATE chat bubble from the next
+    walkthrough card, so the user can clearly distinguish what just
+    happened from what to do next.
+    """
     return {
         'reply': '\n\n'.join(p for p in parts if p).strip(),
+        'ack_reply': '\n\n'.join(p for p in (ack_parts or []) if p).strip(),
         'clarifying_questions': questions,
         'proposed_patch': patch if patch else {},
         'advice': advice,

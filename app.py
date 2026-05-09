@@ -2766,12 +2766,51 @@ def api_ocr_nric():
     abs_path = os.path.join(UPLOAD_DIR, rel_path)
     extracted = None
     ocr_warning = None
+
+    # 🔥 §10x.81 — Skip the expensive vision call when this is the BACK
+    # of an IC we already scanned. Front IC has all key fields (name +
+    # NRIC + DOB). Back has only address. If Tesseract can pull the
+    # NRIC quickly (free) and that NRIC matches an existing Person for
+    # this client, reuse that data instead of paying ~$0.014 for a fresh
+    # Haiku vision call.
+    skipped_vision = False
     try:
-        from ai.ocr import extract_nric_data
-        extracted = extract_nric_data(abs_path)
-    except Exception as e:
-        app.logger.error(f'OCR NRIC error: {e}')
-        ocr_warning = 'Image unclear — could not scan automatically. File saved. Please fill in the details manually.'
+        from ai.ocr_preprocessor import ocr_extract
+        import re as _re_nric
+        _quick_text = ocr_extract(abs_path) or ''
+        _m_nric = _re_nric.search(r'(\d{6})[-\s]?(\d{2})[-\s]?(\d{4})', _quick_text)
+        if _m_nric:
+            _nric_quick = f"{_m_nric.group(1)}-{_m_nric.group(2)}-{_m_nric.group(3)}"
+            _nric_norm = _nric_quick.replace('-', '')
+            existing = Person.query.filter_by(client_id=client_id).all()
+            for _p in existing:
+                _p_norm = (_p.nric_passport or '').replace('-', '').replace(' ', '')
+                if _p_norm == _nric_norm:
+                    # Match — reuse this Person's data, skip vision call.
+                    extracted = {
+                        'doc_type': 'nric',
+                        'full_name': _p.full_name or '',
+                        'nric_number': _p.nric_passport or _nric_quick,
+                        'date_of_birth': _p.date_of_birth or '',
+                        'address': _p.address or '',
+                        'gender': _p.gender or '',
+                        'nationality': _p.nationality or 'Malaysian',
+                        'passport_expiry': _p.passport_expiry or '',
+                        '_already_known': True,
+                        '_matched_person_id': _p.id,
+                    }
+                    skipped_vision = True
+                    break
+    except Exception:
+        pass  # quick-OCR optimisation is best-effort
+
+    if not skipped_vision:
+        try:
+            from ai.ocr import extract_nric_data
+            extracted = extract_nric_data(abs_path)
+        except Exception as e:
+            app.logger.error(f'OCR NRIC error: {e}')
+            ocr_warning = 'Image unclear — could not scan automatically. File saved. Please fill in the details manually.'
 
     if extracted:
         # Address fallback: if OCR couldn't read address clearly (empty),
@@ -4164,6 +4203,22 @@ def _api_chat_message_impl(client_id):
         plan['reply'] = (plan.get('reply') or '') + (
             "\n\n**Some files were rejected:**\n- " + "\n- ".join(file_errors)
         )
+
+    # 🔥 §10x.80 — Post the ack ("✅ Saved X as Y") as a SEPARATE chat
+    # bubble BEFORE the next walkthrough card. Mixing them in one bubble
+    # was confusing — the user couldn't tell the previous action's
+    # confirmation apart from the next prompt.
+    ack_text = (plan.get('ack_reply') or '').strip()
+    if ack_text:
+        ack_msg = ChatMessage(
+            session_id=cs.id,
+            role='assistant',
+            content=ack_text,
+            attachments_json='[]',
+            target_will_id=active_will.id if active_will else None,
+        )
+        db.session.add(ack_msg)
+        db.session.flush()   # ensure created_at strictly precedes the next card
 
     asst_msg = ChatMessage(
         session_id=cs.id,

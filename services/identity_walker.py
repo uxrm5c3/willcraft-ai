@@ -203,6 +203,41 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
     known_nrics.discard('')
     linked_doc_ids = {p.document_id for p in persons if p.document_id}
 
+    # 🔥 §10x.81 — front+back IC dedup. When the user uploads the FRONT
+    # of an IC (name + NRIC visible) and then the BACK separately
+    # (address only, name extraction fails), the walker used to treat
+    # them as two separate pending ICs — confusing the user with a
+    # "(name not extracted) — <NRIC>" card for an IC they already saw.
+    # Pre-pass: when two docs share the same canonical NRIC, keep the
+    # one with MORE extracted fields and drop the rest.
+    docs_by_nric: Dict[str, Any] = {}
+    other_docs = []
+    for d in docs:
+        try:
+            ex = json.loads(d.extracted_data) if d.extracted_data else {}
+        except (json.JSONDecodeError, TypeError):
+            ex = {}
+        nric_key = _canonical_nric(ex.get('nric_number') or '')
+        if not nric_key:
+            nric_key = _canonical_nric(ex.get('full_name') or '')
+        if not nric_key:
+            other_docs.append(d)
+            continue
+        # Prefer the doc with the most non-empty fields (front beats back).
+        existing = docs_by_nric.get(nric_key)
+        if existing is None:
+            docs_by_nric[nric_key] = d
+        else:
+            try:
+                ex_old = json.loads(existing.extracted_data) if existing.extracted_data else {}
+            except (json.JSONDecodeError, TypeError):
+                ex_old = {}
+            score_new = sum(1 for k in ('full_name','nric_number','date_of_birth','address','gender') if (ex.get(k) or '').strip())
+            score_old = sum(1 for k in ('full_name','nric_number','date_of_birth','address','gender') if (ex_old.get(k) or '').strip())
+            if score_new > score_old:
+                docs_by_nric[nric_key] = d
+    docs = list(docs_by_nric.values()) + other_docs
+
     pending = []
     seen_in_pending = set()  # names we've already queued in this batch
     seen_nrics_in_pending = set()  # NRICs we've already queued
