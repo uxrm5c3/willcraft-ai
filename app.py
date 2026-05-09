@@ -7166,6 +7166,13 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                     'kind':             'property',
                     'gift_type':        'property',
                     '_pending_beneficiary': True,   # Phase B will replace this
+                    # 🔥 §10x.96 — every Document-bound gift MUST carry
+                    # _match_via per §10he Step 5 / verifier R12. The
+                    # 'inventory confirm' path means the user explicitly
+                    # accepted this property card → match_via='user_confirmed'.
+                    '_match_via':       'user_confirmed',
+                    '_match_tier':      'A',
+                    '_match_confidence': 'high',
                     'property_address': ex.get('property_address', ''),
                     'title_number':     ex.get('title_number', ''),
                     'lot_number':       ex.get('lot_number', ''),
