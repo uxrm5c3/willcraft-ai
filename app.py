@@ -869,42 +869,148 @@ def build_will_data():
         from models.gift import PropertyDetails, FinancialDetails
         gifts = []
         for gd in gifts_data:
+            # 🔥 §10x.129 — chat-saved gifts use {kind, beneficiaries,
+            # property_info, substitute_specific}; the WillData model
+            # expects {gift_type, allocations, property_details,
+            # financial_details}. Normalise here.
+            kind = (gd.get('kind') or gd.get('asset_type')
+                    or gd.get('gift_type') or 'other').lower()
+            if kind in ('bank', 'insurance', 'epf', 'kwsp', 'mutual_fund',
+                        'unit_trust', 'shares', 'financial'):
+                gift_type = 'financial'
+            elif kind == 'property':
+                gift_type = 'property'
+            else:
+                gift_type = 'other'
+
+            # Allocations: prefer pre-built, else build from beneficiaries
+            # + substitute_specific so the Phek substitute clause renders.
             allocs_raw = gd.get('allocations') or []
+            if not allocs_raw and (gd.get('beneficiaries')
+                                   or gd.get('substitute_specific')):
+                # Build allocations from main beneficiaries
+                subs_list = gd.get('substitute_specific') or []
+                # Normalise substitute share to a fraction string
+                sub_alloc = [{'beneficiary_name': s.get('name', ''),
+                              'share': s.get('share', '1/1')}
+                             for s in subs_list if s.get('name')]
+                for b in (gd.get('beneficiaries') or []):
+                    nm = b.get('name') or ''
+                    if not nm:
+                        continue
+                    allocs_raw.append({
+                        'beneficiary_name': nm,
+                        'share': b.get('share', '1/1'),
+                        'role': 'MB',
+                        'substitutes': sub_alloc or None,
+                    })
             allocations = [GiftAllocation(**a) for a in allocs_raw]
+
             prop_details = None
             fin_details = None
-            gift_type = gd.get('gift_type', 'other')
-            if gift_type == 'property' and gd.get('property_details'):
-                prop_details = PropertyDetails(**gd['property_details'])
-            if gift_type == 'financial' and gd.get('financial_details'):
-                fin_details = FinancialDetails(**gd['financial_details'])
-            gifts.append(Gift(
-                gift_type=gift_type,
-                description=gd.get('description', ''),
-                property_details=prop_details,
-                financial_details=fin_details,
-                allocations=allocations,
-                subject_to_trust=gd.get('subject_to_trust', False),
-                subject_to_guardian_allowance=gd.get('subject_to_guardian_allowance', False),
-                sell_property=gd.get('sell_property', False),
-                substitute_mode=gd.get('substitute_mode', 'equal'),
-                ownership_type=gd.get('ownership_type', 'sole'),
-                testator_share=gd.get('testator_share'),
-                joint_owners=gd.get('joint_owners'),
-                encumbrance_status=gd.get('encumbrance_status', 'clean'),
-                debt_source=gd.get('debt_source'),
-                account_ownership=gd.get('account_ownership', 'individual'),
-            ))
+            if gift_type == 'property':
+                pd = gd.get('property_details') or gd.get('property_info') or {}
+                # Build a PropertyDetails dict that matches the model's expected fields
+                if pd or gd.get('property_address'):
+                    pd_norm = {
+                        'property_address':   pd.get('property_address') or gd.get('property_address') or '',
+                        'title_number':       pd.get('title_number') or gd.get('title_number') or '',
+                        'lot_number':         pd.get('lot_number') or gd.get('lot_number') or '',
+                        'mukim':              pd.get('mukim') or gd.get('mukim') or '',
+                        'daerah':             pd.get('daerah') or gd.get('daerah') or '',
+                        'negeri':             pd.get('negeri') or gd.get('negeri') or '',
+                    }
+                    if any(pd_norm.values()):
+                        try:
+                            prop_details = PropertyDetails(**pd_norm)
+                        except Exception:
+                            prop_details = None
+            if gift_type == 'financial':
+                fd = gd.get('financial_details') or {}
+                # Build from chat-saved bank/insurance fields if needed
+                if not fd:
+                    fd = {
+                        'asset_type':       (kind if kind in ('bank', 'insurance', 'epf', 'kwsp', 'mutual_fund', 'unit_trust', 'shares') else 'other'),
+                        'institution':      gd.get('institution') or gd.get('bank_name') or gd.get('insurer') or '',
+                        'account_number':   gd.get('account_number') or gd.get('policy_number') or '',
+                        'country':          gd.get('country') or '',
+                    }
+                try:
+                    fin_details = FinancialDetails(**fd)
+                except Exception:
+                    fin_details = None
+            try:
+                gifts.append(Gift(
+                    gift_type=gift_type,
+                    description=gd.get('description', ''),
+                    property_details=prop_details,
+                    financial_details=fin_details,
+                    allocations=allocations,
+                    subject_to_trust=gd.get('subject_to_trust', False),
+                    subject_to_guardian_allowance=gd.get('subject_to_guardian_allowance', False),
+                    sell_property=gd.get('sell_property', False),
+                    substitute_mode=gd.get('substitute_mode', 'equal'),
+                    ownership_type=gd.get('ownership_type', 'sole'),
+                    testator_share=gd.get('testator_share'),
+                    joint_owners=gd.get('joint_owners'),
+                    encumbrance_status=gd.get('encumbrance_status', 'clean'),
+                    debt_source=gd.get('debt_source'),
+                    account_ownership=gd.get('account_ownership', 'individual'),
+                ))
+            except Exception:
+                continue   # skip malformed gift rather than abort whole will
 
     # -- Section F: Residuary Estate ------------------------------------------
     res_data = session.get('step6_residuary') or {}
     if not isinstance(res_data, dict):
         res_data = {}
+    # 🔥 §10x.129 — chat-saved residuary uses {beneficiaries[],
+    # substitute_specific[]}; the model expects {main_beneficiaries[],
+    # substitute_groups[][]}.
     main_bens_raw = res_data.get('main_beneficiaries') or []
-    main_bens = [ResiduaryBeneficiary(**mb) for mb in main_bens_raw]
+    if not main_bens_raw and res_data.get('beneficiaries'):
+        for b in res_data.get('beneficiaries') or []:
+            nm = b.get('name') or b.get('full_name') or ''
+            if nm:
+                main_bens_raw.append({
+                    'beneficiary_name': nm,
+                    'share':            b.get('share', '100/100'),
+                })
+    elif not main_bens_raw and res_data.get('residuary_beneficiary_name'):
+        main_bens_raw.append({
+            'beneficiary_name': res_data['residuary_beneficiary_name'],
+            'share':            '100/100',
+        })
+
+    def _norm_residuary_ben(mb: dict) -> dict:
+        bb = {k: v for k, v in mb.items() if not k.startswith('_')}
+        # Pydantic model expects beneficiary_name + share
+        if not bb.get('beneficiary_name'):
+            bb['beneficiary_name'] = bb.pop('name', '') or bb.get('full_name', '')
+        return bb
+
+    main_bens = []
+    for mb in main_bens_raw:
+        try:
+            main_bens.append(ResiduaryBeneficiary(**_norm_residuary_ben(mb)))
+        except Exception:
+            pass
+
     sub_groups = []
     for sg in (res_data.get('substitute_groups') or []):
-        sub_groups.append([ResiduaryBeneficiary(**sb) for sb in (sg or [])])
+        try:
+            sub_groups.append([ResiduaryBeneficiary(**_norm_residuary_ben(sb)) for sb in (sg or [])])
+        except Exception:
+            pass
+    if not sub_groups and res_data.get('substitute_specific'):
+        try:
+            grp = []
+            for sb in res_data['substitute_specific']:
+                grp.append(ResiduaryBeneficiary(**_norm_residuary_ben(sb)))
+            if grp:
+                sub_groups.append(grp)
+        except Exception:
+            pass
     residuary_estate = ResiduaryEstate(
         main_beneficiaries=main_bens,
         substitute_groups=sub_groups,
