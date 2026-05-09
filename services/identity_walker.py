@@ -114,7 +114,8 @@ RELATIONSHIP_KEYWORDS = {
 
 
 def _score_ic_confidence(name: str, recent_text: str,
-                          role_matcher_outsider_names: set) -> int:
+                          role_matcher_outsider_names: set,
+                          nric: str = '') -> int:
     """🔥 §10x.30 BURN-IN — Identity matching: HIGH → LOW confidence.
 
     Mirrors §10e for asset matching, applied to identities. The IC
@@ -142,9 +143,29 @@ def _score_ic_confidence(name: str, recent_text: str,
         0 — NONE:   No signal at all.
     """
     nm = (name or '').strip().upper()
+    text_upper = (recent_text or '').upper()
+    # 🔥 §10x.87 — NRIC-age tiebreaker for empty-name ICs. When two ICs
+    # both have name='' (Tesseract failed on both), upload-time order
+    # is the only tiebreaker — which surfaces the OUTSIDER (sister-in-
+    # law) before the named family member (Joshua) just because of
+    # email arrival order. NRIC year-of-birth tells us which generation
+    # the IC belongs to: 20-40yo NRIC near a "(son)" / "(daughter)"
+    # mention scores higher than an unmatched outsider.
+    if not nm and nric:
+        import re as _re
+        m = _re.search(r'(\d{2})', nric)
+        if m:
+            yy = int(m.group(1))
+            year = 1900 + yy if yy >= 31 else 2000 + yy
+            from datetime import datetime
+            age = datetime.utcnow().year - year
+            # Score 2 if age fits a CHILD/SPOUSE band that's named in
+            # the message; outsider-only IC stays at 0/1.
+            CHILD_ROLES = ('SON', 'DAUGHTER', 'SPOUSE', 'WIFE', 'HUSBAND')
+            if any(r in text_upper for r in CHILD_ROLES) and 5 <= age <= 60:
+                return 2   # better than 1 (outsider) but lower than 3 (name in msg)
     if not nm:
         return 0
-    text_upper = (recent_text or '').upper()
     if nm in text_upper:
         idx = text_upper.find(nm)
         # Window: 30 chars before / 60 chars after to catch role tag
@@ -286,8 +307,9 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
     outsider_names = _outsider_eliminated_names(client_id)
     for p in pending:
         nm = (p['extracted'].get('full_name') or '').strip()
+        nric_val = (p['extracted'].get('nric_number') or '').strip()
         p['_deduction_score'] = _score_ic_confidence(
-            nm, recent_text, outsider_names)
+            nm, recent_text, outsider_names, nric=nric_val)
 
     # ╔════════════════════════════════════════════════════════════════════╗
     # ║  🔥 §10x.34 / §10hg — H3 IDENTITY PLACEHOLDERS                     ║
