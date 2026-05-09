@@ -3523,6 +3523,45 @@ def api_chat_history(client_id):
                       .filter(Document.category == 'chat_inbox')
                       .count())
             if _stuck == 0:
+                # 🔥 §10x.75 — Race-condition recovery for the §10x.53
+                # "Analysis complete — ▶️ Start verify identities" card.
+                # The post-classification gate inside the inbound processor
+                # only runs while the processor is alive. When all docs
+                # transition out of chat_inbox (e.g. last image hits
+                # §10x.26 retry terminal state AFTER the processor's
+                # final check), no one re-runs the gate and the user is
+                # stuck with no action button. The watchdog now closes
+                # this loop: if all docs are out of chat_inbox AND no
+                # "Analysis complete" card exists yet AND there are
+                # pending ICs to verify, post the card here.
+                try:
+                    _ready_exists = (ChatMessage.query
+                                     .filter_by(session_id=cs.id, role='assistant')
+                                     .filter(ChatMessage.created_at >= _m.created_at)
+                                     .filter(ChatMessage.content.ilike('%Analysis complete%'))
+                                     .first())
+                    if not _ready_exists:
+                        from services.identity_walker import get_pending_ic_documents
+                        if get_pending_ic_documents(client_id):
+                            _qr = json.dumps([
+                                {'label': '▶️ Start — verify identities',
+                                 'value': 'inbox start'}
+                            ])
+                            db.session.add(ChatMessage(
+                                session_id=cs.id, role='assistant',
+                                content=(
+                                    "✅ **Analysis complete.** All exhibits "
+                                    "classified — ready to verify identities."
+                                    f"\n\n<!--quickreplies:{_qr}-->"
+                                ),
+                                attachments_json='[]',
+                            ))
+                            db.session.commit()
+                except Exception:
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
                 continue   # all classified — nothing to resume
             # (1) lock held = another thread already working
             with _PROCESSING_LOCK:
