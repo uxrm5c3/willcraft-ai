@@ -339,6 +339,10 @@ def make_web_resolver(claude_client) -> Callable[[str], Optional[GeoResult]]:
         msg = claude_client.messages.create(
             model="claude-haiku-4-5",   # cheap; this is a lookup
             max_tokens=400,
+            # 🔥 §10x.99 — deterministic resolution. Default temperature=1.0
+            # produced different mukim verdicts for the same address across
+            # runs, cascading into Tier B/C non-determinism downstream.
+            temperature=0,
             system=[{
                 'type': 'text',
                 'text': WEB_RESOLVER_SYSTEM_PROMPT,

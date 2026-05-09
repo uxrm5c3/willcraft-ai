@@ -187,6 +187,10 @@ def search_property_clues(
         msg = claude_client.messages.create(
             model=model,
             max_tokens=max_tokens,
+            # 🔥 §10x.99 — deterministic resolution. Default temperature=1.0
+            # caused different clue verdicts on repeat calls, cascading
+            # into non-deterministic Tier B/C bindings downstream.
+            temperature=0,
             system=[{
                 'type': 'text',
                 'text': PROPERTY_CLUES_SYSTEM_PROMPT,
