@@ -887,9 +887,9 @@ def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
         return []
     try:
         # Find the latest assistant message starting with the AI Summary header
-        sess_ids_subq = (db.session.query(ChatSession.id)
-                          .filter(ChatSession.client_id == client_id)
-                          .subquery())
+        from sqlalchemy import select as _sa_select
+        sess_ids_subq = (_sa_select(ChatSession.id)
+                          .filter(ChatSession.client_id == client_id))
         msg = (ChatMessage.query
                .filter(ChatMessage.session_id.in_(sess_ids_subq))
                .filter(ChatMessage.role == 'assistant')
@@ -1096,9 +1096,9 @@ def _gather_summary_source_text(client_id: str) -> str:
     parts: List[str] = []
     try:
         from database import db, ChatMessage, ChatSession
-        sess_ids_subq = (db.session.query(ChatSession.id)
-                         .filter(ChatSession.client_id == client_id)
-                         .subquery())
+        from sqlalchemy import select as _sa_select
+        sess_ids_subq = (_sa_select(ChatSession.id)
+                         .filter(ChatSession.client_id == client_id))
         msg = (ChatMessage.query
                .filter(ChatMessage.session_id.in_(sess_ids_subq))
                .filter(ChatMessage.role == 'assistant')
