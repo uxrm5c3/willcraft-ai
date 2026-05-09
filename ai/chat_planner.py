@@ -4613,6 +4613,19 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
         # this came from. See CLAUDE.md §10d.
         if _is_property_isolated(target, recent_text, all_props):
             return _walkthrough_property_unverified_card(target)
+        # ── §10x.108 ORPHAN-GROUP GUARD ──────────────────────────────────
+        # Doc is in a DocGroup that the asset_pipeline can't bind to any
+        # AI Summary property (e.g. Marina Cove title docs that OCR'd as
+        # bare title=564662 with no strata sub-token — could be C-30-08
+        # OR C-05-01). Show a disambiguation card listing each AI Summary
+        # property as a quickreply, plus Skip / Delete. User picks which
+        # unit these docs belong to.
+        try:
+            _orphan_card = _maybe_orphan_group_card(target, _client_id, _ai_props)
+            if _orphan_card:
+                return _orphan_card
+        except Exception:
+            pass
         # Accurate sequence counter across two accepted-property paths:
         #   Path A: accepted before placeholder fix → _inventoried=True, not in step5
         #           → still in all_props, filtered from props → counted via (all-pending)
@@ -4853,6 +4866,81 @@ def _is_property_isolated(target: Dict[str, Any],
             return False
 
     return True
+
+
+def _maybe_orphan_group_card(target: Dict[str, Any],
+                              client_id: str,
+                              ai_props: List[Dict[str, Any]]
+                              ) -> Optional[Dict[str, Any]]:
+    """🔥 §10x.108 — orphan-group disambiguation card.
+
+    Returns a card dict if `target.document_id` is in a DocGroup that the
+    asset_pipeline can't bind to any AI Summary slot (no Binding entry).
+    Returns None otherwise.
+
+    The card lists each AI Summary property as a quickreply so the user
+    picks which unit the orphan docs belong to. Used for the Marina Cove
+    case where 3 title docs OCR'd as bare `title=564662` with no strata
+    sub-token (could be either C-30-08 or C-05-01).
+    """
+    if not target or not client_id or not ai_props:
+        return None
+    doc_id = target.get('document_id')
+    if not doc_id or str(doc_id).startswith('_h3_synth_'):
+        return None
+    try:
+        from services.asset_pipeline import (parse_canonical_assets,
+                                              group_documents,
+                                              bind_assets)
+        items = parse_canonical_assets(client_id)
+        groups = group_documents(client_id)
+        bindings = bind_assets(items, groups)
+        # Find target's group
+        grp = next((g for g in groups if doc_id in g.document_ids), None)
+        if not grp:
+            return None
+        # Is this group bound to any AI Summary slot?
+        b = next((bb for bb in bindings if bb.group_id == grp.group_id), None)
+        if b and b.tier in ('A', 'B', 'C'):
+            return None  # not orphan — pipeline bound it
+        # Orphan! Build disambiguation card.
+        ex = target.get('extracted') or {}
+        title = (ex.get('title_number') or '').strip() or '_(none)_'
+        lot   = (ex.get('lot_number') or '').strip() or '_(none)_'
+        mukim = (ex.get('mukim') or '').strip() or '_(none)_'
+        n_docs = len(grp.document_ids)
+        parts = [
+            "### ❓ Property — need your help to identify",
+            (f"I found **{n_docs} document(s)** with these identifiers:"),
+            f"  • **Title No.:** {title}",
+            f"  • **Lot No.:** {lot}",
+            f"  • **Mukim:** {mukim}",
+            ("These docs share a base title number but the OCR didn't capture "
+             "a strata sub-token (e.g. `/MIC/3`), so I can't tell which "
+             "specific unit they belong to. Which property in your message "
+             "do they go with?"),
+        ]
+        quick: List[Dict[str, str]] = []
+        for i, ap in enumerate(ai_props):
+            label_addr = (ap.get('address') or ap.get('name') or f'Property {i+1}')[:60]
+            quick.append({
+                'label': f'🏠 {label_addr}',
+                'value': f'orphan_claim {grp.group_id} {i}',
+            })
+        quick.append({
+            'label': '🗑 Wrong upload — remove these docs',
+            'value': f'orphan_remove {grp.group_id}',
+        })
+        quick.append({
+            'label': '⏭ Skip — not in my will',
+            'value': f'orphan_skip {grp.group_id}',
+        })
+        return {
+            'text': '\n\n'.join(parts) + _qr_marker(quick),
+            'focus_doc_ids': list(grp.document_ids),
+        }
+    except Exception:
+        return None
 
 
 def _walkthrough_property_unverified_card(p: Dict[str, Any]) -> Dict[str, Any]:

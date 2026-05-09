@@ -4154,6 +4154,7 @@ def _api_chat_message_impl(client_id):
                           or _try_handle_inventory_action(client_id, user_text)
                           # §10hg — H3 placeholder confirm/skip when no pending image
                           or _try_handle_h3_user_match(client_id, user_text)
+                          or _try_handle_orphan_claim(client_id, user_text)
                           or _try_handle_h3_property_action(client_id, user_text)
                           # §10hg — conflict resolve replies
                           or _try_handle_message_conflict(client_id, user_text)
@@ -7481,6 +7482,114 @@ def _try_handle_h3_user_match(client_id: str, user_text: str):
         'group_id': target_group.group_id,
         'name': (target_ai.fields.get('address') or '')[:60] or 'property',
     }
+
+
+def _try_handle_orphan_claim(client_id: str, user_text: str):
+    """🔥 §10x.108 — handle the user's reply to the orphan-group
+    disambiguation card.
+
+    Quickreply formats:
+      • `orphan_claim <group_id> <ai_idx>` — assign these docs to AI[ai_idx]
+      • `orphan_remove <group_id>` — soft-delete the docs
+      • `orphan_skip <group_id>`   — mark inventoried, no further questions
+
+    Returns dict on success, None if not applicable.
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    parts = t.split()
+    if not parts or not parts[0].startswith('orphan_'):
+        return None
+
+    action = parts[0]
+    if len(parts) < 2:
+        return None
+    group_id = parts[1]
+
+    try:
+        from services.asset_pipeline import group_documents
+        groups = group_documents(client_id)
+        grp = next((g for g in groups if g.group_id == group_id), None)
+        if not grp:
+            return None
+        doc_ids = list(grp.document_ids or [])
+    except Exception:
+        return None
+
+    if action == 'orphan_claim':
+        if len(parts) < 3:
+            return None
+        try:
+            ai_idx = int(parts[2])
+        except (TypeError, ValueError):
+            return None
+        # Stamp _user_assigned_ai_idx on each doc in the group so future
+        # bind_assets() runs treat them as belonging to AI[ai_idx].
+        n_updated = 0
+        for did in doc_ids:
+            d = db.session.get(Document, did)
+            if not d:
+                continue
+            try:
+                ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+            except Exception:
+                ex = {}
+            ex['_user_assigned_ai_idx'] = ai_idx
+            ex.pop('_inventoried', None)
+            ex.pop('_orphan_group_skipped', None)
+            d.extracted_data = json.dumps(ex)
+            n_updated += 1
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'kind': 'orphan_claimed',
+            'role': f'ai_idx={ai_idx}',
+            'name': f'{n_updated} doc(s) -> AI[{ai_idx}]',
+        }
+
+    if action == 'orphan_remove':
+        n = 0
+        for did in doc_ids:
+            d = db.session.get(Document, did)
+            if not d:
+                continue
+            d.category = 'deleted'
+            n += 1
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {'kind': 'orphan_removed', 'role': 'wrong_upload',
+                'name': f'{n} doc(s) removed'}
+
+    if action == 'orphan_skip':
+        n = 0
+        for did in doc_ids:
+            d = db.session.get(Document, did)
+            if not d:
+                continue
+            try:
+                ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+            except Exception:
+                ex = {}
+            ex['_inventoried'] = True
+            ex['_orphan_group_skipped'] = True
+            d.extracted_data = json.dumps(ex)
+            n += 1
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {'kind': 'orphan_skipped', 'role': 'not_in_will',
+                'name': f'{n} doc(s) skipped'}
+
+    return None
 
 
 def _try_handle_h3_property_action(client_id: str, user_text: str):

@@ -1126,6 +1126,47 @@ def bind_assets(asset_items: List[AssetItem],
     bindings: Dict[int, Binding] = {}
     claimed: set = set()
 
+    # 🔥 §10x.108 Tier 0 — user-assigned override. The user picked an AI
+    # Summary slot for an orphan group via the §10x.108 disambiguation
+    # card. Each doc in that group has `_user_assigned_ai_idx=N` in its
+    # extracted_data. Honour it BEFORE running the normal cascade so the
+    # user's choice can never be overridden by a noisy LLM match.
+    for grp in doc_groups:
+        ex_merged = grp.merged_extracted or {}
+        # The merged extraction picks one doc's fields; check ALL docs
+        # in the group for the user-assigned tag.
+        try:
+            from database import db as _db, Document as _Doc
+            user_idx_set = set()
+            for did in (grp.document_ids or []):
+                _d = _db.session.get(_Doc, did)
+                if not _d or not _d.extracted_data:
+                    continue
+                import json as _json
+                try:
+                    _ex = _json.loads(_d.extracted_data) or {}
+                except Exception:
+                    continue
+                v = _ex.get('_user_assigned_ai_idx')
+                if isinstance(v, int):
+                    user_idx_set.add(v)
+            if len(user_idx_set) == 1:
+                forced_idx = user_idx_set.pop()
+                if (forced_idx not in bindings
+                    and grp.group_id not in claimed
+                    and 0 <= forced_idx < len(asset_items)):
+                    bindings[forced_idx] = Binding(
+                        ai_index=forced_idx,
+                        group_id=grp.group_id,
+                        tier='A',
+                        match_via='user_assigned',
+                        confidence='high',
+                        evidence='User explicitly assigned this doc group via §10x.108 card',
+                    )
+                    claimed.add(grp.group_id)
+        except Exception:
+            pass
+
     # Gather context (raw text, testator name, family names) once
     ctx = _gather_match_context(client_id) if client_id else {
         'raw_forward_text': '', 'testator_name': '', 'family_names': set()
