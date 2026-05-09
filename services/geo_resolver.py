@@ -267,6 +267,37 @@ You will be graded on accuracy. A confident wrong answer is worse than UNKNOWN.
 """
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  §10x.74 — Address cache for web_resolver
+#
+# The KOID test forward triggered 8+ web_resolver calls at ~$0.04 each
+# ($0.33 total — 46% of run cost). Without caching, every image's
+# address triggers a fresh web search even when the same building has
+# already been resolved earlier in the same run. With caching:
+#   - First call for "Paradiso Nuova": $0.04 → cached
+#   - Subsequent calls for same address: $0.00
+# Expected savings on KOID fixture: $0.20-$0.30 per run.
+# ─────────────────────────────────────────────────────────────────────────────
+_ADDR_CACHE_HITS = {}   # normalised address -> GeoResult or None (= UNKNOWN)
+
+
+def _normalise_address_for_cache(text: str) -> str:
+    """Normalise address into a stable cache key.
+
+    Lowercase, strip punctuation, collapse whitespace, drop unit numbers
+    (so "Unit B-05-11 Paradiso Nuova" and "B-05-11, Paradiso Nuova"
+    cache as the same key)."""
+    if not text:
+        return ''
+    import re
+    s = text.lower()
+    # Drop common prefixes that don't affect mukim
+    s = re.sub(r'\b(unit|block|level|floor|no\.?|tower|menara|blok)\b', '', s)
+    s = re.sub(r'[^a-z0-9 ]+', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s[:120]
+
+
 def make_web_resolver(claude_client) -> Callable[[str], Optional[GeoResult]]:
     """Build a web_search_fn that calls Claude with web-search and the
     strict no-memory prompt. Returns None if Claude says UNKNOWN.
@@ -274,10 +305,33 @@ def make_web_resolver(claude_client) -> Callable[[str], Optional[GeoResult]]:
     The caller (chat_planner) injects this as web_search_fn=… on
     resolve_mukim(). Decoupling lets tests pass a stub instead of a
     real API call.
+
+    🔥 §10x.74 — Process-local + DB-backed cache by normalised address.
+    Same address never re-pays for a web search.
     """
     import json
 
     def _query(text: str) -> Optional[GeoResult]:
+        cache_key = _normalise_address_for_cache(text)
+        if cache_key and cache_key in _ADDR_CACHE_HITS:
+            return _ADDR_CACHE_HITS[cache_key]
+
+        # DB cache lookup — survives gunicorn worker recycle / redeploys
+        if cache_key:
+            try:
+                from database import db, VisionExtractCache
+                row = db.session.query(VisionExtractCache).filter_by(
+                    content_hash=f'geo:{cache_key}',
+                    call_kind='geo_resolver_v1',
+                ).first()
+                if row:
+                    cached = json.loads(row.extracted_json or 'null')
+                    result = (GeoResult(**cached) if cached else None)
+                    _ADDR_CACHE_HITS[cache_key] = result
+                    return result
+            except Exception:
+                pass
+
         # 🔥 §10x.60 — prompt caching on the strict no-memory system
         # prompt. Mukim resolver runs per AssetItem (5 properties per
         # client × multiple polls), so the system prompt repeats often
@@ -305,18 +359,40 @@ def make_web_resolver(claude_client) -> Callable[[str], Optional[GeoResult]]:
             text_out = blocks[-1].text if blocks else ""
             data = json.loads(_extract_json(text_out))
         except Exception:
-            return None
-        if data.get("unknown"):
-            return None
-        url = data.get("source_url", "")
-        if not url.startswith("http"):
-            return None  # untraceable — reject
-        return GeoResult(
-            _norm(data.get("mukim", "")),
-            _norm(data.get("daerah", "")),
-            _norm(data.get("negeri", "")),
-            url,
-        )
+            data = None
+
+        result = None
+        if data and not data.get("unknown"):
+            url = data.get("source_url", "")
+            if url.startswith("http"):
+                result = GeoResult(
+                    _norm(data.get("mukim", "")),
+                    _norm(data.get("daerah", "")),
+                    _norm(data.get("negeri", "")),
+                    url,
+                )
+
+        # Persist BOTH success and UNKNOWN — knowing "address X is
+        # unresolvable" is just as valuable as knowing it is.
+        if cache_key:
+            _ADDR_CACHE_HITS[cache_key] = result
+            try:
+                from database import db, VisionExtractCache
+                row = VisionExtractCache(
+                    content_hash=f'geo:{cache_key}',
+                    call_kind='geo_resolver_v1',
+                    extracted_json=json.dumps(result.__dict__ if result else None),
+                )
+                db.session.add(row)
+                db.session.commit()
+            except Exception:
+                try:
+                    from database import db as _db
+                    _db.session.rollback()
+                except Exception:
+                    pass
+
+        return result
 
     return _query
 

@@ -717,6 +717,23 @@ def vision_extract_property_fields(file_path: str) -> dict:
     import os as _os
     if _os.environ.get('DISABLE_VISION_CALLS', '').strip() == '1':
         return {}
+    # 🔥 §10x.73 — One-shot vision: when UNIFIED_VISION=1, the unified pass
+    # (cached by content_hash) already extracted ALL property fields. No
+    # need for a second vision call here. The cache will return the prior
+    # result without re-paying. This was the missing 5th shim from the
+    # initial §10x.73 refactor — adding it eliminates ~$0.07 per 28-image
+    # KOID run.
+    if _os.environ.get('UNIFIED_VISION', '').strip() == '1':
+        try:
+            from ai.unified_vision import extract_all, as_property_result
+            unified = extract_all(file_path,
+                                   call_site='ai.file_classifier.vision_extract_property_fields')
+            if not unified.get('_disabled_by_kill_switch'):
+                # Return the same shape vision_extract_property_fields
+                # historically returned, so callers see no diff.
+                return as_property_result(unified)
+        except Exception:
+            pass  # fall through to legacy
     # 🔥 §10x.67 — DB-backed cache. Same image, same fields, $0 second time.
     try:
         from services.vision_cache import cached_vision
