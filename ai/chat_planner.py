@@ -2722,15 +2722,19 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
             f"Looks like your **{out_role}** (the only IC name NOT in "
             f"your immediate family list).{evidence_block}\n\nConfirm?"
         )
-        quick = [
-            {'label': f"✓ Yes — {out_role}", 'value': 'yes'},
-            {'label': 'Spouse', 'value': 'spouse'},
-            {'label': 'Sister', 'value': 'sister'},
-            {'label': 'Brother', 'value': 'brother'},
-            {'label': 'Friend', 'value': 'friend'},
-            {'label': 'Skip', 'value': 'skip'},
-            {'label': 'Delete', 'value': 'delete'},
-        ]
+        # 🔥 §10x.83 + §10x.86 — show ONE primary suggestion + the
+        # other plausible-remaining roles (max 2) + Skip/Delete. NOT
+        # the old 7-button {Spouse/Sister/Brother/Friend} list which
+        # showed alternates that contradict the testator's stated
+        # family list (e.g. 'Spouse' on a sister-in-law card after
+        # the wife is already confirmed).
+        quick = [{'label': f"✓ Yes — {out_role.title()}", 'value': out_role.lower()}]
+        plausible_alts = [r for r in _plausible_remaining_roles(client_id, recent_text)
+                          if r.lower() != out_role.lower()][:2]
+        for r in plausible_alts:
+            quick.append({'label': r.title(), 'value': r.lower()})
+        quick.append({'label': '⏭ Skip', 'value': 'skip'})
+        quick.append({'label': '🗑 Delete', 'value': 'delete'})
     else:
         # 🔥 §10x.83 — show ONLY plausible roles based on what the AI
         # Summary / message text mentions and what's NOT yet filled.
