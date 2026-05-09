@@ -12996,6 +12996,65 @@ def _refresh_wizard_session_from_db():
         s5_raw = s5_raw.get('gifts', []) or []
     if not isinstance(s5_raw, list):
         s5_raw = []
+    # 🔥 §10x.128 — enrich each gift with a `documents` array so the
+    # wizard step6_gifts.html template can render the title/SPA/cukai
+    # images (same pattern as Step 1 Identities renders IC photos).
+    # Chat saves a single `document_id` per gift; the template wants
+    # a list of {filename, url, doctype}. Resolve here.
+    if isinstance(s5_raw, list):
+        for g in s5_raw:
+            if not isinstance(g, dict):
+                continue
+            if g.get('documents'):
+                continue   # already enriched
+            doc_id = (g.get('document_id') or '').strip()
+            docs_out = []
+            # The primary bound doc
+            if doc_id and not doc_id.startswith('_h3_synth_'):
+                _d = db.session.get(Document, doc_id)
+                if _d:
+                    cat = _d.category or ''
+                    doctype = ('title' if cat == 'property_title'
+                               else 'spa' if cat == 'property_spa'
+                               else 'cukai_harta' if cat == 'property_tax'
+                               else 'financial' if cat in ('bank_statement', 'insurance')
+                               else 'document')
+                    docs_out.append({
+                        'document_id': _d.id,
+                        'filename':    _d.original_filename or '',
+                        'url':         f'/api/documents/{_d.id}',
+                        'doctype':     doctype,
+                        'category':    cat,
+                    })
+                    # Also pull any sibling docs grouped via DocGroup
+                    try:
+                        from services.asset_pipeline import group_documents
+                        for gp in group_documents(w.client_id) or []:
+                            if doc_id in gp.document_ids:
+                                for sid in gp.document_ids:
+                                    if sid == doc_id:
+                                        continue
+                                    _sd = db.session.get(Document, sid)
+                                    if not _sd:
+                                        continue
+                                    scat = _sd.category or ''
+                                    sdoctype = ('title' if scat == 'property_title'
+                                                else 'spa' if scat == 'property_spa'
+                                                else 'cukai_harta' if scat == 'property_tax'
+                                                else 'document')
+                                    docs_out.append({
+                                        'document_id': _sd.id,
+                                        'filename':    _sd.original_filename or '',
+                                        'url':         f'/api/documents/{_sd.id}',
+                                        'doctype':     sdoctype,
+                                        'category':    scat,
+                                    })
+                                break
+                    except Exception:
+                        pass
+            if docs_out:
+                g['documents'] = docs_out
+
     session['step5_gifts']     = s5_raw
     session['step6_residuary'] = _j(w.step6_data, {})
     session['step7_trust']     = _j(w.step7_data, {})
