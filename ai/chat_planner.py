@@ -5757,8 +5757,41 @@ def _maybe_inventory_gate_card(
     if not (client_id and ai_props):
         return None
     completed = (will_data or {}).get('completed_steps') or []
-    if 'assets_inventory_confirmed' in completed:
-        return None  # user said YES; let the caller render its own card
+
+    # 🔥 §10x.127 — once user said YES once, every future "can't identify"
+    # doc auto-skips silently. We return a tiny ack message and tag the doc
+    # `_skipped_not_in_will=True` so gift_walker drops it on the next turn.
+    if 'assets_inventory_confirmed' in completed and target:
+        doc_id = target.get('document_id') or ''
+        if doc_id:
+            try:
+                from database import db as _db, Document as _Doc
+                _d = _db.session.get(_Doc, doc_id)
+                if _d:
+                    try:
+                        _ex = (json.loads(_d.extracted_data)
+                               if _d.extracted_data else {})
+                    except Exception:
+                        _ex = {}
+                    if not isinstance(_ex, dict):
+                        _ex = {}
+                    _ex['_inventoried'] = True
+                    _ex['_skipped_not_in_will'] = True
+                    _ex['_auto_skipped_reason'] = (
+                        'inventory already confirmed; extra image '
+                        'auto-skipped (§10x.127)')
+                    _d.extracted_data = json.dumps(_ex)
+                    try:
+                        _db.session.commit()
+                    except Exception:
+                        _db.session.rollback()
+            except Exception:
+                pass
+        return {
+            'text': ("_(extra image auto-skipped — your asset inventory "
+                     "is already confirmed)_"),
+            '_auto_skipped': True,
+        }
 
     ex = target.get('extracted') or {} if target else {}
     fname = (target.get('original_filename') if target else '') or 'this image'
@@ -6232,39 +6265,38 @@ def _step6_property_question(pending_props, recent_text, will_data):
                     fname, purpose, isolated_count, ai_props, will_data
                 )
 
-            # Fall-through: user already confirmed the inventory once but
-            # this doc is somehow still pending (race / new upload after
-            # confirmation). Render the per-image identify card so the
-            # user can place it manually.
-            id_parts = [
-                "### ❓ Property — please identify this image",
-                f"I have an image (`{fname[:50]}`) but **couldn't read** "
-                f"the address, title number, lot or mukim from it.",
-            ]
-            if purpose:
-                id_parts.append(f"_What I see in the image:_ {purpose[:160]}")
-            id_parts.append(
-                "**Which of your properties does this image belong to?**"
-            )
-            id_quick: List[Dict[str, str]] = []
-            for i, ap in enumerate(ai_props):
-                addr_label = (ap.get('address') or ap.get('name')
-                              or f'Property {i+1}')[:50]
-                id_quick.append({
-                    'label': f'🏠 {addr_label}',
-                    'value': f'doc_assign {doc_id} {i}',
-                })
-            id_quick.append({
-                'label': '🗑 Wrong upload — remove',
-                'value': f'doc_assign remove {doc_id}',
-            })
-            id_quick.append({
-                'label': '⏭ Skip — not in my will',
-                'value': f'doc_assign skip {doc_id}',
-            })
+            # 🔥 §10x.127 — user already confirmed the inventory; never
+            # ask again. Auto-skip this orphan doc silently and let the
+            # planner advance to the next pending gift.
+            if doc_id:
+                try:
+                    from database import db as _db, Document as _Doc
+                    _d = _db.session.get(_Doc, doc_id)
+                    if _d:
+                        try:
+                            _ex = (json.loads(_d.extracted_data)
+                                   if _d.extracted_data else {})
+                        except Exception:
+                            _ex = {}
+                        if not isinstance(_ex, dict):
+                            _ex = {}
+                        _ex['_inventoried'] = True
+                        _ex['_skipped_not_in_will'] = True
+                        _ex['_auto_skipped_reason'] = (
+                            'inventory already confirmed; extra image '
+                            'auto-skipped (§10x.127 fall-through)')
+                        _d.extracted_data = json.dumps(_ex)
+                        try:
+                            _db.session.commit()
+                        except Exception:
+                            _db.session.rollback()
+                except Exception:
+                    pass
             return {
-                'text': '\n\n'.join(id_parts) + _qr_marker(id_quick),
+                'text': ("_(extra image auto-skipped — your asset "
+                         "inventory is already confirmed)_"),
                 'focus_doc_id': doc_id,
+                '_auto_skipped': True,
             }
 
     # Build evidence footnote (which uploads belong to this property)
