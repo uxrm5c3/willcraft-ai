@@ -5151,6 +5151,60 @@ match any of the three signals.
 
 ---
 
+### 10x.83  🔥🔥 BURN-IN — IC card buttons = ONLY plausible roles 🔥🔥
+
+**The IC walkthrough card MUST show only relationship buttons that are
+(a) MENTIONED in the AI Summary / message text AND (b) NOT YET filled
+by an existing Person row.** Showing the full 13-button family-roles
+menu (Spouse / Son / Daughter / Father / Mother / Brother / Sister /
+Sister-in-law / …) is overwhelming and most options are irrelevant.
+
+### Computation
+
+`_plausible_remaining_roles(client_id, recent_text)`:
+
+1. Pull `Person.relationship` for every confirmed Person → set `filled`
+2. Scan `recent_text` for role mentions:
+   - Name+role pairs via `_extract_family_name_role_pairs`
+   - Bare role tokens via regex (`sister-in-law`, `wife`, `husband`,
+     `son`, `daughter`, etc.) — handles role-only references like
+     "My Executor — my sister in law"
+3. Return `mentioned - filled`, deduped, in order of first appearance
+
+### Card layout
+
+| Pre-conditions | Buttons shown |
+|---|---|
+| ≥1 plausible role in message | `✓ <Role>` (top 3) + `✏️ Other relationship` + `⏭ Skip` + `🗑 Delete` |
+| Nothing role-related in message | Core 6 (Spouse/Son/Daughter/Father/Mother/Brother/Sister) + `✏️ Other` + `⏭ Skip` + `🗑 Delete` |
+
+### Why this works for the KOID test
+
+Message names: wife (Lim Bee Yan), son (Joshua), daughter (Esther),
+sister-in-law (executor). After three are confirmed via Step 1, the
+remaining IC of NRIC 650629 surfaces with ONLY `✓ Sister-in-law` as
+the suggested button (since wife/son/daughter are filled).
+
+### Where enforced
+
+`ai/chat_planner.py::_identity_question_with_doc` — the `else:` branch
+(no role deduced for current IC) now calls `_plausible_remaining_roles`
+to build the button list.
+
+### Litmus
+
+For an IC where the message has named exactly one unfilled relation,
+the card's quickreply list should be:
+  ['✓ <Role>', '✏️ Other relationship', '⏭ Skip', '🗑 Delete']
+— i.e. 4 buttons, not 15.
+
+If you see all 13 family-role buttons, `_plausible_remaining_roles`
+returned `[]` → either `recent_text` was empty, or the bare-role
+regex didn't match. Check the message body and extend the regex
+list if needed.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

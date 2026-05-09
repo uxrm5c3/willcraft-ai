@@ -2685,29 +2685,92 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
             {'label': 'Delete', 'value': 'delete'},
         ]
     else:
-        parts.append("**Relationship to testator?**\n_(Executor / Trustee / Guardian roles are set in later steps)_")
-        # 🔥 §10x.30 — buttons now include in-laws (sister-in-law /
-        # brother-in-law / mother-in-law / father-in-law). Earlier list
-        # forced users to use "✏️ None of above" for these very common
-        # relationships.
-        quick = [
-            {'label': 'Spouse', 'value': 'spouse'},
-            {'label': 'Son', 'value': 'son'},
-            {'label': 'Daughter', 'value': 'daughter'},
-            {'label': 'Father', 'value': 'father'},
-            {'label': 'Mother', 'value': 'mother'},
-            {'label': 'Brother', 'value': 'brother'},
-            {'label': 'Sister', 'value': 'sister'},
-            {'label': 'Sister-in-law', 'value': 'sister in law'},
-            {'label': 'Brother-in-law', 'value': 'brother in law'},
-            {'label': 'Son-in-law', 'value': 'son in law'},
-            {'label': 'Daughter-in-law', 'value': 'daughter in law'},
-            {'label': 'Mother-in-law', 'value': 'mother in law'},
-            {'label': 'Father-in-law', 'value': 'father in law'},
-            {'label': 'Skip', 'value': 'skip'},
-            {'label': 'Delete', 'value': 'delete'},
-        ]
+        # 🔥 §10x.83 — show ONLY plausible roles based on what the AI
+        # Summary / message text mentions and what's NOT yet filled.
+        # The earlier 13-button menu (Spouse / Son / Daughter / ...
+        # Brother-in-law / etc.) was overwhelming and most options
+        # were irrelevant for any given testator.
+        plausible = _plausible_remaining_roles(client_id, recent_text)
+        parts.append("**Relationship to testator?**")
+        quick = []
+        if plausible:
+            # Suggested roles first — these are mentioned in the message
+            # AND not yet filled. Usually 1-3 options.
+            for role in plausible[:3]:
+                quick.append({
+                    'label': f'✓ {role.title()}',
+                    'value': role.lower(),
+                })
+            quick.append({'label': '✏️ Other relationship', 'value': 'type'})
+        else:
+            # Fallback: nothing in message text indicates which role.
+            # Show core 6 family roles (no in-laws unless mentioned).
+            for role in ('Spouse', 'Son', 'Daughter', 'Father', 'Mother', 'Brother', 'Sister'):
+                quick.append({'label': role, 'value': role.lower()})
+            quick.append({'label': '✏️ Other', 'value': 'type'})
+        quick.append({'label': '⏭ Skip', 'value': 'skip'})
+        quick.append({'label': '🗑 Delete', 'value': 'delete'})
     return '\n\n'.join(parts) + _qr_marker(quick)
+
+
+def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
+    """🔥 §10x.83 — Roles that the testator has MENTIONED in their
+    WhatsApp/email but NOT yet filled by an existing Person row.
+
+    Lets the IC card surface only relevant relationship buttons (e.g.
+    just 'Sister-in-law' for the unidentified IC when the message
+    already named a wife / son / daughter who are confirmed Persons).
+    Returns lowercase role labels, deduped, in order of confidence.
+    """
+    if not client_id:
+        return []
+    try:
+        from database import db, Person
+        from services.identity_walker import _extract_family_name_role_pairs
+    except Exception:
+        return []
+    # Roles already filled
+    filled = set()
+    try:
+        for p in db.session.query(Person).filter_by(client_id=client_id).all():
+            r = (p.relationship or '').strip().lower()
+            if r and r != 'testator':
+                filled.add(r)
+    except Exception:
+        pass
+    # Roles mentioned in message text — both name+role pairs and bare
+    # role-only mentions (e.g. "My executor — my sister-in-law").
+    mentioned: List[str] = []
+    seen: set = set()
+    if recent_text:
+        try:
+            for _, role in _extract_family_name_role_pairs(recent_text):
+                k = (role or '').strip().lower()
+                if k and k not in seen and k not in filled:
+                    seen.add(k); mentioned.append(k)
+        except Exception:
+            pass
+        # Also scan for bare role tokens (no associated name) — common
+        # for executor named only by relation: "my sister in law".
+        import re as _re_role
+        bare_roles = [
+            'sister-in-law', 'brother-in-law', 'mother-in-law',
+            'father-in-law', 'son-in-law', 'daughter-in-law',
+            'spouse', 'wife', 'husband',
+            'son', 'daughter', 'father', 'mother', 'brother', 'sister',
+        ]
+        rt_lower = recent_text.lower()
+        for r in bare_roles:
+            # Allow "sister in law" and "sister-in-law" forms
+            r_pat = r.replace('-', '[ -]?')
+            if _re_role.search(rf'\b{r_pat}\b', rt_lower):
+                key = r if r in ('wife', 'husband') else r
+                # Normalise wife/husband → spouse for the dedup; UI
+                # still shows the friendlier label below.
+                norm = 'spouse' if key in ('wife', 'husband') else key
+                if norm not in seen and norm not in filled:
+                    seen.add(norm); mentioned.append(norm)
+    return mentioned
 
 
 def _step2_question(s1: Dict[str, Any]) -> str:
