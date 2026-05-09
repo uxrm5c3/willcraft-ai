@@ -5092,6 +5092,65 @@ before shipping. Production users see no machine language, ever.
 
 ---
 
+### 10x.82  🔥🔥 BURN-IN — Back IC for verified person = NO scan 🔥🔥
+
+**The back of a Malaysian MyKad has only the address. The front has
+name + NRIC + DOB + photo + (sometimes) address. If the front of an
+IC has been scanned and the person is verified (Person row exists),
+scanning the back adds ZERO new information for the will and costs
+~$0.014 in vision API spend.**
+
+### Rule
+
+`/api/ocr/nric` — BEFORE calling `extract_nric_data` (Haiku vision,
+~$0.014/call), do a free Tesseract pre-check on the uploaded image
+and look for ANY of three signals that this IC is already verified:
+
+| Signal | Test |
+|---|---|
+| (a) NRIC visible | Regex `\d{6}-\d{2}-\d{4}` on Tesseract text → match against `Person.nric_passport` |
+| (b) Address visible | ≥3 distinctive tokens (4+ chars, non-numeric) from `Person.address` appear in Tesseract text; postcode counts as +1 |
+| (c) Name visible | Surname + first-name (both ≥3 chars) from `Person.full_name` both appear in Tesseract text |
+
+If ANY signal matches → reuse the matched Person's fields, skip the
+vision call, save ~$0.014. Tag the response with:
+- `already_known: true`
+- `matched_person: {id, name, relationship}`
+- `skip_reason: 'nric_match' | 'address_match' | 'name_match'`
+- `savings_usd: 0.014`
+- `notice: "Back of <Name>'s IC — already verified. Skipped scan."`
+
+The Document is saved with `category='duplicate'` (not `'nric'`) so
+the IC walker doesn't add it as a pending IC.
+
+### Why ALL three signals (not just NRIC)
+
+The back of MyKad sometimes has the NRIC printed small / in barcode
+form that Tesseract can't read reliably. Address text is large and
+multi-line, much easier for Tesseract. Name is rarely on the back
+but appears on some passport-style IDs. Trying all three covers
+the common failure modes of NRIC-only matching.
+
+### Where enforced
+
+`app.py::api_ocr_nric` — the pre-check block sets `skipped_vision`
+before the `extract_nric_data` call. When skipped, response carries
+`already_known: true` for the UI.
+
+### Litmus
+
+Upload the BACK of an IC whose front is already a verified Person:
+- Cost in `ApiCallLog` for this scan: $0 ✓
+- Response payload contains `already_known: true` ✓
+- Document.category = 'duplicate' ✓
+- Walker does NOT show this as pending IC ✓
+
+If you see ~$0.014 logged for a back-IC scan of a verified person,
+the §10x.82 path was bypassed — investigate why Tesseract didn't
+match any of the three signals.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

@@ -2767,42 +2767,84 @@ def api_ocr_nric():
     extracted = None
     ocr_warning = None
 
-    # 🔥 §10x.81 — Skip the expensive vision call when this is the BACK
-    # of an IC we already scanned. Front IC has all key fields (name +
-    # NRIC + DOB). Back has only address. If Tesseract can pull the
-    # NRIC quickly (free) and that NRIC matches an existing Person for
-    # this client, reuse that data instead of paying ~$0.014 for a fresh
-    # Haiku vision call.
+    # 🔥 §10x.81 + §10x.82 — Skip the expensive vision call when this is the
+    # BACK of an IC we already scanned. Front IC has all key fields
+    # (name + NRIC + DOB). Back has only address. The Haiku vision pass
+    # on a back-of-IC costs ~$0.014 and adds NO new field beyond what's
+    # already known. We do a free Tesseract pre-check and look for ANY
+    # of three signals that this IC is for an already-verified Person:
+    #
+    #   (a) NRIC visible on the image → match Person.nric_passport
+    #   (b) Address visible on the image → match Person.address
+    #   (c) Full name visible on the image → match Person.full_name
+    #
+    # ANY signal matching → skip vision. The user uploaded a back-IC
+    # whose front we already verified — no need to spend $0.014 to
+    # learn nothing new.
     skipped_vision = False
+    skip_reason = ''
+    matched_person = None
     try:
         from ai.ocr_preprocessor import ocr_extract
         import re as _re_nric
-        _quick_text = ocr_extract(abs_path) or ''
+        _quick_text = (ocr_extract(abs_path) or '').upper()
+        _quick_lines = _quick_text.replace('\n', ' ')
+        existing = Person.query.filter_by(client_id=client_id).all()
+        # (a) NRIC match
         _m_nric = _re_nric.search(r'(\d{6})[-\s]?(\d{2})[-\s]?(\d{4})', _quick_text)
         if _m_nric:
-            _nric_quick = f"{_m_nric.group(1)}-{_m_nric.group(2)}-{_m_nric.group(3)}"
-            _nric_norm = _nric_quick.replace('-', '')
-            existing = Person.query.filter_by(client_id=client_id).all()
+            _nric_norm = (_m_nric.group(1) + _m_nric.group(2) + _m_nric.group(3))
             for _p in existing:
                 _p_norm = (_p.nric_passport or '').replace('-', '').replace(' ', '')
                 if _p_norm == _nric_norm:
-                    # Match — reuse this Person's data, skip vision call.
-                    extracted = {
-                        'doc_type': 'nric',
-                        'full_name': _p.full_name or '',
-                        'nric_number': _p.nric_passport or _nric_quick,
-                        'date_of_birth': _p.date_of_birth or '',
-                        'address': _p.address or '',
-                        'gender': _p.gender or '',
-                        'nationality': _p.nationality or 'Malaysian',
-                        'passport_expiry': _p.passport_expiry or '',
-                        '_already_known': True,
-                        '_matched_person_id': _p.id,
-                    }
-                    skipped_vision = True
+                    matched_person, skip_reason = _p, 'nric_match'
                     break
+        # (b) Address match — cheap fuzzy: any 3+ shared address tokens
+        if not matched_person and len(_quick_text) > 20:
+            for _p in existing:
+                if not _p.address:
+                    continue
+                _p_addr_up = _p.address.upper()
+                # Pull street/postcode tokens from the Person address
+                _p_tokens = set(t for t in _re_nric.split(r'[\s,/\-]+', _p_addr_up)
+                                 if len(t) >= 4 and not t.isdigit())
+                _shared = sum(1 for t in _p_tokens if t in _quick_lines)
+                # Also count postcode hits
+                _p_postcode = _re_nric.search(r'\b\d{5}\b', _p_addr_up)
+                if _p_postcode and _p_postcode.group(0) in _quick_text:
+                    _shared += 1
+                if _shared >= 3:
+                    matched_person, skip_reason = _p, 'address_match'
+                    break
+        # (c) Name match — Person's surname + first name both present
+        if not matched_person:
+            for _p in existing:
+                if not _p.full_name:
+                    continue
+                _name_tokens = [t for t in _p.full_name.upper().split()
+                                if len(t) >= 3]
+                if len(_name_tokens) >= 2 and all(t in _quick_text for t in _name_tokens[:2]):
+                    matched_person, skip_reason = _p, 'name_match'
+                    break
+
+        if matched_person:
+            extracted = {
+                'doc_type': 'nric',
+                'full_name': matched_person.full_name or '',
+                'nric_number': matched_person.nric_passport or '',
+                'date_of_birth': matched_person.date_of_birth or '',
+                'address': matched_person.address or '',
+                'gender': matched_person.gender or '',
+                'nationality': matched_person.nationality or 'Malaysian',
+                'passport_expiry': matched_person.passport_expiry or '',
+                '_already_known': True,
+                '_matched_person_id': matched_person.id,
+                '_skip_reason': skip_reason,
+                '_savings_usd': 0.014,
+            }
+            skipped_vision = True
     except Exception:
-        pass  # quick-OCR optimisation is best-effort
+        pass  # quick-OCR optimisation is best-effort — fall through to vision
 
     if not skipped_vision:
         try:
@@ -2827,12 +2869,16 @@ def api_ocr_nric():
         # Remove internal confidence field (not needed in response)
         extracted.pop('confidence', None)
 
-    # Always save Document record (file is saved regardless of OCR success)
+    # 🔥 §10x.82 — When the scan was skipped (already-verified person),
+    # save the doc as `duplicate` instead of `nric` so the IC walker
+    # doesn't add it to the pending list — the user already confirmed
+    # this Person via the front IC.
+    doc_category = 'duplicate' if skipped_vision else 'nric'
     doc = Document(
         client_id=client_id, will_id=session.get('will_id'),
         filename=saved_name, original_filename=file.filename,
         file_path=rel_path, file_type=file.content_type,
-        file_size=file_size, category='nric',
+        file_size=file_size, category=doc_category,
         extracted_data=json.dumps(extracted) if extracted else None,
     )
     db.session.add(doc)
@@ -2840,6 +2886,19 @@ def api_ocr_nric():
     result = {'ok': True, 'document_id': doc.id}
     if extracted:
         result['extracted'] = extracted
+    if skipped_vision and matched_person:
+        result['already_known'] = True
+        result['matched_person'] = {
+            'id': matched_person.id,
+            'name': matched_person.full_name,
+            'relationship': matched_person.relationship,
+        }
+        result['skip_reason'] = skip_reason
+        result['savings_usd'] = 0.014
+        result['notice'] = (
+            f"This is the back of {matched_person.full_name}'s IC — "
+            f"already verified. Skipped scan (saved ~$0.014)."
+        )
     if ocr_warning:
         result['warning'] = ocr_warning
     return jsonify(result)
