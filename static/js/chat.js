@@ -671,6 +671,25 @@
       textInput.placeholder = 'Type your answer here…';
       return;
     }
+    // 🔥 §10x.120 — client-side navigation values. These DON'T go to
+    // the backend planner; chat.js intercepts and redirects the browser
+    // to the matching URL. Handles 'open wizard step N' for the
+    // wizard-jump buttons that the planner emits.
+    if (typeof value === 'string' && value.startsWith('open wizard step ')) {
+      const stepStr = value.slice('open wizard step '.length).trim();
+      const stepNum = parseInt(stepStr, 10);
+      if (!isNaN(stepNum) && stepNum >= 1 && stepNum <= 10) {
+        window.location.href = `/wizard/step/${stepNum}`;
+        return;
+      }
+    }
+    if (value === 'upload-ic') {
+      // Trigger the file picker on the chat input.
+      const filePicker = document.getElementById('chat-file-picker')
+        || document.querySelector('input[type=file]');
+      if (filePicker) filePicker.click();
+      return;
+    }
     // Values ending in ': ' (e.g. 'address: ') prefill but don't send — the
     // user fills in the rest, then hits Send.
     if (typeof value === 'string' && value.endsWith(': ')) {
