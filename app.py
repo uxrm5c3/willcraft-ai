@@ -6893,10 +6893,65 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                     + (f" ({_ocr_shares})" if _ocr_shares else '')
                     + " — likely joint ownership._"
                 )
-            _qr_ow = [
-                {'label': '👤 Sole owner',  'value': 'inventory ownership sole'},
-                {'label': '🤝 Joint owner', 'value': 'inventory ownership joint'},
-            ]
+
+            # 🔥 §10x.95 — auto-deduce from the AI Summary's ownership
+            # field for THIS property. The §10x.77 narrative summary says
+            # things like "jointly owned 50/50 with son Joshua Koid Teck
+            # Seng". Parse that and pre-fill the answer with a 1-click
+            # Confirm button instead of asking sole-vs-joint cold.
+            _ai_hint = ''
+            _ai_match_value = ''
+            _ai_match_label = ''
+            try:
+                from ai.chat_planner import _extract_ai_summary_properties
+                _ai_props = _extract_ai_summary_properties(client_id) or []
+                _gex_addr = (_gex.get('property_address') or '').strip().upper()
+                _gex_lot  = re.sub(r'\D', '', (_gex.get('lot_number') or ''))
+                _gex_title = re.sub(r'\D', '', (_gex.get('title_number') or ''))
+                _matched_ai = None
+                for _ap in _ai_props:
+                    _ap_lot   = re.sub(r'\D', '', _ap.get('lot') or '')
+                    _ap_title = re.sub(r'\D', '', _ap.get('title') or '')
+                    _ap_addr  = (_ap.get('address') or '').upper()
+                    if (_gex_lot and _gex_lot == _ap_lot) \
+                       or (_gex_title and _gex_title == _ap_title) \
+                       or (_gex_addr and _ap_addr and (_gex_addr in _ap_addr or _ap_addr in _gex_addr)):
+                        _matched_ai = _ap
+                        break
+                if _matched_ai:
+                    own_text = ((_matched_ai.get('ownership') or '') + ' '
+                                + (_matched_ai.get('beneficiary') or '')).lower()
+                    if any(p in own_text for p in (
+                        'jointly', 'joint with', 'share with', 'co-owned',
+                        '50/50', '1/2', '50 percent')):
+                        _ai_match_value = 'inventory ownership joint'
+                        _ai_match_label = '🤝 Joint owner (per your message)'
+                        _ai_hint = (
+                            f"\n\n📨 _from your message:_ \"{(_matched_ai.get('ownership') or _matched_ai.get('beneficiary') or '')[:140]}\""
+                        )
+                    elif 'sole' in own_text or '100%' in own_text or '100percent' in own_text or '1/1' in own_text:
+                        _ai_match_value = 'inventory ownership sole'
+                        _ai_match_label = '👤 Sole owner (per your message)'
+                        _ai_hint = (
+                            f"\n\n📨 _from your message:_ \"{(_matched_ai.get('ownership') or _matched_ai.get('beneficiary') or '')[:140]}\""
+                        )
+            except Exception:
+                pass
+
+            if _ai_match_value:
+                # AUTO-DEDUCED — confirm button first, alternates after
+                _qr_ow = [
+                    {'label': f'✅ {_ai_match_label} — Confirm',
+                     'value': _ai_match_value},
+                    {'label': '👤 Sole owner instead',
+                     'value': 'inventory ownership sole' if _ai_match_value.endswith('joint')
+                              else 'inventory ownership joint'},
+                ]
+            else:
+                _qr_ow = [
+                    {'label': '👤 Sole owner',  'value': 'inventory ownership sole'},
+                    {'label': '🤝 Joint owner', 'value': 'inventory ownership joint'},
+                ]
             return {
                 'name': 'ownership',
                 'role': 'ownership_gate',
@@ -6904,6 +6959,7 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                 'reply_override': (
                     "**Step 1 of 2 — Ownership**\n\n"
                     "Is the testator the **sole owner**, or is it **jointly owned** with another person?"
+                    + _ai_hint
                     + _ocr_hint
                     + f'<!--quickreplies:{json.dumps(_qr_ow)}-->'
                 ),
