@@ -7228,14 +7228,16 @@ def _try_handle_inventory_action(client_id: str, user_text: str):
                         )
                         if _b and _b.tier in ('A', 'B', 'C'):
                             _ai_idx_for_placeholder = _b.ai_index
-                        elif _b and _b.tier == 'D':
-                            # 🔥 §10x.105 — pipeline says this group is
-                            # orphan (Tier D = no AI Summary slot bound).
+                        else:
+                            # 🔥 §10x.105 — orphan group detection.
+                            # `_b is None` (no binding references this
+                            # group) OR `_b.tier == 'D'` (binding present
+                            # but unmatched). Both mean: pipeline can't
+                            # tie this doc to any AI Summary slot.
                             # Refuse to save the placeholder; mark the doc
-                            # _inventoried so it doesn't reappear in pending.
-                            # Otherwise we'd save a phantom property gift
-                            # with no AI-Summary anchor (the Marina Cove
-                            # `3b89a4a2` orphan-group case).
+                            # _inventoried so it doesn't reappear in
+                            # pending. Avoids the Marina Cove `0664e07a`
+                            # phantom in DocGroup `3b89a4a2`.
                             _doc_in_orphan_group = True
                 except Exception:
                     pass
