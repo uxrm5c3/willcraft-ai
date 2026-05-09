@@ -5584,10 +5584,14 @@ def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
             doc.extracted_data = json.dumps(ed)
             return True
 
-    # ── Check against other nric Documents (sibling batch dedup) ────
+    # ── Check against other IC Documents (sibling batch dedup) ────
+    # Include category='duplicate' too — those are ICs we've already
+    # tagged as duplicates, but they still carry rich extracted info
+    # (name + NRIC + address). A new IC with matching NRIC should
+    # transitively dedup against them.
     siblings = Document.query.filter(
         Document.client_id == client_id,
-        Document.category == 'nric',
+        Document.category.in_(('nric', 'duplicate')),
         Document.id != doc.id,
     ).all()
     for sib in siblings:
