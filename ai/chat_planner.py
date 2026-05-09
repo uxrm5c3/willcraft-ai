@@ -2693,21 +2693,16 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
         plausible = _plausible_remaining_roles(client_id, recent_text)
         parts.append("**Relationship to testator?**")
         quick = []
-        if plausible:
-            # Suggested roles first — these are mentioned in the message
-            # AND not yet filled. Usually 1-3 options.
-            for role in plausible[:3]:
-                quick.append({
-                    'label': f'✓ {role.title()}',
-                    'value': role.lower(),
-                })
-            quick.append({'label': '✏️ Other relationship', 'value': 'type'})
-        else:
-            # Fallback: nothing in message text indicates which role.
-            # Show core 6 family roles (no in-laws unless mentioned).
-            for role in ('Spouse', 'Son', 'Daughter', 'Father', 'Mother', 'Brother', 'Sister'):
-                quick.append({'label': role, 'value': role.lower()})
-            quick.append({'label': '✏️ Other', 'value': 'type'})
+        # 🔥 §10x.83 — show AT MOST 3 plausible roles. If we have ZERO,
+        # don't fall back to a generic 7-button menu — just offer
+        # 'Type your own' so the user types the exact relation they
+        # mean. Less noise, fewer wrong-click traps.
+        for role in (plausible or [])[:3]:
+            quick.append({
+                'label': f'✓ {role.title()}',
+                'value': role.lower(),
+            })
+        quick.append({'label': '✏️ Type relationship', 'value': 'type'})
         quick.append({'label': '⏭ Skip', 'value': 'skip'})
         quick.append({'label': '🗑 Delete', 'value': 'delete'})
     return '\n\n'.join(parts) + _qr_marker(quick)
@@ -2721,14 +2716,52 @@ def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
     just 'Sister-in-law' for the unidentified IC when the message
     already named a wife / son / daughter who are confirmed Persons).
     Returns lowercase role labels, deduped, in order of confidence.
+
+    🔥 IMPORTANT: only scans the user's ORIGINAL forward text, not
+    chat history. Earlier we used recent_text directly, but that
+    includes prior assistant messages — including our own rendered
+    button labels like "Brother-in-law". The labels echoed back as
+    "mentions" and surfaced as suggestions. Now we read just the
+    inbound user message (and step6_data._raw_forward_text fallback).
     """
     if not client_id:
         return []
     try:
-        from database import db, Person
+        from database import db, Person, ChatMessage, ChatSession, Will
         from services.identity_walker import _extract_family_name_role_pairs
     except Exception:
         return []
+    # Pull ONLY the user's inbound text (not assistant replies / not
+    # button labels we rendered earlier). This is the canonical source
+    # of role mentions per CLAUDE.md §7 ("text/words — use AI Summary").
+    user_text = ''
+    try:
+        sess = (db.session.query(ChatSession)
+                .filter_by(client_id=client_id)
+                .order_by(ChatSession.created_at.desc()).first())
+        if sess:
+            user_msgs = (db.session.query(ChatMessage)
+                         .filter_by(session_id=sess.id, role='user')
+                         .order_by(ChatMessage.created_at.asc()).all())
+            user_text = '\n\n'.join(m.content or '' for m in user_msgs)
+    except Exception:
+        user_text = ''
+    # Fallback to the raw forward stored on the will record
+    if not user_text:
+        try:
+            w = (db.session.query(Will)
+                 .filter_by(client_id=client_id, status='draft')
+                 .order_by(Will.updated_at.desc()).first())
+            if w and w.step6_data:
+                import json as _jrf
+                user_text = (_jrf.loads(w.step6_data) or {}).get('_raw_forward_text', '') or ''
+        except Exception:
+            pass
+    # Override the supplied recent_text with the user-only text — the
+    # caller passes recent_text for the rendered card prompt, but for
+    # deciding which buttons to show we strictly need user-authored
+    # content.
+    recent_text = user_text or recent_text or ''
     # Roles already filled. Normalise wife/husband → spouse and
     # collapse hyphens so 'sister-in-law' and 'sister in law' compare
     # as the same role. Without this, an unfilled-role check sees
