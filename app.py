@@ -3649,6 +3649,16 @@ def _api_chat_message_impl(client_id):
         return jsonify({'ok': False, 'error': 'Client not found'}), 404
 
     user_text = (request.form.get('text') or '').strip()
+    # §10x.77 — `intent` is the machine token from a quickreply click
+    # (e.g. "inbox start"). `text` is the user-visible label
+    # (e.g. "▶️ Start — verify identities"). The planner needs to see
+    # the intent so its existing pattern matches still fire; the user
+    # bubble shows the label so machine language never reaches the UI.
+    user_intent = (request.form.get('intent') or '').strip()
+    # If the planner downstream uses pattern matching, blend the intent
+    # into a single string it can read alongside (or instead of) the
+    # display text. We preserve `user_text` as the bubble content and
+    # use `user_intent` as the planner's pivot signal.
     files = request.files.getlist('files') if 'files' in request.files else []
 
     if not user_text and not files:
@@ -3676,13 +3686,19 @@ def _api_chat_message_impl(client_id):
     except Exception:
         _cost_tracker_cm = None
 
-    # 1. Persist the user message first so attachments can FK to it
+    # 1. Persist the user message first so attachments can FK to it.
+    # §10x.77 — content stays as the FRIENDLY user_text (label); from
+    # this point on, swap user_text → intent for planner branching, so
+    # existing pattern matches like 'inbox start' / 'yes' / 'skip'
+    # continue to fire even though the bubble shows the friendly label.
     user_msg = ChatMessage(
         session_id=cs.id, role='user', content=user_text,
         attachments_json='[]',
     )
     db.session.add(user_msg)
     db.session.flush()
+    if user_intent:
+        user_text = user_intent
 
     folder_name = client.folder_name
     attachment_ids = []

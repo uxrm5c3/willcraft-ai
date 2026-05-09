@@ -257,6 +257,14 @@
     sendBtn.disabled = true;
     const fd = new FormData();
     fd.append('text', text);
+    // §10x.77 — if this submit was triggered by a quickreply button,
+    // pass the underlying machine value as 'intent' so the backend
+    // planner can branch on it (e.g. 'inbox start') while the bubble
+    // shows the friendly label as 'text'.
+    if (window.__pendingIntent) {
+      fd.append('intent', window.__pendingIntent);
+      window.__pendingIntent = null;
+    }
     for (const f of pendingFiles) fd.append('files', f);
 
     // Optimistic UI: render the user message immediately
@@ -503,7 +511,9 @@
             : v === 'delete'
               ? 'px-3 py-1.5 bg-red-50 text-red-600 text-sm font-semibold rounded-lg hover:bg-red-100 border border-red-200'
               : 'px-3 py-1.5 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700';
-          html += `<button onclick="window.__quickReply('${val}')" class="${cls}">${lbl}</button>`;
+          // §10x.77 — pass label so the user-bubble shows it, not the machine value
+          const lblForJs = (qr.label || qr.value || '').replace(/'/g, "\\'");
+          html += `<button onclick="window.__quickReply('${val}', '${lblForJs}')" class="${cls}">${lbl}</button>`;
         }
         html += '</div>';
       }
@@ -629,21 +639,30 @@
   };
 
   // ── Quick reply (walk-through buttons send a one-word message) ──────
-  window.__quickReply = function (word) {
+  // 🔥 §10x.77 — label is what the user sees in their chat bubble; value
+  // is the machine token the backend planner branches on. Without label
+  // the user bubble shows "inbox start" / "yes" / "skip" verbatim, which
+  // is machine language leaking to the UI. label is optional for back-
+  // compat with old call sites; if missing we fall back to value.
+  window.__quickReply = function (value, label) {
     // Special value 'other' → just focus the input so user can type their own.
-    if (word === 'other' || word === 'type') {
+    if (value === 'other' || value === 'type') {
       textInput.focus();
       textInput.placeholder = 'Type your answer here…';
       return;
     }
     // Values ending in ': ' (e.g. 'address: ') prefill but don't send — the
     // user fills in the rest, then hits Send.
-    if (typeof word === 'string' && word.endsWith(': ')) {
-      textInput.value = word;
+    if (typeof value === 'string' && value.endsWith(': ')) {
+      textInput.value = value;
       textInput.focus();
       return;
     }
-    textInput.value = word;
+    // Display label (or value if no label provided) in the bubble; send the
+    // machine value as a separate intent so the backend planner still
+    // branches on the known token without showing it to the user.
+    textInput.value = label && label.trim() ? label : value;
+    window.__pendingIntent = value;
     sendChatMessage();
   };
 
