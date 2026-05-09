@@ -1153,8 +1153,55 @@ def _parse_ai_summary_text(text: str) -> List[Dict[str, Any]]:
         addr_m = _AI_SUMMARY_FIELD_RE['address'].search(blk)
         lot_m  = _AI_SUMMARY_FIELD_RE['lot'].search(blk)
         title_m = _AI_SUMMARY_FIELD_RE['title'].search(blk)
-        # Heuristic: if no address AND no lot AND no title → not a property
+
+        # 🔥 §10x.92 — Narrative-format fallback for §10x.77 summaries.
+        # The new narrative AI Summary uses one-line per-asset bullets
+        # like:  "Unit B-05-11, Condominium Paradisonuava — jointly
+        #         owned 50/50 with Chai Mei Fun. Testator's 50% to ..."
+        # Without structured Address/Lot/Title fields. Detect by:
+        # 1) bullet contains an em-dash / en-dash / " - " separator,
+        # 2) first segment looks property-ish (condominium / unit /
+        #    house / shop / jalan / taman / postcode / "Lot N").
         if not (addr_m or lot_m or title_m):
+            _nar_split = re.split(r'\s+[—–]\s+|\s+-\s+', blk, maxsplit=1)
+            if len(_nar_split) == 2:
+                head = _nar_split[0].strip().rstrip(',')
+                tail = _nar_split[1]
+                head_low = head.lower()
+                if (any(h in head_low for h in _RAW_PROP_HINTS)
+                    or _POSTCODE_RE.search(head)
+                    or re.search(r'\bLot\s+\d', head, re.IGNORECASE)):
+                    # Build a synthetic property record
+                    nar_prop = {
+                        'name': head[:120],
+                        'address': head[:200],
+                        'lot': '',
+                        'title': '',
+                        'mukim': '',
+                        'daerah': '',
+                        'ownership': tail[:200],
+                        'beneficiary': tail[:200],
+                    }
+                    # Pull lot / title / mukim if printed inline
+                    lot_inline = _RAW_LOT_RE.search(blk)
+                    if lot_inline:
+                        nar_prop['lot'] = lot_inline.group(1)
+                    hsd_inline = _RAW_HSD_RE.search(blk)
+                    if hsd_inline:
+                        nar_prop['title'] = hsd_inline.group(1)
+                    geran_inline = _RAW_GERAN_RE.search(blk)
+                    if geran_inline and not nar_prop['title']:
+                        nar_prop['title'] = geran_inline.group(1)
+                    mu_inline = _RAW_MUKIM_RE.search(blk)
+                    if mu_inline:
+                        nar_prop['mukim'] = mu_inline.group(1).strip()
+                    dr_inline = _RAW_DAERAH_RE.search(blk)
+                    if dr_inline:
+                        nar_prop['daerah'] = dr_inline.group(1).strip()
+                    out.append(nar_prop)
+                    continue
+            # Heuristic: if no address AND no lot AND no title AND no
+            # narrative-form match → not a property
             continue
         mukim_raw = ''
         if _AI_SUMMARY_FIELD_RE['mukim'].search(blk):

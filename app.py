@@ -3588,6 +3588,21 @@ def chat_page(client_id):
     if not client:
         flash('Client not found.', 'error')
         return redirect(url_for('clients_list'))
+    # 🔥 §10x.91 — Pin session to THIS client + their active draft will so
+    # the 'Open Wizard' button in the chat header navigates to the right
+    # wizard. Without this, session.will_id was either stale (from the
+    # last client's wizard) or None, and _refresh_wizard_session_from_db
+    # returned early → wizard rendered empty form fields even when the
+    # chat had populated step1-step5_data via the Step 1 walkthrough +
+    # §10x.42 reconcile.
+    session['client_id'] = client.id
+    active_will = (Will.query
+                   .filter_by(client_id=client.id, status='draft')
+                   .filter(Will.deleted_at.is_(None))
+                   .order_by(Will.updated_at.desc())
+                   .first())
+    if active_will:
+        session['will_id'] = active_will.id
     # MX record is on will.alantanjb.com directly — no subdomain needed
     host = request.host.split(':')[0] if request else 'localhost'
     inbox_address = address_for_client(client, host)
