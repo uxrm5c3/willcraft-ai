@@ -28,13 +28,33 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  // Tiny inline markdown: **bold** and [text](url). Run AFTER escapeHtml.
+  // Tiny inline markdown. Run AFTER escapeHtml.
+  // 🔥 §10x.118 — extend with H1/H2/H3 + underscore-italic so chat
+  // cards using these patterns (e.g. Step 9 follow-up prompts) render
+  // properly instead of showing literal '###' and '_italic_' to the user.
   function inlineMd(s) {
-    return escapeHtml(s)
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g,
-        '<a href="$2" class="text-primary-600 underline" target="_blank" rel="noopener">$1</a>')
-      .replace(/\n/g, '<br>');
+    let out = escapeHtml(s);
+    // Headings — line-anchored. Process before other transforms.
+    out = out.replace(/(^|\n)### +(.+?)(?=\n|$)/g,
+      '$1<h3 class="text-base font-semibold mt-2 mb-1">$2</h3>');
+    out = out.replace(/(^|\n)## +(.+?)(?=\n|$)/g,
+      '$1<h2 class="text-lg font-semibold mt-2 mb-1">$2</h2>');
+    out = out.replace(/(^|\n)# +(.+?)(?=\n|$)/g,
+      '$1<h1 class="text-xl font-bold mt-2 mb-1">$2</h1>');
+    // Bold (must run before italic so **_x_** works).
+    out = out.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic — underscores or asterisks. Word-boundary-aware so
+    // identifiers like `_pending_change` aren't mangled.
+    out = out.replace(/(^|[\s(\[>])_([^_\n]{1,200})_(?=$|[\s).,!?;:\]<])/g,
+      '$1<em>$2</em>');
+    out = out.replace(/(^|[\s(\[>])\*([^*\n]{1,200})\*(?=$|[\s).,!?;:\]<])/g,
+      '$1<em>$2</em>');
+    // Links.
+    out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+      '<a href="$2" class="text-primary-600 underline" target="_blank" rel="noopener">$1</a>');
+    // Newlines → <br> (keep as last so <h*> blocks aren't doubled).
+    out = out.replace(/\n/g, '<br>');
+    return out;
   }
 
   function fmtKB(bytes) {
