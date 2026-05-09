@@ -7509,6 +7509,8 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
     # 🔥 §10x.48 Stage 4 — build gift via canonical pipeline so address,
     # lot/title, mukim (via §10ha geo bridge), co_owners, and
     # testator_share all derive from one source of truth.
+    target_b = None
+    doc_groups = []
     try:
         from services.asset_pipeline import (parse_canonical_assets,
                                                 group_documents,
@@ -7571,6 +7573,34 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
          and g.get('_ai_summary_idx') == h3_idx),
         None,
     )
+    # 🔥 §10x.102 — Fix 3: catch "untagged placeholder whose document is
+    # in the AI Summary slot's bound DocGroup". Happens when §10x.99
+    # leftover non-determinism caused the inventory-confirm save's
+    # bind_assets() lookup to return Tier D, leaving _ai_summary_idx=None.
+    # On THIS turn the pipeline binding may now succeed → use the bound
+    # group's document_ids to find the orphan placeholder and claim it.
+    if _existing_idx is None and target_b and target_b.group_id:
+        try:
+            _bound_dg = next(
+                (g for g in doc_groups if g.group_id == target_b.group_id),
+                None,
+            )
+            if _bound_dg:
+                _bound_doc_ids = set(_bound_dg.document_ids or [])
+                _existing_idx = next(
+                    (i for i, g in enumerate(s5)
+                     if isinstance(g, dict)
+                     and g.get('document_id') in _bound_doc_ids
+                     and g.get('_ai_summary_idx') is None
+                     and (g.get('kind') == 'property'
+                          or g.get('asset_type') == 'property')),
+                    None,
+                )
+                if _existing_idx is not None:
+                    # Stamp the now-resolved slot tag onto the orphan.
+                    s5[_existing_idx]['_ai_summary_idx'] = h3_idx
+        except Exception:
+            pass
     if _existing_idx is not None:
         # Upsert: merge new fields onto existing, keep the older entry
         # in place (preserves user's prior layer1_confirmed / beneficiaries).
