@@ -268,6 +268,25 @@ def plan_turn(
                 focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
                 return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts, focus_attachments=focus)
         if not has_any_assets:
+            # 🔥 §10x.101 — even when pending_gifts is empty, saved gifts
+            # may still need Layer 2 / Layer 3 (the LAST item of the LAST
+            # category — typically the 3rd insurance — only gets L1 because
+            # this branch fired before _asset_walkthrough_question()). The
+            # walker function correctly looks at saved gifts with empty
+            # beneficiaries/substitute and surfaces the L2/L3 card. Call
+            # it first; only fall through to the generic upload prompt if
+            # the walker also returns nothing.
+            wt_check = _asset_walkthrough_question(
+                pending_gifts, recent_text, current_will_data,
+            )
+            if wt_check and (wt_check.get('text') or wt_check.get('reply_override')):
+                reply_parts.append(
+                    wt_check.get('reply_override') or wt_check.get('text')
+                )
+                focus = wt_check.get('focus_doc_ids') or []
+                return _wrap(reply_parts, questions, patch, advice,
+                             ack_parts=ack_parts,
+                             focus_attachments=focus)
             reply_parts.append(_assets_prompt_for_uploads())
             return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
         # 🔥 BURN-IN §10x.18 — text-vs-image conflict gate. If any saved
