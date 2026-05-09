@@ -846,7 +846,21 @@ def build_will_data():
     )
 
     # -- Section D: Beneficiaries ---------------------------------------------
-    beneficiaries = [Beneficiary(**b) for b in _list('step4_beneficiaries')]
+    def _normalise_beneficiary(b: dict) -> dict:
+        # Drop chat-internal keys & ensure nric_passport_birthcert is set
+        bb = {k: v for k, v in b.items() if not k.startswith('_')}
+        if not bb.get('nric_passport_birthcert'):
+            bb['nric_passport_birthcert'] = (bb.get('nric_passport')
+                                             or bb.get('birth_cert_no')
+                                             or '')
+        # Drop nric_passport since model only knows nric_passport_birthcert
+        bb.pop('nric_passport', None)
+        bb.pop('relationship_to_testator', None)
+        bb.pop('address', None)
+        return bb
+    beneficiaries = [Beneficiary(**_normalise_beneficiary(b))
+                     for b in _list('step4_beneficiaries')
+                     if b.get('full_name')]
 
     # -- Section E: Gifts (optional) ------------------------------------------
     gifts_data = _list('step5_gifts')
