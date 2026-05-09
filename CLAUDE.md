@@ -5260,6 +5260,56 @@ the message actually mentions a child/spouse role.
 
 ---
 
+### 10x.94  🔥🔥 BURN-IN — Wizard Step number ≠ DB column number 🔥🔥
+
+**The DB columns `stepN_data` are OFFSET BY ONE from the wizard UI's
+"Step N" labels. This is a legacy footgun that has caused multiple
+bugs. ALWAYS check this table before modifying any step handler.**
+
+### Canonical mapping
+
+| Wizard UI label | What it captures | DB column | Session key |
+|-----------------|------------------|-----------|-------------|
+| **Step 1: Identities** | Family relationship registry | (Person table + identities_data) | `person_registry` |
+| **Step 2: Testator** | Testator's name, NRIC, DOB, address | `step1_data` | `step1` |
+| **Step 3: Executors & Trustees** | Executor + substitute + trustee | `step2_data` | `step2_executors`, `step3_executor_type`, `step3_trustees` |
+| **Step 4: Guardians** | Guardians for minor children | `step3_data` | `step3_guardians` |
+| **Step 5: Beneficiaries** | Main beneficiary list | `step4_data` | `step4_beneficiaries` |
+| **Step 6: Specific Gifts** | Per-asset gift entries | `step5_data` | `step5_gifts` |
+| **Step 7: Residuary Estate** | Catch-all residuary clause | `step6_data` | `step6_residuary` |
+| **Step 8: Testamentary Trust** | Trust setup for minors | `step7_data` | `step7_trust` |
+| **Step 9: Other Matters** | Funeral wishes, special instructions | `step8_data` | `step8_others` |
+| **Step 10: Review & Generate** | Compile + render | (reads all above) | — |
+
+### Why the offset exists
+
+When the wizard was first built, "Step 1" was Testator (now relabelled to
+"Step 2") and Identities was added later as a pre-step. The DB columns
+were never renamed because legacy data referenced `step1_data` for
+Testator, `step2_data` for Executors, etc. Renaming would break all
+existing wills.
+
+### How to avoid the footgun
+
+When code talks about "saving Step N":
+  - If the source is the chat planner → it usually means the **UI label**
+  - If the source is a DB write → it's the **column name**
+  - Always double-check by tracing the variable name and the UI label
+    side-by-side. `step4_data` is **Beneficiaries**, NOT Guardians.
+
+### Litmus
+
+User says "Step 4 is Guardians, Step 5 is Beneficiaries":
+  - YES that's correct for the UI labels
+  - The DB column `step3_data` holds Guardians content
+  - The DB column `step4_data` holds Beneficiaries content
+  - The DB column `step5_data` holds Specific Gifts content
+
+If a code change writes to `step4_data` but says "saved guardian" in the
+comment — it's wrong. Trace through.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and
