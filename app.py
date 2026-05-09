@@ -4199,7 +4199,12 @@ def _api_chat_message_impl(client_id):
                             if not just_residuary_skip:
                                 just_residuary_skip = _try_handle_residuary_skip(client_id, user_text)
                             if not just_residuary_skip:
-                                just_benef = _try_save_beneficiaries(client_id, user_text)
+                                # 🔥 §10x.115 — explicit confirmation of auto-
+                                # populated step4_data via 'beneficiaries confirm'.
+                                # Run BEFORE the legacy save handler.
+                                just_benef = _try_handle_beneficiaries_confirm(client_id, user_text)
+                                if not just_benef:
+                                    just_benef = _try_save_beneficiaries(client_id, user_text)
                                 if not just_benef:
                                     # §10x.18 mismatch handler runs FIRST so 'mismatch ...'
                                     # quickreplies don't fall to other handlers.
@@ -8883,6 +8888,52 @@ def _try_handle_role_match(client_id: str, user_text: str):
     db.session.commit()
 
     return {'name': p.full_name, 'role': 'executor', 'kind': 'role_match_confirmed'}
+
+
+def _try_handle_beneficiaries_confirm(client_id: str, user_text: str):
+    """🔥 §10x.115 — handle the user's response to the Step 5 main
+    beneficiaries confirmation card.
+
+    Quickreplies:
+      • `beneficiaries confirm` → stamp `beneficiaries_confirmed` so
+        planner advances to Step 6 (Specific Gifts).
+      • `beneficiaries edit` → fall through to free-text editing
+        (handled by _try_save_beneficiaries with 'remove X' / 'only X')
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    if t != 'beneficiaries confirm':
+        return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+        if not isinstance(completed, list):
+            completed = []
+    except Exception:
+        completed = []
+    if 'beneficiaries_confirmed' not in completed:
+        completed.append('beneficiaries_confirmed')
+        will.completed_steps = json.dumps(completed)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+    try:
+        s4 = json.loads(will.step4_data or '[]')
+    except Exception:
+        s4 = []
+    n = len(s4) if isinstance(s4, list) else 0
+    return {
+        'kind': 'beneficiaries_confirmed',
+        'name': f'{n} beneficiaries',
+        'role': 'confirmed',
+    }
 
 
 def _try_save_residuary_main(client_id: str, user_text: str):

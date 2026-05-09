@@ -380,6 +380,15 @@ def plan_turn(
     if n_benef == 0:
         reply_parts.append(_step5_beneficiaries_question(current_will_data, recent_text))
         return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
+    # 🔥 §10x.115 — when step4_data was AUTO-populated (e.g. wife added
+    # via §10x.42 reconciliation during identity walk), the user never
+    # sees the Step 5 question explicitly. They reach Step 6/7 confused
+    # ("where is the main beneficiary step?"). Show an explicit
+    # confirmation card listing the auto-populated beneficiaries — user
+    # taps Confirm to stamp `beneficiaries_confirmed` and proceed.
+    if 'beneficiaries_confirmed' not in completed:
+        reply_parts.append(_step5_beneficiaries_confirm_card(s4))
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 5. STEP 6: Specific Gifts (properties, then banks generic) ──────
     pending_gifts = current_will_data.get('pending_gifts') or {}
@@ -3317,6 +3326,46 @@ def _step3_executor_question(will_data: Dict[str, Any], recent_text: str = '') -
 
     return {'text': '\n\n'.join(parts) + _qr_marker(quick),
             'focus_doc_id': candidate.get('document_id') if candidate else None}
+
+
+def _step5_beneficiaries_confirm_card(beneficiaries: list) -> str:
+    """🔥 §10x.115 — when step4_data is auto-populated (via §10x.42
+    reconciliation when a new identity is added mid-flow), surface an
+    explicit confirmation card so the user actually SEES the main
+    beneficiary list before moving to Step 6 / Step 7.
+
+    Without this, the user's perception is 'I never saw a main
+    beneficiary step' — they end up at Residuary thinking that's the
+    primary inheritance question.
+
+    User clicks ✅ Confirm → `beneficiaries_confirmed` stamp → planner
+    advances. Or types changes ('remove X', 'only X and Y') to update.
+    """
+    parts = [
+        "### 👨‍👩‍👧 Step 5: Main Beneficiaries",
+        ("These are the people I have on file as beneficiaries — "
+         "everyone who can inherit anything from your estate. **Confirm "
+         "to proceed**, or tell me what to change."),
+    ]
+    for b in (beneficiaries or []):
+        if not isinstance(b, dict):
+            continue
+        n = (b.get('full_name') or b.get('name') or '').strip()
+        rel = (b.get('relationship') or '').strip()
+        if n:
+            line = f"- **{n}**"
+            if rel:
+                line += f" _({rel})_"
+            parts.append(line)
+    parts.append(
+        "_(These are who CAN inherit. The specific shares are decided "
+        "in the next steps: specific gifts and residuary clause.)_"
+    )
+    quick = [
+        {'label': '✅ Confirm — proceed to Specific Gifts', 'value': 'beneficiaries confirm'},
+        {'label': '✏️ Change — type names',                'value': 'beneficiaries edit'},
+    ]
+    return '\n\n'.join(parts) + _qr_marker(quick)
 
 
 def _step5_beneficiaries_question(will_data, recent_text: str = ''):

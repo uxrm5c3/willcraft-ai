@@ -72,6 +72,8 @@ KNOWN_HANDLERS = {
     'conflict ': '_try_handle_message_conflict',
     'orphan_': '_try_handle_orphan_claim',
     'role_match': '_try_handle_role_match',
+    'beneficiaries confirm': '_try_handle_beneficiaries_confirm',
+    'beneficiaries edit': '_try_save_beneficiaries (fall-through)',
     'bank_l1 ': '_try_save_bank_layered_gift',
     'bank_l2 ': '_try_save_bank_layered_gift',
     'bank_l3 ': '_try_save_bank_layered_gift',
