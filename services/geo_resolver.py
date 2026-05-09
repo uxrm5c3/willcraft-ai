@@ -173,6 +173,108 @@ _POSTCODE_BRIDGE: Dict[str, GeoResult] = {
     # NOTE — postcodes 81100, 81200, 80100, 80200, 80250, 80300 are
     # AMBIGUOUS (JB city core spans multiple mukim). Deliberately
     # omitted; resolver falls through to web_search for these.
+
+    # ── Selangor / Daerah Petaling ────────────────────────────────
+    "47301": GeoResult(  # Petaling Jaya (PJ)
+        "Damansara", "Petaling", "Selangor",
+        "https://en.wikipedia.org/wiki/Petaling_Jaya",
+    ),
+    "47400": GeoResult(  # Petaling Jaya (Bandar Utama / SS)
+        "Damansara", "Petaling", "Selangor",
+        "https://en.wikipedia.org/wiki/Petaling_Jaya",
+    ),
+    "47500": GeoResult(  # Subang Jaya
+        "Damansara", "Petaling", "Selangor",
+        "https://en.wikipedia.org/wiki/Subang_Jaya",
+    ),
+    "47600": GeoResult(  # Subang Jaya / USJ
+        "Damansara", "Petaling", "Selangor",
+        "https://en.wikipedia.org/wiki/Subang_Jaya",
+    ),
+    "47800": GeoResult(  # Petaling Jaya (Damansara Damai)
+        "Sungai Buloh", "Petaling", "Selangor",
+        "https://postcode.my/postcode-47800.html",
+    ),
+    "47820": GeoResult(  # Kota Damansara
+        "Sungai Buloh", "Petaling", "Selangor",
+        "https://postcode.my/postcode-47820.html",
+    ),
+    "47830": GeoResult(  # Kota Damansara
+        "Sungai Buloh", "Petaling", "Selangor",
+        "https://postcode.my/postcode-47830.html",
+    ),
+    # ── Selangor / Daerah Hulu Langat ─────────────────────────────
+    "43000": GeoResult(  # Kajang
+        "Kajang", "Hulu Langat", "Selangor",
+        "https://en.wikipedia.org/wiki/Kajang",
+    ),
+    "43200": GeoResult(  # Cheras (Selangor side)
+        "Cheras", "Hulu Langat", "Selangor",
+        "https://en.wikipedia.org/wiki/Cheras",
+    ),
+    "43300": GeoResult(  # Seri Kembangan
+        "Petaling", "Hulu Langat", "Selangor",
+        "https://en.wikipedia.org/wiki/Seri_Kembangan",
+    ),
+    "43500": GeoResult(  # Semenyih
+        "Semenyih", "Hulu Langat", "Selangor",
+        "https://en.wikipedia.org/wiki/Semenyih",
+    ),
+    # ── Selangor / Daerah Klang ───────────────────────────────────
+    "41000": GeoResult(  # Klang town
+        "Klang", "Klang", "Selangor",
+        "https://en.wikipedia.org/wiki/Klang_(city)",
+    ),
+    "41100": GeoResult(  # Klang
+        "Klang", "Klang", "Selangor",
+        "https://en.wikipedia.org/wiki/Klang_(city)",
+    ),
+    "41200": GeoResult(  # Klang
+        "Klang", "Klang", "Selangor",
+        "https://en.wikipedia.org/wiki/Klang_(city)",
+    ),
+    # ── Penang / Daerah Timur Laut ────────────────────────────────
+    "10000": GeoResult(  # George Town centre
+        "Bandar Georgetown", "Timur Laut", "Pulau Pinang",
+        "https://en.wikipedia.org/wiki/George_Town,_Penang",
+    ),
+    "10050": GeoResult(  # George Town
+        "Bandar Georgetown", "Timur Laut", "Pulau Pinang",
+        "https://en.wikipedia.org/wiki/George_Town,_Penang",
+    ),
+    "11600": GeoResult(  # Jelutong
+        "Bandar Georgetown", "Timur Laut", "Pulau Pinang",
+        "https://en.wikipedia.org/wiki/Jelutong,_Penang",
+    ),
+    "11700": GeoResult(  # Gelugor
+        "Bandar Georgetown", "Timur Laut", "Pulau Pinang",
+        "https://en.wikipedia.org/wiki/Gelugor",
+    ),
+    "11900": GeoResult(  # Bayan Lepas
+        "Bayan Lepas", "Barat Daya", "Pulau Pinang",
+        "https://en.wikipedia.org/wiki/Bayan_Lepas",
+    ),
+    "11950": GeoResult(  # Bayan Lepas
+        "Bayan Lepas", "Barat Daya", "Pulau Pinang",
+        "https://en.wikipedia.org/wiki/Bayan_Lepas",
+    ),
+    # ── Penang / Daerah Seberang Perai (mainland) ─────────────────
+    "13000": GeoResult(  # Butterworth
+        "Bagan Tuan Kechil", "Seberang Perai Utara", "Pulau Pinang",
+        "https://en.wikipedia.org/wiki/Butterworth,_Penang",
+    ),
+    "13700": GeoResult(  # Prai
+        "Prai", "Seberang Perai Tengah", "Pulau Pinang",
+        "https://en.wikipedia.org/wiki/Prai",
+    ),
+    "14000": GeoResult(  # Bukit Mertajam
+        "Mukim 13", "Seberang Perai Tengah", "Pulau Pinang",
+        "https://en.wikipedia.org/wiki/Bukit_Mertajam",
+    ),
+    # NOTE — Kuala Lumpur (50000-60000) postcodes span multiple mukim
+    # (Mukim Kuala Lumpur, Mukim Setapak, Mukim Petaling, Mukim Ulu
+    # Klang, Mukim Batu, Mukim Cheras). Deliberately omitted; falls
+    # through to web_search for KL addresses.
 }
 
 
