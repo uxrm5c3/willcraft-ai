@@ -3449,6 +3449,10 @@ def _will_data_snapshot(will_record):
         'nric_passport': p.nric_passport, 'relationship': p.relationship or '',
         'date_of_birth': p.date_of_birth or '',
         'document_id': p.document_id or '',
+        # 🔥 §10x.123 — include address so the Step 2 testator card can
+        # surface family-member addresses as one-click shortcuts.
+        'address': p.address or '',
+        'gender': getattr(p, 'gender', '') or '',
     } for p in persons]
     # `completed_steps` carries chat-flow markers like 'assets_confirmed'
     # that the planner uses to gate ordering — collect ALL gifts before
