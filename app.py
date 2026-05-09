@@ -8753,31 +8753,52 @@ def _try_save_property_gift(client_id: str, user_text: str):
             .order_by(Will.updated_at.desc()).first())
     if not will:
         return None
-    # Load step4 beneficiaries; fall back to identities when step4 is not yet
-    # collected (Layer 1 / Layer 2 interleaving happens before step4 is filled).
+    # 🔥 §10x.90 — Property-gift beneficiary candidate pool ALWAYS merges
+    # step4_data + identities + Person rows (minus testator). Earlier we
+    # only fell back to identities when step4 was EMPTY, but the §10x.42
+    # reconciler often adds ONE auto-detected beneficiary (e.g. wife for
+    # bank gifts) which kept step4 non-empty AND prevented the merge.
+    # Then a property gift to a NAMED beneficiary (e.g. "to son Joshua")
+    # couldn't parse because Joshua wasn't in step4 → bank handler
+    # mis-claimed the click → 5 bank accounts wrongly saved.
     try:
-        s4 = json.loads(will.step4_data or '[]')
+        s4_saved = json.loads(will.step4_data or '[]')
+        if not isinstance(s4_saved, list): s4_saved = []
     except (json.JSONDecodeError, TypeError):
-        s4 = []
+        s4_saved = []
+    try:
+        _idents = json.loads(will.identities_data or '[]')
+        if not isinstance(_idents, list): _idents = []
+    except (json.JSONDecodeError, TypeError):
+        _idents = []
+    try:
+        _s1_name = (json.loads(will.step1_data or '{}') or {}).get('full_name', '').upper()
+    except (json.JSONDecodeError, TypeError):
+        _s1_name = ''
+    # Also pull every Person row — handles the case where identity_walker
+    # ensured a Person but identities_data wasn't refreshed.
+    try:
+        _persons = Person.query.filter_by(client_id=client_id).all()
+    except Exception:
+        _persons = []
+    s4 = list(s4_saved)
+    seen_names = {(p.get('full_name') or '').upper().strip() for p in s4}
+    seen_names.discard('')
+    for i in _idents:
+        nm = (i.get('full_name') or '').strip()
+        nm_up = nm.upper()
+        if nm and nm_up != _s1_name and nm_up not in seen_names:
+            s4.append({'full_name': nm, 'relationship': i.get('relationship', '')})
+            seen_names.add(nm_up)
+    for p in _persons:
+        nm = (p.full_name or '').strip()
+        nm_up = nm.upper()
+        rel = (p.relationship or '').lower()
+        if nm and nm_up != _s1_name and rel != 'testator' and nm_up not in seen_names:
+            s4.append({'full_name': nm, 'relationship': p.relationship or ''})
+            seen_names.add(nm_up)
     if not s4:
-        # During Layer 1, step4 may be empty — use scanned identities as candidate pool
-        try:
-            _idents = json.loads(will.identities_data or '[]')
-        except (json.JSONDecodeError, TypeError):
-            _idents = []
-        # Exclude the testator (step1 full_name) from candidate beneficiaries
-        try:
-            _s1_name = (json.loads(will.step1_data or '{}') or {}).get('full_name', '').upper()
-        except (json.JSONDecodeError, TypeError):
-            _s1_name = ''
-        s4 = [
-            {'full_name': i.get('full_name', ''), 'relationship': i.get('relationship', '')}
-            for i in _idents
-            if i.get('full_name', '').upper() != _s1_name
-        ]
-        # Still no candidates at all → cannot parse beneficiary names
-        if not s4:
-            return None
+        return None
 
     from services.gift_walker import get_pending_gift_documents, parse_beneficiary_shares
 
