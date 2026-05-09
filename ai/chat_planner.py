@@ -3052,20 +3052,46 @@ def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
 
 
 def _step2_question(s1: Dict[str, Any]) -> str:
-    """Confirm testator details once identities are in."""
-    body = (
-        "### 👔 Step 2: Confirm Testator\n\n"
-        f"- **Name:** {s1.get('full_name','?')}\n"
-        f"- **NRIC:** {s1.get('nric_passport','?')}\n"
-        f"- **DOB:** {s1.get('date_of_birth','?')}\n"
-        f"- **Address:** {s1.get('residential_address','?')}\n\n"
-        "**All correct?**"
-    )
-    quick = [
-        {'label': '✓ Confirm', 'value': 'confirm'},
-        {'label': 'Edit address', 'value': 'address: '},
+    """Confirm testator details once identities are in.
+
+    🔥 §10x.122 — testator's residential address is REQUIRED for will
+    drafting (the will document opens with 'I [NAME] of [ADDRESS]').
+    If missing, surface a prominent warning and refuse the plain
+    Confirm button — make user supply the address first.
+    """
+    name = (s1.get('full_name') or '').strip()
+    nric = (s1.get('nric_passport') or '').strip()
+    dob  = (s1.get('date_of_birth') or '').strip()
+    addr = (s1.get('residential_address') or '').strip()
+    addr_missing = not addr
+
+    parts = [
+        "### 👔 Step 2: Confirm Testator",
+        f"- **Name:** {name or '_(missing)_'}",
+        f"- **NRIC:** {nric or '_(missing)_'}",
+        f"- **DOB:** {dob or '_(missing — optional)_'}",
+        (f"- **Address:** ⚠️ _**REQUIRED — please provide.**_"
+         if addr_missing else f"- **Address:** {addr}"),
     ]
-    return body + _qr_marker(quick)
+    if addr_missing:
+        parts.append(
+            "⚠️ **Your residential address is required to draft the will.** "
+            "The will document opens with _\"I [NAME] of [ADDRESS]\"_ — "
+            "without an address the will cannot be generated. "
+            "Tap **Type address** below and paste your full address (street, "
+            "town, postcode, state)."
+        )
+        quick = [
+            {'label': '✏️ Type address', 'value': 'address: '},
+            {'label': '↩ Edit other details', 'value': 'change details'},
+        ]
+    else:
+        parts.append("**All correct?**")
+        quick = [
+            {'label': '✓ Confirm', 'value': 'confirm'},
+            {'label': '✏️ Edit address', 'value': f'address: {addr}'},
+        ]
+    return '\n\n'.join(parts) + _qr_marker(quick)
 
 
 def _eligible_executor_candidates(identities):

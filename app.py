@@ -4182,7 +4182,13 @@ def _api_chat_message_impl(client_id):
             # 🔥 §7 — Step 2 (Testator confirm) runs BEFORE Step 3 (Executor)
             # and BEFORE Step 6 (Specific Gifts). Catch user's confirm
             # click and save Will.step1_data with testator info from Person.
-            just_testator = _try_confirm_testator(client_id, user_text)
+            # 🔥 §10x.122 — testator address save MUST run before
+            # _try_confirm_testator (so 'address: 123 Main St' replies
+            # save the address) AND before _try_handle_property_fill
+            # (so they aren't mistakenly treated as property addresses).
+            just_testator = _try_save_testator_address(client_id, user_text)
+            if not just_testator:
+                just_testator = _try_confirm_testator(client_id, user_text)
             if not just_testator:
                 just_executor = _try_save_executor(client_id, user_text)
             if not just_executor:
@@ -10337,6 +10343,80 @@ def _try_save_bank_gift(client_id: str, user_text: str):
     }
 
 
+def _try_save_testator_address(client_id: str, user_text: str):
+    """🔥 §10x.122 — capture testator's residential address from
+    `address: <full address>` reply when at Step 2.
+
+    Gates:
+      - user_text starts with 'address:' (case-insensitive)
+      - testator Person row exists (Step 1 done)
+      - testator.address OR step1_data.residential_address is empty
+        (don't intercept property-fill 'address:' replies once Step 2
+         is past)
+      - step5_data has no entries (Step 6 not started — so 'address:'
+        is unambiguously the testator address, not a property address)
+
+    Writes to BOTH:
+      - Person row (where relationship='Testator'): person.address
+      - Will.step1_data: residential_address
+
+    Returns dict on save, None to fall through.
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    if not t.lower().startswith('address:'):
+        return None
+    addr_value = t[len('address:'):].strip()
+    if not addr_value:
+        return None  # bare 'address: ' is the prefill — wait for user to type
+
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        s1 = json.loads(will.step1_data or '{}') or {}
+    except Exception:
+        s1 = {}
+    # Don't fire if testator already has a saved address (post-Step-2 stage).
+    if (s1.get('residential_address') or '').strip():
+        return None
+    # Find testator Person row
+    testator = (Person.query
+                .filter_by(client_id=client_id)
+                .filter(Person.relationship.ilike('testator'))
+                .first())
+    if not testator:
+        return None
+    # Skip if Step 6 has saved gifts (property-fill territory now).
+    try:
+        s5 = json.loads(will.step5_data or '[]')
+    except Exception:
+        s5 = []
+    if isinstance(s5, list) and len(s5) > 0:
+        # Past Step 6 — let _try_handle_property_fill claim 'address:'
+        return None
+
+    testator.address = addr_value[:500]
+    s1['residential_address'] = addr_value[:500]
+    s1['full_name'] = s1.get('full_name') or testator.full_name or ''
+    s1['nric_passport'] = s1.get('nric_passport') or testator.nric_passport or ''
+    s1['person_id'] = s1.get('person_id') or testator.id
+    will.step1_data = json.dumps(s1)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+    return {
+        'kind': 'testator_address_saved',
+        'name': testator.full_name or 'testator',
+        'role': f'address: {addr_value[:60]}',
+    }
+
+
 def _try_confirm_testator(client_id: str, user_text: str):
     """🔥 §7 — Step 2 confirm handler.
 
@@ -10369,11 +10449,22 @@ def _try_confirm_testator(client_id: str, user_text: str):
     testator = Person.query.filter_by(client_id=client_id, relationship='Testator').first()
     if not testator:
         return None
+    # 🔥 §10x.122 — refuse plain Confirm when address is missing.
+    # The will document opens with 'I [NAME] of [ADDRESS]' — without an
+    # address it cannot be drafted. Force the user to provide one via
+    # 'address: <full address>' first (handled by _try_save_testator_address).
+    addr = (testator.address or '').strip() or (s1.get('residential_address') or '').strip()
+    if not addr:
+        return {
+            'kind': 'testator_address_required',
+            'name': testator.full_name or 'testator',
+            'role': 'blocked — address missing',
+        }
     s1.update({
         'full_name':           testator.full_name or '',
         'nric_passport':       testator.nric_passport or '',
         'date_of_birth':       testator.date_of_birth or '',
-        'residential_address': testator.address or '',
+        'residential_address': testator.address or s1.get('residential_address', ''),
         'nationality':         testator.nationality or 'Malaysian',
         'gender':              testator.gender or '',
         'email':               testator.email or '',
@@ -12287,7 +12378,71 @@ def _refresh_wizard_session_from_db():
     session['step6_residuary'] = _j(w.step6_data, {})
     session['step7_trust']     = _j(w.step7_data, {})
     session['step8_others']    = _j(w.step8_data, {})
-    session['completed_steps'] = _j(w.completed_steps, [])
+    # 🔥 §10x.121 — derive WIZARD STEP NUMBERS from DB data for the
+    # sidebar's `{% if num in completed_steps %}` check. The DB column
+    # `Will.completed_steps` stores MARKER STRINGS ('executor_confirmed',
+    # 'residuary_confirmed'); the sidebar wants step NUMBERS [1, 2, 3,
+    # 5, 7]. Bridge them here so chat-saved progress shows green
+    # checkmarks in the wizard sidebar instead of red asterisks.
+    db_completed_markers = _j(w.completed_steps, [])
+    if not isinstance(db_completed_markers, list):
+        db_completed_markers = []
+    completed_nums = []
+    # Step 1: Identities — at least 1 Person row beyond testator
+    try:
+        n_persons = (Person.query
+                     .filter(Person.client_id == w.client_id,
+                             Person.relationship.notilike('testator'))
+                     .count())
+        if n_persons >= 1:
+            completed_nums.append(1)
+    except Exception:
+        pass
+    # Step 2: Testator — name + NRIC populated (address is a separate
+    # warning, doesn't block sidebar completion check; address gap
+    # surfaces via Step 1's "Address required" inline warning)
+    if (s1.get('full_name') or '').strip() and (s1.get('nric_passport') or '').strip():
+        completed_nums.append(2)
+    # Step 3: Executors — ≥ 1 executor saved
+    if isinstance(s2, dict) and len(s2.get('executors') or []) >= 1:
+        completed_nums.append(3)
+    # Step 4: Guardians — optional. Complete when explicitly set OR
+    # when there are no minor children (skip-by-default).
+    if isinstance(s3, dict):
+        if (s3.get('guardians')
+            or 'guardians_confirmed' in db_completed_markers
+            or 'guardians_skipped' in db_completed_markers):
+            completed_nums.append(4)
+    # Step 5: Beneficiaries — ≥ 1 entry saved
+    s4_list = _j(w.step4_data, [])
+    if isinstance(s4_list, list) and len(s4_list) >= 1:
+        completed_nums.append(5)
+    # Step 6: Specific Gifts — optional. Complete when assets_confirmed
+    # marker is set OR step5_data has gifts.
+    if 'assets_confirmed' in db_completed_markers or (
+            isinstance(s5_raw, list) and len(s5_raw) >= 1):
+        completed_nums.append(6)
+    # Step 7: Residuary — beneficiaries OR explicitly skipped
+    s6_dict = _j(w.step6_data, {})
+    if isinstance(s6_dict, dict) and (
+            s6_dict.get('beneficiaries')
+            or s6_dict.get('residuary_beneficiary_name')
+            or s6_dict.get('skipped')):
+        completed_nums.append(7)
+    # Step 8: Trust — optional
+    s7_dict = _j(w.step7_data, {})
+    if isinstance(s7_dict, dict) and (
+            s7_dict.get('trustee_name')
+            or s7_dict.get('trust_skipped')
+            or 'trust_confirmed' in db_completed_markers):
+        completed_nums.append(8)
+    # Step 9: Other Matters — optional
+    s8_dict = _j(w.step8_data, {})
+    if isinstance(s8_dict, dict) and (
+            s8_dict.get('confirmed')
+            or 'others_confirmed' in db_completed_markers):
+        completed_nums.append(9)
+    session['completed_steps'] = completed_nums
     _refresh_session_person_registry(w.client_id)
     session.modified = True
 
