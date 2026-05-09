@@ -4876,7 +4876,15 @@ def _get_layer2_pending_props(client_id: str) -> list:
                 ex = json.loads(d.extracted_data) if d.extracted_data else {}
             except (json.JSONDecodeError, TypeError):
                 ex = {}
-            if ex.get('_inventoried') and not ex.get('_substitute_assigned') and not ex.get('_skipped'):
+            if (ex.get('_inventoried')
+                    and not ex.get('_substitute_assigned')
+                    and not ex.get('_skipped')
+                    # 🔥 §10x.127 — skipped-not-in-will / user-removed docs
+                    # MUST NOT surface as Layer 2 pending. They were
+                    # explicitly excluded from the will by the user.
+                    and not ex.get('_skipped_not_in_will')
+                    and not ex.get('_user_removed')
+                    and not ex.get('_orphan_group_skipped')):
                 # Skip properties with no NLC identifiers (no lot/title) — these
                 # are ghost entries (e.g. address-only photos with no land title data)
                 # that cannot form a valid probate gift.
