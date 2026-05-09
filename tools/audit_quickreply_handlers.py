@@ -67,6 +67,8 @@ KNOWN_HANDLERS = {
     'guardian ': '_try_handle_guardian_action',
     'trust ': '_try_handle_trust_action',
     'others ': '_try_handle_others_action',
+    'others customize': '_try_handle_others_action',
+    'others customise': '_try_handle_others_action',
     'residuary skip': '_try_handle_residuary_skip',
     'residuary ': '_try_handle_residuary_skip',
     'conflict ': '_try_handle_message_conflict',

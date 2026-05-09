@@ -462,9 +462,16 @@ def plan_turn(
     # ── 8. STEP 9: Other Matters (optional) ───────────────────────────
     if 'others_confirmed' not in completed:
         s8 = current_will_data.get('step8') or {}
-        # 🔥 §10x.117 — pending-change follow-up. User clicked
-        # ✏️ Set X → handler stamped `_pending_change=X` → ask for input.
-        pending = (s8.get('_pending_change') or '').strip() if isinstance(s8, dict) else ''
+        if not isinstance(s8, dict):
+            s8 = {}
+        # 🔥 §10x.119 — if user clicked "Yes I have wishes" earlier
+        # (`_combined_input_pending=True`), show the combined-input card.
+        if s8.get('_combined_input_pending'):
+            reply_parts.append(_step9_others_combined_input(s8))
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
+        # 🔥 §10x.117 (legacy) — per-item pending-change follow-up.
+        # Kept for compat in case any old chat session has this flag set.
+        pending = (s8.get('_pending_change') or '').strip()
         if pending:
             reply_parts.append(_step9_pending_change_prompt(pending))
             return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
@@ -6185,39 +6192,107 @@ def _step9_pending_change_prompt(pending_key: str) -> str:
 
 
 def _step9_others_question(s8: dict) -> str:
-    """🔥 §10x.117 — cleaner Step 9 card.
+    """🔥 §10x.119 — single-gate Step 9 card.
 
-    Layout:
-      Step 9: Other Matters
-      Personal wishes (your call):
-        Funeral wishes:  <override OR 'executor's discretion'>
-        Organ donation:  <override OR 'no specific instructions'>
-        Pets:             <override OR 'no specific instructions'>
-      Standard clauses (auto-handled): debts, digital assets, governing law
+    Most testators have no specific personal wishes — defaults are
+    sensible. Asking item-by-item (funeral / organ / pets) is friction
+    for the common case.
 
-      [✅ Looks good — proceed to review] [✏️ Set funeral wishes]
-      [✏️ Set organ donation] [✏️ Skip]
+    New flow:
+      1. ONE question: "Any specific personal wishes?"
+         ✅ No — use sensible defaults  → instant confirm, proceed
+         ✏️ Yes — I have wishes        → opens combined-input card
+      2. If Yes: a single combined-input card asking for funeral /
+         organ / pets in one free-text reply (parsed by labeled lines).
+
+    Standard legal clauses (debts / digital assets / governing law)
+    are auto-included; user is told but not asked about them.
+
+    If any personal field already has an override saved, surface a
+    summary so user sees what's set.
     """
     if s8 and s8.get('confirmed'):
         return ''  # already done
 
     s8 = s8 or {}
+    has_overrides = any(
+        (s8.get(key) or '').strip()
+        for key, _, _ in _PERSONAL_OTHER_CLAUSES
+    )
+
     lines = ["### ⚖️ Step 9: Other Matters _(optional)_"]
-    lines.append("**Personal wishes** _(your call — defaults shown if no preference):_")
-    for key, label, default in _PERSONAL_OTHER_CLAUSES:
-        override = (s8.get(key) or '').strip()
-        if override:
-            lines.append(f"  • **{label}:** {override}")
-        else:
-            lines.append(f"  • **{label}:** _{default}_")
-    lines.append("**Standard legal clauses** _(auto-included — debts paid before "
-                 "distribution; digital assets at executor's discretion; governed "
-                 "by Malaysian law)._")
+
+    if has_overrides:
+        # User already typed some preferences earlier — show what's saved
+        lines.append("**Your personal wishes so far:**")
+        for key, label, default in _PERSONAL_OTHER_CLAUSES:
+            override = (s8.get(key) or '').strip()
+            if override:
+                lines.append(f"  • **{label}:** {override}")
+            else:
+                lines.append(f"  • **{label}:** _(default — {default})_")
+    else:
+        lines.append(
+            "Most people leave **funeral arrangements**, **organ donation**, "
+            "and **pet instructions** to their executor's discretion. We've "
+            "set sensible defaults for those, plus the standard legal clauses "
+            "(debts / digital assets / governing law)."
+        )
+
+    lines.append("**Do you have any specific personal wishes to record?**")
+
     text = '\n\n'.join(lines)
-    quick = [
-        {'label': '✅ Looks good — proceed to review', 'value': 'others confirm'},
-        {'label': '✏️ Set funeral wishes',           'value': 'change funeral'},
-        {'label': '✏️ Set organ donation',           'value': 'change organ donation'},
-        {'label': '⏭ Skip — use all defaults',       'value': 'others skip'},
-    ]
+    quick: List[Dict[str, str]] = []
+    if has_overrides:
+        quick.append({'label': '✅ Looks good — proceed to review',
+                      'value': 'others confirm'})
+        quick.append({'label': '✏️ Update my wishes',
+                      'value': 'others customize'})
+    else:
+        quick.append({'label': '✅ No specific wishes — use defaults',
+                      'value': 'others confirm'})
+        quick.append({'label': '✏️ Yes — I have specific wishes',
+                      'value': 'others customize'})
     return text + _qr_marker(quick)
+
+
+def _step9_others_combined_input(s8: dict) -> str:
+    """🔥 §10x.119 — combined free-text input for Step 9 personal wishes.
+
+    Asks for funeral + organ + pets in ONE reply. User can fill in any
+    subset (blank lines OK). Parsed in `_try_handle_others_action` by
+    looking for labels at the start of lines, e.g.:
+
+      Funeral: Buddhist rites at Nirvana memorial
+      Organ: yes, donate any usable organs
+      Pets: cat to be cared for by Esther
+    """
+    s8 = s8 or {}
+    lines = [
+        "### ✏️ Personal Wishes",
+        "Reply in **one message** — fill in any of these (leave blank to "
+        "keep the default):",
+        "```\n"
+        "Funeral: ...\n"
+        "Organ: ...\n"
+        "Pets: ...\n"
+        "```",
+        "_Examples:_",
+        "  • _Funeral: Buddhist rites at Nirvana memorial; cremation; ashes scattered at sea._",
+        "  • _Organ: yes — donate any usable organs._",
+        "  • _Pets: cat to be cared for by Esther; RM 5,000 set aside for vet bills._",
+    ]
+    # If overrides already exist, prefill the prompt with them
+    has_any = any((s8.get(key) or '').strip()
+                  for key, _, _ in _PERSONAL_OTHER_CLAUSES)
+    if has_any:
+        lines.append("_Currently saved (just retype to replace):_")
+        for key, label, _ in _PERSONAL_OTHER_CLAUSES:
+            override = (s8.get(key) or '').strip()
+            if override:
+                lines.append(f"  • **{label}:** {override}")
+    quick = [
+        {'label': '⏭ Skip — use all defaults', 'value': 'others skip'},
+        {'label': '↩ Back', 'value': 'others confirm'},
+    ]
+    return '\n\n'.join(lines) + _qr_marker(quick)

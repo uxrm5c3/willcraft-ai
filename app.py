@@ -8090,6 +8090,7 @@ def _try_handle_others_action(client_id: str, user_text: str):
              'confirm defaults', 'skip — use all defaults'):
         s8['confirmed'] = True
         s8.pop('_pending_change', None)
+        s8.pop('_combined_input_pending', None)
         will.step8_data = json.dumps(s8)
         try:
             db.session.commit()
@@ -8097,6 +8098,19 @@ def _try_handle_others_action(client_id: str, user_text: str):
             db.session.rollback()
         _mark_completed(will, 'others_confirmed')
         return {'name': 'other matters', 'role': 'confirmed with defaults', 'kind': 'others_confirmed'}
+
+    # 🔥 §10x.119 — open combined-input card. User clicked
+    # "✏️ Yes I have specific wishes" / "Update my wishes".
+    if t in ('others customize', 'others customise'):
+        s8['_combined_input_pending'] = True
+        s8.pop('_pending_change', None)
+        will.step8_data = json.dumps(s8)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return {'name': 'other matters', 'role': 'awaiting wishes',
+                'kind': 'others_customize_prompt'}
 
     # 🔥 §10x.117 — handle bare 'change X' clicks (no colon/value yet).
     # Stamp _pending_change on s8 so the planner renders a follow-up
@@ -8137,6 +8151,81 @@ def _try_handle_others_action(client_id: str, user_text: str):
         except Exception:
             db.session.rollback()
         return {'name': clause_key, 'role': f'updated: {new_val[:60]}', 'kind': 'others_updated'}
+
+    # 🔥 §10x.119 — free-text reply when combined-input card is showing.
+    # User clicked "Yes I have specific wishes" → planner showed the
+    # one-card combined input → user typed labelled lines like
+    #   Funeral: Buddhist rites...
+    #   Organ: yes — donate
+    #   Pets: cat to Esther
+    if s8.get('_combined_input_pending') and user_text and len(user_text) > 1:
+        low_t = user_text.strip().lower()
+        # Don't capture obvious other-step replies
+        if not low_t.startswith(('change ', 'others ', 'confirm', 'yes',
+                                 'no', 'skip', 'trust ', 'residuary',
+                                 'inventory', 'orphan_', 'bank_', 'insurance_',
+                                 'gift ', 'substitute ', 'beneficiaries ',
+                                 'role_match')):
+            # Parse labelled lines. Recognised label keywords (case-
+            # insensitive) → s8 key:
+            _LABEL_MAP = {
+                'funeral': 'funeral_arrangements',
+                'funeral arrangements': 'funeral_arrangements',
+                'funeral wishes': 'funeral_arrangements',
+                'organ': 'organ_donation',
+                'organ donation': 'organ_donation',
+                'pet': 'pets',
+                'pets': 'pets',
+                'digital': 'digital_assets',
+                'digital assets': 'digital_assets',
+            }
+            updated = []
+            # Split into lines; skip blanks; for each line look for
+            # "Label:" prefix and capture the remainder.
+            for raw in (user_text or '').splitlines():
+                line = raw.strip()
+                if not line:
+                    continue
+                m = re.match(r'^([A-Za-z][A-Za-z ]{0,40}?)\s*[:\-]\s*(.+)$',
+                             line)
+                if not m:
+                    continue
+                label = m.group(1).strip().lower()
+                value = m.group(2).strip()
+                if label in _LABEL_MAP and value:
+                    s8[_LABEL_MAP[label]] = value[:500]
+                    updated.append(_LABEL_MAP[label])
+            if updated:
+                # User provided at least one labelled value — save and
+                # confirm. Defaults remain for unprovided keys.
+                s8.pop('_combined_input_pending', None)
+                s8['confirmed'] = True
+                will.step8_data = json.dumps(s8)
+                try:
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    return None
+                _mark_completed(will, 'others_confirmed')
+                return {'name': 'personal wishes',
+                        'role': f'updated {len(updated)} field(s)',
+                        'kind': 'others_updated'}
+            # If the reply doesn't look labelled, treat the whole thing
+            # as funeral wishes (most common single intent) and confirm.
+            if len(user_text.strip()) > 3:
+                s8['funeral_arrangements'] = user_text.strip()[:500]
+                s8.pop('_combined_input_pending', None)
+                s8['confirmed'] = True
+                will.step8_data = json.dumps(s8)
+                try:
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    return None
+                _mark_completed(will, 'others_confirmed')
+                return {'name': 'funeral_arrangements',
+                        'role': f'set as: {user_text.strip()[:60]}',
+                        'kind': 'others_updated'}
 
     # 🔥 §10x.117 — free-text reply when _pending_change is set.
     # User clicked 'change funeral' on the previous turn → planner asked
