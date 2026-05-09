@@ -697,9 +697,16 @@
 
     const sections = [];
 
+    // §10x.38 — when planner is on Step 1 Identity walkthrough, the
+    // right-pane indicator must mark the Identities row as current
+    // (not Step 2 Testator, which gets highlighted by the fallback
+    // "first required empty step" rule).
+    const stageNum = will && will.current_stage_num;
+    const onStep1 = String(stageNum) === '1';
+
     // Live identities from Person registry (added via chat walk-through)
     const ids = will.identities || [];
-    if (ids.length) {
+    if (ids.length || onStep1) {
       let body = '<table class="text-[11px] mt-1 ml-5"><tbody>';
       for (const p of ids) {
         const rel = p.relationship || '—';
@@ -710,11 +717,21 @@
                  <td class="py-px ${relColor}">${escapeHtml(rel)}</td></tr>`;
       }
       body += '</tbody></table>';
+      // Active styling when on Step 1 — pulsing dot + bold to mirror the
+      // numbered-step section's "current" appearance below.
+      const headerCls = onStep1 ? 'flex items-center gap-1.5 text-primary-600' :
+                                  'hover:text-primary-600 flex items-center gap-1.5';
+      const dot = onStep1
+        ? '<span class="inline-block w-2 h-2 rounded-full bg-primary-500 animate-pulse"></span>'
+        : '<svg class="w-3.5 h-3.5 text-green-600 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>';
+      const title = onStep1
+        ? `Step 1: Identity (${ids.length} confirmed)`
+        : `Identities (${ids.length})`;
       sections.push(
         `<div class="border-b border-gray-100 pb-2">
-           <a href="/wizard/step/1" class="hover:text-primary-600 flex items-center gap-1.5">
-             <svg class="w-3.5 h-3.5 text-green-600 inline" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
-             <span class="font-semibold">Identities (${ids.length})</span>
+           <a href="/wizard/step/1" class="${headerCls}">
+             ${dot}
+             <span class="font-semibold">${title}</span>
            </a>
            ${body}
          </div>`
@@ -842,18 +859,24 @@
     //   2. Else: first REQUIRED empty step (skips optional gaps).
     //   3. Else: first empty step (any kind).
     //   4. Else: last step (everything filled).
+    //
+    // §10x.38 — Step 1 Identity is rendered as a SEPARATE section above
+    // (not in stepData). When stageNum === 1, that section already shows
+    // the active indicator — DO NOT also mark Step 2 Testator as current
+    // via the fallback. Otherwise the right pane lights up two steps.
     let currentIdx = -1;
-    const stageNum = will && will.current_stage_num;
-    if (stageNum) {
+    if (stageNum && String(stageNum) === '1') {
+      // skip — handled by the Identities section above
+    } else if (stageNum) {
       currentIdx = stepData.findIndex(s => String(s.n) === String(stageNum));
     }
-    if (currentIdx === -1) {
+    if (!onStep1 && currentIdx === -1) {
       currentIdx = stepData.findIndex(s => !s.fields && !s.optional);
     }
-    if (currentIdx === -1) {
+    if (!onStep1 && currentIdx === -1) {
       currentIdx = stepData.findIndex(s => !s.fields);
     }
-    if (currentIdx === -1) currentIdx = stepData.length - 1;
+    if (!onStep1 && currentIdx === -1) currentIdx = stepData.length - 1;
 
     for (let i = 0; i < stepData.length; i++) {
       sections.push(snapshotSection(stepData[i], i === currentIdx));
