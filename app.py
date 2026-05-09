@@ -4159,6 +4159,7 @@ def _api_chat_message_impl(client_id):
                           # §10hg — H3 placeholder confirm/skip when no pending image
                           or _try_handle_h3_user_match(client_id, user_text)
                           or _try_handle_orphan_claim(client_id, user_text)
+                          or _try_handle_doc_assign(client_id, user_text)
                           or _try_handle_h3_property_action(client_id, user_text)
                           # §10hg — conflict resolve replies
                           or _try_handle_message_conflict(client_id, user_text)
@@ -7504,6 +7505,58 @@ def _try_handle_h3_user_match(client_id: str, user_text: str):
         'doc_id': doc_id,
         'group_id': target_group.group_id,
         'name': (target_ai.fields.get('address') or '')[:60] or 'property',
+    }
+
+
+def _try_handle_doc_assign(client_id: str, user_text: str):
+    """🔥 §10x.125 — handle the user's reply to the 'identify this
+    image' card surfaced when a property doc has fully-unreadable
+    fields (no address, no title, no lot, no mukim).
+
+    Quickreply format:
+      `doc_assign <doc_id> <ai_index>`
+
+    Stamps `_user_assigned_ai_idx` on the doc — same mechanism as
+    §10x.108 orphan_claim — so the next pipeline run binds this doc
+    to the chosen AI Summary property and the property card re-renders
+    with that property's already-saved beneficiary distribution.
+
+    Returns dict on save, None to fall through.
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    if not t.startswith('doc_assign '):
+        return None
+    parts = t.split()
+    if len(parts) < 3:
+        return None
+    doc_id = parts[1]
+    try:
+        ai_idx = int(parts[2])
+    except (TypeError, ValueError):
+        return None
+
+    d = db.session.get(Document, doc_id)
+    if not d:
+        return None
+    try:
+        ex = json.loads(d.extracted_data or '{}') if d.extracted_data else {}
+    except Exception:
+        ex = {}
+    ex['_user_assigned_ai_idx'] = ai_idx
+    ex.pop('_inventoried', None)
+    ex.pop('_orphan_group_skipped', None)
+    d.extracted_data = json.dumps(ex)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+    return {
+        'kind': 'doc_assigned',
+        'name': (d.original_filename or doc_id)[:60],
+        'role': f'AI[{ai_idx}]',
     }
 
 

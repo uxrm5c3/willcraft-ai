@@ -73,6 +73,7 @@ KNOWN_HANDLERS = {
     'residuary ': '_try_handle_residuary_skip',
     'conflict ': '_try_handle_message_conflict',
     'orphan_': '_try_handle_orphan_claim',
+    'doc_assign': '_try_handle_doc_assign',
     'role_match': '_try_handle_role_match',
     'beneficiaries confirm': '_try_handle_beneficiaries_confirm',
     'beneficiaries edit': '_try_save_beneficiaries (fall-through)',

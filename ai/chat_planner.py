@@ -5668,6 +5668,59 @@ def _step6_property_question(pending_props, recent_text, will_data):
     # PHASE A — main beneficiary prompt
     # ═══════════════════════════════════════════════════════════════
 
+    # 🔥 §10x.125 — when ALL identifying fields are unreadable, don't
+    # ask "who inherits?" — that question makes no sense without
+    # knowing WHICH property this is. Instead surface an "identify
+    # this image" card listing the AI Summary properties for one-click
+    # claim. Same shape as the §10x.108 orphan-group disambiguation
+    # card, but for individual fully-unreadable docs.
+    addr_raw = (ex.get('property_address') or '').strip()
+    title_raw = (ex.get('title_number') or '').strip()
+    lot_raw = (ex.get('lot_number') or '').strip()
+    mukim_raw = (ex.get('mukim') or '').strip()
+    fully_unreadable = not (addr_raw or title_raw or lot_raw or mukim_raw)
+    if fully_unreadable:
+        client_id_id = (will_data or {}).get('client_id') or ''
+        ai_props = []
+        try:
+            ai_props = _extract_ai_summary_properties(client_id_id) or []
+        except Exception:
+            pass
+        if ai_props:
+            doc_id = p.get('document_id') or ''
+            fname = p.get('original_filename') or 'this image'
+            purpose = (p.get('purpose') or ex.get('purpose') or '').strip()
+            id_parts = [
+                "### ❓ Property — please identify this image",
+                f"I have an image (`{fname[:50]}`) but **couldn't read** "
+                f"the address, title number, lot or mukim from it.",
+            ]
+            if purpose:
+                id_parts.append(f"_What I see in the image:_ {purpose[:160]}")
+            id_parts.append(
+                "**Which of your properties does this image belong to?**"
+            )
+            id_quick: List[Dict[str, str]] = []
+            for i, ap in enumerate(ai_props):
+                addr_label = (ap.get('address') or ap.get('name')
+                              or f'Property {i+1}')[:50]
+                id_quick.append({
+                    'label': f'🏠 {addr_label}',
+                    'value': f'doc_assign {doc_id} {i}',
+                })
+            id_quick.append({
+                'label': '🗑 Wrong upload — remove',
+                'value': 'delete',
+            })
+            id_quick.append({
+                'label': '⏭ Skip — not in my will',
+                'value': 'skip',
+            })
+            return {
+                'text': '\n\n'.join(id_parts) + _qr_marker(id_quick),
+                'focus_doc_id': doc_id,
+            }
+
     # Build evidence footnote (which uploads belong to this property)
     evidence_lines = []
     primary_purpose = (p.get('purpose') or '').strip()
