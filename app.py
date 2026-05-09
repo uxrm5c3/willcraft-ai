@@ -9100,6 +9100,43 @@ def _try_save_property_gift(client_id: str, user_text: str):
             gifts.append(gift_entry)
         will.step5_data = json.dumps(gifts)
 
+        # 🔥 §10x.93 — Propagate gift beneficiaries into step4_data so the
+        # wizard's Step 5 (Beneficiaries) and Step 6 (Specific Gifts)
+        # dropdowns are populated. Without this, the wizard's gift form
+        # renders '-- Select Beneficiary --' empty for every saved gift
+        # whose beneficiary names aren't already in step4 (the §10x.42
+        # reconcile only added Lim Bee Yan there for bank gifts).
+        try:
+            _s4_existing = json.loads(will.step4_data or '[]')
+            if not isinstance(_s4_existing, list):
+                _s4_existing = []
+        except Exception:
+            _s4_existing = []
+        _s4_names = {(b.get('full_name') or '').upper().strip()
+                     for b in _s4_existing if isinstance(b, dict)}
+        _s4_names.discard('')
+        _added_to_s4 = False
+        # Pull from main + substitute beneficiaries — both are real people
+        for entry in (main_bens or []) + (substitute_specific or []):
+            nm = (entry.get('name') or '').strip()
+            if not nm or nm.upper() in _s4_names:
+                continue
+            # Find their Person row to get NRIC + relationship + address
+            _p = next((p for p in (Person.query.filter_by(client_id=client_id).all() or [])
+                       if (p.full_name or '').upper().strip() == nm.upper()), None)
+            _s4_existing.append({
+                'full_name':     nm,
+                'nric_passport': (_p.nric_passport if _p else '') or '',
+                'address':       (_p.address if _p else '') or '',
+                'relationship':  (_p.relationship if _p else '') or '',
+                'person_id':     (_p.id if _p else ''),
+                '_added_by':     '§10x.93 propagate from gift',
+            })
+            _s4_names.add(nm.upper())
+            _added_to_s4 = True
+        if _added_to_s4:
+            will.step4_data = json.dumps(_s4_existing)
+
         # Clear the phase flag in extracted_data (only if real Document)
         if doc is not None:
             doc_ex['_main_beneficiary_set'] = False
