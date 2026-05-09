@@ -4192,10 +4192,13 @@ def _api_chat_message_impl(client_id):
                     if not just_trust:
                         just_others = _try_handle_others_action(client_id, user_text)
                         if not just_others:
-                            # 🔥 §10x.114 — try to save a real residuary main
-                            # beneficiary FIRST (e.g. "wife 100%"). If it
-                            # doesn't apply, fall through to skip handler.
-                            just_residuary_skip = _try_save_residuary_main(client_id, user_text)
+                            # 🔥 §10x.116 — Layer 3 substitute residuary FIRST
+                            # (so 'residuary substitute ...' isn't accidentally
+                            # captured by main). Then main, then skip.
+                            just_residuary_skip = _try_save_residuary_substitute(client_id, user_text)
+                            if not just_residuary_skip:
+                                # 🔥 §10x.114 — Layer 2 main residuary beneficiary
+                                just_residuary_skip = _try_save_residuary_main(client_id, user_text)
                             if not just_residuary_skip:
                                 just_residuary_skip = _try_handle_residuary_skip(client_id, user_text)
                             if not just_residuary_skip:
@@ -8936,6 +8939,188 @@ def _try_handle_beneficiaries_confirm(client_id: str, user_text: str):
     }
 
 
+def _try_save_residuary_substitute(client_id: str, user_text: str):
+    """🔥 §10x.116 — Step 7 Layer 3 (substitute residuary beneficiary).
+
+    Quickreply formats:
+      • `residuary substitute survivors`        — surviving main bens equally
+      • `residuary substitute equal others`     — surviving non-main family equally
+      • `residuary substitute equal children`   — surviving children equally
+      • `residuary substitute 100% <name>`      — single named substitute
+      • `residuary substitute none`             — no substitute clause
+      • free text 'Joshua 50%, Esther 50%' or 'wife 100%'
+
+    Writes to step6_data:
+      substitute_mode: 'specific' | 'equal' | 'survivors' | 'none'
+      substitute_specific: [{name, share}, ...]
+    """
+    if not user_text:
+        return None
+    t = user_text.strip()
+    low = t.lower()
+    if not low.startswith('residuary substitute'):
+        # Also accept free-text NAMES if planner is at Layer 3.
+        # Only fire when step6 has main beneficiaries but no substitute yet.
+        will_check = (Will.query.filter_by(client_id=client_id, status='draft')
+                      .filter(Will.deleted_at.is_(None))
+                      .order_by(Will.updated_at.desc()).first())
+        if not will_check:
+            return None
+        try:
+            s6_check = json.loads(will_check.step6_data or '{}')
+            if not isinstance(s6_check, dict):
+                return None
+        except Exception:
+            return None
+        has_main = bool(s6_check.get('beneficiaries') or s6_check.get('residuary_beneficiary_name'))
+        has_sub = (s6_check.get('substitute_specific') is not None
+                   or s6_check.get('substitute_mode') in ('specific', 'equal',
+                                                          'survivors', 'none'))
+        if not has_main or has_sub:
+            return None
+        # We're at Layer 3 — accept free-text. Apply the same negative
+        # filters as _try_save_residuary_main.
+        _BAD = ('inventory ', 'orphan_', 'bank_', 'insurance_', 'gift ',
+                'substitute ', 'trust ', 'others ', 'guardian ',
+                'role_match', 'address:', 'lot:', 'title:', 'mukim:',
+                'daerah:', 'negeri:', 'property ', 'change ',
+                'confirm assets', 'confirm defaults', 'h3 ',
+                'unlink ', 'restart ', 'inbox ', 'conflict ',
+                'i have more', 'beneficiaries ', 'residuary skip')
+        if any(low.startswith(p) for p in _BAD):
+            return None
+        if low in ('yes', 'no', 'skip', 'delete', 'confirm', 'remove'):
+            return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        s6 = json.loads(will.step6_data or '{}')
+        if not isinstance(s6, dict): s6 = {}
+    except Exception:
+        s6 = {}
+    if not (s6.get('beneficiaries') or s6.get('residuary_beneficiary_name')):
+        return None  # Layer 2 not done yet — skip Layer 3
+    if (s6.get('substitute_specific') is not None
+        or s6.get('substitute_mode') in ('specific', 'equal',
+                                          'survivors', 'none')):
+        return None  # already saved
+
+    persons = Person.query.filter_by(client_id=client_id).all()
+    eligible = [p for p in persons
+                if (p.relationship or '').lower() not in ('testator', 'witness')]
+    main_names = {(b.get('name') or b.get('full_name') or '').upper()
+                  for b in (s6.get('beneficiaries') or [])
+                  if isinstance(b, dict)}
+    children = [p for p in eligible
+                if (p.relationship or '').lower() in ('son', 'daughter')]
+
+    sub_mode = ''
+    sub_list: List[Dict[str, str]] = []
+
+    if low == 'residuary substitute none':
+        sub_mode = 'none'
+    elif low == 'residuary substitute survivors':
+        sub_mode = 'survivors'
+        # Survivors of the main list, equal shares
+        n = max(len(main_names), 1)
+        sub_list = [{'name': n_, 'share': f'1/{n}'}
+                    for n_ in (b.get('name') or b.get('full_name')
+                                for b in (s6.get('beneficiaries') or []))
+                    if n_]
+    elif low == 'residuary substitute equal others':
+        sub_mode = 'equal'
+        others = [p for p in eligible
+                  if (p.full_name or '').upper() not in main_names
+                  and (p.relationship or '').lower() in
+                      ('son', 'daughter', 'spouse', 'wife', 'husband',
+                       'father', 'mother', 'brother', 'sister')]
+        n = max(len(others), 1)
+        sub_list = [{'name': p.full_name, 'share': f'1/{n}'}
+                    for p in others]
+    elif low == 'residuary substitute equal children':
+        sub_mode = 'equal'
+        n = max(len(children), 1)
+        sub_list = [{'name': c.full_name, 'share': f'1/{n}'}
+                    for c in children]
+    elif low.startswith('residuary substitute 100%'):
+        sub_mode = 'specific'
+        nm = t[len('residuary substitute 100%'):].strip()
+        # Resolve via name OR relationship
+        match = None
+        for p in eligible:
+            if nm.upper() == (p.full_name or '').upper() \
+               or nm.lower() in (p.full_name or '').lower():
+                match = p; break
+        if match:
+            sub_list = [{'name': match.full_name, 'share': '1/1'}]
+    else:
+        # Free-text: 'Joshua 50%, Esther 50%' or 'wife 100%'
+        sub_mode = 'specific'
+        parts = [p.strip() for p in re.split(r',|\band\b', t) if p.strip()]
+        for part in parts:
+            share_m = re.search(
+                r'\s+(\d{1,3})\s*%|\s+(equal|equally)\b|\s+(\d+/\d+)\s*$',
+                part, flags=re.IGNORECASE)
+            if share_m:
+                name_token = part[:share_m.start()].strip().rstrip(',')
+                if share_m.group(1):
+                    share = f'{share_m.group(1)}/100'
+                elif share_m.group(2):
+                    share = 'equal'
+                else:
+                    share = share_m.group(3) or ''
+            else:
+                name_token = part.strip()
+                share = 'equal'
+            # Resolve
+            person = None
+            tok_low = name_token.lower()
+            for p in eligible:
+                rel = (p.relationship or '').lower()
+                nm = (p.full_name or '').lower()
+                if tok_low in nm or tok_low == rel:
+                    person = p; break
+                if tok_low in ('wife', 'husband', 'spouse') \
+                   and rel in ('spouse', 'wife', 'husband'):
+                    person = p; break
+            if not person:
+                return None
+            sub_list.append({'name': person.full_name, 'share': share})
+        # Normalise equal shares
+        if any(s.get('share') in ('equal', '') for s in sub_list):
+            n = len(sub_list)
+            for s in sub_list:
+                s['share'] = f'1/{n}' if n > 1 else '1/1'
+
+    # Persist + stamp residuary_confirmed (Layer 2 + Layer 3 done)
+    s6['substitute_mode'] = sub_mode or 'none'
+    s6['substitute_specific'] = sub_list if sub_list else None
+    will.step6_data = json.dumps(s6)
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+        if not isinstance(completed, list):
+            completed = []
+    except Exception:
+        completed = []
+    if 'residuary_confirmed' not in completed:
+        completed.append('residuary_confirmed')
+        will.completed_steps = json.dumps(completed)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return None
+    return {
+        'kind': 'residuary_substitute_saved',
+        'name': ', '.join(s.get('name', '') for s in sub_list) if sub_list
+                else 'no substitute',
+        'role': sub_mode,
+    }
+
+
 def _try_save_residuary_main(client_id: str, user_text: str):
     """🔥 §10x.114 — Step 7 (Residuary Estate) main-beneficiary saver.
 
@@ -8972,7 +9157,9 @@ def _try_save_residuary_main(client_id: str, user_text: str):
                      'title:', 'mukim:', 'daerah:', 'negeri:',
                      'property ', 'change ', 'confirm assets',
                      'confirm defaults', 'h3 ', 'unlink ', 'restart ',
-                     'inbox ', 'conflict ', 'i have more')
+                     'inbox ', 'conflict ', 'i have more',
+                     'beneficiaries ', 'residuary substitute',
+                     'residuary skip')
     if any(low.startswith(p) for p in _BAD_PREFIXES):
         return None
     # Don't intercept "yes/skip/delete/confirm" alone — too generic
@@ -9100,20 +9287,19 @@ def _try_save_residuary_main(client_id: str, user_text: str):
     s6['residuary_beneficiary_name'] = parsed[0]['name']  # legacy compat
     s6.pop('skipped', None)
     will.step6_data = json.dumps(s6)
+    # 🔥 §10x.116 — DON'T stamp residuary_confirmed here. Layer 3
+    # (substitute) hasn't been answered yet. Stamp only when both
+    # main + substitute saved (in skip handler or substitute handler).
     try:
-        # Stamp residuary_confirmed so planner advances to Step 8
-        if 'residuary_confirmed' not in completed:
-            completed.append('residuary_confirmed')
-            will.completed_steps = json.dumps(completed)
         db.session.commit()
     except Exception:
         db.session.rollback()
         return None
 
     return {
-        'kind': 'residuary_saved',
+        'kind': 'residuary_main_saved',
         'name': ', '.join(p['name'] for p in parsed),
-        'role': f'{len(parsed)} residuary beneficiar' + ('y' if len(parsed) == 1 else 'ies'),
+        'role': f'{len(parsed)} main residuary beneficiar' + ('y' if len(parsed) == 1 else 'ies'),
     }
 
 

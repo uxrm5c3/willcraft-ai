@@ -423,11 +423,30 @@ def plan_turn(
         reply_parts.append(q['text'])
         return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
-    # ── 6. STEP 7: Residuary ───────────────────────────────────────────
+    # ── 6. STEP 7: Residuary — Layer 2 main + Layer 3 substitute ──────
+    # 🔥 §10x.116 — match the per-asset 3-layer pattern: every gift has
+    # main → substitute. Residuary now follows the same shape:
+    #   Layer 2 (main):       'Who inherits everything else?'
+    #   Layer 3 (substitute): 'If [main] predeceases, who gets it?'
+    # Without Layer 3 the residuary clause has no fallback; if the main
+    # residuary beneficiary dies first, the estate goes intestate per
+    # the Distribution Act 1958 — usually NOT what the testator wanted.
     s6 = current_will_data.get('step6') or {}
     if not s6 or not (s6.get('beneficiaries') or s6.get('residuary_beneficiary_name')):
+        # Layer 2: ask MAIN residuary beneficiary
         s4_list = current_will_data.get('step4') or []
         reply_parts.append(_step7_residuary_question(s4_list))
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
+    if (s6.get('substitute_specific') is None
+        and s6.get('substitute_mode') in (None, '')
+        and not s6.get('skipped')):
+        # Layer 3: ask SUBSTITUTE residuary
+        s4_list = current_will_data.get('step4') or []
+        reply_parts.append(
+            _step7_residuary_substitute_question(
+                s6.get('beneficiaries') or [], s4_list
+            )
+        )
         return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 7. STEP 8: Testamentary Trust (optional) ──────────────────────
@@ -5939,9 +5958,10 @@ def _step4_guardian_question(s3: dict, minors: list, recent_text: str = '') -> d
 
 
 def _step7_residuary_question(beneficiaries: list) -> str:
-    """Ask who inherits the residuary estate. Pre-fills a quick-reply
-    default (equal shares among all beneficiaries) so the writer can
-    one-tap it for simple wills."""
+    """Layer 2 — ask who is the MAIN residuary beneficiary. The
+    substitute is asked separately as Layer 3 in
+    `_step7_residuary_substitute_question`.
+    """
     # Build default: all beneficiaries equally
     names = [b.get('full_name', '') for b in beneficiaries if isinstance(b, dict) and b.get('full_name')]
     if names:
@@ -5959,9 +5979,74 @@ def _step7_residuary_question(beneficiaries: list) -> str:
     ]
     text = (
         "✅ Specific gifts done. Moving to **Step 7: Residuary Estate**.\n\n"
-        "After the specific gifts above, who should inherit **everything else** "
-        "(property or money not specifically given away)?\n\n"
+        "**Layer 1 — MAIN residuary beneficiary**\n\n"
+        "After the specific gifts above, who is the **MAIN** person to inherit "
+        "**everything else** (any property or money not specifically given away)?\n\n"
+        "_(Substitute / fallback will be asked next, after you confirm the main.)_\n\n"
         "Reply with name + share, e.g. `Wife 100%` or `Joshua 50%, Esther 50%`."
+    )
+    return text + _qr_marker(quick)
+
+
+def _step7_residuary_substitute_question(main_bens: list, all_bens: list) -> str:
+    """Layer 3 — ask the SUBSTITUTE residuary beneficiary, mirroring
+    the per-asset Layer 3 substitute pattern (§10x.14).
+
+    If the MAIN residuary beneficiary doesn't survive the testator,
+    who gets the residuary instead? Defaults follow §10x.14:
+      - main is single child → other surviving child(ren)
+      - main is spouse → all children equally
+      - main is multi-bene → surviving members equally
+      - main is other (sister/friend) → all children equally
+    """
+    main_names = [b.get('name') or b.get('full_name')
+                  for b in (main_bens or [])
+                  if isinstance(b, dict)]
+    main_names = [n for n in main_names if n]
+    main_label = ', '.join(main_names) if main_names else 'the main residuary beneficiary'
+
+    # Build default substitute label per §10x.14 cascade
+    other_eligible = [
+        b for b in (all_bens or [])
+        if isinstance(b, dict)
+        and (b.get('full_name') or b.get('name')) not in main_names
+        and (b.get('relationship') or '').lower() in
+            ('son', 'daughter', 'spouse', 'wife', 'husband', 'father',
+             'mother', 'brother', 'sister')
+    ]
+    quick: List[Dict[str, str]] = []
+    if main_names and len(main_names) >= 2:
+        # Multi-bene main: substitute = surviving (same names equal)
+        survivor_val = ', '.join(f'{n} equal' for n in main_names)
+        quick.append({
+            'label': f'✅ Survivors equal — {", ".join(main_names[:2])}'
+                     + (f' + {len(main_names)-2} more' if len(main_names) > 2 else ''),
+            'value': f'residuary substitute survivors',
+        })
+    if len(other_eligible) >= 2:
+        # Equal among other family
+        names = [(b.get('full_name') or b.get('name')) for b in other_eligible]
+        quick.append({
+            'label': f'✅ {", ".join(names[:2])} equal'
+                     + (f' + {len(names)-2} more' if len(names) > 2 else ''),
+            'value': 'residuary substitute equal others',
+        })
+    elif len(other_eligible) == 1:
+        nm = other_eligible[0].get('full_name') or other_eligible[0].get('name')
+        quick.append({
+            'label': f'✅ {nm} 100%',
+            'value': f'residuary substitute 100% {nm}',
+        })
+    quick.append({
+        'label': '⏭ No substitute clause',
+        'value': 'residuary substitute none',
+    })
+
+    text = (
+        f"### 🔄 Step 7 — Layer 2: SUBSTITUTE residuary beneficiary\n\n"
+        f"You set **{main_label}** as the MAIN residuary beneficiary.\n\n"
+        f"If they **don't survive you**, who should inherit the residuary instead?\n\n"
+        f"Reply with name + share, e.g. `Joshua 50%, Esther 50%` or `Esther 100%`."
     )
     return text + _qr_marker(quick)
 
