@@ -10344,32 +10344,48 @@ def _try_save_bank_gift(client_id: str, user_text: str):
 
 
 def _try_save_testator_address(client_id: str, user_text: str):
-    """🔥 §10x.122 — capture testator's residential address from
-    `address: <full address>` reply when at Step 2.
+    """🔥 §10x.122 + §10x.123 — capture testator's compulsory
+    Step 2 fields from labelled replies: `address:`, `dob:`, `gender:`,
+    `marital:`, `occupation:`.
 
-    Gates:
-      - user_text starts with 'address:' (case-insensitive)
+    Gates (per-field):
+      - user_text starts with one of the recognised prefixes
       - testator Person row exists (Step 1 done)
-      - testator.address OR step1_data.residential_address is empty
-        (don't intercept property-fill 'address:' replies once Step 2
-         is past)
-      - step5_data has no entries (Step 6 not started — so 'address:'
-        is unambiguously the testator address, not a property address)
+      - that field on step1_data is empty (don't overwrite)
+      - For 'address:' specifically — Step 6 not yet started (no saved
+        gifts) so it's unambiguously the testator address, not a
+        property address.
 
     Writes to BOTH:
-      - Person row (where relationship='Testator'): person.address
-      - Will.step1_data: residential_address
+      - Person row (where relationship='Testator')
+      - Will.step1_data
 
     Returns dict on save, None to fall through.
     """
     if not user_text:
         return None
     t = user_text.strip()
-    if not t.lower().startswith('address:'):
+    low = t.lower()
+
+    # Map prefix → (s1_key, person_attr, label)
+    _FIELD_MAP = {
+        'address:':    ('residential_address', 'address',          'Address'),
+        'dob:':        ('date_of_birth',       'date_of_birth',    'DOB'),
+        'gender:':     ('gender',              'gender',           'Gender'),
+        'marital:':    ('marital_status',      'marital_status',   'Marital status'),
+        'occupation:': ('occupation',          'occupation',       'Occupation'),
+    }
+    matched_prefix = None
+    for prefix in _FIELD_MAP:
+        if low.startswith(prefix):
+            matched_prefix = prefix
+            break
+    if not matched_prefix:
         return None
-    addr_value = t[len('address:'):].strip()
-    if not addr_value:
-        return None  # bare 'address: ' is the prefill — wait for user to type
+    s1_key, person_attr, label = _FIELD_MAP[matched_prefix]
+    raw_value = t[len(matched_prefix):].strip()
+    if not raw_value:
+        return None  # bare prefix is the prefill — wait for typing
 
     will = (Will.query.filter_by(client_id=client_id, status='draft')
             .filter(Will.deleted_at.is_(None))
@@ -10380,9 +10396,48 @@ def _try_save_testator_address(client_id: str, user_text: str):
         s1 = json.loads(will.step1_data or '{}') or {}
     except Exception:
         s1 = {}
-    # Don't fire if testator already has a saved address (post-Step-2 stage).
-    if (s1.get('residential_address') or '').strip():
-        return None
+
+    # 🔥 §10x.122 — for 'address:' specifically, refuse if Step 6 already
+    # has saved gifts (property-fill is the real intent past that point).
+    if matched_prefix == 'address:':
+        try:
+            s5 = json.loads(will.step5_data or '[]')
+        except Exception:
+            s5 = []
+        if isinstance(s5, list) and len(s5) > 0:
+            return None
+
+    # Don't overwrite already-saved values silently. If user types a
+    # field that's already set, let it pass — they're updating.
+    # (Just save and return.)
+
+    # Validate / normalise per field
+    if s1_key == 'gender':
+        v_low = raw_value.lower()
+        if v_low.startswith('m'): raw_value = 'Male'
+        elif v_low.startswith('f'): raw_value = 'Female'
+        else: return None  # unrecognised
+    elif s1_key == 'marital_status':
+        v_low = raw_value.lower()
+        if 'marri' in v_low: raw_value = 'Married'
+        elif 'singl' in v_low: raw_value = 'Single'
+        elif 'widow' in v_low: raw_value = 'Widowed'
+        elif 'divor' in v_low: raw_value = 'Divorced'
+        # else: keep raw value
+    elif s1_key == 'date_of_birth':
+        # Accept DD-MM-YYYY, DD/MM/YYYY, YYYY-MM-DD — normalise to DD-MM-YYYY
+        import re as _re_dob
+        m = _re_dob.match(r'^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$', raw_value)
+        if m:
+            d, mo, y = m.group(1), m.group(2), m.group(3)
+            raw_value = f'{int(d):02d}-{int(mo):02d}-{y}'
+        else:
+            m = _re_dob.match(r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$', raw_value)
+            if m:
+                y, mo, d = m.group(1), m.group(2), m.group(3)
+                raw_value = f'{int(d):02d}-{int(mo):02d}-{y}'
+        # else keep raw — user can type 'circa 1963' etc.
+
     # Find testator Person row
     testator = (Person.query
                 .filter_by(client_id=client_id)
@@ -10390,17 +10445,12 @@ def _try_save_testator_address(client_id: str, user_text: str):
                 .first())
     if not testator:
         return None
-    # Skip if Step 6 has saved gifts (property-fill territory now).
-    try:
-        s5 = json.loads(will.step5_data or '[]')
-    except Exception:
-        s5 = []
-    if isinstance(s5, list) and len(s5) > 0:
-        # Past Step 6 — let _try_handle_property_fill claim 'address:'
-        return None
 
-    testator.address = addr_value[:500]
-    s1['residential_address'] = addr_value[:500]
+    # Update Person AND step1_data
+    if hasattr(testator, person_attr):
+        setattr(testator, person_attr, raw_value[:500])
+    s1[s1_key] = raw_value[:500]
+    # Backfill name/nric/person_id if missing
     s1['full_name'] = s1.get('full_name') or testator.full_name or ''
     s1['nric_passport'] = s1.get('nric_passport') or testator.nric_passport or ''
     s1['person_id'] = s1.get('person_id') or testator.id
@@ -10411,9 +10461,9 @@ def _try_save_testator_address(client_id: str, user_text: str):
         db.session.rollback()
         return None
     return {
-        'kind': 'testator_address_saved',
+        'kind': 'testator_field_saved',
         'name': testator.full_name or 'testator',
-        'role': f'address: {addr_value[:60]}',
+        'role': f'{label}: {raw_value[:60]}',
     }
 
 
@@ -10449,16 +10499,22 @@ def _try_confirm_testator(client_id: str, user_text: str):
     testator = Person.query.filter_by(client_id=client_id, relationship='Testator').first()
     if not testator:
         return None
-    # 🔥 §10x.122 — refuse plain Confirm when address is missing.
-    # The will document opens with 'I [NAME] of [ADDRESS]' — without an
-    # address it cannot be drafted. Force the user to provide one via
-    # 'address: <full address>' first (handled by _try_save_testator_address).
+    # 🔥 §10x.122 + §10x.123 — refuse plain Confirm when ANY required
+    # field is missing. The will document opens with 'I [NAME] of
+    # [ADDRESS]', and probate clauses use gender pronouns + DOB.
+    # Force the user to provide each missing field before advancing.
     addr = (testator.address or '').strip() or (s1.get('residential_address') or '').strip()
-    if not addr:
+    dob = (testator.date_of_birth or '').strip() or (s1.get('date_of_birth') or '').strip()
+    gender = (testator.gender or '').strip() or (s1.get('gender') or '').strip()
+    missing = []
+    if not addr:   missing.append('address')
+    if not dob:    missing.append('date_of_birth')
+    if not gender: missing.append('gender')
+    if missing:
         return {
-            'kind': 'testator_address_required',
+            'kind': 'testator_field_required',
             'name': testator.full_name or 'testator',
-            'role': 'blocked — address missing',
+            'role': f'blocked — missing: {", ".join(missing)}',
         }
     s1.update({
         'full_name':           testator.full_name or '',

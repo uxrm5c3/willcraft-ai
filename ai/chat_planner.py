@@ -231,7 +231,10 @@ def plan_turn(
                     }
                     break
         if testator_info.get('full_name'):
-            reply_parts.append(_step2_question(testator_info))
+            reply_parts.append(_step2_question(
+                testator_info,
+                identities=current_will_data.get('identities') or [],
+            ))
             return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 3.5 ASSET INVENTORY — walk one cleaned-up property at a time ───
@@ -3051,46 +3054,151 @@ def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
     return mentioned
 
 
-def _step2_question(s1: Dict[str, Any]) -> str:
-    """Confirm testator details once identities are in.
+# 🔥 §10x.123 — compulsory testator fields. Each entry is
+# (s1_key, label, prompt_value_prefix, example_text).
+# The planner walks these in order and asks for the first missing one.
+# 'address:' / 'dob:' / 'gender:' / 'marital:' / 'occupation:' are
+# the prompt prefixes user types (or button prefills); the corresponding
+# handlers parse and save.
+_STEP2_REQUIRED_FIELDS = [
+    ('residential_address', 'Residential address', 'address: ',
+     '10 Jalan Sri Laguna 1/7, Taman Laguna, 81200 Johor Bahru, Johor'),
+    ('date_of_birth', 'Date of birth (DD-MM-YYYY)', 'dob: ',
+     '04-12-1963'),
+    ('gender', 'Gender', 'gender: ',
+     'Male  /  Female'),
+    ('marital_status', 'Marital status', 'marital: ',
+     'Married  /  Single  /  Widowed  /  Divorced'),
+    ('occupation', 'Occupation', 'occupation: ',
+     'Retired  /  Engineer  /  Teacher'),
+]
 
-    🔥 §10x.122 — testator's residential address is REQUIRED for will
-    drafting (the will document opens with 'I [NAME] of [ADDRESS]').
-    If missing, surface a prominent warning and refuse the plain
-    Confirm button — make user supply the address first.
+
+def _step2_question(s1: Dict[str, Any],
+                    identities: Optional[List[Dict[str, Any]]] = None) -> str:
+    """🔥 §10x.122 + §10x.123 — testator info gate.
+
+    Walks compulsory fields one at a time. Address / DOB / gender are
+    REQUIRED for a Phek-format probate will. Marital status and
+    occupation are SOFT-required (used in clause boilerplate but
+    defaulted if missing).
+
+    Refuses '✓ Confirm' until ALL required fields are present.
+    Renders the FIRST missing field's prompt card; user types one
+    value at a time; planner re-runs after each save and asks for
+    the next missing field (or shows the full Confirm card when done).
     """
     name = (s1.get('full_name') or '').strip()
     nric = (s1.get('nric_passport') or '').strip()
-    dob  = (s1.get('date_of_birth') or '').strip()
     addr = (s1.get('residential_address') or '').strip()
-    addr_missing = not addr
+    dob  = (s1.get('date_of_birth') or '').strip()
+    gender = (s1.get('gender') or '').strip()
+    marital = (s1.get('marital_status') or '').strip()
+    occupation = (s1.get('occupation') or '').strip()
 
-    parts = [
-        "### 👔 Step 2: Confirm Testator",
-        f"- **Name:** {name or '_(missing)_'}",
-        f"- **NRIC:** {nric or '_(missing)_'}",
-        f"- **DOB:** {dob or '_(missing — optional)_'}",
-        (f"- **Address:** ⚠️ _**REQUIRED — please provide.**_"
-         if addr_missing else f"- **Address:** {addr}"),
-    ]
-    if addr_missing:
+    # Find the FIRST missing required field
+    REQUIRED_KEYS = ('residential_address', 'date_of_birth', 'gender')
+    SOFT_KEYS     = ('marital_status', 'occupation')
+    missing_required = []
+    missing_soft     = []
+    for key, label, prefix, example in _STEP2_REQUIRED_FIELDS:
+        if not (s1.get(key) or '').strip():
+            (missing_required if key in REQUIRED_KEYS
+             else missing_soft).append((key, label, prefix, example))
+
+    parts = ["### 👔 Step 2: Confirm Testator"]
+    parts.append(
+        f"- **Name:** {name or '_(missing)_'}\n"
+        f"- **NRIC:** {nric or '_(missing)_'}\n"
+        f"- **Address:** {addr or '⚠️ _**MISSING**_'}\n"
+        f"- **DOB:** {dob or '⚠️ _**MISSING**_'}\n"
+        f"- **Gender:** {gender or '⚠️ _**MISSING**_'}\n"
+        f"- **Marital status:** {marital or '_(default: Single)_'}\n"
+        f"- **Occupation:** {occupation or '_(default: omitted)_'}"
+    )
+
+    if missing_required:
+        # Walk one at a time — ask for the FIRST missing required field
+        key, label, prefix, example = missing_required[0]
         parts.append(
-            "⚠️ **Your residential address is required to draft the will.** "
-            "The will document opens with _\"I [NAME] of [ADDRESS]\"_ — "
-            "without an address the will cannot be generated. "
-            "Tap **Type address** below and paste your full address (street, "
-            "town, postcode, state)."
+            f"⚠️ **{label} is required** to draft the will.\n\n"
+            f"Reply with `{prefix}<your value>` — for example:\n"
+            f"  `{prefix}{example}`"
         )
-        quick = [
-            {'label': '✏️ Type address', 'value': 'address: '},
-            {'label': '↩ Edit other details', 'value': 'change details'},
+        quick: List[Dict[str, str]] = []
+
+        # 🔥 §10x.123 — for the address field, surface family-member
+        # addresses (spouse / son / daughter / parent) as one-click
+        # options. Most testators live with their spouse/children at
+        # the same address.
+        if key == 'residential_address' and identities:
+            seen_addrs = set()
+            family_rels = ('spouse', 'wife', 'husband', 'son', 'daughter',
+                           'father', 'mother')
+            for i in identities:
+                if not isinstance(i, dict):
+                    continue
+                rel = (i.get('relationship') or '').lower()
+                if rel not in family_rels:
+                    continue
+                addr_i = (i.get('address') or '').strip()
+                if not addr_i:
+                    continue
+                # Normalise for dedup (address can have multiline newlines)
+                addr_one_line = ' '.join(addr_i.split())
+                if addr_one_line in seen_addrs:
+                    continue
+                seen_addrs.add(addr_one_line)
+                short = addr_one_line[:50] + ('…' if len(addr_one_line) > 50 else '')
+                quick.append({
+                    'label': f'📍 Same as {rel}: {short}',
+                    'value': f'address: {addr_one_line}',
+                })
+
+        # Gender field — offer Male / Female buttons
+        if key == 'gender':
+            quick.extend([
+                {'label': '👨 Male',   'value': 'gender: Male'},
+                {'label': '👩 Female', 'value': 'gender: Female'},
+            ])
+        # Marital status — common options
+        elif key == 'marital_status':
+            quick.extend([
+                {'label': '💍 Married',  'value': 'marital: Married'},
+                {'label': '◯ Single',   'value': 'marital: Single'},
+                {'label': '⚭ Widowed',  'value': 'marital: Widowed'},
+                {'label': '✕ Divorced', 'value': 'marital: Divorced'},
+            ])
+
+        # Always include the typed-prefix button as a fallback
+        quick.append({
+            'label': f'✏️ Type {label.split(" ")[0].lower()}',
+            'value': prefix,
+        })
+        return '\n\n'.join(parts) + _qr_marker(quick)
+
+    # All REQUIRED fields filled. Ask about SOFT fields if any are
+    # missing — but allow Confirm now since soft fields have defaults.
+    if missing_soft:
+        parts.append(
+            "**All required fields complete.** You can confirm now or add "
+            "marital status / occupation for a more complete will record."
+        )
+        quick: List[Dict[str, str]] = [
+            {'label': '✓ Confirm — proceed',
+             'value': 'confirm'},
         ]
-    else:
-        parts.append("**All correct?**")
-        quick = [
-            {'label': '✓ Confirm', 'value': 'confirm'},
-            {'label': '✏️ Edit address', 'value': f'address: {addr}'},
-        ]
+        for key, label, prefix, example in missing_soft:
+            short = label.split(' ')[0].lower()
+            quick.append({'label': f'✏️ Add {short}', 'value': prefix})
+        return '\n\n'.join(parts) + _qr_marker(quick)
+
+    # All fields complete
+    parts.append("**All correct?**")
+    quick = [
+        {'label': '✓ Confirm', 'value': 'confirm'},
+        {'label': '✏️ Edit address', 'value': f'address: {addr}'},
+    ]
     return '\n\n'.join(parts) + _qr_marker(quick)
 
 
