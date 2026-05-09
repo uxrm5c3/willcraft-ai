@@ -144,6 +144,19 @@ def _score_ic_confidence(name: str, recent_text: str,
     """
     nm = (name or '').strip().upper()
     text_upper = (recent_text or '').upper()
+    # 🔥 §10x.89 — Loose name matching. The IC's full name need not appear
+    # verbatim in the message. If ANY 4+ char token of the name appears
+    # in the message AND a family-role word is near it, that's a match.
+    # Example:
+    #   IC name : "JOSHUA KOID TECK SENG"
+    #   Message : "my son Joshua"
+    #   Token "JOSHUA" appears → match (was previously requiring full
+    #   "JOSHUA KOID TECK SENG" substring → no match → score 0).
+    name_tokens_4plus = []
+    if nm:
+        import re as _re_nt
+        name_tokens_4plus = [t for t in _re_nt.split(r'[\s\-]+', nm)
+                              if len(t) >= 4 and t.isalpha()]
     # 🔥 §10x.87 — NRIC-age tiebreaker for empty-name ICs. When two ICs
     # both have name='' (Tesseract failed on both), upload-time order
     # is the only tiebreaker — which surfaces the OUTSIDER (sister-in-
@@ -166,26 +179,43 @@ def _score_ic_confidence(name: str, recent_text: str,
                 return 2   # better than 1 (outsider) but lower than 3 (name in msg)
     if not nm:
         return 0
+    # Try direct full-name substring match first (highest fidelity)
     if nm in text_upper:
         idx = text_upper.find(nm)
-        # Window: 30 chars before / 60 chars after to catch role tag
-        ctx = text_upper[max(0, idx - 30): idx + len(nm) + 60]
+        match_len = len(nm)
+    else:
+        # 🔥 §10x.89 — Token-overlap loose match. Any 4+ char name
+        # token that appears as a whole word in the message counts as
+        # a hit. We require the longest such token to disambiguate
+        # (avoid 'KOID' alone matching 'KOID BENG SUN' for Joshua).
+        idx = -1
+        match_len = 0
         FAMILY_ROLES = ('SON', 'DAUGHTER', 'WIFE', 'HUSBAND', 'SPOUSE',
                          'FATHER', 'MOTHER', 'BROTHER', 'SISTER')
-        if any(r in ctx for r in FAMILY_ROLES):
-            return 5
-        # Score 4 — co-owner phrasing within 50 chars BEFORE the name
-        # (the phrase precedes the name: "I share with Chai Mei Fun")
-        before = text_upper[max(0, idx - 50): idx]
-        CO_OWNER_PHRASES = ('SHARE WITH', 'JOINT WITH', 'CO-OWNED WITH',
-                             'CO OWNED WITH', 'JOINTLY WITH')
-        if any(p in before for p in CO_OWNER_PHRASES):
-            return 4
-        return 3
-    # Outsider-elimination match (sister-in-law case)
-    if nm in role_matcher_outsider_names:
-        return 1
-    return 0
+        for tok in sorted(name_tokens_4plus, key=len, reverse=True):
+            import re as _re_tok
+            m = _re_tok.search(rf'\b{tok}\b', text_upper)
+            if m:
+                idx = m.start()
+                match_len = len(tok)
+                break
+        if idx < 0:
+            # Outsider-elimination match (sister-in-law case)
+            if nm in role_matcher_outsider_names:
+                return 1
+            return 0
+    # We have a hit at idx. Score by what's around it.
+    ctx = text_upper[max(0, idx - 30): idx + match_len + 60]
+    FAMILY_ROLES = ('SON', 'DAUGHTER', 'WIFE', 'HUSBAND', 'SPOUSE',
+                     'FATHER', 'MOTHER', 'BROTHER', 'SISTER')
+    if any(r in ctx for r in FAMILY_ROLES):
+        return 5
+    before = text_upper[max(0, idx - 50): idx]
+    CO_OWNER_PHRASES = ('SHARE WITH', 'JOINT WITH', 'CO-OWNED WITH',
+                         'CO OWNED WITH', 'JOINTLY WITH')
+    if any(p in before for p in CO_OWNER_PHRASES):
+        return 4
+    return 3
 
 
 def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:

@@ -5664,17 +5664,26 @@ def _try_delete_pending_identity(client_id: str, user_text: str):
 
 
 def _current_stage_num(client_id: str, will) -> int:
-    """🔥 §10x.38 — Numeric current step. Wizard right-pane indicator
-    MUST match what the chat planner is currently asking. Computed from
-    the EXACT same gates the chat planner uses, in the EXACT same order:
+    """🔥 §10x.38 + §10x.88 — Numeric current step. Wizard right-pane
+    indicator MUST match what the chat planner is currently asking.
+    Computed from the EXACT same gates the chat planner uses, in the
+    EXACT same order:
 
-      pending IC                    → 1 (Identity walkthrough)
-      testator not confirmed        → 2 (Confirm Testator)
-      < 1 executor                  → 3 (Executor)
-      no beneficiaries              → 5 (Beneficiaries)
-      pending gifts in walkthrough  → 6 (Specific Gifts)
-      no residuary                  → 7 (Residuary)
-      else                          → 10 (Generate)
+      pending IC                                → 1 (Identity walkthrough)
+      testator data missing OR not confirmed    → 2 (Confirm Testator)
+      < 1 executor OR not confirmed             → 3 (Executor)
+      no beneficiaries OR not confirmed         → 5 (Beneficiaries)
+      pending gifts in walkthrough              → 6 (Specific Gifts)
+      no residuary                              → 7 (Residuary)
+      else                                      → 10 (Generate)
+
+    🔥 §10x.88 — auto-populated steps still require user confirmation.
+    Earlier this function only checked DATA PRESENCE, so the §10x.42
+    reconcile that auto-adds executor / beneficiaries from message
+    context made the planner skip Steps 2/3/5 entirely → user dropped
+    straight to Step 6. Now Steps 2/3/5 require completed_steps
+    markers ('testator_confirmed' / 'executor_confirmed' /
+    'beneficiaries_confirmed') BEFORE advancing past them.
 
     Earlier this function returned 7 when 'assets_confirmed' was in
     completed_steps EVEN IF s5 had 0 saved gifts (walkthrough mid-flight)
@@ -5696,12 +5705,18 @@ def _current_stage_num(client_id: str, will) -> int:
         s1, s2, s4, s5, s6, completed = {}, {}, [], [], {}, []
     if not isinstance(completed, list):
         completed = []
-    if not (s1 or {}).get('full_name'):
-        return 2  # Step 2 Testator
+    # 🔥 §10x.88 — auto-populated steps still require user confirmation.
+    # Per-step gate: data exists AND user confirmed (marker in
+    # completed_steps). Without the second clause, the §10x.42
+    # reconciler that auto-adds executor / beneficiaries from message
+    # context made the planner skip Steps 2/3/5 entirely → user landed
+    # straight on Step 6.
+    if not (s1 or {}).get('full_name') or 'testator_confirmed' not in completed:
+        return 2  # Step 2 Testator (data missing OR awaiting confirm)
     n_exec = len((s2 or {}).get('executors') or [])
-    if n_exec < 1:
+    if n_exec < 1 or 'executor_confirmed' not in completed:
         return 3  # Step 3 Executors
-    if not isinstance(s4, list) or len(s4) == 0:
+    if not isinstance(s4, list) or len(s4) == 0 or 'beneficiaries_confirmed' not in completed:
         return 5  # Step 5 Beneficiaries
     # 🔥 §10x.38 — Pending-gift check overrides 'assets_confirmed' flag.
     # The flag means asset-inventory phase ended; walkthrough may still
@@ -5863,6 +5878,18 @@ def _try_save_beneficiaries(client_id: str, user_text: str):
     if not final:
         return None
     will.step4_data = json.dumps(_serialize(final))
+    # 🔥 §10x.88 — mark Step 5 confirmed so the planner can advance to
+    # Step 6. Without this, auto-populated beneficiaries (via §10x.42)
+    # made the planner skip Step 5 entirely.
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+        if not isinstance(completed, list):
+            completed = []
+        if 'beneficiaries_confirmed' not in completed:
+            completed.append('beneficiaries_confirmed')
+            will.completed_steps = json.dumps(completed)
+    except Exception:
+        pass
     db.session.commit()
     names = ', '.join(p.full_name for p in final)
     return {'name': names, 'role': f'{len(final)} beneficiaries', 'kind': 'beneficiaries'}
@@ -9386,6 +9413,18 @@ def _try_confirm_testator(client_id: str, user_text: str):
         if testator.nric_passport:
             client.nric_passport = testator.nric_passport
         will.title = f"Will of {testator.full_name or 'Unknown'}"
+    # 🔥 §10x.88 — mark Step 2 confirmed so _current_stage_num can
+    # advance past it. Without this, auto-populated executor (via
+    # §10x.42) made the planner skip from Step 1 → Step 6.
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+        if not isinstance(completed, list):
+            completed = []
+        if 'testator_confirmed' not in completed:
+            completed.append('testator_confirmed')
+            will.completed_steps = json.dumps(completed)
+    except Exception:
+        pass
     db.session.commit()
     return {
         'name': testator.full_name,
@@ -9470,6 +9509,20 @@ def _try_save_executor(client_id: str, user_text: str):
     s2['executor_type'] = 'joint' if len(executors) > 1 else 'single'
     s2['trustee_data'] = s2.get('trustee_data') or {'same_as_executor': True, 'trustees': [{}]}
     will.step2_data = json.dumps(s2)
+    # 🔥 §10x.88 — mark Step 3 confirmed when a substitute is picked OR
+    # when only one executor is needed and the user explicitly chose
+    # them (not the §10x.42 reconcile auto-add). The marker advances
+    # _current_stage_num past Step 3.
+    if role == 'substitute' or s2.get('_substitute_skipped'):
+        try:
+            completed = json.loads(will.completed_steps or '[]')
+            if not isinstance(completed, list):
+                completed = []
+            if 'executor_confirmed' not in completed:
+                completed.append('executor_confirmed')
+                will.completed_steps = json.dumps(completed)
+        except Exception:
+            pass
     db.session.commit()
     return {'name': chosen.full_name, 'role': f'{role} executor', 'kind': 'executor'}
 

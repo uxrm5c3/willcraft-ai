@@ -5506,14 +5506,16 @@ def _compute_next_step_label(will_data: Dict[str, Any]) -> str:
             except Exception:
                 pass
 
-    # Step 3 — executors
+    # 🔥 §10x.88 — Step 3/5 require user confirmation, not just data
+    # presence. Auto-population by §10x.42 reconcile must not skip the
+    # user's review.
     n_exec = len((s2.get('executors') or []))
-    if n_exec < 1:
+    if n_exec < 1 or 'executor_confirmed' not in completed:
         return 'Step 3: Executor'
     # Step 4 — guardians (skip if no minor children declared)
     # (We don't track guardian-needed flag here — best-effort label only)
     # Step 5 — beneficiaries
-    if not s4:
+    if not s4 or 'beneficiaries_confirmed' not in completed:
         return 'Step 5: Beneficiaries'
     # Step 6 — specific gifts walkthrough
     if 'assets_confirmed' not in completed:
