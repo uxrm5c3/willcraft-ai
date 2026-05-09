@@ -10581,18 +10581,35 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
             )
             db.session.add(asst_msg)
             db.session.flush()
-            # 🔥 §10x.63 — post-insert dedup for intake card. If another
-            # processor already posted an "exhibits received" message
-            # before ours, delete self.
+            # 🔥 §10x.63 — post-insert dedup for intake card. The hazard
+            # is two concurrent processors both posting the same card
+            # for the SAME user_msg ~ms apart. The dedup window must be
+            # tight or it eats legitimate follow-up cards.
+            #
+            # 🔥 §10x.78 — Earlier this dedup deleted ANY new "exhibits
+            # received" card whenever the session had ever posted one,
+            # which silently lost intake cards for follow-up emails (a
+            # 2nd email arrives hours after the first; its 2 new docs
+            # get processed and the intake card is created — then this
+            # dedup deletes it because the morning's card still matches
+            # the LIKE query). Fix: only dedup against cards posted
+            # WITHIN 30 seconds AND for the same user_msg's window
+            # (created_at >= user_msg.created_at).
             reply_text = plan.get('reply', '')
             if 'exhibits received' in reply_text or 'Asset inventory' in reply_text:
                 try:
                     from sqlalchemy import or_ as _or_op
+                    from datetime import timedelta as _td
                     _earlier = (ChatMessage.query
                                 .filter(ChatMessage.session_id == cs.id,
                                          ChatMessage.role == 'assistant',
                                          ChatMessage.id != asst_msg.id,
-                                         ChatMessage.created_at < asst_msg.created_at)
+                                         # Only dedup within the same user_msg's
+                                         # window — earlier cards from older
+                                         # forwards are NOT duplicates of this one.
+                                         ChatMessage.created_at >= user_msg.created_at,
+                                         ChatMessage.created_at < asst_msg.created_at,
+                                         ChatMessage.created_at >= asst_msg.created_at - _td(seconds=30))
                                 .filter(_or_op(
                                     ChatMessage.content.ilike('%exhibits received%'),
                                     ChatMessage.content.ilike('%Asset inventory%'),
