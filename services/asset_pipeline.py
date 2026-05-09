@@ -293,8 +293,20 @@ def parse_canonical_assets(client_id: str) -> List[AssetItem]:
             fields.setdefault('negeri', bridged[2])
 
         # §10hf web-clues: building name, type, postcode, etc.
-        if web_clues_fn:
-            clues = web_clues_fn(fields.get('address') or fields.get('name') or '')
+        # 🔥 §10x.107 — only call web_search when it's actually NEEDED.
+        # Web search costs ~$0.063/call (token + $0.01 web_search fee).
+        # SKIP when we already have enough signal to bind:
+        #   - mukim known (via §10ha bridge or AI Summary) AND
+        #   - either lot OR title number present (Tier A will succeed)
+        # In those cases Tier A/B can match without web_clues, so calling
+        # web_search is pure cost waste. Cache hits are free (§10x.104)
+        # but cache misses pay the full price.
+        _addr_for_clues = fields.get('address') or fields.get('name') or ''
+        _has_mukim = bool(fields.get('mukim'))
+        _has_lot_or_title = bool(fields.get('lot') or fields.get('title'))
+        _need_web_clues = bool(_addr_for_clues) and not (_has_mukim and _has_lot_or_title)
+        if web_clues_fn and _need_web_clues:
+            clues = web_clues_fn(_addr_for_clues)
             if clues:
                 if clues.get('building_name'):
                     fields['_web_building'] = clues['building_name']

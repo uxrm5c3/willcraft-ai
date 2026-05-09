@@ -167,11 +167,23 @@ def _normalise_clues_cache_key(address: str) -> str:
     """Same normalisation pattern as services/geo_resolver._normalise_address_for_cache:
     lowercase, drop unit/block/level prefixes, strip punctuation, collapse
     whitespace. Two slightly different spellings of the same address get
-    one cache slot."""
+    one cache slot.
+
+    🔥 §10x.107 — also strip OCR-extractor noise suffixes like
+    '(from doc extract)' / '(from extract)' / '(from ocr)' / '(unreadable)'
+    so doc-OCR addresses share cache keys with the corresponding AI
+    Summary addresses. Without this, every cache lookup for a doc
+    address misses (costing $0.063 each) even though the AI Summary
+    address is already cached for the same physical property.
+    """
     if not address:
         return ''
     import re
     s = address.lower()
+    # Strip OCR/extractor noise suffixes BEFORE other normalisation so
+    # punctuation removal doesn't fragment them.
+    s = re.sub(r'\((?:from\s+)?(?:doc[\s_]extract|ocr|extract|unreadable|blurred|not\s+visible)[^)]*\)',
+               '', s)
     s = re.sub(r'\b(unit|block|level|floor|no\.?|tower|menara|blok)\b', '', s)
     s = re.sub(r'[^a-z0-9 ]+', ' ', s)
     s = re.sub(r'\s+', ' ', s).strip()
