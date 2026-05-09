@@ -4852,6 +4852,19 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
                 )
                 if _gate:
                     return _gate
+                # Gate returned None — auto-skip path bulk-cleared docs.
+                # Recurse with fresh pending_gifts so we render the next
+                # actionable card (typically an H3 placeholder).
+                if 'assets_inventory_confirmed' in (
+                        (will_data or {}).get('completed_steps') or []):
+                    try:
+                        from services.gift_walker import (
+                            get_pending_gift_documents as _gpd)
+                        return _asset_walkthrough_question(
+                            _gpd(_client_id), recent_text, will_data
+                        )
+                    except Exception:
+                        pass
             except Exception:
                 pass
             return _walkthrough_property_unverified_card(target)
@@ -4872,6 +4885,17 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
                     )
                     if _gate:
                         return _gate
+                    # Gate auto-skipped — recurse to next pending
+                    if 'assets_inventory_confirmed' in (
+                            (will_data or {}).get('completed_steps') or []):
+                        try:
+                            from services.gift_walker import (
+                                get_pending_gift_documents as _gpd)
+                            return _asset_walkthrough_question(
+                                _gpd(_client_id), recent_text, will_data
+                            )
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 return _orphan_card
@@ -5758,40 +5782,58 @@ def _maybe_inventory_gate_card(
         return None
     completed = (will_data or {}).get('completed_steps') or []
 
-    # 🔥 §10x.127 — once user said YES once, every future "can't identify"
-    # doc auto-skips silently. We return a tiny ack message and tag the doc
-    # `_skipped_not_in_will=True` so gift_walker drops it on the next turn.
-    if 'assets_inventory_confirmed' in completed and target:
-        doc_id = target.get('document_id') or ''
-        if doc_id:
+    # 🔥 §10x.127 — once user said YES once, EVERY remaining isolated /
+    # unbound property doc gets auto-skipped in one shot, not one-per-turn.
+    # We compute the bound-doc set from the pipeline; everything else gets
+    # `_skipped_not_in_will=True`. Returns None so the caller can render
+    # the next pending card (H3 confirm, etc.) immediately.
+    if 'assets_inventory_confirmed' in completed:
+        try:
+            from database import db as _db, Document as _Doc
+            from services.asset_pipeline import (parse_canonical_assets,
+                                                  group_documents,
+                                                  bind_assets)
+            items = parse_canonical_assets(client_id)
+            groups = group_documents(client_id)
+            bindings = bind_assets(items, groups)
+            bound_group_ids = {b.group_id for b in bindings
+                               if b.tier in ('A', 'B', 'C')}
+            bound_doc_ids = set()
+            for g in groups:
+                if g.group_id in bound_group_ids:
+                    for did in g.document_ids:
+                        bound_doc_ids.add(did)
+            all_docs = _Doc.query.filter_by(
+                client_id=client_id, category='property_title'
+            ).all()
+            for _d in all_docs:
+                try:
+                    _ex = (json.loads(_d.extracted_data)
+                           if _d.extracted_data else {})
+                except Exception:
+                    _ex = {}
+                if not isinstance(_ex, dict):
+                    _ex = {}
+                if _ex.get('_inventoried') or _ex.get('_skipped_not_in_will'):
+                    continue
+                if _d.id in bound_doc_ids:
+                    continue
+                _ex['_inventoried'] = True
+                _ex['_skipped_not_in_will'] = True
+                _ex['_auto_skipped_reason'] = (
+                    'inventory already confirmed; bulk auto-skipped '
+                    '(§10x.127)')
+                _d.extracted_data = json.dumps(_ex)
             try:
-                from database import db as _db, Document as _Doc
-                _d = _db.session.get(_Doc, doc_id)
-                if _d:
-                    try:
-                        _ex = (json.loads(_d.extracted_data)
-                               if _d.extracted_data else {})
-                    except Exception:
-                        _ex = {}
-                    if not isinstance(_ex, dict):
-                        _ex = {}
-                    _ex['_inventoried'] = True
-                    _ex['_skipped_not_in_will'] = True
-                    _ex['_auto_skipped_reason'] = (
-                        'inventory already confirmed; extra image '
-                        'auto-skipped (§10x.127)')
-                    _d.extracted_data = json.dumps(_ex)
-                    try:
-                        _db.session.commit()
-                    except Exception:
-                        _db.session.rollback()
+                _db.session.commit()
             except Exception:
-                pass
-        return {
-            'text': ("_(extra image auto-skipped — your asset inventory "
-                     "is already confirmed)_"),
-            '_auto_skipped': True,
-        }
+                _db.session.rollback()
+        except Exception:
+            pass
+        # Return None so the caller falls through to render the next
+        # pending card naturally. The skipped docs are now filtered by
+        # gift_walker for the rest of this request (uncached query).
+        return None
 
     ex = target.get('extracted') or {} if target else {}
     fname = (target.get('original_filename') if target else '') or 'this image'
