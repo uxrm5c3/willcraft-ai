@@ -4991,6 +4991,107 @@ pipeline raises every time bad data flows through it.
 
 ---
 
+### 10x.76  🔥 BURN-IN — AI Summary uses Document EXTRACTS 🔥
+
+**The AI Summary parser MUST receive every uploaded property doc's
+extracted fields (lot/title/mukim/daerah/negeri/owner/title_type) as
+context — not just the raw message text.** Without this, the summary
+asks the user to "obtain full PTD/Lot numbers from property documents"
+even though the vision extractor already pulled those numbers from the
+uploaded title images.
+
+Hard rule: anywhere `_summarise_message` is called with substantive
+docs available, the caller MUST gather Document.extracted_data from
+property-class docs (`property_title`, `property_spa`, `property_tax`,
+`property_transfer`, `loan_agreement`, `bank_statement`, `insurance`,
+`vehicle`, `nric`) and pass via `doc_fields=[…]`. The cache key
+includes `doc_fields` so different image sets get different summaries.
+
+Where enforced: `ai/chat_planner.py::_summarise_message`,
+`app.py::_process_inbound_message_async_inner`,
+`app.py::_post_ai_summary` (chat reset).
+
+Litmus: AI Summary should NEVER output "obtain full PTD/Lot numbers
+from property documents" when at least one `property_title` /
+`property_spa` doc has non-empty `lot_number` in extracted_data. If it
+does, the caller forgot to pass `doc_fields`.
+
+---
+
+### 10x.77  🔥🔥🔥 BURN-IN — NO MACHINE LANGUAGE in user-facing UI 🔥🔥🔥
+
+**Two non-negotiable rules:**
+
+#### Rule A: AI Summary states FACTS only — no follow-up questions
+
+The AI Summary card has exactly two sections:
+  1. **What was communicated** — paraphrase of what the sender wrote
+  2. **What we deduce** — interpreted assets/beneficiaries/relations
+
+It must NOT contain:
+  ❌ "Key Flags for Follow-up"
+  ❌ "Issues Requiring Clarification"
+  ❌ "Confirm…", "Verify…", "Clarify…" prompts
+  ❌ "❓ Ambiguous: Obtain X from Y" requests
+
+Clarifications happen LATER, in the per-step walkthrough cards (Step 1
+IC card → Step 2 Testator confirm → Step 3 Executor → Step 5
+Beneficiaries → Step 6 Specific Gifts → conflict cards). Each
+clarification is asked ONCE, in context, with the relevant evidence
+quoted, with action buttons.
+
+The summary's purpose is to MIRROR what was understood so the user
+can verify at-a-glance. Asking questions in the summary creates a
+parallel decision channel that competes with the walkthrough — the
+user ends up unsure whether to answer in the summary card or wait for
+the walkthrough.
+
+Where enforced: prompt of `_summarise_message` in `ai/chat_planner.py`.
+
+Litmus: search the rendered AI Summary content for the strings
+`"Key Flags"`, `"Follow-up"`, `"Issues Requiring"`. Any match = bug.
+
+#### Rule B: Internal markers MUST be scrubbed before leaving the API
+
+Backend code uses HTML-comment markers to track state:
+  - `<!--_summary_hash:…-->`  — input hash for DB cache lookup
+  - `<!--_property_match_hint:…-->`  — planner pivot signal
+  - `<!--_added_by:…-->`  — reconciliation audit trail
+  - any future `<!--…-->` we introduce
+
+These MUST be invisible to the user. They appear inside the DB
+content (where backend logic reads them) but the API serializer
+strips them before sending to the frontend. The ONE exception:
+`<!--quickreplies:[…]-->` is parsed by chat.js to render action
+buttons, so it survives the scrub.
+
+Where enforced: `app.py::_serialise_chat_message` runs the scrub on
+every outgoing message. Any new internal marker we add inherits this
+behaviour automatically — no per-marker change needed.
+
+Litmus: open a chat, view the rendered text. `<!--…-->` of any kind
+must NOT appear in the visible text. If you see one, either the
+serializer regressed OR the frontend is reading content from a path
+that bypasses `_serialise_chat_message`.
+
+#### Rule C (corollary): every new feature checks against §10x.77
+
+Anyone adding a new card, prompt template, or planner branch must:
+  1. Confirm the user-facing text contains zero `<!--…-->` blocks
+     (the scrubber handles this for free)
+  2. Confirm the user-facing text contains zero "please confirm",
+     "please verify", "please provide" prompts UNLESS that prompt
+     IS the card's intended call-to-action with quickreply buttons
+     attached
+  3. Confirm follow-up clarifications are scheduled for a later step,
+     not stuffed into a summary or aggregate card
+
+If the rule blocks a legitimate need (e.g. a debug message visible to
+internal users), gate it behind `app.config['DEV']` or remove it
+before shipping. Production users see no machine language, ever.
+
+---
+
 ### 10x.11  Operational test pipeline (verify no duplicates)
 
 After deploying any inbound-pipeline change, run the smell test and

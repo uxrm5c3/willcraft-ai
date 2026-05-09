@@ -3438,10 +3438,39 @@ def _serialise_chat_message(m):
                 'suspected_wrong': _suspected,
                 'wrong_reason': _wrong_reason,
             })
+    # 🔥 §10x.77 — Strip MACHINE-LANGUAGE markers from user-facing content.
+    # The DB content can contain internal markers used by backend logic
+    # (cache hashes, dedup tags, planner pivots). They MUST never reach
+    # the user UI. EXCEPTION: <!--quickreplies:[...]--> — chat.js parses
+    # this to render the action buttons, so it stays.
+    _content = m.content or ''
+    if _content:
+        # Remove every HTML comment EXCEPT quickreplies marker
+        def _scrub(text):
+            out = []
+            i = 0
+            while i < len(text):
+                start = text.find('<!--', i)
+                if start < 0:
+                    out.append(text[i:]); break
+                out.append(text[i:start])
+                end = text.find('-->', start)
+                if end < 0:
+                    out.append(text[start:]); break
+                comment = text[start:end + 3]
+                if 'quickreplies:' in comment:
+                    out.append(comment)   # keep — chat.js needs it
+                # else: drop silently
+                i = end + 3
+            return ''.join(out)
+        _content = _scrub(_content)
+        # Tidy any double-blank lines the scrub left behind
+        import re as _re_md
+        _content = _re_md.sub(r'\n{3,}', '\n\n', _content).rstrip() + '\n'
     return {
         'id': m.id,
         'role': m.role,
-        'content': m.content or '',
+        'content': _content,
         'attachments': attachments,
         'clarifying_questions': _j(m.clarifying_questions_json, []),
         'proposed_patch': _j(m.proposed_patch_json, None),
