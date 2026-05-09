@@ -490,6 +490,49 @@ def make_web_resolver(claude_client) -> Callable[[str], Optional[GeoResult]]:
     import json
 
     def _query(text: str) -> Optional[GeoResult]:
+        # 🔥 §10x.112 — input guard: reject obvious non-addresses BEFORE
+        # spending an API call or polluting the cache. Caller should
+        # only invoke with canonical address text. Junk inputs observed
+        # in the wild: "son 50 50" (beneficiary clause), "executor my
+        # sister in law tel 6016 7338764" (role mention), bank account
+        # numbers, etc. Cheapest filter: needs ≥3 words AND at least one
+        # geographic hint token.
+        _t = (text or '').strip().lower()
+        if not _t:
+            return None
+        _word_count = len(_t.split())
+        # Quick reject: too short to be an address (< 3 words)
+        if _word_count < 3:
+            return None
+        # Quick reject: "son X Y", "wife Y", "executor X" — beneficiary
+        # / role chatter that leaked from message-text parsing
+        _bad_starts = ('son ', 'daughter ', 'wife ', 'husband ', 'spouse ',
+                       'father ', 'mother ', 'brother ', 'sister ',
+                       'executor ', 'witness ', 'guardian ', 'trustee ',
+                       'beneficiary ', 'co-owner ', 'co owner ')
+        if any(_t.startswith(p) for p in _bad_starts):
+            return None
+        # Quick reject: pure account-number / phone-number text
+        import re as _re_g
+        _digit_count = len(_re_g.findall(r'\d', _t))
+        if _digit_count > 0 and _digit_count >= len(_t.replace(' ', '')) * 0.5:
+            return None  # >50% digits → probably a number, not an address
+        # Geographic hint required: at least one Malaysian-address token
+        _hints = ('jalan', 'lorong', 'lebuh', 'persiaran', 'taman',
+                  'bandar', 'kampung', 'lot ', 'mukim', 'daerah',
+                  'condominium', 'apartment', 'menara', 'block',
+                  'unit ', 'no.', 'no ', 'house', 'shop', 'plot',
+                  'medini', 'paradiso', 'marina', 'laguna', 'sri ',
+                  'seri ', 'putra', 'gunung', 'pulai', 'plentong',
+                  'tebrau', 'masai', 'pasir gudang', 'iskandar',
+                  'penang', 'georgetown', 'butterworth', 'bayan',
+                  'klang', 'shah alam', 'subang', 'damansara',
+                  'kajang', 'cheras', 'kuala lumpur', 'kl', 'pj')
+        # Also accept if a 5-digit postcode is present
+        if _re_g.search(r'\b\d{5}\b', _t):
+            pass  # postcode is enough signal
+        elif not any(h in _t for h in _hints):
+            return None  # no geographic signal → not an address
         cache_key = _normalise_address_for_cache(text)
         if cache_key and cache_key in _ADDR_CACHE_HITS:
             return _ADDR_CACHE_HITS[cache_key]
