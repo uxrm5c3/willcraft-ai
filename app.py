@@ -5512,18 +5512,79 @@ _DELETE_TOKENS = ('delete', 'remove', 'wrong', 'discard', 'trash', 'irrelevant',
 
 
 def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
-    """If `doc` is an IC whose extracted name OR NRIC matches another nric
-    Document for this client, mark `doc` as 'duplicate' and return True.
-    Caller should skip emitting this doc as an artifact.
+    """If `doc` is an IC whose extracted name / NRIC / ADDRESS matches an
+    existing Person row OR another nric Document for this client, mark
+    `doc` as 'duplicate' and return True. Caller should skip emitting
+    this doc as an artifact.
 
-    Match by NRIC (most reliable) OR by name (in case NRIC was unreadable).
+    🔥 §10x.85 — three signals checked, ANY match dedups:
+      (a) NRIC equal (digit-strip) — same IC card
+      (b) Name equal (uppercase strict) — same person
+      (c) Address fuzzy match (≥3 distinctive 4+ char tokens shared,
+          + postcode bonus) — back-of-IC of an already-known person
+          (the back has only address, NOT name/NRIC, so without (c)
+          we miss back-of-IC dedup for ICs uploaded via email)
+
+    Checks against BOTH:
+      - Existing Person rows (already-confirmed via Step 1 walkthrough)
+      - Other nric Documents (front+back uploaded in same batch)
+
+    Without these checks, a 2nd email carrying the back of an
+    already-confirmed person's IC creates a brand-new pending IC card
+    asking the user to identify someone they've already verified.
     """
     if not extracted:
         return False
     name = (extracted.get('full_name') or '').strip().upper()
-    nric = (extracted.get('nric_number') or '').strip()
-    if not name and not nric:
+    nric_raw = (extracted.get('nric_number') or '').strip()
+    nric_digits = re.sub(r'\D', '', nric_raw)
+    address = (extracted.get('address') or '').strip().upper()
+    if not (name or nric_digits or address):
         return False
+
+    def _addr_tokens(addr: str) -> set:
+        return set(t for t in re.split(r'[\s,/\-]+', addr or '')
+                    if len(t) >= 4 and not t.isdigit())
+
+    def _addr_matches(a: str, b: str) -> bool:
+        if not a or not b:
+            return False
+        ta, tb = _addr_tokens(a), _addr_tokens(b)
+        shared = len(ta & tb)
+        # Postcode bonus
+        pa = re.search(r'\b\d{5}\b', a)
+        pb = re.search(r'\b\d{5}\b', b)
+        if pa and pb and pa.group(0) == pb.group(0):
+            shared += 1
+        return shared >= 3
+
+    # ── Check against existing Person rows (already confirmed) ──────
+    try:
+        persons = Person.query.filter_by(client_id=client_id).all()
+    except Exception:
+        persons = []
+    for p in persons:
+        p_name = (p.full_name or '').strip().upper()
+        p_nric_digits = re.sub(r'\D', '', (p.nric_passport or '').strip())
+        p_addr = (p.address or '').strip().upper()
+        if (nric_digits and p_nric_digits and nric_digits == p_nric_digits) \
+           or (name and p_name and name == p_name) \
+           or _addr_matches(address, p_addr):
+            doc.category = 'duplicate'
+            doc.description = f'(duplicate of {p.full_name})'
+            try:
+                ed = json.loads(doc.extracted_data) if doc.extracted_data else {}
+            except Exception:
+                ed = {}
+            ed['_already_known'] = True
+            ed['_matched_person_id'] = p.id
+            ed['_skip_reason'] = ('nric_match' if nric_digits and p_nric_digits and nric_digits == p_nric_digits
+                                   else 'name_match' if name and p_name and name == p_name
+                                   else 'address_match')
+            doc.extracted_data = json.dumps(ed)
+            return True
+
+    # ── Check against other nric Documents (sibling batch dedup) ────
     siblings = Document.query.filter(
         Document.client_id == client_id,
         Document.category == 'nric',
@@ -5535,8 +5596,11 @@ def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
         except (json.JSONDecodeError, TypeError):
             sib_ex = {}
         sib_name = (sib_ex.get('full_name') or '').strip().upper()
-        sib_nric = (sib_ex.get('nric_number') or '').strip()
-        if (nric and sib_nric and nric == sib_nric) or (name and sib_name and name == sib_name):
+        sib_nric_digits = re.sub(r'\D', '', (sib_ex.get('nric_number') or '').strip())
+        sib_addr = (sib_ex.get('address') or '').strip().upper()
+        if (nric_digits and sib_nric_digits and nric_digits == sib_nric_digits) \
+           or (name and sib_name and name == sib_name) \
+           or _addr_matches(address, sib_addr):
             doc.category = 'duplicate'
             doc.description = f'(duplicate of {sib.original_filename or sib.id[:8]})'
             return True
