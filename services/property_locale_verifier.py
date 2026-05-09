@@ -49,6 +49,24 @@ def _cache_set(k: str, body: str):
         oldest = min(_CACHE.items(), key=lambda kv: kv[1][0])[0]
         _CACHE.pop(oldest, None)
     _CACHE[k] = (time.time(), body)
+    # 🔥 §10x.109 — also persist to DB so the verdict survives gunicorn
+    # worker recycle / redeploy. body='' (locale OK) is just as valuable
+    # to cache as a real warning.
+    try:
+        from database import db, VisionExtractCache
+        row = VisionExtractCache(
+            content_hash=f'locale:{k}',
+            call_kind='property_locale_verifier_v1',
+            extracted_json=body or '',
+        )
+        db.session.merge(row)
+        db.session.commit()
+    except Exception:
+        try:
+            from database import db as _db
+            _db.session.rollback()
+        except Exception:
+            pass
 
 
 def verify_locale(address: str = '', mukim: str = '', daerah: str = '',
@@ -70,6 +88,25 @@ def verify_locale(address: str = '', mukim: str = '', daerah: str = '',
     hit = _cache_get(k)
     if hit is not None:
         return hit
+
+    # 🔥 §10x.109 — DB-backed cache layer survives gunicorn worker
+    # recycle / container restart / redeploy. Same pattern as §10x.74
+    # (geo_resolver) and §10x.104 (web_property_clues). Locale doesn't
+    # change, so cached verdicts are valid indefinitely.
+    try:
+        from database import db, VisionExtractCache
+        row = db.session.query(VisionExtractCache).filter_by(
+            content_hash=f'locale:{k}',
+            call_kind='property_locale_verifier_v1',
+        ).first()
+        if row is not None:
+            cached_body = row.extracted_json or ''
+            # Persist to in-process cache so subsequent calls in this
+            # process skip the DB hit too.
+            _cache_set(k, cached_body)
+            return cached_body
+    except Exception:
+        pass
 
     parts = [f"Address: {address}"]
     if mukim:  parts.append(f"Mukim claimed: {mukim}")
@@ -100,6 +137,9 @@ No preface, no other text. If unsure, respond OK."""
         msg = client.messages.create(
             model=CLAUDE_MODEL_CHEAP,
             max_tokens=200,
+            # 🔥 §10x.99 — deterministic verdict. Same address+mukim
+            # always returns the same OK/WARN result.
+            temperature=0,
             tools=[{
                 'type': 'web_search_20250305',
                 'name': 'web_search',
