@@ -4646,9 +4646,36 @@ def _api_chat_message_impl(client_id):
                 f'user_text={_user_text_clean[:120]!r} — emitting recovery card')
         except Exception:
             pass
+        # 🔥 §10x.126 + §10x.127 — read the previous assistant card's
+        # quickreplies marker and pass it INTO the recovery card so the
+        # buttons render alongside the "I didn't understand" hint.
+        # Without this, the recovery card becomes the latest assistant
+        # message → chat.js renders quickreplies only on the latest →
+        # the previous question's buttons disappear → user sees the
+        # hint "Tap ✅ Accept / ⏭ Skip / 🗑 Remove" but THERE ARE NO
+        # BUTTONS to tap. User feedback: "there is no button to tap".
+        _prev_qr_marker = ''
+        try:
+            _prev_cs = (ChatSession.query
+                        .filter_by(client_id=client_id)
+                        .order_by(ChatSession.created_at.desc()).first())
+            if _prev_cs:
+                _prev_msg = (ChatMessage.query.filter_by(
+                                session_id=_prev_cs.id, role='assistant')
+                             .order_by(ChatMessage.created_at.desc())
+                             .first())
+                if _prev_msg and _prev_msg.content:
+                    _qr_match = re.search(
+                        r'<!--quickreplies:(\[[\s\S]*?\])-->',
+                        _prev_msg.content)
+                    if _qr_match:
+                        _prev_qr_marker = _qr_match.group(0)
+        except Exception:
+            pass
         will_snapshot['_no_op_recovery'] = {
-            'intent':    _last_intent,
-            'user_text': _user_text_clean[:200],
+            'intent':           _last_intent,
+            'user_text':        _user_text_clean[:200],
+            'prev_qr_marker':   _prev_qr_marker,
         }
     will_snapshot['pending_gifts'] = pending_gifts
     will_snapshot['layer2_pending_props'] = _get_layer2_pending_props(client_id)

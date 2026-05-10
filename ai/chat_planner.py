@@ -161,13 +161,21 @@ _NO_OP_HINTS = {
 
 def _emit_no_op_recovery_card(no_op: Dict[str, Any],
                                current_will_data: Dict[str, Any]) -> Dict[str, Any]:
-    """🔥 §10x.126 — emit the recovery card.
+    """🔥 §10x.126 + §10x.127 — emit the recovery card.
 
-    Returns the same shape as plan_turn: dict with reply, clarifying_questions,
-    proposed_patch, advice, focus_attachments.
+    The recovery card text includes the previous question's quickreply
+    marker so the SAME buttons render right next to the "I didn't
+    understand" hint. Without this, the recovery card becomes the
+    latest assistant message → chat.js renders quickreplies only on
+    the latest → previous question's buttons disappear → user sees
+    "Tap ✅ Accept / ⏭ Skip / 🗑 Remove" but THERE ARE NO BUTTONS to
+    tap. User feedback: "there is no button to tap" (§10x.127).
+
+    Returns the same shape as plan_turn.
     """
     intent = (no_op.get('intent') or 'unknown').strip()
     user_text = (no_op.get('user_text') or '').strip()
+    prev_qr_marker = (no_op.get('prev_qr_marker') or '').strip()
     hint = _NO_OP_HINTS.get(intent, (
         "I couldn't determine what to do with your reply. Please use "
         "one of the buttons above, or describe more clearly what you'd "
@@ -178,10 +186,15 @@ def _emit_no_op_recovery_card(no_op: Dict[str, Any],
         f"⚠️ **I didn't understand your reply** — `{short_text}`",
         hint,
         "_If you keep seeing this message, the previous question is "
-        "still waiting for your input. Use one of the buttons or rephrase._",
+        "still waiting for your input. Use one of the buttons below or "
+        "rephrase._",
     ]
+    body = '\n\n'.join(parts)
+    # Append previous quickreply marker — buttons render on this card
+    if prev_qr_marker:
+        body = body + '\n\n' + prev_qr_marker
     return {
-        'reply':                '\n\n'.join(parts),
+        'reply':                body,
         'ack_reply':            '',
         'clarifying_questions': [],
         'proposed_patch':       None,
