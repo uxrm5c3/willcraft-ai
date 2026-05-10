@@ -9000,6 +9000,70 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
     entry['beneficiaries'] = entry.get('beneficiaries') or []
     entry['_ai_summary_idx'] = h3_idx
     entry['_layer1_confirmed'] = True if is_confirm else entry.get('_layer1_confirmed', False)
+
+    # 🔥 §10x.150 — Pre-populate Layer 2 + co_owners + testator_share
+    # from the AI Summary's structured `beneficiaries[]` and
+    # `ownership_struct` (when JSON footer present). Without this, an
+    # H3-skipped property saves with bens=[] and the user-visible
+    # wizard shows "missing beneficiary" even though the AI Summary
+    # had a clear distribution. Also covers H3-confirm path so the gift
+    # has full distribution from the start without needing a separate
+    # Layer 2 turn.
+    try:
+        _ap = ai_props[h3_idx] if h3_idx < len(ai_props) else None
+        if _ap:
+            # Beneficiaries from JSON footer (structured)
+            _ap_bens = _ap.get('beneficiaries') or []
+            if not entry['beneficiaries'] and isinstance(_ap_bens, list) and _ap_bens:
+                _norm_bens = []
+                _allocs = []
+                for b in _ap_bens:
+                    if not isinstance(b, dict): continue
+                    nm = (b.get('name') or '').strip()
+                    sh = str(b.get('share_of_testator') or b.get('share') or '').strip()
+                    if not nm: continue
+                    # Normalise share: '50%' → '1/2', '100%' → '1/1'
+                    sh_norm = sh
+                    pct_m = re.match(r'(\d+)\s*%\s*$', sh)
+                    if pct_m:
+                        n_pct = int(pct_m.group(1))
+                        if n_pct == 100: sh_norm = '1/1'
+                        elif n_pct == 50: sh_norm = '1/2'
+                        elif n_pct == 25: sh_norm = '1/4'
+                        elif n_pct == 33: sh_norm = '1/3'
+                        elif n_pct == 67: sh_norm = '2/3'
+                        elif n_pct == 75: sh_norm = '3/4'
+                    _norm_bens.append({'name': nm, 'share': sh_norm or '1/1'})
+                    _allocs.append({'beneficiary_name': nm, 'share': sh_norm or '1/1', 'role': 'MB'})
+                # If multiple bens with no shares, distribute equally
+                if _norm_bens and all(b['share'] == '1/1' for b in _norm_bens) and len(_norm_bens) > 1:
+                    eq = f'1/{len(_norm_bens)}'
+                    for b in _norm_bens: b['share'] = eq
+                    for a in _allocs: a['share'] = eq
+                entry['beneficiaries'] = _norm_bens
+                entry['allocations'] = _allocs
+            # Ownership from structured dict
+            _own_struct = _ap.get('ownership_struct') or {}
+            if isinstance(_own_struct, dict):
+                pi_e = entry.setdefault('property_info', {})
+                if not pi_e.get('testator_share') and _own_struct.get('testator_share'):
+                    pi_e['testator_share'] = str(_own_struct.get('testator_share'))
+                    entry['testator_share'] = pi_e['testator_share']
+                if not pi_e.get('co_owners') and _own_struct.get('co_owner'):
+                    pi_e['co_owners'] = [str(_own_struct.get('co_owner'))]
+                if not pi_e.get('ownership_type'):
+                    _ot = (_own_struct.get('type') or '').lower()
+                    if _ot == 'sole': pi_e['ownership_type'] = 'Sole'
+                    elif _ot == 'joint': pi_e['ownership_type'] = 'Joint'
+            # Lot/title/mukim from JSON if missing on entry
+            pi_e = entry.setdefault('property_info', {})
+            for k_dst, k_src in [('lot_number', 'lot'), ('title_number', 'title'),
+                                  ('mukim', 'mukim'), ('daerah', 'daerah'),
+                                  ('negeri', 'negeri')]:
+                if not pi_e.get(k_dst) and _ap.get(k_src):
+                    pi_e[k_dst] = str(_ap.get(k_src))
+    except Exception:
+        pass
     # 🔥 §10x.137 — overlay web-resolved address into the gift if user
     # confirmed via "✅ Use this address" button. The web search returned
     # a canonical address (e.g. 'Paradiso Nuova, Bandar Medini Iskandar,
@@ -9656,6 +9720,34 @@ def _try_save_bank_layered_gift(client_id, user_text):
             'substitute_mode':     None,
             'substitute_specific': None,
         }
+        # 🔥 §10x.150 — Pre-populate Layer 2 beneficiaries from AI Summary
+        # structured `beneficiaries[]` (JSON footer). If the user confirms
+        # L1 and the AI Summary has clear distribution intent (e.g. "all
+        # banks → wife 100%"), save those beneficiaries immediately.
+        try:
+            _ben_list = target.get('beneficiaries') or []
+            if isinstance(_ben_list, list) and _ben_list:
+                _norm = []
+                for b in _ben_list:
+                    if not isinstance(b, dict): continue
+                    nm = (b.get('name') or '').strip()
+                    sh = str(b.get('share_of_testator') or b.get('share') or '').strip()
+                    if not nm: continue
+                    sh_norm = sh
+                    pct_m = re.match(r'(\d+)\s*%\s*$', sh)
+                    if pct_m:
+                        n_pct = int(pct_m.group(1))
+                        if n_pct == 100: sh_norm = '1/1'
+                        elif n_pct == 50: sh_norm = '1/2'
+                    _norm.append({'name': nm, 'share': sh_norm or '1/1'})
+                if _norm:
+                    new_gift['beneficiaries'] = _norm
+                    new_gift['allocations'] = [
+                        {'beneficiary_name': b['name'], 'share': b['share'], 'role': 'MB'}
+                        for b in _norm
+                    ]
+        except Exception:
+            pass
         if action == 'skip':
             new_gift['skipped'] = True
         elif action == 'remove':
@@ -9809,6 +9901,32 @@ def _try_save_insurance_layered_gift(client_id, user_text):
             'substitute_mode':     None,
             'substitute_specific': None,
         }
+        # 🔥 §10x.150 — Pre-populate Layer 2 beneficiaries from AI Summary
+        # structured `beneficiaries[]` (JSON footer). Same as bank L1.
+        try:
+            _ben_list = target.get('beneficiaries') or []
+            if isinstance(_ben_list, list) and _ben_list:
+                _norm = []
+                for b in _ben_list:
+                    if not isinstance(b, dict): continue
+                    nm = (b.get('name') or '').strip()
+                    sh = str(b.get('share_of_testator') or b.get('share') or '').strip()
+                    if not nm: continue
+                    sh_norm = sh
+                    pct_m = re.match(r'(\d+)\s*%\s*$', sh)
+                    if pct_m:
+                        n_pct = int(pct_m.group(1))
+                        if n_pct == 100: sh_norm = '1/1'
+                        elif n_pct == 50: sh_norm = '1/2'
+                    _norm.append({'name': nm, 'share': sh_norm or '1/1'})
+                if _norm:
+                    new_gift['beneficiaries'] = _norm
+                    new_gift['allocations'] = [
+                        {'beneficiary_name': b['name'], 'share': b['share'], 'role': 'MB'}
+                        for b in _norm
+                    ]
+        except Exception:
+            pass
         if action == 'skip':
             new_gift['skipped'] = True
         elif action == 'remove':
