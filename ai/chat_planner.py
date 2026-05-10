@@ -440,8 +440,35 @@ def plan_turn(
     # confirmation before being thrown into Step 6 gift assignment).
     if 'beneficiaries_confirmed' not in completed_pre_assets:
         s4_pre = current_will_data.get('step4')
-        if isinstance(s4_pre, list) and len(s4_pre) > 0:
-            reply_parts.append(_step5_beneficiaries_confirm_card(s4_pre))
+        # 🔥 §10x.131 — show the card if EITHER step4 already has any
+        # beneficiaries OR family Persons exist (Wife/Son/Daughter/etc).
+        # Without this guard, when §10x.42 reconciliation only added 1
+        # beneficiary, the missing family members never reached the card.
+        _cid_for_card = (current_will_data or {}).get('client_id') or ''
+        _has_family = False
+        try:
+            if _cid_for_card:
+                from database import Person as _P
+                _has_family = (_P.query
+                                .filter_by(client_id=_cid_for_card)
+                                .filter(_P.relationship.in_((
+                                    'Wife','Husband','Spouse',
+                                    'Son','Daughter',
+                                    'Father','Mother',
+                                    'Brother','Sister',
+                                    'Son-in-law','Daughter-in-law',
+                                    'Father-in-law','Mother-in-law',
+                                    'Stepson','Stepdaughter',
+                                    'Adopted Son','Adopted Daughter',
+                                    'Grandson','Granddaughter',
+                                ))).first()) is not None
+        except Exception:
+            pass
+        if (isinstance(s4_pre, list) and len(s4_pre) > 0) or _has_family:
+            reply_parts.append(
+                _step5_beneficiaries_confirm_card(
+                    s4_pre or [], client_id=_cid_for_card,
+                    will_data=current_will_data))
             return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 3.5 ASSET INVENTORY — walk one cleaned-up property at a time ───
@@ -610,7 +637,9 @@ def plan_turn(
     # confirmation card listing the auto-populated beneficiaries — user
     # taps Confirm to stamp `beneficiaries_confirmed` and proceed.
     if 'beneficiaries_confirmed' not in completed:
-        reply_parts.append(_step5_beneficiaries_confirm_card(s4))
+        reply_parts.append(_step5_beneficiaries_confirm_card(
+            s4, client_id=(current_will_data or {}).get('client_id') or '',
+            will_data=current_will_data))
         return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 5. STEP 6: Specific Gifts (properties, then banks generic) ──────
@@ -3907,42 +3936,154 @@ def _step3_executors_confirm_card(executors: list) -> str:
     return '\n\n'.join(parts) + _qr_marker(quick)
 
 
-def _step5_beneficiaries_confirm_card(beneficiaries: list) -> str:
-    """🔥 §10x.115 — when step4_data is auto-populated (via §10x.42
-    reconciliation when a new identity is added mid-flow), surface an
-    explicit confirmation card so the user actually SEES the main
-    beneficiary list before moving to Step 6 / Step 7.
+def _step5_beneficiaries_confirm_card(beneficiaries: list,
+                                        client_id: str = '',
+                                        will_data: Optional[Dict[str, Any]] = None) -> str:
+    """🔥 §10x.115 + §10x.131 — when step4_data is auto-populated (via
+    §10x.42 reconciliation when a new identity is added mid-flow),
+    surface an explicit confirmation card so the user actually SEES the
+    main beneficiary list before moving to Step 6 / Step 7.
 
-    Without this, the user's perception is 'I never saw a main
-    beneficiary step' — they end up at Residuary thinking that's the
-    primary inheritance question.
+    🔥 §10x.131 — UNION with AI-Summary-named beneficiaries.
+    User feedback: *"step 5 beneficiaries incomplete / User need to
+    confirm all the beneficiaries are added in before moving to next
+    step / Also AI summary which list the beneficiaries should be
+    listed in the card for user to confirm"*.
 
-    User clicks ✅ Confirm → `beneficiaries_confirmed` stamp → planner
-    advances. Or types changes ('remove X', 'only X and Y') to update.
+    Bug fixed: §10x.42 reconciliation only added beneficiaries whose
+    name appeared after a verb like "go to" / "to my X". Property
+    split-allocations ("25% to son Joshua and 25% to daughter Esther")
+    didn't match — Joshua + Esther were in the Person table as Son /
+    Daughter but never reached step4_data. The Step 5 confirm card
+    showed only Wife → user confirmed → walker proceeded to Step 6
+    with an INCOMPLETE beneficiary list. Will-generation downstream
+    couldn't name Joshua/Esther for property gifts.
+
+    Fix: at card render time, build the UNION of:
+      • current step4_data (whatever §10x.42 already added)
+      • every Person whose relationship is family (Wife/Husband/Son/
+        Daughter/etc.) — they can plausibly inherit
+      • every name from AI Summary text whose context contains
+        beneficiary keywords (to / unto / for / receives / get(s))
+    Display each with the AI Summary snippet that names them so the
+    user has EVIDENCE to confirm.
+
+    User clicks ✅ Confirm → `beneficiaries_confirmed` stamp + the
+    UNION list is also persisted to step4_data (so Step 6 + will-gen
+    have the full list).
     """
-    parts = [
-        "### 👨‍👩‍👧 Step 5: Main Beneficiaries",
-        ("These are the people I have on file as beneficiaries — "
-         "everyone who can inherit anything from your estate. **Confirm "
-         "to proceed**, or tell me what to change."),
-    ]
+    # ── Build the UNION list ─────────────────────────────────────────
+    union_by_name = {}   # name_upper → {name, rel, source, snippet}
+    # Seed with whatever step4 already has
     for b in (beneficiaries or []):
         if not isinstance(b, dict):
             continue
         n = (b.get('full_name') or b.get('name') or '').strip()
-        rel = (b.get('relationship') or '').strip()
-        if n:
-            line = f"- **{n}**"
-            if rel:
-                line += f" _({rel})_"
+        if not n:
+            continue
+        union_by_name[n.upper()] = {
+            'name':    n,
+            'rel':     (b.get('relationship') or '').strip(),
+            'source':  'step4',
+            'snippet': '',
+            'nric':    (b.get('nric_passport') or '').strip(),
+        }
+
+    # Add family Persons (Wife/Husband/Son/Daughter/Spouse/etc.)
+    _FAMILY_RELS = {'Wife', 'Husband', 'Spouse',
+                     'Son', 'Daughter',
+                     'Father', 'Mother',
+                     'Brother', 'Sister',
+                     'Son-in-law', 'Daughter-in-law',
+                     'Father-in-law', 'Mother-in-law',
+                     'Stepson', 'Stepdaughter',
+                     'Adopted Son', 'Adopted Daughter',
+                     'Grandson', 'Granddaughter'}
+    try:
+        if client_id:
+            from database import Person as _P
+            for p in _P.query.filter_by(client_id=client_id).all():
+                rel = (p.relationship or '').strip()
+                if rel not in _FAMILY_RELS:
+                    continue
+                key = (p.full_name or '').strip().upper()
+                if not key:
+                    continue
+                if key not in union_by_name:
+                    union_by_name[key] = {
+                        'name': p.full_name, 'rel': rel,
+                        'source': 'family', 'snippet': '',
+                        'nric': (p.nric_passport or '').strip(),
+                    }
+    except Exception:
+        pass
+
+    # Cross-reference each name with AI Summary snippets
+    try:
+        if client_id:
+            from database import ChatMessage as _CM, ChatSession as _CS
+            sess = (_CS.query.filter_by(client_id=client_id)
+                    .order_by(_CS.created_at.desc()).first())
+            ai_summary_text = ''
+            if sess:
+                msgs = (_CM.query.filter_by(session_id=sess.id, role='assistant')
+                        .order_by(_CM.created_at.asc()).all())
+                for m in msgs:
+                    if m.content and 'AI Summary' in m.content:
+                        ai_summary_text = m.content
+                        break
+            if ai_summary_text:
+                for entry in union_by_name.values():
+                    nm = entry['name']
+                    # Find first line that mentions this name
+                    for line in ai_summary_text.split('\n'):
+                        line = line.strip()
+                        if not line or len(line) < 10:
+                            continue
+                        if nm.lower() in line.lower() or \
+                           (entry['rel'] and entry['rel'].lower() in line.lower()
+                            and ' to ' in line.lower()):
+                            entry['snippet'] = line[:160]
+                            break
+    except Exception:
+        pass
+
+    # ── Build the card ─────────────────────────────────────────────
+    parts = [
+        "### 👨‍👩‍👧 Step 5: Main Beneficiaries",
+        ("Below is **everyone who can inherit anything** from your "
+         "estate — pulled from your identities + WhatsApp/email message. "
+         "**Confirm all beneficiaries are correct** before moving on. "
+         "If anyone is missing, type their name; if anyone shouldn't "
+         "be here, type `remove X`."),
+    ]
+    if not union_by_name:
+        parts.append("_(No beneficiaries identified yet — type names below.)_")
+    else:
+        # Sort: spouse first, then children, then everyone else
+        def _sort_key(entry):
+            rel = (entry['rel'] or '').lower()
+            if 'spouse' in rel or 'wife' in rel or 'husband' in rel:
+                return (0, entry['name'])
+            if 'son' in rel or 'daughter' in rel:
+                return (1, entry['name'])
+            return (2, entry['name'])
+        for entry in sorted(union_by_name.values(), key=_sort_key):
+            line = f"- **{entry['name']}**"
+            if entry['rel']:
+                line += f" _({entry['rel']})_"
+            if entry['nric']:
+                line += f"  •  NRIC `{entry['nric']}`"
             parts.append(line)
+            if entry['snippet']:
+                parts.append(f"  📨 _from your message:_ \"{entry['snippet']}\"")
     parts.append(
-        "_(These are who CAN inherit. The specific shares are decided "
+        "_(These are who CAN inherit. Specific shares are decided "
         "in the next steps: specific gifts and residuary clause.)_"
     )
     quick = [
-        {'label': '✅ Confirm — proceed to Specific Gifts', 'value': 'beneficiaries confirm'},
-        {'label': '✏️ Change — type names',                'value': 'beneficiaries edit'},
+        {'label': '✅ Confirm all beneficiaries', 'value': 'beneficiaries confirm'},
+        {'label': '✏️ Add / remove names',        'value': 'beneficiaries edit'},
     ]
     return '\n\n'.join(parts) + _qr_marker(quick)
 

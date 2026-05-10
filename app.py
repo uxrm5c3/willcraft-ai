@@ -4697,6 +4697,9 @@ def _api_chat_message_impl(client_id):
         }
     will_snapshot['pending_gifts'] = pending_gifts
     will_snapshot['layer2_pending_props'] = _get_layer2_pending_props(client_id)
+    # 🔥 §10x.131 — pass client_id so planner can pull family Persons
+    # + AI Summary snippets when rendering Step 5 confirm card.
+    will_snapshot['client_id'] = client_id
     # If a property_fill action produced a reply_override (e.g. the "how to
     # type missing fields" prompt), inject it into the plan instead of running
     # the normal planner — it's a simple instructional message, not a full turn.
@@ -10279,19 +10282,56 @@ def _try_handle_beneficiaries_confirm(client_id: str, user_text: str):
             completed = []
     except Exception:
         completed = []
+    # 🔥 §10x.131 — PERSIST THE UNION before stamping confirmed.
+    # Without this, the user clicks Confirm but step4_data still only
+    # has whatever §10x.42 reconciliation added (e.g. only Lim Bee Yan).
+    # Joshua + Esther stay missing → will-generation downstream can't
+    # name them as property gift beneficiaries.
+    try:
+        s4 = json.loads(will.step4_data or '[]')
+        if not isinstance(s4, list):
+            s4 = []
+    except Exception:
+        s4 = []
+    existing_names = {((b.get('full_name') or b.get('name') or '')
+                        .strip().upper())
+                       for b in s4 if isinstance(b, dict)}
+    _FAMILY_RELS = {'Wife','Husband','Spouse','Son','Daughter',
+                    'Father','Mother','Brother','Sister',
+                    'Son-in-law','Daughter-in-law','Father-in-law',
+                    'Mother-in-law','Stepson','Stepdaughter',
+                    'Adopted Son','Adopted Daughter',
+                    'Grandson','Granddaughter'}
+    try:
+        added_names = []
+        for p in (Person.query.filter_by(client_id=client_id)
+                  .filter(Person.relationship.in_(_FAMILY_RELS)).all()):
+            key = (p.full_name or '').strip().upper()
+            if not key or key in existing_names:
+                continue
+            s4.append({
+                'full_name':     p.full_name,
+                'nric_passport': p.nric_passport or '',
+                'relationship':  p.relationship,
+                'address':       p.address or '',
+                'person_id':     p.id,
+                '_added_by':     '§10x.131 confirm-time union',
+            })
+            existing_names.add(key)
+            added_names.append(p.full_name)
+        if added_names:
+            will.step4_data = json.dumps(s4)
+    except Exception:
+        db.session.rollback()
     if 'beneficiaries_confirmed' not in completed:
         completed.append('beneficiaries_confirmed')
         will.completed_steps = json.dumps(completed)
-        try:
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-            return None
     try:
-        s4 = json.loads(will.step4_data or '[]')
+        db.session.commit()
     except Exception:
-        s4 = []
-    n = len(s4) if isinstance(s4, list) else 0
+        db.session.rollback()
+        return None
+    n = len(s4)
     return {
         'kind': 'beneficiaries_confirmed',
         'name': f'{n} beneficiaries',
