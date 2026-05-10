@@ -1601,15 +1601,21 @@ def _parse_ownership(ownership_text: str) -> Tuple[str, List[str]]:
             share = f'{num}/{den}'
         # else: default 1/2 (the regex matched something unusable)
     co_owners: List[str] = []
+    # 🔥 §10x.154 — also terminate capture on '.' or '!' so phrases
+    # like "joint 50/50 with Chai Mei Fun. Testator's 50%..." pull
+    # the co-owner correctly. Was missing — co_owners stayed empty.
     for m in re.finditer(
         r'\bwith\s+(?:my\s+(?:wife|husband|spouse|son|daughter|father|mother|brother|sister)\s+)?'
         r'((?:[A-Z][A-Za-z]+\s*){1,5})'
-        r'(?=,|\s+\(|\s+share|\s+\d|\s*$)',
+        r'(?=[\.,!]|\s+\(|\s+share|\s+\d|\s*$)',
         ownership_text, re.IGNORECASE,
     ):
         nm = m.group(1).strip()
         nm = re.sub(r'\s+(share|with)\s*$', '', nm, flags=re.IGNORECASE).strip()
-        if nm and len(nm) > 2 and nm.lower() not in ('share', 'with'):
+        # Strip trailing 'Testator' / 'My' (caught by greedy caps match
+        # when next sentence starts with a capitalised word)
+        nm = re.sub(r'\s+(Testator|My|His|Her)$', '', nm).strip()
+        if nm and len(nm) > 2 and nm.lower() not in ('share', 'with', 'testator'):
             co_owners.append(nm[:80])
     seen = set()
     co_owners = [c for c in co_owners if not (c.lower() in seen or seen.add(c.lower()))]
