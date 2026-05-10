@@ -3799,6 +3799,51 @@ def _will_data_snapshot(will_record):
     }
 
 
+def _post_asst_msg_idempotent(session_id, content, plan, active_will_id):
+    """🔥 §10x.138 — idempotent assistant-message post.
+
+    The watchdog (api_chat_history poll, every 5s) and the POST handler
+    (api_chat_message) both call plan_turn + post the result. They can
+    race when a user clicks fast or the chat polls during a write — the
+    SAME card content gets inserted 2-3 times within 3 seconds. chat.js
+    renders quickreplies ONLY on the LATEST assistant message → older
+    duplicate copies of the same card lose their buttons → user sees
+    'card not responding'.
+
+    Solution: before insert, query the latest assistant message in this
+    session. If its content matches the new content, RETURN None (caller
+    skips the add). Otherwise build + return the new ChatMessage.
+
+    The dedup compares the FULL content including the quickreplies marker
+    so distinct cards (different question, different buttons) always post.
+    """
+    if not content:
+        return None
+    try:
+        latest = (ChatMessage.query.filter_by(session_id=session_id, role='assistant')
+                   .order_by(ChatMessage.created_at.desc()).first())
+        if latest and (latest.content or '') == content:
+            try:
+                app.logger.warning(
+                    f'§10x.138 DEDUP: skipped duplicate assistant post '
+                    f'(session={session_id[:8]}, latest_msg={latest.id[:8]})')
+            except Exception:
+                pass
+            return None
+    except Exception:
+        pass   # never block on the dedup
+    return ChatMessage(
+        session_id=session_id,
+        role='assistant',
+        content=content,
+        attachments_json=json.dumps(plan.get('focus_attachments') or []),
+        clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
+        proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
+        advice_json=json.dumps(plan.get('advice', [])),
+        target_will_id=active_will_id,
+    )
+
+
 def _serialise_chat_message(m):
     """Turn a ChatMessage row into a JSON-friendly dict for the UI."""
     def _j(s, default):
@@ -4751,17 +4796,27 @@ def _api_chat_message_impl(client_id):
         db.session.add(ack_msg)
         db.session.flush()   # ensure created_at strictly precedes the next card
 
-    asst_msg = ChatMessage(
-        session_id=cs.id,
-        role='assistant',
-        content=plan.get('reply', ''),
-        attachments_json=json.dumps(plan.get('focus_attachments') or []),
-        clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
-        proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
-        advice_json=json.dumps(plan.get('advice', [])),
-        target_will_id=active_will.id if active_will else None,
+    # 🔥 §10x.138 — IDEMPOTENT POST. Watchdog (api_chat_history) and the
+    # POST handler (api_chat_message) can race when the user clicks fast
+    # or the chat polls during a write. Without dedup, the SAME card gets
+    # posted 2-3 times within 3s. Symptom: chat.js renders quickreplies
+    # only on the LATEST message → older copies of the SAME card lose
+    # their buttons → user sees "card not responding". Fix: skip the
+    # insert if the latest assistant message already has identical content.
+    _new_content = plan.get('reply', '') or ''
+    _new_msg = _post_asst_msg_idempotent(
+        cs.id,
+        content=_new_content,
+        plan=plan,
+        active_will_id=active_will.id if active_will else None,
     )
-    db.session.add(asst_msg)
+    if _new_msg is None:
+        # Skipped duplicate — reuse the existing latest message
+        asst_msg = (ChatMessage.query.filter_by(session_id=cs.id, role='assistant')
+                     .order_by(ChatMessage.created_at.desc()).first())
+    else:
+        asst_msg = _new_msg
+        db.session.add(asst_msg)
     db.session.commit()
 
     # If a side-quest Q&A reply was produced earlier in this turn, surface it
@@ -4942,16 +4997,19 @@ def api_chat_replan(client_id, message_id):
         plan = plan_turn(user_msg.content or '', [], _will_data_snapshot(active_will),
                          pending_ics=pending_ics, recent_text=recent_text)
 
-    asst_msg = ChatMessage(
-        session_id=cs.id, role='assistant',
-        content=plan.get('reply', ''),
-        attachments_json=json.dumps(plan.get('focus_attachments') or []),
-        clarifying_questions_json=json.dumps(plan.get('clarifying_questions', [])),
-        proposed_patch_json=json.dumps(plan['proposed_patch']) if plan.get('proposed_patch') else None,
-        advice_json=json.dumps(plan.get('advice', [])),
-        target_will_id=active_will.id if active_will else None,
+    # 🔥 §10x.138 — IDEMPOTENT POST (watchdog site).
+    asst_msg = _post_asst_msg_idempotent(
+        cs.id,
+        content=plan.get('reply', '') or '',
+        plan=plan,
+        active_will_id=active_will.id if active_will else None,
     )
-    db.session.add(asst_msg)
+    if asst_msg is None:
+        # Skipped (duplicate); reuse the existing latest message
+        asst_msg = (ChatMessage.query.filter_by(session_id=cs.id, role='assistant')
+                     .order_by(ChatMessage.created_at.desc()).first())
+    else:
+        db.session.add(asst_msg)
     db.session.commit()
     return jsonify({'ok': True, 'message_id': asst_msg.id, 'replaced_replies': n_deleted})
 
