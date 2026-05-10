@@ -93,6 +93,7 @@
             {% if not pd.get('property_address') %}{% set _ = _missing.append('street address') %}{% endif %}
             {% if not pd.get('postcode') %}{% set _ = _missing.append('postcode') %}{% endif %}
             {% if not pd.get('city') %}{% set _ = _missing.append('city') %}{% endif %}
+            {% if not pd.get('title_type') %}{% set _ = _missing.append('title type') %}{% endif %}
             {% if not pd.get('title_number') %}{% set _ = _missing.append('title No.') %}{% endif %}
             {% if not pd.get('lot_number') %}{% set _ = _missing.append('lot No.') %}{% endif %}
             {% if not (pd.get('mukim') or pd.get('bandar_pekan')) %}{% set _ = _missing.append('mukim') %}{% endif %}
