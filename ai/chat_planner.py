@@ -1850,6 +1850,12 @@ def _detect_message_conflicts(ai_props: List[Dict[str, Any]]
             r"\bmy\s*\d+\s*(?:percent|%)",         # "my 50%"
             r"jointly?\s+owned[^,]*",              # "jointly owned 50/50 with X"
             r"\bowns?\s+\d+\s*(?:percent|%)",      # "owns 50%"
+            # 🔥 §10x.140b — additional ownership-share phrasings
+            r"\b(?:holds?|hold)\s+\d+\s*(?:percent|%)[^,]*", # "testator holds 50% jointly with..."
+            r"\bhis\s+\d+\s*(?:percent|%)\s+to",   # "His 50% to be split"
+            r"\bher\s+\d+\s*(?:percent|%)\s+to",   # "Her 50% to be split"
+            r"\bshare\s+of\s+\d+\s*(?:percent|%)", # "share of 50%"
+            r"\bjointly\s+with[^,]*",              # "jointly with X" (without "owned")
         ):
             b_clean = re.sub(pat, '', b_clean)
         # Pull all "NN percent" / "NN%" tokens and sum them
