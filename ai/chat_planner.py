@@ -7258,9 +7258,14 @@ def _step6_property_question(pending_props, recent_text, will_data):
                              if c.upper() == nm.upper() or
                                 nm.upper() in c.upper() or
                                 c.upper() in nm.upper()), nm)
+            # 🔥 §10x.142b — `ownership` is now a string (legacy compat).
+            # The dict form is preserved as `ownership_struct`.
+            _own_struct = _ai_match.get('ownership_struct') or {}
+            if not isinstance(_own_struct, dict):
+                _own_struct = {}
+            _ts = _own_struct.get('testator_share') or '1/1'
             evidence = (
-                f"AI Summary: {nm} → {sh} (of testator's "
-                f"{(_ai_match.get('ownership') or {}).get('testator_share') or '1/1'})"
+                f"AI Summary: {nm} → {sh} (of testator's {_ts})"
             )
             deduced.append({'name': matched, 'share': sh, 'evidence': evidence})
         # Sanity: total must be 100%
