@@ -474,15 +474,23 @@
             : 'border-gray-200 hover:border-primary-400';
           // Show purpose/address as label if available, else category
           const thumbLabel = escapeHtml((a.purpose || a.address || catLabel || '').trim().slice(0, 40));
-          html += `<button type="button"
-                      onclick="window.__openCarousel(${JSON.stringify(imgCarouselUrls).replace(/"/g, '&quot;')}, ${thisIdx}, ${JSON.stringify(imgCarouselMeta).replace(/"/g, '&quot;')})"
+          // 🔥 §10x.123 — exhibit thumbnails open in NEW WINDOW (not the
+          // in-app carousel overlay). User explicit instruction:
+          //   "when open exhibit, open in new window. separate window.
+          //    do not use the AI will craft window"
+          // The in-app __openCarousel was overlaying the chat — clicking
+          // the IC photo replaced the chat view with the lightbox; user
+          // wants to inspect the exhibit alongside the chat instead.
+          // target="_blank" + rel="noopener" → browser opens new tab/window
+          // and chat view is preserved.
+          html += `<a href="${url}" target="_blank" rel="noopener"
                       title="${escapeHtml(a.filename || '')} — ${thumbLabel}${isSuspect ? ' ⚠️ may be incorrect' : ''}"
                       class="relative block bg-white border rounded-md overflow-hidden hover:shadow transition-all text-left w-full ${borderCls}">
             ${inner}
             <div class="absolute top-0.5 left-0.5 bg-black/50 text-white text-[9px] font-bold px-1 rounded leading-tight">${thumbNum}</div>
             ${warnBadge}
             <div class="px-1 py-0.5 text-[9px] truncate ${isSuspect ? 'bg-amber-100 text-amber-800' : catColor} font-medium">${thumbLabel || catLabel}</div>
-          </button>`;
+          </a>`;
         } else {
           html += `<a href="${url}" target="_blank" rel="noopener" title="${escapeHtml(a.filename)} (${catLabel})"
                       class="block bg-white border border-gray-200 rounded-md overflow-hidden hover:border-primary-400 hover:shadow transition-all">
