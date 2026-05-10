@@ -1808,12 +1808,26 @@ def _detect_message_conflicts(ai_props: List[Dict[str, Any]]
         seen[key] = i
 
     # 2. Allocation overflow: beneficiary shares > 100% in one property
+    # 🔥 §10x.140 — Per §10x.13, percentages following "Testator's", "my X%",
+    # "joint X/Y" or "X/Y with X" express OWNERSHIP share (not beneficiary
+    # allocation). Strip those before summing so "joint 50/50 ... testator's
+    # 50% to Esther 100%" doesn't read as 150%.
     for i, p in enumerate(ai_props):
         b = (p.get('beneficiary') or '').lower()
         if not b:
             continue
+        b_clean = b
+        for pat in (
+            r"joint\s*\d+\s*[/]\s*\d+",            # "joint 50/50"
+            r"\d+\s*[/]\s*\d+\s+with",             # "50/50 with"
+            r"testator['']?s?\s*\d+\s*(?:percent|%)",   # "testator's 50%"
+            r"\bmy\s*\d+\s*(?:percent|%)",         # "my 50%"
+            r"jointly?\s+owned[^,]*",              # "jointly owned 50/50 with X"
+            r"\bowns?\s+\d+\s*(?:percent|%)",      # "owns 50%"
+        ):
+            b_clean = re.sub(pat, '', b_clean)
         # Pull all "NN percent" / "NN%" tokens and sum them
-        nums = [int(x) for x in re.findall(r'(\d{1,3})\s*(?:percent|%)', b) if 0 < int(x) <= 100]
+        nums = [int(x) for x in re.findall(r'(\d{1,3})\s*(?:percent|%)', b_clean) if 0 < int(x) <= 100]
         if nums and sum(nums) > 100:
             conflicts.append({
                 'kind': 'allocation_overflow',
