@@ -228,6 +228,19 @@ def _render_substitute_clause(clause_num: int, ref_clause: int, gift,
     if not sub_specific:
         return None
 
+    # 🔥 §10x.130 — dedupe by name. When build_will_data attaches the full
+    # substitute list to every MB allocation, identical entries multiply
+    # (2 MBs × 2 subs = 4 collected). Render each unique name once.
+    _seen = set()
+    _deduped = []
+    for sb in sub_specific:
+        nm_key = (sb.get('name') or '').strip().upper()
+        if not nm_key or nm_key in _seen:
+            continue
+        _seen.add(nm_key)
+        _deduped.append(sb)
+    sub_specific = _deduped
+
     # Render names for the main beneficiaries
     main_phrases = []
     for a in allocs:

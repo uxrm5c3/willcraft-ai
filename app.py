@@ -910,13 +910,33 @@ def build_will_data():
             fin_details = None
             if gift_type == 'property':
                 pd = gd.get('property_details') or gd.get('property_info') or {}
-                # Build a PropertyDetails dict that matches the model's expected fields
+                # Build a PropertyDetails dict that matches the model's
+                # expected field names. The model uses `bandar_pekan` for
+                # Mukim (legacy naming) — chat saves it as `mukim`.
                 if pd or gd.get('property_address'):
+                    raw_addr = (pd.get('property_address') or gd.get('property_address') or '').strip()
+                    # Strip noise prefixes from chat-summary text
+                    for _pref in ('House at ', 'Shop at ', 'Unit at ', 'Apartment at '):
+                        if raw_addr.startswith(_pref):
+                            raw_addr = raw_addr[len(_pref):]
+                            break
+                    # Detect title type from title_number prefix (HSD, GRN, GM, PTD…)
+                    title_num_raw = (pd.get('title_number') or gd.get('title_number') or '').strip()
+                    title_type = ''
+                    title_num_clean = title_num_raw
+                    import re as _re_tt
+                    _tt_m = _re_tt.match(r'^(HSD|HSM|HS\(D\)|HS\(M\)|GRN|GM|GERAN|HAKMILIK|PAJAKAN|PTD|PTM)\s*:?\s*(.+)$',
+                                          title_num_raw, _re_tt.IGNORECASE)
+                    if _tt_m:
+                        title_type = _tt_m.group(1).upper()
+                        title_num_clean = _tt_m.group(2).strip()
                     pd_norm = {
-                        'property_address':   pd.get('property_address') or gd.get('property_address') or '',
-                        'title_number':       pd.get('title_number') or gd.get('title_number') or '',
+                        'property_address':   raw_addr,
+                        'title_type':         title_type,
+                        'title_number':       title_num_clean,
                         'lot_number':         pd.get('lot_number') or gd.get('lot_number') or '',
-                        'mukim':              pd.get('mukim') or gd.get('mukim') or '',
+                        # PropertyDetails uses `bandar_pekan` for Mukim
+                        'bandar_pekan':       pd.get('mukim') or gd.get('mukim') or pd.get('bandar_pekan') or '',
                         'daerah':             pd.get('daerah') or gd.get('daerah') or '',
                         'negeri':             pd.get('negeri') or gd.get('negeri') or '',
                     }
@@ -13116,65 +13136,12 @@ def _refresh_wizard_session_from_db():
         s5_raw = s5_raw.get('gifts', []) or []
     if not isinstance(s5_raw, list):
         s5_raw = []
-    # 🔥 §10x.128 — enrich each gift with a `documents` array so the
-    # wizard step6_gifts.html template can render the title/SPA/cukai
-    # images (same pattern as Step 1 Identities renders IC photos).
-    # Chat saves a single `document_id` per gift; the template wants
-    # a list of {filename, url, doctype}. Resolve here.
-    if isinstance(s5_raw, list):
-        for g in s5_raw:
-            if not isinstance(g, dict):
-                continue
-            if g.get('documents'):
-                continue   # already enriched
-            doc_id = (g.get('document_id') or '').strip()
-            docs_out = []
-            # The primary bound doc
-            if doc_id and not doc_id.startswith('_h3_synth_'):
-                _d = db.session.get(Document, doc_id)
-                if _d:
-                    cat = _d.category or ''
-                    doctype = ('title' if cat == 'property_title'
-                               else 'spa' if cat == 'property_spa'
-                               else 'cukai_harta' if cat == 'property_tax'
-                               else 'financial' if cat in ('bank_statement', 'insurance')
-                               else 'document')
-                    docs_out.append({
-                        'document_id': _d.id,
-                        'filename':    _d.original_filename or '',
-                        'url':         f'/api/documents/{_d.id}',
-                        'doctype':     doctype,
-                        'category':    cat,
-                    })
-                    # Also pull any sibling docs grouped via DocGroup
-                    try:
-                        from services.asset_pipeline import group_documents
-                        for gp in group_documents(w.client_id) or []:
-                            if doc_id in gp.document_ids:
-                                for sid in gp.document_ids:
-                                    if sid == doc_id:
-                                        continue
-                                    _sd = db.session.get(Document, sid)
-                                    if not _sd:
-                                        continue
-                                    scat = _sd.category or ''
-                                    sdoctype = ('title' if scat == 'property_title'
-                                                else 'spa' if scat == 'property_spa'
-                                                else 'cukai_harta' if scat == 'property_tax'
-                                                else 'document')
-                                    docs_out.append({
-                                        'document_id': _sd.id,
-                                        'filename':    _sd.original_filename or '',
-                                        'url':         f'/api/documents/{_sd.id}',
-                                        'doctype':     sdoctype,
-                                        'category':    scat,
-                                    })
-                                break
-                    except Exception:
-                        pass
-            if docs_out:
-                g['documents'] = docs_out
-
+    # 🔥 §10x.128 → §10x.131 — image enrichment moved out of session.
+    # Storing per-gift `documents[]` in session inflated the cookie past
+    # Flask's 4093-byte limit. The enrichment now lives in
+    # `enrich_gifts_with_documents()` which is called by the Step 6 GET
+    # handler at render time and passed to the template directly — never
+    # written back to session/cookie.
     session['step5_gifts']     = s5_raw
     session['step6_residuary'] = _j(w.step6_data, {})
     session['step7_trust']     = _j(w.step7_data, {})
@@ -13249,16 +13216,83 @@ def _refresh_wizard_session_from_db():
     session.modified = True
 
 
+def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
+    """🔥 §10x.131 — render-time-only enrichment. Build a SHALLOW COPY of
+    each gift with `documents[]` resolved from `document_id`. Used by the
+    wizard Step 6 GET handler; result is passed to the template and never
+    stored in session (which is cookie-backed and would exceed 4 KB).
+    """
+    if not isinstance(gifts, list):
+        return gifts
+    # One pipeline run per request to find sibling docs cheaply
+    sibling_map = {}   # doc_id → set of sibling doc_ids
+    try:
+        from services.asset_pipeline import group_documents
+        for gp in group_documents(client_id) or []:
+            ids = list(gp.document_ids)
+            for did in ids:
+                sibling_map[did] = [s for s in ids if s != did]
+    except Exception:
+        pass
+    out = []
+    for g in gifts:
+        if not isinstance(g, dict):
+            out.append(g)
+            continue
+        gg = dict(g)   # shallow copy
+        if gg.get('documents'):
+            out.append(gg); continue
+        doc_id = (gg.get('document_id') or '').strip()
+        if not doc_id or doc_id.startswith('_h3_synth_'):
+            out.append(gg); continue
+        docs_out = []
+        seen_ids = set()
+        for did in [doc_id] + sibling_map.get(doc_id, []):
+            if did in seen_ids:
+                continue
+            seen_ids.add(did)
+            d = db.session.get(Document, did)
+            if not d:
+                continue
+            cat = d.category or ''
+            doctype = ('title' if cat == 'property_title'
+                       else 'spa' if cat == 'property_spa'
+                       else 'cukai_harta' if cat == 'property_tax'
+                       else 'financial' if cat in ('bank_statement', 'insurance')
+                       else 'document')
+            docs_out.append({
+                'document_id': d.id,
+                'filename':    d.original_filename or '',
+                'url':         f'/api/documents/{d.id}',
+                'doctype':     doctype,
+                'category':    cat,
+            })
+        if docs_out:
+            gg['documents'] = docs_out
+        out.append(gg)
+    return out
+
+
 @app.route('/wizard/step/6', methods=['GET', 'POST'])
 @login_required
 def wizard_step_gifts():
     if request.method == 'GET':
         _refresh_wizard_session_from_db()
+        will_id = session.get('will_id')
+        client_id = ''
+        if will_id:
+            _w = db.session.get(Will, will_id)
+            if _w:
+                client_id = _w.client_id
+        gifts_raw = session.get('step5_gifts', [])
+        # Render-time enrichment with documents[] — NOT written to session
+        gifts_enriched = (_enrich_gifts_with_documents(client_id, gifts_raw)
+                           if client_id else gifts_raw)
         return render_template(
             'wizard/step6_gifts.html',
             current_step=6,
             completed_steps=get_completed_steps(),
-            data={'gifts': session.get('step5_gifts', [])},
+            data={'gifts': gifts_enriched},
             beneficiaries=session.get('step4_beneficiaries', []),
             persons=session.get('person_registry', []),
         )
