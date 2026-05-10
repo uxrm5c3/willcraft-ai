@@ -11484,14 +11484,46 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
     if not chosen_role:
         return None
 
+    # 🔥 §10x.143b — H3 placeholder backfill from existing IC docs.
+    # When confirming an H3 placeholder (no IC), search for any uploaded
+    # IC Document whose extracted name matches this person and pull its
+    # NRIC + address + doc_id. Fixes the case where Joshua's IC was
+    # marked 'duplicate' (sibling-dedup) before any Person row existed,
+    # so the H3 placeholder confirm landed without NRIC even though
+    # the data was right there in the doc.
+    h3_nric = (ex.get('nric_number') or '').strip()
+    h3_address = (ex.get('address') or '').strip()
+    h3_doc_id = target.get('document_id')
+    if not h3_nric and not h3_doc_id and target.get('_h3_placeholder'):
+        try:
+            name_upper = name.strip().upper()
+            ic_docs = Document.query.filter(
+                Document.client_id == client_id,
+                Document.category.in_(('nric', 'duplicate')),
+            ).all()
+            for d in ic_docs:
+                try:
+                    d_ex = json.loads(d.extracted_data or '{}')
+                except Exception:
+                    d_ex = {}
+                d_name = (d_ex.get('full_name') or '').strip().upper()
+                d_nric = (d_ex.get('nric_number') or '').strip()
+                if d_name == name_upper and d_nric:
+                    h3_nric = d_nric
+                    h3_address = h3_address or (d_ex.get('address') or '').strip()
+                    h3_doc_id = h3_doc_id or d.id
+                    break
+        except Exception:
+            pass
+
     ensure_person(
         client_id, name,
-        nric=(ex.get('nric_number') or ''),
-        address=(ex.get('address') or ''),
+        nric=h3_nric,
+        address=h3_address,
         relationship=chosen_role,
         dob=(ex.get('date_of_birth') or ''),
         nationality=ex.get('nationality') or 'Malaysian',
-        document_id=target['document_id'],
+        document_id=h3_doc_id,
     )
     db.session.commit()
     # 🔥 §10x.42 — Mid-flow identity add MUST trigger downstream

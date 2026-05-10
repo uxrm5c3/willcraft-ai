@@ -122,9 +122,21 @@ STEP 1 — IDENTIFY the document type. Pick exactly one `kind`:
   • nric                — MyKad / IC card / Malaysian passport / foreign ID
   • property_title      — Geran / Hakmilik / HSD / PTD strata or landed title
   • property_spa        — Sale & Purchase Agreement, transfer / lease docs
-  • property_tax        — Cukai Tanah / Cukai Pintu / quit rent / assessment
+  • property_tax        — Cukai Tanah / Cukai Pintu / quit rent /
+                          assessment / STRATA MAINTENANCE BILL
+                          (JMB / Badan Pengurusan Bersama / Management
+                          Corporation Statement of Account; service
+                          charge; sinking fund; water bill for a unit)
   • loan_agreement      — bank loan, mortgage, charge document
-  • bank_statement      — bank statement, FD certificate, savings book
+  • bank_statement      — REAL bank statement only: ISSUER must be a
+                          recognised bank (Maybank, CIMB, Public Bank,
+                          POSB, DBS, OCBC, UOB, RHB, Hong Leong, etc.)
+                          AND show a deposit account number. A strata
+                          "Statement of Account" from a JMB / Badan
+                          Pengurusan Bersama / Management Corporation
+                          is NOT a bank_statement — classify as
+                          property_tax instead, even if the layout
+                          says "Statement of Account".
   • insurance           — insurance policy, schedule, premium notice
   • vehicle             — vehicle ownership card / Geran kereta / V5
   • will                — last will and testament document
