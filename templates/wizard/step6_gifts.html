@@ -260,8 +260,12 @@
                         <select name="gift_prop_title_type_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                 onchange="updatePropertyPreview({{ loop.index0 }})">
                             <option value="">-- Select --</option>
-                            {% for tt in ['Geran', 'Hakmilik', 'HSD', 'HSM', 'Pajakan Negeri', 'Other'] %}
-                            <option value="{{ tt }}" {% if pd.get('title_type', '') == tt or pd.get('title_type', '').upper() == tt.upper() or (tt == 'Geran' and pd.get('title_type', '').upper() in ('GRN', 'GERAN')) %}selected{% endif %}>{{ tt }}</option>
+                            {# 🔥 §10x.206 — added Strata Title Geran / Hakmilik Strata options
+                               for condo + service-apartment units (Strata Titles Act 1985).
+                               §10x.204 auto-detects from "Unit X-NN-NN" addresses. #}
+                            {% set _ttv = (pd.get('title_type') or '').upper() %}
+                            {% for tt in ['Geran', 'Strata Title Geran', 'Hakmilik', 'Hakmilik Strata', 'HSD', 'HSM', 'Pajakan Negeri', 'PTD', 'Other'] %}
+                            <option value="{{ tt }}" {% if _ttv == tt.upper() or (tt == 'Geran' and _ttv in ('GRN', 'GERAN')) or (tt == 'Strata Title Geran' and _ttv in ('STRATA TITLE GERAN', 'STRATA GERAN', 'HAKMILIK STRATA')) %}selected{% endif %}>{{ tt }}</option>
                             {% endfor %}
                         </select>
                     </div>
