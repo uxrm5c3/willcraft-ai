@@ -8866,6 +8866,64 @@ def _try_handle_orphan_claim(client_id: str, user_text: str):
     return None
 
 
+def _default_substitute_for_main(client_id: str,
+                                    main_bens: list) -> list:
+    """🔥 §10x.14 — Default substitute clause from main beneficiaries.
+
+    Rules:
+      • Multi main bens → surviving bens equal
+      • Single main = a CHILD → other child(ren) equal
+      • Single main = SPOUSE → all children equal
+      • Single main = other person → all children equal
+      • No children → fallback to spouse, then siblings
+
+    Returns [{'name', 'share'}, …]. Empty list if nothing to default to.
+    """
+    if not main_bens:
+        return []
+    persons = Person.query.filter_by(client_id=client_id).all()
+    children = [p for p in persons
+                if (p.relationship or '').lower() in
+                ('son', 'daughter', 'son-in-law', 'daughter-in-law')]
+    spouse = next((p for p in persons
+                    if (p.relationship or '').lower()
+                       in ('wife', 'husband', 'spouse')), None)
+    main_names_upper = {(b.get('name') or '').upper() for b in main_bens}
+
+    # Multi: surviving bens equal
+    if len(main_bens) >= 2:
+        n = len(main_bens)
+        return [{'name': b.get('name'), 'share': f'1/{n}'} for b in main_bens]
+
+    # Single main
+    sole_name = (main_bens[0].get('name') or '').upper()
+    sole_is_child = any(
+        sole_name == (c.full_name or '').upper() for c in children)
+    sole_is_spouse = bool(spouse and
+                           sole_name == (spouse.full_name or '').upper())
+
+    # Single child → other surviving children
+    if sole_is_child:
+        others = [c for c in children
+                  if (c.full_name or '').upper() != sole_name]
+        if others:
+            n = len(others)
+            return [{'name': c.full_name, 'share': f'1/{n}'}
+                    for c in others]
+
+    # Single spouse OR other person → all children equally
+    if children and not sole_is_child:
+        n = len(children)
+        return [{'name': c.full_name, 'share': f'1/{n}'}
+                for c in children]
+
+    # Last fallback: spouse if not already main
+    if spouse and not sole_is_spouse:
+        return [{'name': spouse.full_name, 'share': '1/1'}]
+
+    return []
+
+
 def _try_handle_h3_property_action(client_id: str, user_text: str):
     """Handle 'inventory confirm' / 'inventory skip' when there is no
     image-derived pending property — i.e. the card was an H3 placeholder
@@ -9042,6 +9100,19 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
                     for a in _allocs: a['share'] = eq
                 entry['beneficiaries'] = _norm_bens
                 entry['allocations'] = _allocs
+                # 🔥 §10x.14 — pre-populate substitute clause defaults so
+                # walkthrough doesn't leave gift incomplete after auto-L2.
+                _subs = _default_substitute_for_main(client_id, _norm_bens)
+                if _subs and not entry.get('substitute_specific'):
+                    entry['substitute_mode'] = 'specific'
+                    entry['substitute_specific'] = _subs
+                    # Mirror onto allocations[0].substitutes for wizard
+                    if entry.get('allocations'):
+                        for a in entry['allocations']:
+                            a.setdefault('substitutes', [
+                                {'beneficiary_name': s['name'], 'share': s['share']}
+                                for s in _subs
+                            ])
             # Ownership from structured dict
             _own_struct = _ap.get('ownership_struct') or {}
             if isinstance(_own_struct, dict):
@@ -9746,6 +9817,16 @@ def _try_save_bank_layered_gift(client_id, user_text):
                         {'beneficiary_name': b['name'], 'share': b['share'], 'role': 'MB'}
                         for b in _norm
                     ]
+                    # §10x.14 default substitute
+                    _subs = _default_substitute_for_main(client_id, _norm)
+                    if _subs:
+                        new_gift['substitute_mode'] = 'specific'
+                        new_gift['substitute_specific'] = _subs
+                        for a in new_gift['allocations']:
+                            a.setdefault('substitutes', [
+                                {'beneficiary_name': s['name'], 'share': s['share']}
+                                for s in _subs
+                            ])
         except Exception:
             pass
         if action == 'skip':
@@ -9925,6 +10006,16 @@ def _try_save_insurance_layered_gift(client_id, user_text):
                         {'beneficiary_name': b['name'], 'share': b['share'], 'role': 'MB'}
                         for b in _norm
                     ]
+                    # §10x.14 default substitute
+                    _subs = _default_substitute_for_main(client_id, _norm)
+                    if _subs:
+                        new_gift['substitute_mode'] = 'specific'
+                        new_gift['substitute_specific'] = _subs
+                        for a in new_gift['allocations']:
+                            a.setdefault('substitutes', [
+                                {'beneficiary_name': s['name'], 'share': s['share']}
+                                for s in _subs
+                            ])
         except Exception:
             pass
         if action == 'skip':
