@@ -13613,6 +13613,13 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
                     or 'pangsapuri' in _addr or 'flat' in _addr
                     or 'serviced apartment' in _addr or 'service apartment' in _addr):
                     tt = 'Strata Title Geran'
+                # 🔥 §10x.119 — landed property (House at..., Shop No...,
+                # Bungalow at...) without uploaded title doc → default to
+                # 'Geran' (most common landed title type in Malaysia per
+                # NLC s.213). User can override in wizard if it's HSD/HSM.
+                elif (_re_strata.search(r'\b(?:house|shop|bungalow|terrace|semi[\s-]?d|semi[\s-]?detached|villa|townhouse|double[\s-]?storey|single[\s-]?storey)\b', _addr)
+                      or _re_strata.search(r'\bjalan\s+\w+', _addr)):
+                    tt = 'Geran'
             if tt:
                 pd['title_type'] = tt
             # 🔥 §10x.145 — parse postcode/city/state out of the address
@@ -13683,16 +13690,38 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
                             sib_addr = (sed.get('property_address') or '').strip()
                             if not sib_addr:
                                 continue
-                            # Pull postcode + the word after (city)
-                            pmatch = _re_sib.search(r'\b(\d{5})\b\s+([A-Z][A-Za-z\s]{2,30}?)(?:,|$)', sib_addr)
-                            if pmatch:
-                                if not pd.get('postcode'):
-                                    pd['postcode'] = pmatch.group(1)
-                                if not pd.get('city'):
-                                    cand = pmatch.group(2).strip().rstrip(',').strip()
-                                    # Skip state names that follow postcodes
-                                    if cand and cand.lower() not in ('johor', 'kedah', 'malaysia'):
-                                        pd['city'] = cand
+                            # 🔥 §10x.118 — Malaysian addresses come in TWO orders:
+                            #   (a) "<city> <postcode> <state>"   e.g. "Masai 81750 Johor"
+                            #   (b) "<city>, <postcode> <state>"  e.g. "BANDAR MEDINI ISKANDAR, 79250 JOHOR"
+                            # Try post-postcode word first; if that's a state name
+                            # (or "Johor"/"Malaysia"), fall back to pre-postcode match.
+                            _STATE_WORDS = {'johor', 'kedah', 'kelantan', 'melaka',
+                                            'negeri', 'pahang', 'perak', 'perlis',
+                                            'pulau', 'penang', 'sabah', 'sarawak',
+                                            'selangor', 'terengganu', 'wilayah',
+                                            'kuala', 'putrajaya', 'labuan', 'malaysia'}
+                            pc = None
+                            city = None
+                            # Pattern A: postcode then city
+                            pm_a = _re_sib.search(r'\b(\d{5})\s+([A-Z][A-Za-z\s]{2,30}?)(?:,|$)', sib_addr)
+                            if pm_a:
+                                pc = pm_a.group(1)
+                                cand = pm_a.group(2).strip().rstrip(',').strip()
+                                if cand and cand.lower().split()[0] not in _STATE_WORDS:
+                                    city = cand
+                            # Pattern B: city then postcode (when A gave a state name)
+                            if not city:
+                                pm_b = _re_sib.search(r',\s*([A-Z][A-Z\s]{2,40}?)\s*,?\s*(\d{5})\b', sib_addr)
+                                if pm_b:
+                                    pc = pc or pm_b.group(2)
+                                    cand = pm_b.group(1).strip().rstrip(',').strip()
+                                    if cand and cand.lower().split()[0] not in _STATE_WORDS:
+                                        city = cand
+                            if pc or city:
+                                if pc and not pd.get('postcode'):
+                                    pd['postcode'] = pc
+                                if city and not pd.get('city'):
+                                    pd['city'] = city
                                 pd['_postcode_from_doc'] = sd.id
                                 break
                     except Exception:
