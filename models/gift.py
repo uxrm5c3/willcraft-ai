@@ -194,11 +194,23 @@ class FinancialDetails(BaseModel):
             if acct_type:
                 _t_map = {'saving': 'Saving', 'savings': 'Saving',
                            'current': 'Current',
+                           'current account': 'Current',
+                           'savings account': 'Saving',
+                           'saving account': 'Saving',
                            'fixed deposit': 'Fixed Deposit',
                            'fixed_deposit': 'Fixed Deposit',
                            'fd': 'Fixed Deposit',
-                           'plus saving': 'Plus Saving'}
+                           'plus saving': 'Plus Saving',
+                           'plus saving account': 'Plus Saving'}
                 acct_type = _t_map.get(acct_type.lower(), acct_type)
+                # 🔥 §10x.151d — strip trailing " Account" to prevent
+                # duplicate when we append " Account No. ..." below.
+                # AI Summary JSON injects account_type strings like
+                # "Plus Saving Account" / "Current Account" verbatim;
+                # without this strip the will reads "...Plus Saving
+                # Account Account No. ...".
+                if acct_type.lower().endswith(' account'):
+                    acct_type = acct_type[:-len(' account')].strip()
             if ownership_prefix and 'joint' in ownership_prefix.lower():
                 # joint-account variant
                 base = f'{ownership_prefix} {inst}' if inst else ownership_prefix
