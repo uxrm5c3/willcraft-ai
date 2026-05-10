@@ -28,8 +28,30 @@ def _slug_to_title(slug: str) -> str:
     return ' '.join(p.capitalize() for p in slug.split('_'))
 
 
+def _classify(slug: str) -> str:
+    """🔥 §10x.136 — Categorise PDFs: 'act' (statute) vs 'book' (textbook /
+    drafting guide). Acts have year suffix; books are named differently.
+    """
+    s = slug.lower()
+    # Statute pattern: ends with _<year> (4-digit) AND contains _act_ OR _code_
+    if (re.search(r'_(?:act|code|enactment|ordinance)_?\d{4}$', s)
+            or re.search(r'_(?:act|code|enactment|ordinance)\d{4}$', s)):
+        return 'act'
+    # Heuristic for books / guides
+    if any(k in s for k in (
+            'gopalakrishnan', 'kessler', 'shankar', '_ed_', '_11ed',
+            '_3ed', '_drafting_', 'guide', 'precedent', 'handbook',
+            'textbook', 'malaysia_and_singapore')):
+        return 'book'
+    # Default to 'act' for anything ending in a 4-digit year
+    if re.search(r'_\d{4}$', s):
+        return 'act'
+    return 'book'
+
+
 def list_available_acts() -> List[Dict[str, str]]:
-    """Return [{'slug', 'title', 'path', 'size_kb'}] for every PDF found."""
+    """Return [{'slug', 'title', 'path', 'size_kb', 'category'}] for every
+    PDF found. category is 'act' or 'book'."""
     out = []
     if not os.path.isdir(LEGAL_DIR):
         return out
@@ -42,8 +64,11 @@ def list_available_acts() -> List[Dict[str, str]]:
             size_kb = os.path.getsize(path) // 1024
         except OSError:
             size_kb = 0
-        out.append({'slug': slug, 'title': _slug_to_title(slug),
-                    'path': path, 'size_kb': size_kb})
+        out.append({
+            'slug': slug, 'title': _slug_to_title(slug),
+            'path': path, 'size_kb': size_kb,
+            'category': _classify(slug),
+        })
     return out
 
 
