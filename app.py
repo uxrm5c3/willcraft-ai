@@ -13699,6 +13699,31 @@ def wizard_step_gifts():
         # Render-time enrichment with documents[] — NOT written to session
         gifts_enriched = (_enrich_gifts_with_documents(client_id, gifts_raw)
                            if client_id else gifts_raw)
+        # 🔥 §10x.193 — pre-compute missing-field list for each property
+        # gift via the canonical probate-required-fields schema. Template
+        # then just reads `pd_missing[i]` instead of re-checking each
+        # field inline (which had the placeholder-value bug).
+        try:
+            from validation.probate_required_fields import (
+                missing_fields_for_property, missing_fields_for_bank,
+                missing_fields_for_insurance,
+            )
+            pd_missing = {}
+            for i, g in enumerate(gifts_enriched or []):
+                if not isinstance(g, dict):
+                    continue
+                kind = (g.get('kind') or g.get('gift_type') or '').lower()
+                if kind == 'property' or g.get('gift_type') == 'property':
+                    pd_missing[i] = missing_fields_for_property(
+                        g.get('property_details') or {})
+                elif kind == 'bank':
+                    pd_missing[i] = missing_fields_for_bank(
+                        g.get('financial_details') or g)
+                elif kind == 'insurance':
+                    pd_missing[i] = missing_fields_for_insurance(
+                        g.get('financial_details') or g)
+        except Exception:
+            pd_missing = {}
         return render_template(
             'wizard/step6_gifts.html',
             current_step=6,
@@ -13706,6 +13731,7 @@ def wizard_step_gifts():
             data={'gifts': gifts_enriched},
             beneficiaries=session.get('step4_beneficiaries', []),
             persons=session.get('person_registry', []),
+            pd_missing=pd_missing,
         )
 
     # POST -- parse gifts with nested allocations and structured details

@@ -85,18 +85,13 @@
 
             <!-- PROPERTY PANEL -->
             {% set pd = gift.get('property_details', {}) %}
-            {# 🔥 §10x.150 — flag missing critical fields so the user
-               sees at-a-glance which property needs more info. Address
-               + (postcode OR city OR title OR lot) are minimum to
-               probate the gift. #}
-            {% set _missing = [] %}
-            {% if not pd.get('property_address') %}{% set _ = _missing.append('street address') %}{% endif %}
-            {% if not pd.get('postcode') %}{% set _ = _missing.append('postcode') %}{% endif %}
-            {% if not pd.get('city') %}{% set _ = _missing.append('city') %}{% endif %}
-            {% if not pd.get('title_type') %}{% set _ = _missing.append('title type') %}{% endif %}
-            {% if not pd.get('title_number') %}{% set _ = _missing.append('title No.') %}{% endif %}
-            {% if not pd.get('lot_number') %}{% set _ = _missing.append('lot No.') %}{% endif %}
-            {% if not (pd.get('mukim') or pd.get('bandar_pekan')) %}{% set _ = _missing.append('mukim') %}{% endif %}
+            {# 🔥 §10x.193 — the single source of truth for "what's
+               missing" is `validation/probate_required_fields.py
+               ::missing_fields_for_property`. Calling it from Jinja
+               via the `pd_missing` helper (set in the wizard step 6
+               GET handler). This catches placeholder values like
+               'TBD' / 'N/A' which were previously treated as populated. #}
+            {% set _missing = pd_missing.get(loop.index0, []) %}
             {% if gt == 'property' and _missing %}
             <div class="mb-3 p-3 bg-amber-50 border-l-4 border-amber-400 rounded">
                 <div class="flex items-start gap-2">
