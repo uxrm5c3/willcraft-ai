@@ -1588,14 +1588,19 @@ def _parse_ownership(ownership_text: str) -> Tuple[str, List[str]]:
     t = ownership_text.lower()
     if 'sole' in t and 'joint' not in t:
         return '1/1', []
-    # 🔥 §10x.154 — phrases like "to daughter Esther 100%" (no joint /
-    # owned-with phrase, just a beneficiary share) describe a SOLE
-    # property going entirely to one person. Avoid defaulting to joint
-    # 1/2. Detect: contains '100%' / '100percent' AND lacks any
-    # joint-ownership marker (joint / owned with / share with / jointly).
-    if (re.search(r'\b100\s*(?:percent|%)', t)
-            and not re.search(r'\b(?:joint|owned\s+(?:50/50|with)|share[sd]?\s+with|jointly)', t)):
-        return '1/1', []
+    # 🔥 §10x.154 — phrases like "to daughter Esther 100%" or
+    # "50% to son and 50% to daughter" (no joint / owned-with phrase,
+    # just beneficiary shares summing to 100%) describe a SOLE property
+    # being split among beneficiaries. Avoid defaulting to joint 1/2.
+    # Detect: percentages sum to ~100% AND no joint-ownership marker.
+    has_joint_marker = bool(re.search(
+        r'\b(?:joint|owned\s+(?:50/50|with)|share[sd]?\s+with|jointly)', t))
+    if not has_joint_marker:
+        # Pull beneficiary percentages and check sum ≈ 100
+        nums = [int(x) for x in re.findall(r'(\d{1,3})\s*(?:percent|%)', t)
+                if 0 < int(x) <= 100]
+        if nums and 95 <= sum(nums) <= 105:
+            return '1/1', []
     share = '1/2'  # default for joint (two-party)
     m = re.search(r'(\d+)\s*/\s*(\d+)', ownership_text)
     if m:
