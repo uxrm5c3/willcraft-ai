@@ -7042,7 +7042,7 @@ def _step6_property_question(pending_props, recent_text, will_data):
     evidence_block = '\n'.join(evidence_lines) if evidence_lines else ''
 
     # ── Deduce beneficiary from email text ───────────────────────
-    # 🔥 §10x.139 — SCOPE deduction to the ONE line that mentions THIS
+    # 🔥 §10x.140 — SCOPE deduction to the ONE line that mentions THIS
     # property. Bug: previously used `recent_text` globally → percentages
     # from B-05-11 ("25% to Esther"), Shop ("50% Joshua"), banks ("100%
     # Lim Bee Yan") all bled together → total 175% → not in valid set →
