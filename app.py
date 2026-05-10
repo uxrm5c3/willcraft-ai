@@ -8506,10 +8506,24 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
         all_props = pend.get('property') or []
     except Exception:
         all_props = []
+    # 🔥 §10x.117 — GREEDY CLAIM (must match _asset_walkthrough_question
+    # in chat_planner.py, lines 5064-5077). Each image group can only be
+    # claimed by ONE AI Summary prop. Without greedy claim, the handler
+    # disagrees with the planner about which slot is H3 — planner shows
+    # H3 card for C-05-01, handler refuses to save it because it thinks
+    # C-05-01 already matches an image group (which the planner has
+    # already given to C-30-08 first by greedy iteration).
+    _claimed_doc_ids = set()
     matched = []
     for ap in ai_props:
-        cls = _classify_property_match(ap, all_props)
-        matched.append(cls['variant'] in ('h1', 'h2'))
+        available = [g for g in all_props
+                     if g.get('document_id') not in _claimed_doc_ids]
+        cls = _classify_property_match(ap, available)
+        if cls['variant'] in ('h1', 'h2') and cls.get('group'):
+            matched.append(True)
+            _claimed_doc_ids.add(cls['group'].get('document_id'))
+        else:
+            matched.append(False)
 
     h3_idx = next((i for i, ap in enumerate(ai_props)
                    if not handled[i] and not matched[i]), None)
