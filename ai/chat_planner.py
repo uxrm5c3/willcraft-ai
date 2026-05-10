@@ -4033,18 +4033,48 @@ def _step5_beneficiaries_confirm_card(beneficiaries: list,
                         ai_summary_text = m.content
                         break
             if ai_summary_text:
+                # Strip HTML comment markers + the AI Summary header
+                _clean = re.sub(r'<!--.*?-->', '', ai_summary_text,
+                                 flags=re.DOTALL)
+                # Search whole text (not line-by-line) so we can extract a
+                # window CENTERED on the name match — avoids the bug where
+                # the opening 'The testator…' paragraph (which spans many
+                # lines) was used as the snippet for everyone.
+                _hay = _clean.lower()
                 for entry in union_by_name.values():
                     nm = entry['name']
-                    # Find first line that mentions this name
-                    for line in ai_summary_text.split('\n'):
-                        line = line.strip()
-                        if not line or len(line) < 10:
-                            continue
-                        if nm.lower() in line.lower() or \
-                           (entry['rel'] and entry['rel'].lower() in line.lower()
-                            and ' to ' in line.lower()):
-                            entry['snippet'] = line[:160]
-                            break
+                    nm_low = nm.lower()
+                    # Try full name first; fall back to first+last token
+                    pos = _hay.find(nm_low)
+                    if pos < 0:
+                        # Try just the first name (e.g. "Joshua")
+                        first_token = nm_low.split()[0] if nm_low.split() else ''
+                        if len(first_token) >= 4:
+                            pos = _hay.find(first_token)
+                    if pos < 0:
+                        continue
+                    # Extract a window of ~120 chars centered on the match.
+                    # Snap to the nearest sentence/clause boundary if possible.
+                    start = max(0, pos - 50)
+                    end = min(len(_clean), pos + len(nm) + 80)
+                    # Walk backwards from start to a sentence boundary
+                    boundary_chars = '.!?\n•—'
+                    while start > 0 and _clean[start] not in boundary_chars + ' ,':
+                        start -= 1
+                    if start > 0:
+                        start += 1   # skip the boundary char itself
+                    # Walk forwards from end to next sentence boundary
+                    while end < len(_clean) and _clean[end] not in boundary_chars:
+                        end += 1
+                    if end < len(_clean) and _clean[end] in '.!?':
+                        end += 1
+                    snippet = _clean[start:end].strip()
+                    # Collapse whitespace
+                    snippet = re.sub(r'\s+', ' ', snippet)
+                    if len(snippet) > 200:
+                        snippet = snippet[:200] + '…'
+                    if snippet:
+                        entry['snippet'] = snippet
     except Exception:
         pass
 
