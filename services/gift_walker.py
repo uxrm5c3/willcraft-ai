@@ -1388,19 +1388,22 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             continue
         if a_addr and a_addr in covered_addr_norms:
             continue
-        # 🔥 §10x.132 — STRATA-SAFE TOKEN MATCH.
-        # Bug fixed: 'MARINA' + 'COVE' overlapped between C-30-08 image
-        # and C-05-01 AI prop → C-05-01 marked "covered" → no H3
-        # placeholder → walker only saw 2 of 5 properties. Same for
-        # 'LAGUNA' (Sri Laguna), 'SERI ALAM MASAI' (Shop). User: "why
-        # property 1 missing / mismatch with AI summary".
-        # Per CLAUDE.md §10hd (strata: same lot ≠ same property),
-        # different units in the same building share locality tokens.
-        # Require ≥2 distinctive tokens (raised from ≥1) so MARINA+COVE
-        # alone doesn't dedupe two units. STILL too lenient if both
-        # share 'CONDOMINIUM' + 'BAYU' but those are stop-words anyway.
-        if a_toks and len(a_toks & covered_tokens) >= 2:
-            continue
+        # 🔥 §10x.132 — REMOVED token-overlap dedup entirely.
+        # Original §10b intent was to dedup AI props vs image groups
+        # when OCR addresses differ from user-typed addresses for the
+        # SAME property. But token overlap is fundamentally wrong for
+        # STRATA properties: C-30-08 + C-05-01 share 'MARINA'+'COVE',
+        # B-05-11 + nothing in Paradiso, etc. Different units in same
+        # building share locality tokens by construction (CLAUDE.md
+        # §10hd). Single OR multi-token overlap both produce false
+        # positives. The 3 explicit checks above (lot digits, title
+        # digits, address-norm[:60]) are sufficient — they're identity-
+        # equality checks, not fuzzy. If neither lot, title, nor
+        # normalised address matches → it's a different property →
+        # surface H3 placeholder.
+        # Bug fixed: KOID had 5 AI Summary properties but only 2 ever
+        # surfaced ('MARINA'+'COVE' false-matched C-05-01 against
+        # C-30-08; 'SERI ALAM MASAI' false-matched Sri Laguna; etc).
         # H3 placeholder per §10hg — confirm-then-complete card
         out['property'].append({
             '_h3_placeholder': True,
