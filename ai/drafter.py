@@ -850,11 +850,50 @@ def draft_will_mock(will_data) -> str:
 {next_clause}.  If the nomination(s) made by me in my Employees' Provident Fund do(es) not take effect for whatsoever reason, then I hereby devise and bequeath the benefits of the nomination(s) to form part of my residuary estate."""
         next_clause += 1
 
+    # 🔥 §10x.152 — Insurance gifts going to the SAME beneficiary set
+    # are grouped into ONE combined clause with roman-numeral bullets,
+    # using Insurance Act 1996 s.130 nomination-fallback wording per
+    # Sample template. Sample format:
+    #   "If any nomination under my insurance policies below fails, is
+    #   invalid, revoked or otherwise ineffective, the proceeds shall
+    #   be given to <BEN> absolutely.
+    #   (i) Policy No. <N> <Insurer> <Country>
+    #   (ii) ..."
+    # Pre-compute the grouping so the main loop can skip insurance
+    # gifts and emit them once at the end.
+    _insurance_groups: list = []  # list of (sig, gift_indices, ben_text)
+    if will_data.gifts:
+        _seen_ins_sigs: dict = {}
+        for _gi, _g in enumerate(will_data.gifts):
+            if (_g.gift_type or '').lower() != 'financial':
+                continue
+            _ft = getattr(_g, 'financial_details', None)
+            if not _ft or (getattr(_ft, 'asset_type', '') or '').lower() != 'insurance':
+                continue
+            # Build beneficiary signature (names + shares)
+            _sig_parts = []
+            for _a in _g.allocations:
+                _sig_parts.append(f"{_a.beneficiary_name.upper()}|{_a.share}")
+            _sig = ';'.join(sorted(_sig_parts))
+            if _sig not in _seen_ins_sigs:
+                _seen_ins_sigs[_sig] = len(_insurance_groups)
+                _insurance_groups.append({'sig': _sig, 'indices': [_gi],
+                                           'gift': _g})
+            else:
+                _insurance_groups[_seen_ins_sigs[_sig]]['indices'].append(_gi)
+
     # Specific gift clauses
     specific_gifts_text = ""
     gift_clause_map = {}  # Maps gift index to clause number for substitute references
     if will_data.gifts:
+        # Collect insurance indices to skip in main loop (handled separately)
+        _ins_idx_skip = set()
+        for _grp in _insurance_groups:
+            for _i in _grp['indices']:
+                _ins_idx_skip.add(_i)
         for gi, g in enumerate(will_data.gifts):
+            if gi in _ins_idx_skip:
+                continue
             desc = g.get_formatted_description()
             if not desc:
                 continue
@@ -959,6 +998,59 @@ def draft_will_mock(will_data) -> str:
 
 {next_clause}.  Pursuant to Clause {ref_clause} above, if {mb_rel_str}{a.beneficiary_name.upper()}{mb_id_str} does not survive me, then the benefit {he_she} would have received shall be given to {sub_text}{trailing}."""
                 next_clause += 1
+
+    # 🔥 §10x.152 — Insurance combined clause(s). Per Sample template:
+    #   "If any nomination under my insurance policies below fails, is
+    #   invalid, revoked or otherwise ineffective, the proceeds shall
+    #   be given to <BEN> absolutely.
+    #   (i) Policy No. <N> <Insurer> <Country>
+    #   (ii) Policy No. <N> <Insurer> <Country>"
+    # ONE combined clause per beneficiary set, not per-policy.
+    if _insurance_groups:
+        roman = ['(i)', '(ii)', '(iii)', '(iv)', '(v)', '(vi)', '(vii)', '(viii)']
+        for _grp in _insurance_groups:
+            _g0 = _grp['gift']
+            _alloc_parts = []
+            for _a in _g0.allocations:
+                _nric, _nat, _rel = "", "Malaysian", ""
+                for _b in will_data.beneficiaries:
+                    if _b.full_name.lower() == _a.beneficiary_name.lower():
+                        _nric = _b.nric_passport_birthcert
+                        _nat = getattr(_b, 'nationality', 'Malaysian')
+                        _rel = _b.relationship.lower()
+                        break
+                _id = f" {format_id_for_will(_nric, _nat)}" if _nric else ""
+                _rs = f"my {_rel} " if _rel else ""
+                _alloc_parts.append(f"{_rs}{_a.beneficiary_name.upper()}{_id}")
+            if not _alloc_parts:
+                continue
+            if len(_alloc_parts) == 1:
+                _ben_str = _alloc_parts[0]
+            else:
+                _ben_str = ", ".join(_alloc_parts[:-1]) + " and " + _alloc_parts[-1]
+            specific_gifts_text += f"""
+
+{next_clause}.  If any nomination under my insurance policies below fails, is invalid, revoked or otherwise ineffective, the proceeds shall be given to {_ben_str} absolutely."""
+            for _idx, _i_gi in enumerate(_grp['indices']):
+                _ig = will_data.gifts[_i_gi]
+                _ift = getattr(_ig, 'financial_details', None)
+                _insurer = (getattr(_ift, 'institution', None) or '').strip() if _ift else ''
+                _polno = (getattr(_ift, 'account_number', None) or '').strip() if _ift else ''
+                _country = (getattr(_ift, 'country', None) or '').strip() if _ift else ''
+                # Country defaults: known SG insurers. Extend per data.
+                if not _country:
+                    _country_map = {
+                        'NTUC INCOME': 'Singapore', 'INCOME INSURANCE': 'Singapore',
+                        'AIA': 'Singapore', 'ETIQA': 'Singapore', 'EATIQA': 'Singapore',
+                        'GREAT EASTERN': 'Singapore', 'PRUDENTIAL': 'Singapore',
+                    }
+                    _country = _country_map.get(_insurer.upper(), '')
+                _r = roman[_idx] if _idx < len(roman) else f'({_idx+1})'
+                _country_suffix = f' {_country}' if _country else ''
+                specific_gifts_text += f"\n{_r} Policy No. {_polno} {_insurer}{_country_suffix}"
+                # Map this gift index to the combined clause for substitute references
+                gift_clause_map[_i_gi] = next_clause
+            next_clause += 1
 
     # 🔥 §10x.151 — Substitute the deferred residuary clause number now
     # that all non-residuary clauses have consumed their numbers.
