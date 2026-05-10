@@ -891,7 +891,25 @@ def draft_will_mock(will_data) -> str:
         for _grp in _insurance_groups:
             for _i in _grp['indices']:
                 _ins_idx_skip.add(_i)
-        for gi, g in enumerate(will_data.gifts):
+        # 🔥 §10x.152e — Sort gifts: BANKS first, then PROPERTIES, then
+        # OTHER (vehicles/EPF). Sample template orders by liquidity:
+        # cash assets (banks) BEFORE immovable property. Insurance is
+        # always last (handled by separate combined-clause emitter).
+        # Stable sort preserves user input order within each kind.
+        def _gift_kind_rank(g):
+            ft = getattr(g, 'financial_details', None)
+            asset_type = (getattr(ft, 'asset_type', '') or '').lower() if ft else ''
+            if asset_type == 'bank':
+                return 0
+            if (g.gift_type or '').lower() == 'property':
+                return 1
+            return 2
+        _gift_order = sorted(
+            range(len(will_data.gifts)),
+            key=lambda i: (_gift_kind_rank(will_data.gifts[i]), i)
+        )
+        for gi in _gift_order:
+            g = will_data.gifts[gi]
             if gi in _ins_idx_skip:
                 continue
             desc = g.get_formatted_description()
@@ -1000,6 +1018,16 @@ def draft_will_mock(will_data) -> str:
                         f"received shall be given to {_sub_text}{_trailing}."
                     )
                 if _inlines:
+                    # 🔥 §10x.152d — Ensure clause body ends in '.' before
+                    # the inlined "If X does not survive..." substitute
+                    # text. The bank/insurance descriptors end with
+                    # "...accruing thereon" (no period), and property
+                    # descriptors with single-beneficiary end with the
+                    # state name (no period either). Without this, output
+                    # reads "thereon If my wife" instead of "thereon. If
+                    # my wife".
+                    if not specific_gifts_text.rstrip().endswith(('.', '!', '?')):
+                        specific_gifts_text += "."
                     specific_gifts_text += " " + " ".join(_inlines)
                 # Mark gift as already-inlined so the LATER specific-substitute
                 # loop doesn't re-emit a separate clause for it.
