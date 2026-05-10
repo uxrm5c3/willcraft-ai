@@ -805,7 +805,48 @@ def build_will_data():
     def _list(key):
         v = session.get(key)
         return v if isinstance(v, list) else []
-    executors = [Executor(**e) for e in _list('step2_executors')]
+    # 🔥 §10x.195 (T-10) — derive Executor.role from is_substitute when role
+    # is None. Saved chat-side step2_executors has is_substitute=True/False
+    # but role=None for executors created by §10x.21 outsider-elimination
+    # path. The template_filler relies on role to choose joint vs substitute
+    # clause structure (Phek format requires substitute structure when one
+    # is_substitute=True). Without this mapping, BOTH executors fell into
+    # the "primary empty" branch and the will emitted joint pattern wrongly.
+    def _coerce_role(e: dict) -> dict:
+        ex = dict(e)
+        if not ex.get('role') or ex['role'] not in ('Primary', 'Joint', 'Substitute'):
+            ex['role'] = 'Substitute' if ex.get('is_substitute') else 'Primary'
+        # Strip keys not in Executor model to avoid pydantic errors
+        return {k: v for k, v in ex.items() if k in (
+            'full_name', 'address', 'nric_passport', 'relationship',
+            'role', 'person_id', 'nationality')}
+    executors = [Executor(**_coerce_role(e)) for e in _list('step2_executors')]
+
+    # 🔥 §10x.202 (T-36) — cross-asset country inference. If majority of
+    # banks in step5 are Singapore, default ambiguous insurance country
+    # to Singapore too. Sets `country` on each financial gift in session
+    # before WillData construction.
+    try:
+        gifts_session = session.get('step5_gifts', []) or []
+        sg_count = my_count = 0
+        for g in gifts_session:
+            if not isinstance(g, dict): continue
+            cty = ((g.get('country') or '') + ' ' + (g.get('financial_details', {}) or {}).get('country', '')).strip().upper()
+            if 'SING' in cty: sg_count += 1
+            elif 'MALAY' in cty: my_count += 1
+        majority_country = ('Singapore' if sg_count > my_count else
+                            'Malaysia' if my_count > sg_count else None)
+        if majority_country:
+            for g in gifts_session:
+                if not isinstance(g, dict): continue
+                fd = g.get('financial_details') or {}
+                if not fd.get('country') and not g.get('country'):
+                    fd['country'] = majority_country
+                    g['financial_details'] = fd
+            session['step5_gifts'] = gifts_session
+            session.modified = True
+    except Exception:
+        pass
 
     # -- Section B2: Trustees (separate from executors) -----------------------
     trustee_session = session.get('step3_trustees', {'same_as_executor': True})
@@ -968,6 +1009,24 @@ def build_will_data():
                         'account_number':   gd.get('account_number') or gd.get('policy_number') or '',
                         'country':          gd.get('country') or '',
                     }
+                # 🔥 §10x.201 (T-5/T-6) — render-time canonicalisation. The
+                # gift may have been saved BEFORE §10x.149/152 deployed; its
+                # `institution` field could still be misspelt ("eaTiQa") or
+                # missing canonical form ("Posb Bank"). Run canonicalise_or_flag
+                # at render time so the will draft uses the canonical name.
+                try:
+                    from services.financial_institutions import canonicalise_or_flag
+                    inst_orig = (fd.get('institution') or '').strip()
+                    cty = (fd.get('country') or '').strip()
+                    cty_hint = 'SG' if cty.upper().startswith('S') else (
+                        'MY' if cty.upper().startswith('M') else None)
+                    sub_kind = 'insurance' if 'insurance' in (fd.get('asset_type','') or '').lower() else 'bank'
+                    if inst_orig:
+                        cf = canonicalise_or_flag(inst_orig, kind=sub_kind, country_hint=cty_hint)
+                        if cf.get('canonical') and not cf.get('ambiguous_country'):
+                            fd['institution'] = cf['canonical']
+                except Exception:
+                    pass
                 # 🔥 §10x.134 — pass `description` field so the FinancialDetails
                 # formatter renders the account-type token ("Saving"/"Current"/
                 # "Fixed Deposit"). Phek format: "the monies in my UOB Saving

@@ -66,17 +66,47 @@ class PropertyDetails(BaseModel):
         addr = re.sub(r'\s+', ' ', addr).strip().rstrip(',')
         parts = [f"{prefix} known as {addr}"]
         title_parts = []
-        if self.title_type and self.title_number:
-            tt = self.title_type
-            tt_map = {'GRN': 'Geran', 'GERAN': 'Geran', 'GM': 'Geran',
-                       'HAKMILIK': 'Hakmilik', 'PAJAKAN': 'Pajakan Negeri',
-                       'PAJAKAN NEGERI': 'Pajakan Negeri',
-                       'HSD': 'H.S.(D)', 'HSM': 'H.S.(M)', 'HS(D)': 'H.S.(D)',
-                       'HS(M)': 'H.S.(M)', 'PTD': 'PTD', 'PTM': 'PTM'}
-            tt = tt_map.get(tt.upper(), tt) if tt else tt
-            title_parts.append(f"held under {tt} No. {self.title_number}")
-        if self.lot_number:
-            title_parts.append(f"Lot No. {self.lot_number}")
+        # 🔥 §10x.193 + §10x.39 — Phek format demands a "held under [TYPE] No. N"
+        # prefix on the title number. Auto-detect type when not set:
+        #   - title_number contains "/" → Strata Title Geran (per T-39)
+        #   - title_number prefix contains H.S.(D)/HSD → H.S.(D)
+        #   - else default to "Geran"
+        # Also: when title_type is HSD/HSM, the "lot_number" is actually a
+        # PTD/PT (Pejabat Tanah Daerah) number — emit "PTD N" not "Lot No. N"
+        # per T-31.
+        tt_raw = (self.title_type or '').strip()
+        tn = (self.title_number or '').strip()
+        ln = (self.lot_number or '').strip()
+        # Auto-detect title type from title_number pattern
+        if tn and not tt_raw:
+            if '/' in tn:
+                tt_raw = 'Strata Title Geran'
+            elif tn.upper().startswith(('HSD', 'HS(D)', 'H.S.(D)')):
+                tt_raw = 'HSD'
+            elif tn.upper().startswith(('HSM', 'HS(M)', 'H.S.(M)')):
+                tt_raw = 'HSM'
+            else:
+                tt_raw = 'Geran'
+        tt_map = {'GRN': 'Geran', 'GERAN': 'Geran', 'GM': 'Geran',
+                   'HAKMILIK': 'Hakmilik', 'PAJAKAN': 'Pajakan Negeri',
+                   'PAJAKAN NEGERI': 'Pajakan Negeri',
+                   'HSD': 'H.S.(D)', 'HSM': 'H.S.(M)', 'HS(D)': 'H.S.(D)',
+                   'HS(M)': 'H.S.(M)', 'PTD': 'PTD', 'PTM': 'PTM',
+                   'STRATA TITLE GERAN': 'Strata Title Geran'}
+        tt = tt_map.get(tt_raw.upper(), tt_raw) if tt_raw else ''
+        if tt and tn:
+            title_parts.append(f"held under {tt} No. {tn}")
+        elif tn:  # have title number but no type — emit anyway with default
+            title_parts.append(f"held under Geran No. {tn}")
+        if ln:
+            # 🔥 §10x.31 / T-31 — HSD-titled properties use PTD prefix not Lot No.
+            tt_upper = (tt or tt_raw).upper()
+            if 'HSD' in tt_upper or 'HS(D)' in tt_upper or 'H.S.(D)' in tt_upper:
+                title_parts.append(f"PTD {ln}")
+            elif 'HSM' in tt_upper or 'HS(M)' in tt_upper:
+                title_parts.append(f"PT {ln}")
+            else:
+                title_parts.append(f"Lot No. {ln}")
         if self.bandar_pekan:
             mukim_val = self.bandar_pekan.strip()
             for pfx in ['MUKIM ', 'Mukim ', 'BANDAR ', 'Bandar ']:

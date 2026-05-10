@@ -268,19 +268,34 @@ def validate_will_data(will_data) -> List[ValidationResult]:
                 missing.append('Negeri (State)')
             if missing:
                 addr_disp = (pd.property_address or '(no address)').strip()[:50]
+                # 🔥 §10x.193 — upgrade to ERROR per NLC s.292 / Borang 14A
+                # which REQUIRES (title OR lot) AND (mukim) AND (daerah)
+                # AND (negeri) for any property bequest. Without these the
+                # clause is unprobatable — the registrar will reject it.
+                # Previous WARNING let users generate incomplete wills.
+                _hard_missing = []
+                if 'address' in missing:
+                    _hard_missing.append('address')
+                if 'title number' in missing and 'lot/PT number' in missing:
+                    _hard_missing.append('title or lot identifier')
+                if 'Mukim' in missing:
+                    _hard_missing.append('Mukim')
+                if 'Daerah (District)' in missing:
+                    _hard_missing.append('Daerah')
+                if 'Negeri (State)' in missing:
+                    _hard_missing.append('Negeri')
                 results.append(ValidationResult(
                     rule_id=f"PROPERTY_GIFT_{i+1}_INCOMPLETE",
-                    # ERROR if address itself missing OR if NEITHER title nor lot
-                    # is present — those are the bare-minimum probate identifiers.
-                    # Otherwise WARNING so the lawyer sees it but generation can proceed.
-                    severity=("ERROR"
-                              if 'address' in missing
-                              or ('title number' in missing and 'lot/PT number' in missing)
-                              else "WARNING"),
+                    severity=("ERROR" if _hard_missing else "WARNING"),
                     message=(f"Gift {i+1} ({addr_disp}) is missing: "
-                             f"{', '.join(missing)}. The will clause will "
-                             f"omit these identifiers — lawyer/firm should "
-                             f"fill them in before signing."),
+                             f"{', '.join(missing)}."
+                             + (f" Probate-blocking — NLC s.292 requires "
+                                f"these for the property to be identifiable "
+                                f"in a Memorandum of Transfer (Form 14A). "
+                                f"Fill in Step 6 before generation."
+                                if _hard_missing
+                                else " The will clause will omit these — "
+                                "lawyer/firm should fill before signing.")),
                     field=f"gifts.{i}.property_details",
                 ))
 

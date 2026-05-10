@@ -1640,8 +1640,11 @@ _GEO_BRIDGE = {
     # Plentong (Daerah Johor Bahru)
     'seri alam':        ('Plentong', 'Johor Bahru', 'Johor'),
     'bandar seri alam': ('Plentong', 'Johor Bahru', 'Johor'),
-    'taman laguna':     ('Plentong', 'Johor Bahru', 'Johor'),
-    'sri laguna':       ('Plentong', 'Johor Bahru', 'Johor'),
+    # 🔥 §10x.85 — Taman Laguna 1/7 IS in Mukim PULAI per Geran 337203
+    # (verified against KOID Sample template ground truth, Alan & Tan firm).
+    # Was incorrectly mapped to Plentong; corrected after firm-side check.
+    'taman laguna':     ('Pulai', 'Johor Bahru', 'Johor'),
+    'sri laguna':       ('Pulai', 'Johor Bahru', 'Johor'),
     'marina cove':      ('Plentong', 'Johor Bahru', 'Johor'),
     'tepian bayu':      ('Plentong', 'Johor Bahru', 'Johor'),
     'pasir gudang':     ('Plentong', 'Johor Bahru', 'Johor'),
