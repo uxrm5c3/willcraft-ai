@@ -240,8 +240,10 @@
                         <select name="gift_prop_state_{{ loop.index0 }}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"
                                 onchange="updatePropertyPreview({{ loop.index0 }})">
                             <option value="">State</option>
+                            {# 🔥 §10x.192 — case-insensitive state match. Data has 'Johor' / 'Johor Darul Ta'zim' / 'JOHOR'; dropdown options are uppercase. Without case-insensitive compare the dropdown rendered blank for every property. #}
+                            {% set _state_val = (pd.get('state') or pd.get('negeri') or '').upper().replace(' DARUL TA''ZIM', '').replace(' DARUL TAKZIM', '').strip() %}
                             {% for state in ['JOHOR', 'KEDAH', 'KELANTAN', 'MELAKA', 'NEGERI SEMBILAN', 'PAHANG', 'PERAK', 'PERLIS', 'PULAU PINANG', 'SABAH', 'SARAWAK', 'SELANGOR', 'TERENGGANU', 'W.P. KUALA LUMPUR', 'W.P. LABUAN', 'W.P. PUTRAJAYA'] %}
-                            <option value="{{ state }}" {% if pd.get('state', pd.get('negeri', '')) == state %}selected{% endif %}>{{ state }}</option>
+                            <option value="{{ state }}" {% if _state_val == state or _state_val == state.replace('W.P. ', '') %}selected{% endif %}>{{ state }}</option>
                             {% endfor %}
                         </select>
                         <select name="gift_prop_country_{{ loop.index0 }}" class="px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500"

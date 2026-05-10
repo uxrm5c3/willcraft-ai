@@ -13489,6 +13489,20 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
                 pd.setdefault('bandar_pekan', mukim_val)
                 pd.setdefault('mukim', mukim_val)
             tt = pi.get('title_type') or pd.get('title_type')
+            # 🔥 §10x.192 — pull title_type from the bound Document if not in
+            # property_info / property_details. Vision extractor sets
+            # title_type='hsd' / 'geran' / 'hakmilik' on the Document but
+            # the placeholder save path doesn't copy it into property_details.
+            if not tt and gg.get('document_id') and not (gg.get('document_id') or '').startswith('_h3_synth'):
+                try:
+                    _doc = db.session.get(Document, gg['document_id'])
+                    if _doc and _doc.extracted_data:
+                        _ed = json.loads(_doc.extracted_data) or {}
+                        _tt = (_ed.get('title_type') or '').strip()
+                        if _tt:
+                            tt = _tt.upper() if _tt.lower() in ('hsd', 'hsm', 'grn') else _tt.title()
+                except Exception:
+                    pass
             if tt:
                 pd['title_type'] = tt
             # 🔥 §10x.145 — parse postcode/city/state out of the address
