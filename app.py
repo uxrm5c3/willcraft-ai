@@ -909,7 +909,14 @@ def build_will_data():
             prop_details = None
             fin_details = None
             if gift_type == 'property':
-                pd = gd.get('property_details') or gd.get('property_info') or {}
+                # 🔥 §10x.132 — prefer property_info (chat-saved schema)
+                # over property_details (older wizard form schema). When
+                # both are present property_info has the up-to-date values
+                # the user confirmed in chat.
+                pd_info = gd.get('property_info') or {}
+                pd_legacy = gd.get('property_details') or {}
+                # Merge: info wins when both have a value
+                pd = {**pd_legacy, **{k: v for k, v in pd_info.items() if v}}
                 # Build a PropertyDetails dict that matches the model's
                 # expected field names. The model uses `bandar_pekan` for
                 # Mukim (legacy naming) — chat saves it as `mukim`.
