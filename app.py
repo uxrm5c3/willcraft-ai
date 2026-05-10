@@ -13539,14 +13539,44 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
                    pd.get('testator_share') or '').strip()
             co = gg.get('co_owners') or pi.get('co_owners') or pd.get('co_owners') or []
             own_intent = (gg.get('ownership_intent') or '').strip()
-            # If still empty, try AI Summary ownership for this gift's slot
-            if (not ts or not co) and gg.get('_ai_summary_idx') is not None:
+            # If still empty, try AI Summary ownership for this gift's slot.
+            # Use _ai_summary_idx if stamped; otherwise match by address /
+            # name similarity to find the AI Summary entry. Saved gifts
+            # from the placeholder path (_try_save_property_gift line ~7575)
+            # leave _ai_summary_idx=None when bind_assets returned Tier D,
+            # so the wizard would never see ownership info from AI Summary.
+            if not ts or not co:
                 try:
                     from ai.chat_planner import _extract_ai_summary_properties
                     ai_props = _extract_ai_summary_properties(client_id) or []
                     idx = gg.get('_ai_summary_idx')
-                    if 0 <= idx < len(ai_props):
-                        own_intent = own_intent or ai_props[idx].get('ownership', '')
+                    matched_ai = None
+                    if isinstance(idx, int) and 0 <= idx < len(ai_props):
+                        matched_ai = ai_props[idx]
+                    else:
+                        # Match by address / name similarity (cheap key match)
+                        gift_addr = (pd.get('property_address') or '').lower()
+                        gift_lot = (pd.get('lot_number') or '').strip()
+                        gift_title = (pd.get('title_number') or '').strip()
+                        for ap in ai_props:
+                            ap_name = (ap.get('name') or '').lower()
+                            ap_addr = (ap.get('address') or '').lower()
+                            ap_lot = (ap.get('lot') or '').strip()
+                            ap_title = (ap.get('title') or '').strip()
+                            # Match if first 30 chars of address overlap, OR
+                            # lot/title equal (digit-strip)
+                            if (gift_addr and ap_addr
+                                and gift_addr[:30] == ap_addr[:30]):
+                                matched_ai = ap; break
+                            if (gift_addr and ap_name
+                                and ap_name and ap_name[:30] == gift_addr[:30]):
+                                matched_ai = ap; break
+                            if (gift_lot and ap_lot and
+                                _re.sub(r'\D','',gift_lot) ==
+                                _re.sub(r'\D','',ap_lot) and gift_lot != 'TBD'):
+                                matched_ai = ap; break
+                    if matched_ai:
+                        own_intent = own_intent or matched_ai.get('ownership', '')
                 except Exception:
                     pass
             if own_intent and (not ts or not co):

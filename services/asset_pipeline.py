@@ -1588,6 +1588,14 @@ def _parse_ownership(ownership_text: str) -> Tuple[str, List[str]]:
     t = ownership_text.lower()
     if 'sole' in t and 'joint' not in t:
         return '1/1', []
+    # 🔥 §10x.154 — phrases like "to daughter Esther 100%" (no joint /
+    # owned-with phrase, just a beneficiary share) describe a SOLE
+    # property going entirely to one person. Avoid defaulting to joint
+    # 1/2. Detect: contains '100%' / '100percent' AND lacks any
+    # joint-ownership marker (joint / owned with / share with / jointly).
+    if (re.search(r'\b100\s*(?:percent|%)', t)
+            and not re.search(r'\b(?:joint|owned\s+(?:50/50|with)|share[sd]?\s+with|jointly)', t)):
+        return '1/1', []
     share = '1/2'  # default for joint (two-party)
     m = re.search(r'(\d+)\s*/\s*(\d+)', ownership_text)
     if m:
@@ -1603,19 +1611,25 @@ def _parse_ownership(ownership_text: str) -> Tuple[str, List[str]]:
     co_owners: List[str] = []
     # 🔥 §10x.154 — also terminate capture on '.' or '!' so phrases
     # like "joint 50/50 with Chai Mei Fun. Testator's 50%..." pull
-    # the co-owner correctly. Was missing — co_owners stayed empty.
+    # the co-owner correctly. Also accept role-only prefix without
+    # 'my' ("with wife Lim Bee Yan" — no 'my').
     for m in re.finditer(
-        r'\bwith\s+(?:my\s+(?:wife|husband|spouse|son|daughter|father|mother|brother|sister)\s+)?'
+        r'\bwith\s+(?:(?:my|his|her)\s+)?(?:wife|husband|spouse|son|daughter|father|mother|brother|sister)?\s*'
         r'((?:[A-Z][A-Za-z]+\s*){1,5})'
         r'(?=[\.,!]|\s+\(|\s+share|\s+\d|\s*$)',
         ownership_text, re.IGNORECASE,
     ):
         nm = m.group(1).strip()
         nm = re.sub(r'\s+(share|with)\s*$', '', nm, flags=re.IGNORECASE).strip()
+        # Strip leading role word that leaked into the capture group
+        nm = re.sub(r'^(wife|husband|spouse|son|daughter|father|mother|brother|sister)\s+', '', nm, flags=re.IGNORECASE).strip()
         # Strip trailing 'Testator' / 'My' (caught by greedy caps match
         # when next sentence starts with a capitalised word)
         nm = re.sub(r'\s+(Testator|My|His|Her)$', '', nm).strip()
-        if nm and len(nm) > 2 and nm.lower() not in ('share', 'with', 'testator'):
+        if nm and len(nm) > 2 and nm.lower() not in ('share', 'with', 'testator',
+                                                       'wife', 'husband', 'spouse',
+                                                       'son', 'daughter', 'father',
+                                                       'mother', 'brother', 'sister'):
             co_owners.append(nm[:80])
     seen = set()
     co_owners = [c for c in co_owners if not (c.lower() in seen or seen.add(c.lower()))]
