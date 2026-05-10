@@ -904,7 +904,18 @@ def build_will_data():
                      if b.get('full_name')]
 
     # -- Section E: Gifts (optional) ------------------------------------------
-    gifts_data = _list('step5_gifts')
+    # 🔥 §10x.203 — apply render-time enrichment so build_will_data sees
+    # the SAME populated fields the wizard does (postcode/city/state/
+    # ownership/title_type/co_owners derived from chat data). Without this
+    # build_will_data was reading raw step5 with title_type=None for the
+    # Shop, even though enrichment had pulled HSD from Document.extracted_data.
+    gifts_data_raw = _list('step5_gifts')
+    try:
+        client_id = session.get('client_id') or ''
+        gifts_data = (_enrich_gifts_with_documents(client_id, gifts_data_raw)
+                       if client_id else gifts_data_raw)
+    except Exception:
+        gifts_data = gifts_data_raw
     gifts = None
     if gifts_data:
         from models.gift import PropertyDetails, FinancialDetails

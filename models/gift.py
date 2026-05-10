@@ -56,14 +56,21 @@ class PropertyDetails(BaseModel):
         if not self.property_address:
             return ""
         prefix = ownership_prefix or "my property"
-        # 🔒 Phek-lock: use the address as-is (don't strip trailing state).
-        # The earlier `_clean_address` aggressive strip dropped ", JOHOR" off
-        # the end and produced "BAHRU, held under" instead of Phek's
-        # "BAHRU, JOHOR held under". Trust the user's input.
+        # 🔒 Phek-lock + §10x.194 (T-29) — apply _format_address_phek for
+        # full normalisation: strip parens metadata, convert "House at NN"
+        # → "NO.NN", collapse newlines, append MALAYSIA suffix when missing.
         addr = (self.property_address or '').strip()
-        # Still collapse double commas + whitespace
-        addr = re.sub(r'\s*,\s*', ', ', addr)
-        addr = re.sub(r'\s+', ' ', addr).strip().rstrip(',')
+        try:
+            from documents.template_filler import _format_address_phek
+            addr = _format_address_phek(addr, nationality='Malaysian')
+            # Property addresses don't need MALAYSIA suffix when followed by
+            # "held under..." — strip if present (Phek doesn't add it on
+            # property bequests, only on testator/executor opening).
+            addr = re.sub(r',\s*MALAYSIA\s*$', '', addr, flags=re.IGNORECASE).strip().rstrip(',')
+        except Exception:
+            # Fall back to original collapse-only behaviour
+            addr = re.sub(r'\s*,\s*', ', ', addr)
+            addr = re.sub(r'\s+', ' ', addr).strip().rstrip(',')
         parts = [f"{prefix} known as {addr}"]
         title_parts = []
         # 🔥 §10x.193 + §10x.39 — Phek format demands a "held under [TYPE] No. N"
