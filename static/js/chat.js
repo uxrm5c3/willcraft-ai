@@ -1,6 +1,78 @@
 // Per-client AI chat — slice 1 (IC photo → testator).
 // Talks to /api/chat/<client_id>/{history,message,apply,reject}.
 
+// 🔥 §10x.124 — render-time role dedup. Mirrors
+// services/role_registry.canonical + dedup_quickreplies in JS so OLD
+// chat messages already in DB (saved before the server-side fix
+// shipped) ALSO get their duplicate role buttons collapsed at render.
+// Without this, every existing card with the bug stays buggy until
+// someone regenerates it. Defence-in-depth: server side + client side.
+window.__roleCanonical = (function () {
+  const ALIASES = {
+    // In-laws — canonical hyphenated form
+    'sister-in-law':   'Sister-in-law',
+    'sister in law':   'Sister-in-law',
+    'sisterinlaw':     'Sister-in-law',
+    'brother-in-law':  'Brother-in-law',
+    'brother in law':  'Brother-in-law',
+    'brotherinlaw':    'Brother-in-law',
+    'father-in-law':   'Father-in-law',
+    'father in law':   'Father-in-law',
+    'fatherinlaw':     'Father-in-law',
+    'mother-in-law':   'Mother-in-law',
+    'mother in law':   'Mother-in-law',
+    'motherinlaw':     'Mother-in-law',
+    'son-in-law':      'Son-in-law',
+    'son in law':      'Son-in-law',
+    'soninlaw':        'Son-in-law',
+    'daughter-in-law': 'Daughter-in-law',
+    'daughter in law': 'Daughter-in-law',
+    'daughterinlaw':   'Daughter-in-law',
+    // Immediate family
+    'spouse': 'Spouse', 'wife': 'Wife', 'husband': 'Husband',
+    'father': 'Father', 'mother': 'Mother',
+    'son': 'Son', 'daughter': 'Daughter',
+    'brother': 'Brother', 'sister': 'Sister',
+    'grandfather': 'Grandfather', 'grandmother': 'Grandmother',
+    'grandson': 'Grandson', 'granddaughter': 'Granddaughter',
+    'uncle': 'Uncle', 'aunt': 'Aunt', 'auntie': 'Aunt',
+    'nephew': 'Nephew', 'niece': 'Niece', 'cousin': 'Cousin',
+    'stepson': 'Stepson', 'stepdaughter': 'Stepdaughter',
+    'friend': 'Friend', 'relative': 'Relative', 'other': 'Other',
+    // Will-roles
+    'executor': 'Executor', 'trustee': 'Trustee', 'guardian': 'Guardian',
+    'witness': 'Witness', 'beneficiary': 'Beneficiary',
+  };
+  return function canonical(text) {
+    if (!text) return null;
+    const key = String(text).trim().toLowerCase().replace(/[\s\-_]+/g, ' ').trim();
+    if (!key) return null;
+    if (ALIASES[key]) return ALIASES[key];
+    const hyphen = key.replace(/ /g, '-');
+    if (ALIASES[hyphen]) return ALIASES[hyphen];
+    const nosep = key.replace(/ /g, '');
+    if (ALIASES[nosep]) return ALIASES[nosep];
+    return null;
+  };
+})();
+
+window.__dedupRoleQuickReplies = function (qrs) {
+  if (!qrs || !qrs.length) return qrs;
+  const seen = new Set();
+  const out = [];
+  for (const qr of qrs) {
+    if (!qr || typeof qr !== 'object') { out.push(qr); continue; }
+    const c = window.__roleCanonical(qr.value || '');
+    if (c && seen.has(c)) {
+      console.warn('§10x.124 client dedup: dropping duplicate role button', qr);
+      continue;
+    }
+    if (c) seen.add(c);
+    out.push(qr);
+  }
+  return out;
+};
+
 (function () {
   const CLIENT_ID = window.CHAT_CLIENT_ID;
   if (!CLIENT_ID) {
@@ -358,6 +430,14 @@
         try { inlineQuickReplies = JSON.parse(qrMatch[1]); } catch (e) {}
         renderContent = renderContent.replace(qrMatch[0], '').trim();
       }
+    }
+    // 🔥 §10x.124 — render-time dedup of quickreply role buttons.
+    // Mirrors services/role_registry.dedup_quickreplies. Drops entries
+    // whose value resolves to the same canonical role as an earlier one.
+    // Defence-in-depth: server-side dedup catches NEW cards; this catches
+    // OLD cards already saved in DB that the planner doesn't rewrite.
+    if (inlineQuickReplies && inlineQuickReplies.length) {
+      inlineQuickReplies = window.__dedupRoleQuickReplies(inlineQuickReplies);
     }
     if (renderContent) {
       html += `<div class="text-sm ${m.role === 'user' ? '' : 'text-gray-800'}">${inlineMd(renderContent)}</div>`;
