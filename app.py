@@ -968,6 +968,14 @@ def build_will_data():
                         'account_number':   gd.get('account_number') or gd.get('policy_number') or '',
                         'country':          gd.get('country') or '',
                     }
+                # 🔥 §10x.134 — pass `description` field so the FinancialDetails
+                # formatter renders the account-type token ("Saving"/"Current"/
+                # "Fixed Deposit"). Phek format: "the monies in my UOB Saving
+                # Account No. ..." — the "Saving" word comes from `description`.
+                if not fd.get('description'):
+                    fd['description'] = (gd.get('account_type')
+                                          or gd.get('description')
+                                          or '')
                 try:
                     fin_details = FinancialDetails(**fd)
                 except Exception:

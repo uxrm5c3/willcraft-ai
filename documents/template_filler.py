@@ -96,6 +96,44 @@ def _ben_phrase(name: str, nric: str, nationality: str = 'Malaysian',
     return f"{pref}{name} ({id_block})"
 
 
+def _format_address_phek(address: str, nationality: str = 'Malaysian') -> str:
+    """🔥 §10x.134 — normalise address to Phek format:
+        1. Collapse newlines/tabs to ', '
+        2. Deduplicate adjacent commas
+        3. Uppercase the trailing state token (Phek: 'JOHOR, MALAYSIA')
+        4. Append ', MALAYSIA' if nationality is Malaysian and country
+           isn't already at the end
+    """
+    if not address:
+        return ''
+    import re as _re
+    # Collapse newlines + tabs into ', '
+    s = _re.sub(r'[\n\r\t]+', ', ', address.strip())
+    # Collapse multiple commas / whitespace
+    s = _re.sub(r'\s*,\s*', ', ', s)
+    s = _re.sub(r',{2,}', ',', s)
+    s = _re.sub(r'\s+', ' ', s).strip().rstrip(',').strip()
+    # Uppercase the trailing state token (last comma-separated chunk if
+    # it looks like a state name)
+    parts = [p.strip() for p in s.split(',') if p.strip()]
+    if parts:
+        last = parts[-1]
+        # Known Malaysian states (case-insensitive match)
+        ms_states = {'johor', 'kedah', 'kelantan', 'melaka', 'malacca',
+                     'negeri sembilan', 'pahang', 'penang', 'pulau pinang',
+                     'perak', 'perlis', 'sabah', 'sarawak', 'selangor',
+                     'terengganu', 'kuala lumpur', 'putrajaya', 'labuan'}
+        if last.lower() in ms_states:
+            parts[-1] = last.upper()
+    s = ', '.join(parts)
+    # Append ", MALAYSIA" if nationality is Malaysian and country isn't
+    # already there
+    if (nationality or '').strip().lower() == 'malaysian':
+        if not _re.search(r',\s*MALAYSIA\s*$', s, _re.IGNORECASE):
+            s = s + ', MALAYSIA'
+    return s
+
+
 def _format_gift_property(gift) -> str:
     """Render the asset description body for a property gift.
     Uses the Phek phrasing pre-built into models/gift.py."""
@@ -289,10 +327,17 @@ def fill_will(will_data) -> str:
     # ── Title + Preamble ────────────────────────────────────────────────
     parts.append(TITLE_TEMPLATE.format(testator_name=t.full_name))
     parts.append('')
+    # 🔥 §10x.134 — match Phek format:
+    #   1. Collapse multi-line addresses to single comma-joined line
+    #   2. Uppercase the trailing state (Phek: "JOHOR, MALAYSIA")
+    #   3. Append ", MALAYSIA" suffix when nationality is Malaysian
+    #      and the address doesn't already end with country
+    addr = _format_address_phek(t.residential_address,
+                                 nationality=t.nationality or 'Malaysian')
     parts.append(PREAMBLE_TEMPLATE.format(
         testator_name=t.full_name,
         nric=t.nric_passport,
-        address=t.residential_address,
+        address=addr,
     ))
     parts.append('')
 
@@ -304,29 +349,35 @@ def fill_will(will_data) -> str:
     execs = will_data.executors or []
     primary = [e for e in execs if e.role in ('Primary', 'Joint')]
     substitutes = [e for e in execs if e.role == 'Substitute']
+    # 🔥 §10x.134 — collapse multi-line addresses (chat-saved persons
+    # often have addresses with embedded \n from OCR) so the executor
+    # clause stays on a single Phek-format line.
+    def _exec_addr(p):
+        return _format_address_phek(getattr(p, 'address', '') or '',
+                                     nationality=getattr(p, 'nationality', '') or 'Malaysian')
     if len(primary) >= 2:
         e1, e2 = primary[0], primary[1]
         parts.append(EXECUTOR_JOINT_TEMPLATE.format(
             rel1=e1.relationship.lower(), name1=e1.full_name,
-            nric1=e1.nric_passport, address1=e1.address,
+            nric1=e1.nric_passport, address1=_exec_addr(e1),
             rel2=e2.relationship.lower(), name2=e2.full_name,
-            nric2=e2.nric_passport, address2=e2.address,
+            nric2=e2.nric_passport, address2=_exec_addr(e2),
         ))
     elif len(primary) == 1 and substitutes:
         e1 = primary[0]
         s1 = substitutes[0]
         parts.append(EXECUTOR_SINGLE_WITH_SUBSTITUTE_TEMPLATE.format(
             relationship=e1.relationship.lower(), executor_name=e1.full_name,
-            nric=e1.nric_passport, address=e1.address,
+            nric=e1.nric_passport, address=_exec_addr(e1),
             he_she=_he_she(e1, will_data),
             sub_relationship=s1.relationship.lower(), substitute_name=s1.full_name,
-            sub_nric=s1.nric_passport, sub_address=s1.address,
+            sub_nric=s1.nric_passport, sub_address=_exec_addr(s1),
         ))
     elif len(primary) == 1:
         e1 = primary[0]
         parts.append(EXECUTOR_SINGLE_TEMPLATE.format(
             relationship=e1.relationship.lower(), executor_name=e1.full_name,
-            nric=e1.nric_passport, address=e1.address,
+            nric=e1.nric_passport, address=_exec_addr(e1),
         ))
     else:
         parts.append(
