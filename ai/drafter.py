@@ -944,13 +944,66 @@ def draft_will_mock(will_data) -> str:
 
 {next_clause}.  I hereby devise and bequeath to {ben_text} {desc}{share_text}."""
 
-            # Add substitute clause inline for equal/prorata modes
+            # Add substitute clause inline for equal/prorata/specific modes
             sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
             mb_allocs = [a for a in g.allocations if a.role == 'MB']
             if sub_mode == 'equal' and len(mb_allocs) > 1:
                 specific_gifts_text += f" If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares or to the survivor of them if one of them does not survive me."
             elif sub_mode == 'prorata' and len(mb_allocs) > 1:
                 specific_gifts_text += f" If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio as their respective shares."
+            elif sub_mode == 'specific':
+                # 🔥 §10x.152c — Inline 'specific' substitute clauses per
+                # Sample format. Sample writes:
+                #   "...absolutely. If my daughter does not survive me,
+                #   then the benefit she would have received shall be
+                #   given to my son JOSHUA KOID TECK SENG (MALAYSIA NRIC
+                #   No. 960525-07-5039)."
+                # Previously emitted as a separate "Pursuant to Clause N
+                # above..." clause. Now collapsed inline.
+                _inlines = []
+                for _a in mb_allocs:
+                    if not _a.substitutes:
+                        continue
+                    _mb_nric, _mb_nat, _mb_rel = "", "Malaysian", ""
+                    for _b in will_data.beneficiaries:
+                        if _b.full_name.lower() == _a.beneficiary_name.lower():
+                            _mb_nric = _b.nric_passport_birthcert
+                            _mb_nat = getattr(_b, 'nationality', 'Malaysian')
+                            _mb_rel = _b.relationship.lower()
+                            break
+                    _mb_id = f" {format_id_for_will(_mb_nric, _mb_nat)}" if _mb_nric else ""
+                    _mb_rs = f"my {_mb_rel} " if _mb_rel else ""
+                    _hs = "she" if _mb_rel in ("sister", "daughter", "mother", "niece", "aunt", "grandmother", "wife") else "he"
+                    _sub_parts = []
+                    for _s in _a.substitutes:
+                        _s_nric, _s_nat, _s_rel = "", "Malaysian", ""
+                        for _b in will_data.beneficiaries:
+                            if _b.full_name.lower() == _s.beneficiary_name.lower():
+                                _s_nric = _b.nric_passport_birthcert
+                                _s_nat = getattr(_b, 'nationality', 'Malaysian')
+                                _s_rel = _b.relationship.lower()
+                                break
+                        _s_id = f" {format_id_for_will(_s_nric, _s_nat)}" if _s_nric else ""
+                        _s_rs = f"my {_s_rel} " if _s_rel else ""
+                        _sub_parts.append(f"{_s_rs}{_s.beneficiary_name.upper()}{_s_id}")
+                    if not _sub_parts:
+                        continue
+                    if len(_sub_parts) == 1:
+                        _sub_text = _sub_parts[0]
+                        _trailing = ""
+                    else:
+                        _sub_text = " and ".join(_sub_parts)
+                        _trailing = " in equal shares or to the survivor of them if one of them does not survive me"
+                    _inlines.append(
+                        f"If {_mb_rs}{_a.beneficiary_name.upper()}{_mb_id} does "
+                        f"not survive me, then the benefit {_hs} would have "
+                        f"received shall be given to {_sub_text}{_trailing}."
+                    )
+                if _inlines:
+                    specific_gifts_text += " " + " ".join(_inlines)
+                # Mark gift as already-inlined so the LATER specific-substitute
+                # loop doesn't re-emit a separate clause for it.
+                gift_clause_map.pop(gi, None)
 
             next_clause += 1
 
