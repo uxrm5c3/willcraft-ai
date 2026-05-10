@@ -974,11 +974,24 @@ def build_will_data():
                 # Mukim (legacy naming) — chat saves it as `mukim`.
                 if pd or gd.get('property_address'):
                     raw_addr = (pd.get('property_address') or gd.get('property_address') or '').strip()
-                    # Strip noise prefixes from chat-summary text
-                    for _pref in ('House at ', 'Shop at ', 'Unit at ', 'Apartment at '):
-                        if raw_addr.startswith(_pref):
-                            raw_addr = raw_addr[len(_pref):]
-                            break
+                    # 🔥 §10x.194 (T-29) — convert "House at NN" / "Shop at
+                    # NN" → "NO.NN" per Phek format. Was stripping the
+                    # prefix entirely, which left "10 Jalan..." (no NO.10).
+                    import re as _re_pref
+                    _ptn = re.match(
+                        r'^(?:House|Shop|Unit|Apartment|Flat)\s+(?:at\s+)?(\d+\b)',
+                        raw_addr, _re_pref.IGNORECASE)
+                    if _ptn:
+                        # Replace the matched prefix with "NO.<number>"
+                        raw_addr = 'NO.' + _ptn.group(1) + raw_addr[_ptn.end():]
+                    else:
+                        # Fall back to old strip behaviour for prefixes
+                        # that don't have a number after them
+                        for _pref in ('House at ', 'Shop at ', 'Unit at ',
+                                      'Apartment at '):
+                            if raw_addr.startswith(_pref):
+                                raw_addr = raw_addr[len(_pref):]
+                                break
                     # Title type: pre-set field wins; otherwise detect from
                     # title_number prefix (HSD, GRN, GM, PTD…)
                     title_num_raw = (pd.get('title_number') or gd.get('title_number') or '').strip()
