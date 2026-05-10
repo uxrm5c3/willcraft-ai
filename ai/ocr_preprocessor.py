@@ -64,6 +64,19 @@ _DOC_PATTERNS: list[tuple[str, list[str]]] = [
         r'\bMBJB\b', r'\bDBKL\b', r'\bMBPJ\b', r'\bMPJBT\b',
         r'\bMPS\b',  r'\bMPK\b',  r'\bMPPG\b',  r'\bMPSP\b',
         r'PENTADBIRAN TANAH',
+        # 🔥 §10x.144 — strata management bills (JMB / Badan Pengurusan
+        # Bersama / Management Corporation) belong here. Common
+        # invoice content: SERVICE CHARGE, SINKING FUND, WATER BILL.
+        r'BADAN PENGURUSAN',
+        r'PENGURUSAN BERSAMA',
+        r'MANAGEMENT CORPORATION',
+        r'PERBADANAN PENGURUSAN',
+        r'\bJMB\b',
+        r'\bMC\s+NO\b',
+        r'SERVICE CHARGE',
+        r'SINKING FUND',
+        r'CAJ PERKHIDMATAN',
+        r'KUMPULAN WANG PENJELASAN',
     ]),
     # ── Death certificate ────────────────────────────────────────────────────
     ('death_certificate', [
