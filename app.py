@@ -11340,10 +11340,66 @@ def _try_save_testator_address(client_id: str, user_text: str):
         if low.startswith(prefix):
             matched_prefix = prefix
             break
+
+    # 🔥 §10x.125 — FREE-TEXT ADDRESS FALLBACK.
+    # If no prefix matched but the chat is currently on Step 2 (testator
+    # address is the only required field that takes a free-text reply),
+    # accept any input that LOOKS like a Malaysian address. The Step 2
+    # card already prompts "Address: REQUIRED — please provide" and
+    # asks the user to type. Without this fallback, the user's free-text
+    # reply (e.g. 'NO.600, JALAN MUTIARA HIJAU 17, ...') was silently
+    # ignored because no 'address:' prefix → handler returns None →
+    # planner re-renders the same card forever ('card keep repeating').
+    #
+    # Heuristic: address-like means
+    #   • length ≥ 15 chars
+    #   • has comma OR newline (multi-segment)
+    #   • contains a 5-digit Malaysian postcode OR keywords like
+    #     'jalan' / 'lorong' / 'taman' / 'lot' / 'no.' / 'no '
+    #   • is NOT a single keyword (gender/dob/marital prefix sans value)
+    if not matched_prefix:
+        # Only attempt when chat is on Step 2 (testator address still empty)
+        try:
+            _w_check = (Will.query.filter_by(client_id=client_id, status='draft')
+                        .filter(Will.deleted_at.is_(None))
+                        .order_by(Will.updated_at.desc()).first())
+            _s1_check = json.loads(_w_check.step1_data or '{}') if _w_check else {}
+        except Exception:
+            _s1_check = {}
+        # Only fall back to free-text address when testator address is unset
+        if (_s1_check.get('residential_address') or '').strip():
+            return None
+        # Don't intercept short / one-word inputs (could be quickreply
+        # values like 'skip', 'yes', or a name in another flow).
+        if len(t) < 15 or (',' not in t and '\n' not in t):
+            return None
+        _low_for_addr = low
+        _has_postcode = bool(re.search(r'\b\d{5}\b', t))
+        _addr_keywords = ('jalan ', 'lorong ', 'taman ', 'lot ', 'no.',
+                           ' no ', 'persiaran', 'jln ', 'kampung ',
+                           'kg ', 'apartment', 'condominium')
+        _has_addr_kw = any(kw in _low_for_addr for kw in _addr_keywords)
+        if not (_has_postcode or _has_addr_kw):
+            return None
+        # Also reject inputs that look like a quickreply value or button
+        # text (start with arrow / emoji / known control words).
+        if (t.startswith(('▶', '✓', '⏭', '🗑', '✏', '📍'))
+            or low.startswith(('confirm', 'skip', 'delete', 'yes',
+                                'inventory ', 'orphan_', 'bank_l',
+                                'insurance_l', 'gift_main', 'substitute '))):
+            return None
+        # OK — treat as testator address
+        matched_prefix = 'address:'
+
     if not matched_prefix:
         return None
     s1_key, person_attr, label = _FIELD_MAP[matched_prefix]
-    raw_value = t[len(matched_prefix):].strip()
+    # 🔥 §10x.125 — when the prefix was synthesized from free-text fallback,
+    # use the ENTIRE input as raw_value (no prefix to strip).
+    if t.lower().startswith(matched_prefix):
+        raw_value = t[len(matched_prefix):].strip()
+    else:
+        raw_value = t
     if not raw_value:
         return None  # bare prefix is the prefill — wait for typing
 
