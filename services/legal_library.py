@@ -108,8 +108,9 @@ _TOPIC_HINTS: List[tuple] = [
      r'best practice|gold.standard|sample clause|precedent|template',
      'drafting_trusts_and_will_trusts_11ed'),
     (r'\bprobate procedure|grant application|caveat|estate administration|'
-     r'contested probate|small estate|sijil faraid|distribution scheme',
-     'probate_administration_in_malaysia_and_singapore_3ed'),
+     r'contested probate|small estate|sijil faraid|distribution scheme|'
+     r'singapore.*probate|family justice court|amanah raya',
+     'probate_administration_malaysia_singapore_3ed'),
     (r'\bcommunity|hindu|christian|muslim|chinese custom|adat|customary',
      'law_of_wills_gopalakrishnan_11ed'),
     (r'\bwill\b|testament|testator|witness|attest|revoke|codicil',
