@@ -4054,6 +4054,40 @@ Audits + permanent rules are the only way to keep bugs DEAD.
 
 ---
 
+### 🔥🔥🔥 BUG-TABLE WORKFLOW (mandatory, every reported bug) 🔥🔥🔥
+
+User instruction (verbatim): *"whenever any bug reported, check against
+the table whether is a reported bug and the fix fail. Update the bug
+table. Always refer back to the table whenever bugs reported. If bug
+persist after repeated fix, need to take a deep and holistic review
+at the code"*.
+
+**Step 1 — Search the table FIRST.** Before any diagnosis, grep §10x.39
+for keywords from the user's report. If a row already exists:
+   • Same fix shipped + still failing → **flag it loudly to the user**
+     ("this should have been fixed by §10x.X — that fix is broken").
+     Do NOT silently re-patch. Bring the regression to attention so
+     the user can decide between another patch vs holistic review.
+   • Different fix → fine, add new row but cross-reference the related
+     prior rule.
+
+**Step 2 — If new** — add a row IMMEDIATELY (before shipping the fix).
+Mark status as "in progress". Update with commit hash + verification
+when shipped.
+
+**Step 3 — If a bug class re-surfaces after 2+ fixes** — STOP patching.
+Do a holistic review (state machine refactor, structural fix, etc.).
+Patches make brittleness worse — every band-aid adds to the
+inventory. Reference the §10x.137 redesign doc as the model.
+
+**Step 4 — Always commit code + bug-table row + tests in ONE commit.**
+Separating them lets future audits lose context.
+
+This rule is the meta-process that prevents the recurring-bug-class
+trap (see §10x.133 for the canonical example).
+
+---
+
 ### 10x.40  🔥🔥 BURN-IN — Confidence-driven buttons + USER MUST CONFIRM 🔥🔥
 
 **Cards NEVER auto-save. The user must click to confirm. Number of

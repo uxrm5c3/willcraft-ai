@@ -959,6 +959,74 @@ def _summarise_message(raw_text: str, *, doc_fields: list = None) -> str:
             "**What we deduce:**\n"
             "• <item>\n"
             "• <item>\n\n"
+            "🔥 §10x.142 — STRUCTURED JSON FOOTER (mandatory).\n"
+            "After the prose bullets, append a JSON block in this EXACT shape\n"
+            "wrapped in `<!--AI_SUMMARY_JSON:` and `-->` so downstream code\n"
+            "can read the testator's intent DIRECTLY without regex-parsing\n"
+            "your prose. The user never sees this block (it's an HTML\n"
+            "comment). EVERY beneficiary/share MUST be machine-readable.\n\n"
+            "<!--AI_SUMMARY_JSON:\n"
+            "{\n"
+            "  \"properties\": [\n"
+            "    {\n"
+            "      \"label\": \"Unit C-30-08 Condominium Marina Cove\",\n"
+            "      \"address\": \"<address as testator wrote it>\",\n"
+            "      \"title\": \"564662\",\n"
+            "      \"lot\": \"207922\",\n"
+            "      \"mukim\": \"Plentong\",\n"
+            "      \"daerah\": \"Johor Bahru\",\n"
+            "      \"negeri\": \"Johor\",\n"
+            "      \"ownership\": {\n"
+            "        \"type\": \"joint\",\n"
+            "        \"co_owner\": \"Joshua Koid Teck Seng\",\n"
+            "        \"testator_share\": \"1/2\"\n"
+            "      },\n"
+            "      \"beneficiaries\": [\n"
+            "        {\"name\": \"Esther Koid En Hui\", \"share_of_testator\": \"100%\"}\n"
+            "      ]\n"
+            "    }\n"
+            "  ],\n"
+            "  \"banks\": [\n"
+            "    {\n"
+            "      \"institution\": \"POSB Bank\",\n"
+            "      \"country\": \"Singapore\",\n"
+            "      \"account\": \"030-25917-3\",\n"
+            "      \"account_type\": null,\n"
+            "      \"beneficiaries\": [\n"
+            "        {\"name\": \"Lim Bee Yan\", \"share\": \"100%\"}\n"
+            "      ]\n"
+            "    }\n"
+            "  ],\n"
+            "  \"insurance\": [\n"
+            "    {\n"
+            "      \"insurer\": \"NTUC Income\",\n"
+            "      \"country\": \"Singapore\",\n"
+            "      \"policy\": \"1811500170\",\n"
+            "      \"beneficiaries\": [\n"
+            "        {\"name\": \"Lim Bee Yan\", \"share\": \"100%\"}\n"
+            "      ]\n"
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "-->\n\n"
+            "RULES for the JSON:\n"
+            "  • `share_of_testator` is the % the beneficiary gets OF THE\n"
+            "    TESTATOR'S SHARE (NOT of the full property). For B-05-11\n"
+            "    where testator owns 1/2 and gives 25% (of full) to each\n"
+            "    of 2 children, `share_of_testator` is `\"50%\"` for each\n"
+            "    (because 25% of full = 50% of testator's 1/2 share). All\n"
+            "    children's shares MUST sum to 100% of testator_share.\n"
+            "  • `beneficiaries` array is REQUIRED. If the testator's text\n"
+            "    is ambiguous, leave it as `[]` — downstream will ASK.\n"
+            "  • Names in `beneficiaries[].name` MUST match the canonical\n"
+            "    family name as the testator typed it (preserve case +\n"
+            "    spelling). Don't title-case or shorten.\n"
+            "  • `ownership.testator_share` is ALWAYS a fraction string\n"
+            "    (e.g. `\"1/1\"` for sole, `\"1/2\"` for joint with one other,\n"
+            "    `\"1/3\"` for joint with two others).\n"
+            "  • Output VALID JSON. No trailing commas. Strings double-quoted.\n"
+            "  • If a category is empty (no banks, no insurance), output\n"
+            "    `[]` — never omit the key.\n\n"
             f"Message:\n{raw_text[:6000]}"
         )
 
@@ -1206,6 +1274,18 @@ def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
                .order_by(ChatMessage.created_at.desc())
                .first())
         if msg and msg.content:
+            # 🔥 §10x.142 — PREFER STRUCTURED JSON FOOTER if present.
+            # AI Summary now emits <!--AI_SUMMARY_JSON:{...}--> as part
+            # of its output. Reading that JSON directly is INFINITELY
+            # more reliable than regex-parsing the prose bullets — every
+            # regex variant has shipped a bug (§10x.97 banks-as-properties,
+            # §10x.140 cross-line bleed, §10x.141 period-space split).
+            # The JSON contains explicit beneficiaries[] arrays per
+            # property/bank/insurance — no parsing needed.
+            json_props = _extract_ai_summary_json_block(msg.content)
+            if json_props:
+                _apply_geo_bridge_inplace(json_props)
+                return json_props
             parsed = _parse_ai_summary_text(msg.content)
             if parsed:
                 # 🔥 §10x.50 Bug A — fill missing lot/title/mukim from raw text
@@ -1483,6 +1563,67 @@ def _gather_summary_source_text(client_id: str) -> str:
     except Exception:
         pass
     return '\n'.join(parts)
+
+
+def _extract_ai_summary_json_block(content: str) -> List[Dict[str, Any]]:
+    """🔥 §10x.142 — read the structured JSON block emitted by
+    `_summarise_message`. Returns the same shape as `_parse_ai_summary_text`
+    (list of property dicts with keys name/address/lot/title/mukim/etc.)
+    plus an extra `beneficiaries` key carrying the testator's intended
+    distribution as `[{name, share_of_testator}, ...]`.
+
+    Returns [] if the JSON block is missing or unparseable. Caller falls
+    back to `_parse_ai_summary_text` on empty.
+
+    The JSON block is wrapped in `<!--AI_SUMMARY_JSON: ... -->` (HTML
+    comment, invisible to user). See _summarise_message prompt for the
+    canonical schema.
+    """
+    if not content:
+        return []
+    m = re.search(r'<!--AI_SUMMARY_JSON:\s*(\{.*?\})\s*-->', content,
+                   flags=re.DOTALL)
+    if not m:
+        return []
+    try:
+        payload = _json.loads(m.group(1))
+    except Exception:
+        return []
+    if not isinstance(payload, dict):
+        return []
+    props_raw = payload.get('properties') or []
+    if not isinstance(props_raw, list):
+        return []
+    out = []
+    for p in props_raw:
+        if not isinstance(p, dict):
+            continue
+        own = p.get('ownership') or {}
+        if not isinstance(own, dict):
+            own = {}
+        bens = p.get('beneficiaries') or []
+        if not isinstance(bens, list):
+            bens = []
+        out.append({
+            'name':    (p.get('label') or p.get('address') or '').strip(),
+            'address': (p.get('address') or p.get('label') or '').strip(),
+            'lot':     str(p.get('lot') or '').strip(),
+            'title':   str(p.get('title') or '').strip(),
+            'mukim':   (p.get('mukim') or '').strip(),
+            'daerah':  (p.get('daerah') or '').strip(),
+            'negeri':  (p.get('negeri') or '').strip(),
+            'ownership': own,   # {type, co_owner, testator_share}
+            'beneficiaries': [
+                {'name': (b.get('name') or '').strip(),
+                 'share_of_testator': str(b.get('share_of_testator') or
+                                            b.get('share') or '').strip()}
+                for b in bens if isinstance(b, dict) and b.get('name')
+            ],
+            # Legacy compat — the prose-parser populated 'beneficiary' as a
+            # narrative string. Some callers still read it.
+            'beneficiary': '',
+        })
+    return out
 
 
 def _parse_ai_summary_text(text: str) -> List[Dict[str, Any]]:
@@ -7042,26 +7183,76 @@ def _step6_property_question(pending_props, recent_text, will_data):
     evidence_block = '\n'.join(evidence_lines) if evidence_lines else ''
 
     # ── Deduce beneficiary from email text ───────────────────────
-    # 🔥 §10x.140 — SCOPE deduction to the ONE line that mentions THIS
-    # property. Bug: previously used `recent_text` globally → percentages
-    # from B-05-11 ("25% to Esther"), Shop ("50% Joshua"), banks ("100%
-    # Lim Bee Yan") all bled together → total 175% → not in valid set →
-    # deduced reset to [] → card said "No clear distribution" even when
-    # the SPECIFIC line clearly stated "Testator's 50% to Esther".
-    # Fix: build the per-property snippet first (same logic as
-    # _find_property_message_snippet), use that scoped text for the
-    # name+percent matching. Each property's beneficiaries are extracted
-    # ONLY from the bullet that names that property.
+    # 🔥 §10x.142 — STRUCTURED-FIRST DEDUCTION.
+    # If the AI Summary's JSON footer (per §10x.142 in the prompt)
+    # gave us explicit `beneficiaries[]` for this property, use that
+    # directly. NO REGEX. NO SNIPPET PARSING. The §10x.140 (cross-
+    # line bleed) and §10x.141 (period-space split) bugs were both
+    # symptoms of regex-parsing prose; they cannot recur when the
+    # AI Summary itself emitted machine-readable beneficiaries.
     deduced = []
+    _ai_match = (will_data or {}).get('_ai_summary_match_for_card') or None
+    # Try to find the matching AI Summary entry by lot/title/address
+    if not _ai_match:
+        try:
+            cid_for_card = (will_data or {}).get('client_id') or ''
+            if cid_for_card:
+                ai_props_struct = _extract_ai_summary_properties(cid_for_card) or []
+                _t_lot   = (ex.get('lot_number') or '').strip()
+                _t_title = (ex.get('title_number') or '').strip()
+                _t_addr  = (ex.get('property_address') or '').strip().lower()
+                for ap in ai_props_struct:
+                    ap_lot   = (ap.get('lot') or '').strip()
+                    ap_title = (ap.get('title') or '').strip()
+                    ap_addr  = (ap.get('address') or '').strip().lower()
+                    if (_t_lot and ap_lot and _t_lot == ap_lot) or \
+                       (_t_title and ap_title and _t_title == ap_title) or \
+                       (_t_addr and ap_addr and _t_addr[:30] == ap_addr[:30]):
+                        _ai_match = ap
+                        break
+        except Exception:
+            _ai_match = None
+    # Use structured beneficiaries if AI Summary provided them
+    if _ai_match and _ai_match.get('beneficiaries'):
+        for b in _ai_match['beneficiaries']:
+            nm = (b.get('name') or '').strip()
+            sh = (b.get('share_of_testator') or '').strip()
+            if not nm or not sh:
+                continue
+            # Match name to candidates (case-insensitive substring works
+            # for first-name vs full-name variations)
+            matched = next((c for c in candidates
+                             if c.upper() == nm.upper() or
+                                nm.upper() in c.upper() or
+                                c.upper() in nm.upper()), nm)
+            evidence = (
+                f"AI Summary: {nm} → {sh} (of testator's "
+                f"{(_ai_match.get('ownership') or {}).get('testator_share') or '1/1'})"
+            )
+            deduced.append({'name': matched, 'share': sh, 'evidence': evidence})
+        # Sanity: total must be 100%
+        try:
+            total = sum(int(d['share'].rstrip('%')) for d in deduced)
+        except Exception:
+            total = 0
+        if total != 100:
+            # AI Summary gave a non-100% total — fall through to regex
+            # fallback below (legacy prose parsing).
+            deduced = []
+
+    # 🔥 §10x.140 (legacy fallback) — only fires when §10x.142 structured
+    # path didn't yield deduced beneficiaries. Older AI Summary outputs
+    # (pre-§10x.142 deploy) don't have the JSON footer; this regex
+    # fallback handles them.
     scoped_text = ''
-    if recent_text:
+    if not deduced and recent_text:
         try:
             scoped_text = _find_property_message_snippet(p, recent_text) or ''
         except Exception:
             scoped_text = ''
     # Fallback to global if scoped match returned nothing (rare)
     text_for_dedup = scoped_text or recent_text
-    if text_for_dedup and candidates:
+    if not deduced and text_for_dedup and candidates:
         import re as _re
         norm = _re.sub(r'(\d+)\s*(?:percent|pct|per\s*cent)\b',
                        r'\1%', text_for_dedup, flags=_re.IGNORECASE)
