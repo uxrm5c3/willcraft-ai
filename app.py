@@ -528,16 +528,15 @@ def save_will_to_db():
                 session.modified = True
                 break
 
-    if will_id:
-        will_record = db.session.get(Will, will_id)
-    else:
-        will_record = None
-
-    if not will_record:
-        will_record = Will(client_id=client_id, created_by=session.get('user_id'))
-        db.session.add(will_record)
-        db.session.flush()
+    # 🔥 §10x.120 — singleton-Will lookup. Even when session has a stale
+    # will_id, prefer the client's CURRENT active will. Stops the bug
+    # where save_session_data targeted an approved/orphan row while chat
+    # wrote to a different draft.
+    will_record = _get_or_create_active_will(
+        client_id, user_id=session.get('user_id'))
+    if will_record.id != will_id:
         session['will_id'] = will_record.id
+        session.modified = True
 
     will_record.identities_data = json.dumps(session.get('person_registry', []))
     will_record.step1_data = json.dumps(session.get('step1', {}))
@@ -3592,18 +3591,83 @@ def _get_or_create_chat_session(client_id, user_id):
     return cs
 
 
+# 🔥 §10x.120 — SINGLETON-WILL INVARIANT
+# Active = not soft-deleted AND status in this whitelist. There MUST be
+# at most ONE active Will per client at any time. Status mutates in place
+# (draft → generated → pending_approval → approved); a NEW row is created
+# ONLY when no active row exists for the client. This prevents the bug
+# class where Approve/Generate left orphan drafts and the wizard pinned
+# to a stale will_id.
+ACTIVE_WILL_STATUSES = ('draft', 'generated', 'pending_approval', 'approved')
+
+
+class WillSingletonViolation(Exception):
+    """Raised when a client has >1 active Will. §10x.120 invariant."""
+    pass
+
+
+def assert_singleton_will(client_id, when='unknown', strict=True):
+    """🔥 §10x.120 — verify exactly ≤1 active Will per client.
+
+    Pass strict=False during the warning-roll-out window: logs but does
+    not raise. Promote to strict=True after we've observed clean prod
+    for one cycle.
+    """
+    if not client_id:
+        return
+    n = (Will.query.filter_by(client_id=client_id)
+         .filter(Will.deleted_at.is_(None))
+         .filter(Will.status.in_(ACTIVE_WILL_STATUSES))
+         .count())
+    if n > 1:
+        msg = (f'§10x.120 VIOLATION at {when}: client {client_id} now '
+               f'has {n} active wills. Expected ≤1.')
+        app.logger.error(msg)
+        if strict:
+            raise WillSingletonViolation(msg)
+
+
 def _get_or_create_active_will(client_id, user_id):
-    """Most recently updated non-deleted draft Will for this client, or new one."""
-    will = (Will.query
-            .filter_by(client_id=client_id, status='draft')
-            .filter(Will.deleted_at.is_(None))
-            .order_by(Will.updated_at.desc())
-            .first())
-    if will:
+    """🔥 §10x.120 — Return the single active Will for this client; create
+    only if no active will exists. ANY active status counts, not just
+    draft. If the active will is approved/generated, flip back to draft
+    on edit so chat/wizard writes don't silently mutate a sealed version.
+    """
+    actives = (Will.query
+               .filter_by(client_id=client_id)
+               .filter(Will.deleted_at.is_(None))
+               .filter(Will.status.in_(ACTIVE_WILL_STATUSES))
+               .order_by(Will.updated_at.desc())
+               .all())
+    if len(actives) > 1:
+        # Multi-will leak — log + auto-consolidate (keep latest, soft-
+        # delete the rest). This makes the invariant self-healing: even
+        # if some legacy code path tries to insert a parallel row, the
+        # next read repairs it. The migration script (consolidate_wills.py)
+        # is for one-shot cleanup; this is the live safety net.
+        from datetime import datetime
+        keep, drop = actives[0], actives[1:]
+        app.logger.warning(
+            f'§10x.120 auto-heal: client {client_id} had {len(actives)} '
+            f'active wills; keeping {keep.id[:8]}, soft-deleting '
+            f'{[w.id[:8] for w in drop]}')
+        for w in drop:
+            w.deleted_at = datetime.utcnow()
+        db.session.flush()
+        return keep
+    if actives:
+        will = actives[0]
+        # Edit on a sealed will → flip back to draft so chat/wizard can
+        # write. Approver re-approves after edits.
+        if will.status != 'draft':
+            will.status = 'draft'
         return will
-    will = Will(client_id=client_id, created_by=user_id)
+    # Genuinely first will for this client.
+    will = Will(client_id=client_id, status='draft', created_by=user_id)
     db.session.add(will)
     db.session.flush()
+    assert_singleton_will(client_id, when='_get_or_create_active_will',
+                           strict=False)
     return will
 
 
@@ -8776,15 +8840,15 @@ def _mark_completed(will, key: str) -> bool:
 
 
 def _get_or_create_will(client_id: str):
-    """Return the active draft Will for client, creating one if missing."""
-    will = (Will.query.filter_by(client_id=client_id, status='draft')
-            .filter(Will.deleted_at.is_(None))
-            .order_by(Will.updated_at.desc()).first())
-    if not will:
-        will = Will(client_id=client_id, status='draft',
-                    title='Draft Will', completed_steps='[]')
-        db.session.add(will)
-        db.session.commit()
+    """🔥 §10x.120 — single active Will per client. Delegates to
+    _get_or_create_active_will so all 3 helpers share one invariant.
+    """
+    will = _get_or_create_active_will(client_id, user_id=None)
+    if not will.title:
+        will.title = 'Draft Will'
+    if not will.completed_steps:
+        will.completed_steps = '[]'
+    db.session.commit()
     return will
 
 
@@ -13393,9 +13457,29 @@ def _refresh_wizard_session_from_db():
     confirms gifts. Call this at the top of every wizard step GET handler.
     """
     will_id = session.get('will_id')
-    if not will_id:
-        return
-    w = db.session.get(Will, will_id)
+    # 🔥 §10x.120 — auto-rebind wizard to the client's CURRENT active will.
+    # Stops the bug where session.will_id pinned to a stale approved/orphan
+    # row while chat wrote to a different active draft. Without this, the
+    # wizard rendered stale beneficiary names (e.g. "LIM LAY CHENG" instead
+    # of "JOSHUA") even after the latest walker run had correct data.
+    target_w = None
+    if will_id:
+        target_w = db.session.get(Will, will_id)
+    if target_w is not None and target_w.deleted_at is not None:
+        target_w = None
+    cid_for_rebind = (target_w.client_id if target_w else
+                       session.get('client_id'))
+    if cid_for_rebind:
+        active = (Will.query.filter_by(client_id=cid_for_rebind)
+                  .filter(Will.deleted_at.is_(None))
+                  .filter(Will.status.in_(ACTIVE_WILL_STATUSES))
+                  .order_by(Will.updated_at.desc())
+                  .first())
+        if active and (not target_w or active.id != target_w.id):
+            session['will_id'] = active.id
+            session.modified = True
+            target_w = active
+    w = target_w
     if not w:
         return
     def _j(s, default):
