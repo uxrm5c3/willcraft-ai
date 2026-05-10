@@ -443,6 +443,19 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
             seen.add(nm.upper())
             out.append((nm, role))
 
+    # 🔥 §10x.139 — Pattern 5: optional pronoun OR comma-separated list.
+    # Catches AI Summary phrasings like "his wife Lim Bee Yan, son Joshua
+    # Koid Teck Seng, and daughter Esther Koid En Hui" where bare role
+    # followed by a name occurs without the "my" prefix.
+    for m in re.finditer(
+        rf'(?:\b(?:my|his|her)\s+|,\s*|\band\s+)(?P<role>{role_alt})\s+(?P<name>{name_pat})\b',
+        text, re.IGNORECASE):
+        nm  = m.group('name').strip()
+        role = m.group('role').strip().title()
+        if nm and (nm.upper() not in seen):
+            seen.add(nm.upper())
+            out.append((nm, role))
+
     # Filter junk-name tokens (no stopwords, must be 2-5 capitalised parts)
     JUNK = {'WITH', 'ALL', 'AND', 'OR', 'THE', 'TO', 'GO', 'OF',
             'FROM', 'BY', 'IN', 'ON', 'FOR', 'BANK', 'INSURANCE',
