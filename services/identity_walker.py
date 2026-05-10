@@ -403,9 +403,10 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
     name_pat = (r"[A-Z][A-Za-z\-\']{1,}"
                 r"(?:\s+[A-Z][A-Za-z\-\']{1,}){1,4}")
 
-    # Pattern 1: "my <role> (<NAME>)" / "<role> (<NAME>)"
+    # Pattern 1: "(my|his|her) <role> (<NAME>)" / "<role> (<NAME>)" /
+    # ", <role> (<NAME>)" / "and <role> (<NAME>)"
     for m in re.finditer(
-        rf'\bmy\s+(?P<role>{role_alt})\s*\(\s*(?P<name>{name_pat})\s*\)',
+        rf'(?:\b(?:my|his|her)\s+|,\s*|\band\s+)(?P<role>{role_alt})\s*\(\s*(?P<name>{name_pat})\s*\)',
         text, re.IGNORECASE):
         nm  = m.group('name').strip()
         role = m.group('role').strip().title()
