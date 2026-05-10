@@ -241,3 +241,193 @@ populated.
 **The Step 6 specific-gifts walkthrough is functionally complete for the happy
 path.** The FUCK items above are residual quality issues — none block the
 walkthrough; all should be tackled before production.
+
+---
+
+## SESSION 2026-05-10 — KOID NEW ACCOUNT END-TO-END FIXES
+
+Tested live against KOID BENG SUN NEW account (`70459059-ff33-4bd7-b31b-d954a4785a78`)
+on `47.130.249.28:8082`. Pre-filled with provided IC `631204-07-5743` + address
+`NO.600 JALAN MUTIARA HIJAU 17 81000 KULAI` (per §10x.99 user instruction).
+Replayed 29 attachments + WhatsApp body via inbound webhook simulation.
+
+### F2-1. AI Summary Pattern 5 — bare `his wife X, son Y, daughter Z`
+**Symptom:** `_extract_family_name_role_pairs` returned `[]` for the AI Summary
+phrasing `his wife Lim Bee Yan, son Joshua Koid Teck Seng, and daughter Esther
+Koid En Hui`. No H3 placeholders → identity walkthrough only saw 2 ICs (Esther
++ Lim Lay Cheng), missed Lim Bee Yan + Joshua entirely.
+**Root cause:** Patterns 1-4 required `my <role> <NAME>` prefix. Bare `his/her`
++ comma-separated lists never matched.
+**Fix:** Pattern 5 (commit `680c468`) accepts `(?:my|his|her|,|and)` prefix on
+bare-name `<role> <NAME>`. Pattern 1 widened similarly (commit `8776ec9`).
+**Rule:** §10x.139.
+
+### F2-2. Allocation overflow false positive on `Testator's 50%` ownership
+**Symptom:** Walker stalled in infinite `other` loop. Conflict detector said
+"Property #1 (Unit B-05-11): shares add up to 150%, not 100%. Original:
+'testator holds 50% jointly with Chai Mei Fun. His 50% to be split: 25% to
+son Joshua and 25% to daughter Esther'."
+**Root cause:** Per §10x.13, percentages following `Testator's` / `holds X%` /
+`joint X/Y` are OWNERSHIP shares, not beneficiary allocations. Detector summed
+them all together.
+**Fix:** `_detect_message_conflicts` (commits `7bdf0d2` + `4c1f97b`) strips
+ownership-share fragments before summing — `joint 50/50` / `\d+/\d+ with` /
+`testator's 50%` / `holds 50%` / `his 50% to` / `jointly with`.
+**Rule:** §10x.140.
+
+### F2-3. Bank regex missed bare-word country
+**Symptom:** `_extract_ai_summary_banks` returned 0 entries. KOID's lines
+`POSB Bank Singapore Account No. 030-25917-3` and `Public Bank Malaysia Current
+Account No. 3244955834` never matched.
+**Root cause:** `_AI_BANK_LINE_RE` required either `(country)` parens OR direct
+`Account No.` after `Bank`. Bare-word country (Singapore/Malaysia) and
+pre-account-type words (Current, Plus Saving) broke the regex.
+**Fix:** commit `9ce14b9`. Extended to accept `Singapore|Malaysia|...` bare
+word + 0-3 capitalised account-type words before `Account No.`.
+**Rule:** §10x.141.
+
+### F2-4. Cross-property identifier hallucination (Shop missing)
+**Symptom:** Pipeline showed 5 properties in AI Summary but only 4 in
+step5_data. Shop @ Jalan Gunung 4 missing.
+**Root cause:** Claude AI Summary HALLUCINATED the same `(Title 251041, Lot
+127082, Mukim Plentong)` for BOTH the House at Sri Laguna AND the Shop because
+both are in Mukim Plentong. Stage 2 binding's one-claim-only rule gave the
+Shop's title doc to the House; Shop got no binding → silently dropped.
+**Fix:** commit `9b76a14`. Strengthened AI Summary prompt with ONE-DOC-TO-ONE-
+PROPERTY hard rule + worked example. NEVER assign the same (lot, title) to TWO
+properties — leave the OTHER without identifiers.
+**Rule:** §10x.142.
+
+### F2-5. H3 Person backfill chain
+**Symptom:** Joshua's IC was uploaded but his Person row had `nric=''` and
+`document_id=None`. Will generated `(MALAYSIA NRIC No. )` blanks for him in
+every clause. Same for Lim Bee Yan when her IC arrived after first
+will-generation cycle (late-arrival test).
+**Three root causes (one fix each):**
+- (a) `_dedupe_ic_against_existing` matched IC by name to Person row but did
+  NOT backfill NRIC/address/doc_id before marking the IC as `duplicate`.
+- (b) `_try_assign_pending_identity` for H3 confirms used the H3 entry's empty
+  NRIC instead of looking up existing IC docs.
+- (c) `_propagate_person_to_steps` only matched `status='draft'` wills; missed
+  the already-generated will so step2/step4 stayed stale.
+**Fix:** commits `1f99a68` + `75c5aca` + `1d3c9cb`. Verified end-to-end:
+late-IC arrival simulation → Lim Bee Yan NRIC `661126-04-5182` propagates to
+step2/step4 → next will-regen includes `(MALAYSIA NRIC No. 661126-04-5182)`.
+**Rules:** §10x.143 + §10x.143b + §10x.143c.
+
+### F2-6. JMB strata maintenance bill misclassified as bank statement
+**Symptom:** KOID `PHOTO-29.jpg` is a "BADAN PENGURUSAN BERSAMA MERAK
+KAYANGAN" Statement of Account (strata maintenance for unit B-05-11, customer
+KOID BENG SUN & CHAI MEI). Vision said `kind=bank_statement, bank_name=Maybank`.
+**Two root causes:**
+- (a) Vision prompt didn't distinguish JMB Statement of Account from real bank
+  statement — saw "Statement of Account" header and hallucinated "Maybank".
+- (b) OCR regex matched 3 patterns in `bank_statement` category (`STATEMENT OF
+  ACCOUNT`, `CLOSING BALANCE`, `TRANSACTION HISTORY`) → 0.95 confidence →
+  bypassed vision entirely.
+**Fix:** commits `1f99a68` + `db7ac63`. Vision prompt requires recognised bank
+issuer + deposit account number; JMB bills classified as property_tax. OCR
+regex `_DOC_PATTERNS` adds `BADAN PENGURUSAN`, `MANAGEMENT CORPORATION`,
+`SERVICE CHARGE`, `SINKING FUND`, `JMB`, `MC NO` patterns to property_tax.
+**Rules:** §10x.144 + §10x.144b.
+
+### F2-7. IC dedup: weak address-only match beat strong NRIC/name match
+**Symptom:** Lim Bee Yan late-arrival IC test: dedup matched her IC to
+TESTATOR's Person row (same residential address). Wife's H3 Person stayed empty.
+**Root cause:** `_dedupe_ic_against_existing` iterated Persons in arbitrary
+order. Testator's address matched (wife's IC has same mailing address) →
+matched first → silently linked wife's IC doc to testator.
+**Fix:** commit `75c5aca`. Sort persons by match strength before loop:
+NRIC=3, name=2, addr=1. Refuse address-only match against a Person who already
+has a different NRIC. Wife's IC now correctly binds to her own Person row.
+**Rule:** §10x.151.
+
+### F2-8. Wizard property card showing empty fields despite chat-saved data
+**Symptom:** Wizard Step 6 property card showed empty postcode/city/state/
+country/ownership_type/testator_share/co_owners even though chat had saved a
+complete address string. Also `(Title X, Lot Y, Mukim Z)` clutter trailing
+every property_address. Mukim showed `Plentongy` (OCR drift). Wizard
+/step/10 returned 500 Internal Server Error from a corrupted nested-dict
+step3_data.
+**Root causes (multiple):**
+- Chat saves address as a single string; wizard expects separate
+  postcode/city/state inputs (§10x.145).
+- Placeholder save path doesn't write testator_share/co_owners/ownership_type
+  — only build_gift does, but H3 path stores them in `property_info` while
+  wizard reads `property_details` (§10x.154).
+- `_parse_ownership` co-owner regex lookahead missed `.` so
+  `joint 50/50 with Chai Mei Fun. Testator's...` returned co_owners=[].
+- Mukim cleaner missing OCR-drift suffix strip.
+- step3_data nested-dict shape (from earlier reset script polluting an empty
+  list with dict-shape writes) crashed `for g in guardians`.
+**Fix:** commits `a47d623` + `f303d63` + `4caf8bd` + `66a948f` + `7b13d6f` +
+`fc6741a` + `8226ba7`. `_enrich_gifts_with_documents` parses postcode/city/
+state, strips parens, derives ownership/share/co_owners from chat data OR
+AI Summary (matching unstamped gifts to AI Summary by address/lot similarity),
+normalises mukim drift, defaults country='Malaysia'. `_parse_ownership`
+terminates capture on `.`/`!`, accepts `with wife X` (no `my`), strips role
+prefix, treats summed-100% as sole. Step10 template defensively filters
+guardians to mappings.
+**Rules:** §10x.145 + §10x.150 + §10x.153 + §10x.154.
+
+### F2-9. India / UK reference books quoted as Malaysian law
+**Symptom:** Two reference books (Gopalakrishnan India, Kessler UK) had no
+jurisdiction tag. Q&A engine could quote them as if they were Malaysian law.
+**Fix:** commit `a47d623`. New `_BOOK_JURISDICTION` dict tags each book. Q&A
+PREFERS Malaysia-authoritative sources; only falls back to foreign sources
+when no MY hit, and prepends `⚠️ FOREIGN-LAW PRINCIPLE ONLY (jurisdiction:
+INDIA)` disclaimer. Library page UI shows per-book jurisdiction badge.
+Plus new `/library/download/<slug>` route — Gold Standard PDF accessible at
+`https://will.alantanjb.com/library/download/will_drafting_gold_standard_guide`.
+**Rules:** §10x.147 + §10x.148.
+
+### F2-10. Misspelled / ambiguous financial institution names
+**Symptom:** `eaTiQa` (insurance) saved as misspelt vendor name. `AIA` silently
+mapped to AIA Bhd (Malaysia) when it could just as well be AIA Singapore Pte
+Ltd — separate legal entities. `NTUC Income` (legacy name) saved as-is when
+the legal name post-2022 corporatisation is `Income Insurance Limited`.
+**Fix:** commits `f303d63` + `eed97a0`. New `services/financial_institutions.py`
+(~85 BNM/MAS-licensed entities, exact/alias/substring/fuzzy Levenshtein
+matching). `eaTiQa → Etiqa Insurance`. `NTUC Income → Income Insurance` (web-
+verified post-2022 name). Bare AMBIGUOUS brands (AIA, HSBC, Allianz, Manulife,
+Etiqa, Citibank, StanChart, OCBC, UOB, Maybank, Prudential, Great Eastern,
+MSIG, Sun Life, Zurich, Sompo) trigger `🇲🇾 Brand Malaysia | 🇸🇬 Brand
+Singapore` quickreply on L1 card. Fuzzy threshold tightened: requires shared
+3-char prefix OR edit distance ≤ 2.
+**Rules:** §10x.149 + §10x.152.
+
+### F2-11. Chat UI snapshot didn't pick up wizard fixes
+**Symptom (user report):** "chat UI not fixed". Wizard property fixes only
+applied to wizard render. Chat right-pane snapshot still showed empty
+postcode/missing-field warnings even after deploy.
+**Root cause:** `_will_data_snapshot` returned `_normalise_gifts(step5_data)`
+RAW — no enrichment. Chat history poll (`/api/chat/<cid>/history`) used the
+raw snapshot. Wizard called `_enrich_gifts_with_documents` separately. Two
+UIs, two render paths, only wizard had the fix.
+**Fix:** commit `008d8f6`. `_will_data_snapshot` runs
+`_enrich_gifts_with_documents` on step5 before returning. Single source of
+truth — chat AND wizard render the same enriched gift data.
+**Rule:** §10x.155.
+
+---
+
+## TEST RESULT — KOID NEW ACCOUNT END-TO-END (post-deploy)
+
+After all fixes above, the property gift data shown in BOTH chat snapshot AND
+wizard Step 6 is consistent and complete:
+
+| # | Property | Ownership | Share | Co-owner | Postcode | City |
+|---|---|---|---|---|---|---|
+| 0 | Shop @ Jalan Gunung 4 | sole | 1/1 | — | 81750 | Masai |
+| 1 | C-30-08 Marina Cove | joint | 1/2 | Joshua Koid Teck Seng | (no street in AI Summary) | — |
+| 2 | B-05-11 Paradisonuava | joint | 1/2 | Chai Mei Fun | (no street in AI Summary) | — |
+| 3 | C-05-01 Marina Cove | sole | 1/1 | — | (no street in AI Summary) | — |
+| 4 | House Sri Laguna | joint | 1/2 | Lim Bee Yan | 81200 | Johor Bahru |
+
+Properties [1], [2], [3] still show empty postcode/city — that's because the
+AI Summary text didn't include street addresses for those units (just "Unit X
+Condominium Y"). Wizard now flags them with the §10x.150 amber banner so the
+user can fill in.
+
+Will-generation includes Lim Bee Yan's NRIC `(MALAYSIA NRIC No. 661126-04-5182)`
+verified end-to-end after the late-IC simulation.
