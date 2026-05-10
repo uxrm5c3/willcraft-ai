@@ -9144,18 +9144,36 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
                     if _ot == 'sole': pi_e['ownership_type'] = 'Sole'
                     elif _ot == 'joint': pi_e['ownership_type'] = 'Joint'
             # Lot/title/mukim from JSON if missing on entry.
-            # Geographic fields (mukim/daerah/negeri): AI Summary values
-            # came from the curated §10ha _GEO_BRIDGE table (verified per
-            # rule). Doc OCR for these fields is unreliable — KOID Sri
-            # Laguna had OCR-extracted "Plentong/JOHOR/State of Malaya"
-            # (all wrong) while AI Summary had correct "Pulai/Johor
-            # Bahru/Johor". OVERRIDE doc OCR with AI Summary geographic
-            # values when AI Summary has them. Lot/title still only
-            # filled if missing (doc OCR is authoritative there).
             pi_e = entry.setdefault('property_info', {})
             for k_dst, k_src in [('lot_number', 'lot'), ('title_number', 'title')]:
                 if not pi_e.get(k_dst) and _ap.get(k_src):
                     pi_e[k_dst] = str(_ap.get(k_src))
+            # 🔥 §10x.151f / §10hd — Strata sub-token CANNOT be copied
+            # from a sibling doc. Title 564662/M1C/30/710 is C-30-08's
+            # parcel; C-05-01 has 564662/M1C/5/517 (different parcel,
+            # same master title 564662). If THIS gift was bound via
+            # Tier C semantic match (not direct identifier match) AND
+            # the title contains a /M1C/N/MMM parcel suffix AND AI
+            # Summary had explicit null title → the suffix is NOT
+            # ours; strip to master title only.
+            _match_via = entry.get('_match_via') or ''
+            _match_tier = entry.get('_match_tier') or ''
+            _t = pi_e.get('title_number') or ''
+            _ai_title_explicit_null = (_ap.get('title') is None
+                                        and 'title' in _ap)
+            if (_match_tier == 'C' or _match_via == 'claude_semantic') \
+                    and re.search(r'/M\d?[A-Z]?/\d+/\d+', _t):
+                # Strip strata sub-token to master title only
+                _master = re.split(r'/M', _t)[0]
+                pi_e['title_number'] = _master
+                # Lot is shared across strata units (master lot is correct
+                # — C-30-08 and C-05-01 both have lot 207922) so leave
+                # lot_number alone.
+                # Stamp audit marker
+                entry['_strata_subtoken_stripped'] = True
+                entry['_strata_strip_reason'] = (
+                    f'Tier C semantic bind to sibling doc; original '
+                    f'title was {_t!r}; master {_master!r} kept')
             # Geographic fields: AI Summary wins (geo bridge canonical)
             for k_dst, k_src in [('mukim', 'mukim'), ('daerah', 'daerah'),
                                   ('negeri', 'negeri')]:
