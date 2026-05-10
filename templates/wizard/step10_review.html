@@ -189,7 +189,13 @@
             <a href="/wizard/step/4" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
-            {% set guardians = will_data.get('guardians', []) %}
+            {# 🔥 §10x.153 — defensive: filter out non-dict entries that
+               would crash `g.get(...)`. Legacy step3_data has been
+               observed as a nested dict instead of a list of dicts. #}
+            {% set _g_raw = will_data.get('guardians', []) %}
+            {% if _g_raw is mapping %}{% set _g_raw = [] %}{% endif %}
+            {% set guardians = [] %}
+            {% for _g in _g_raw %}{% if _g is mapping %}{% set _ = guardians.append(_g) %}{% endif %}{% endfor %}
             {% if guardians %}
             <div class="space-y-2">
                 {% for g in guardians %}

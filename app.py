@@ -13328,9 +13328,23 @@ def _refresh_wizard_session_from_db():
             db.session.rollback()
     session['step1'] = s1
     s3 = _j(w.step3_data, {})
-    session['step3_guardians']         = s3.get('guardians', []) if isinstance(s3, dict) else []
-    session['step3_guardian_allowance'] = s3.get('guardian_allowance', {}) if isinstance(s3, dict) else {}
-    session['step4_beneficiaries']     = _j(w.step4_data, [])
+    # 🔥 §10x.153 — defensive: guardians MUST be a list of dicts. Stale
+    # data from earlier reset scripts has produced nested-dict shapes
+    # like {'guardians': {'guardian_allowance': {}, 'guardians': {...}}}
+    # which crashed the step10_review template's `for g in guardians`.
+    g_raw = s3.get('guardians', []) if isinstance(s3, dict) else []
+    if not isinstance(g_raw, list):
+        g_raw = []
+    g_clean = [g for g in g_raw if isinstance(g, dict)]
+    session['step3_guardians']         = g_clean
+    ga_raw = s3.get('guardian_allowance', {}) if isinstance(s3, dict) else {}
+    session['step3_guardian_allowance'] = ga_raw if isinstance(ga_raw, dict) else {}
+    s4_raw = _j(w.step4_data, [])
+    if isinstance(s4_raw, dict):
+        s4_raw = s4_raw.get('beneficiaries', []) or []
+    if not isinstance(s4_raw, list):
+        s4_raw = []
+    session['step4_beneficiaries']     = [b for b in s4_raw if isinstance(b, dict)]
     s5_raw = _j(w.step5_data, [])
     if isinstance(s5_raw, dict):
         s5_raw = s5_raw.get('gifts', []) or []
