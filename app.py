@@ -54,7 +54,7 @@ app = Flask(__name__)
 app.secret_key = FLASK_SECRET_KEY
 app.config['SQLALCHEMY_DATABASE_URI'] = SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # §10x.136 — 500MB cap (lifted from 100MB; textbooks like Gopalakrishnan can hit 150-200MB)
+app.config['MAX_CONTENT_LENGTH'] = 300 * 1024 * 1024  # §10x.136 — 300MB cap (lifted from 100MB; textbooks like Gopalakrishnan can hit 150-200MB)
 
 db.init_app(app)
 

@@ -871,10 +871,28 @@
             // Don't use generic placeholders like 'Gift' as the label — they add no value
             prefix = (rawDesc && rawDesc.toLowerCase() !== 'gift') ? rawDesc : (typeLabel || '📦 Asset');
           }
+          // 🔥 §10x.138 — call out incomplete fields explicitly so the
+          // snapshot row isn't a confusing white blank like "🏠 Property".
+          // For property gifts: flag missing address / title / lot / mukim.
+          // For financial gifts: flag missing institution / account.
           let label = ident ? `${prefix} — ${ident}` : prefix;
+          const missing = [];
+          if (kind === 'property' || propAddr || titleNo || lotNo) {
+            if (!propAddr) missing.push('address');
+            if (!titleNo)  missing.push('title');
+            if (!lotNo)    missing.push('lot');
+            if (!(pd.mukim || pd.bandar_pekan)) missing.push('mukim');
+          } else if (kind === 'bank' || bankName || acctRaw) {
+            if (!bankName) missing.push('institution');
+            if (!acctRaw)  missing.push('account no.');
+          }
           if (benList.length) label += ' → ' + benList.slice(0, 2).join(', ') + (benList.length > 2 ? '…' : '');
           else if (g._pending_beneficiary) label += ' · ⏳ awaiting beneficiary';
-          return [null, label.slice(0, 120)];
+          else missing.push('beneficiary');
+          if (missing.length) {
+            label += ' · ⚠️ missing ' + missing.join(', ');
+          }
+          return [null, label.slice(0, 160)];
         }) : null },
       // Configured-check helper: ignore internal underscore-prefixed keys
       // (e.g. step6._raw_forward_text is the inbound email body, not user
