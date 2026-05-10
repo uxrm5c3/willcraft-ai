@@ -1114,8 +1114,9 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
             canonical = cf['canonical']
             was_corrected = cf.get('was_corrected', False)
             needs_verify = cf.get('needs_user_verification', False)
+            ambiguous = cf.get('ambiguous_country', False)
         except Exception:
-            canonical, was_corrected, needs_verify = cleaned_name, False, False
+            canonical, was_corrected, needs_verify, ambiguous = cleaned_name, False, False, False
         out.append({
             'bank_name':       canonical,
             'account_number':  acct[:40],
@@ -1123,9 +1124,10 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
             'account_type':    acct_type[:40],
             'beneficiary':     '',   # filled by sibling parser if needed
             'beneficiary_share': '',
-            '_original_name':  cleaned_name if was_corrected or needs_verify else None,
+            '_original_name':  cleaned_name if (was_corrected or needs_verify or ambiguous) else None,
             '_name_corrected': was_corrected,
             '_needs_user_verification': needs_verify,
+            '_ambiguous_country': ambiguous,
         })
     # Heuristic: if the raw text says "All my Bank Savings go [to] my wife
     # 100percent" then default every bank's beneficiary to "wife".
@@ -1159,18 +1161,20 @@ def _extract_ai_summary_insurance(client_id: str) -> List[Dict[str, Any]]:
             continue
         # Strip trailing junk on insurer ("eaTiQa Insurance" → "eaTiQa")
         insurer = re.sub(r'\s+Insurance\s*$', '', insurer, flags=re.IGNORECASE).strip()
-        # 🔥 §10x.149 — canonicalise insurer via institution DB.
-        # Catches OCR misreads: "eaTiQa" → "Etiqa Insurance",
-        # "Allianz" → "Allianz Life Insurance Malaysia", etc.
+        # 🔥 §10x.149 + §10x.152 — canonicalise insurer via institution DB.
+        # Catches OCR misreads: "eaTiQa" → "Etiqa Insurance", and flags
+        # ambiguous bare names (AIA, HSBC, Allianz, etc.) for country
+        # disambiguation.
         try:
             from services.financial_institutions import canonicalise_or_flag
             cf = canonicalise_or_flag(insurer, kind='insurance')
             insurer_canonical = cf['canonical']
             was_corrected = cf.get('was_corrected', False)
             needs_verify = cf.get('needs_user_verification', False)
-            original = insurer if (was_corrected or needs_verify) else None
+            ambiguous = cf.get('ambiguous_country', False)
+            original = insurer if (was_corrected or needs_verify or ambiguous) else None
         except Exception:
-            insurer_canonical, was_corrected, needs_verify, original = insurer, False, False, None
+            insurer_canonical, was_corrected, needs_verify, ambiguous, original = insurer, False, False, False, None
         key = (re.sub(r'\W+', '', insurer_canonical).lower(), policy)
         if key in seen:
             continue
@@ -1183,6 +1187,7 @@ def _extract_ai_summary_insurance(client_id: str) -> List[Dict[str, Any]]:
             '_original_name':  original,
             '_name_corrected': was_corrected,
             '_needs_user_verification': needs_verify,
+            '_ambiguous_country': ambiguous,
         })
     wife_default = re.search(
         r'all\s+insurance\s+(?:go|to)\s+(?:my\s+)?wife',
@@ -2094,17 +2099,25 @@ def _walkthrough_bank_layer3_card(gift: Dict[str, Any],
 def _walkthrough_insurance_layer1_card(ins: Dict[str, Any], seq: int, total: int) -> Dict[str, Any]:
     insurer = (ins.get('insurer') or 'Insurer').strip()
     policy  = (ins.get('policy_number') or '').strip()
-    # 🔥 §10x.149 — spell-correction notice for insurance
+    # 🔥 §10x.149 + §10x.152 — spell-correction + ambiguous-country notice
     orig_name = (ins.get('_original_name') or '').strip()
     name_corrected = bool(ins.get('_name_corrected'))
     needs_verify = bool(ins.get('_needs_user_verification'))
+    ambiguous = bool(ins.get('_ambiguous_country'))
     parts = [
         f"### 🛡 Insurance Policy {seq} of {total} — Layer 1: Confirm Asset",
         f"📨 **From your message:**",
         f"• **Insurer:** {insurer}",
         f"• **Policy No.:** `{policy}`",
     ]
-    if name_corrected and orig_name and orig_name.lower() != insurer.lower():
+    if ambiguous:
+        parts.append(
+            f"⚠️ **'{insurer}' operates as separate companies in Malaysia AND "
+            f"Singapore.** Which one issued this policy? (e.g. AIA Bhd in "
+            f"Malaysia is licensed by BNM; AIA Singapore Pte Ltd is licensed "
+            f"by MAS — separate legal entities.)"
+        )
+    elif name_corrected and orig_name and orig_name.lower() != insurer.lower():
         parts.append(f"_💡 Note: corrected from **{orig_name}** to "
                      f"**{insurer}** (matched against the BNM/MAS "
                      f"institution registry)._")
@@ -2113,12 +2126,17 @@ def _walkthrough_insurance_layer1_card(ins: Dict[str, Any], seq: int, total: int
                      f"Malaysian/Singapore insurer exactly. Closest "
                      f"match: **{insurer}**. Please verify._")
     parts.append("Confirm this policy belongs to the testator?")
-    quick = [
-        {'label': '✅ Confirm — add to specific gifts', 'value': 'insurance_l1 confirm'},
-        {'label': '🗑 Wrong — remove',                   'value': 'insurance_l1 remove'},
-        {'label': '⏭ Skip',                              'value': 'insurance_l1 skip'},
-    ]
-    if needs_verify and orig_name:
+    quick = []
+    if ambiguous:
+        quick.append({'label': f'🇲🇾 {insurer} Malaysia',
+                       'value': f'insurance_l1 setcountry MY'})
+        quick.append({'label': f'🇸🇬 {insurer} Singapore',
+                       'value': f'insurance_l1 setcountry SG'})
+    quick.append({'label': '✅ Confirm — add to specific gifts',
+                   'value': 'insurance_l1 confirm'})
+    quick.append({'label': '🗑 Wrong — remove', 'value': 'insurance_l1 remove'})
+    quick.append({'label': '⏭ Skip', 'value': 'insurance_l1 skip'})
+    if needs_verify and orig_name and not ambiguous:
         quick.insert(1, {'label': f'✏️ Different insurer — type the name',
                           'value': 'insurance_l1 rename'})
     return {'text': '\n\n'.join(parts) + _qr_marker(quick), 'focus_doc_ids': []}

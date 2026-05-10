@@ -100,7 +100,11 @@ _BANKS_SG: List[FinancialInstitution] = [
 
 # ── INSURANCE / TAKAFUL ───────────────────────────────────────────────────
 _INSURANCE_MY: List[FinancialInstitution] = [
-    FinancialInstitution('AIA Bhd', ['AIA Malaysia', 'AIA', 'AIA Berhad'], 'MY', 'insurance', 'Berhad'),
+    # 🔥 §10x.152 — 'AIA' bare is ambiguous (AIA Bhd in Malaysia + AIA
+    # Singapore Pte Ltd in Singapore). Do NOT alias bare 'AIA' to either —
+    # require country hint OR user verification. The Malaysia entry
+    # accepts only 'AIA Malaysia', 'AIA Bhd', 'AIA Berhad'.
+    FinancialInstitution('AIA Bhd', ['AIA Malaysia', 'AIA Berhad', 'AIA MY'], 'MY', 'insurance', 'Berhad'),
     FinancialInstitution('Allianz Life Insurance Malaysia', ['Allianz Malaysia', 'Allianz Life'], 'MY', 'insurance', 'Berhad'),
     FinancialInstitution('Allianz General Insurance Malaysia', ['Allianz General'], 'MY', 'insurance', 'Berhad'),
     FinancialInstitution('AmGeneral Insurance', ['AmGeneral', 'Am General Insurance'], 'MY', 'insurance', 'Berhad'),
@@ -134,7 +138,10 @@ _INSURANCE_MY: List[FinancialInstitution] = [
 ]
 
 _INSURANCE_SG: List[FinancialInstitution] = [
-    FinancialInstitution('AIA Singapore', ['AIA SG'], 'SG', 'insurance', 'Pte Ltd'),
+    # 🔥 §10x.152 — 'AIA' bare is ambiguous; only AIA-Singapore-specific
+    # aliases match this entry. Bare 'AIA' falls through to fuzzy match
+    # which marks needs_user_verification=True.
+    FinancialInstitution('AIA Singapore', ['AIA SG', 'AIA Singapore Pte Ltd'], 'SG', 'insurance', 'Pte Ltd'),
     FinancialInstitution('Allianz Singapore', ['Allianz SG', 'Allianz Insurance Singapore'], 'SG', 'insurance', 'Pte Ltd'),
     FinancialInstitution('AXA Singapore', ['AXA SG', 'AXA Insurance Singapore'], 'SG', 'insurance', 'Pte Ltd',
                           notes='Acquired by HSBC in 2022; brand transitioning to HSBC Life Singapore'),
@@ -247,16 +254,25 @@ def match_institution(name: str, kind: Optional[str] = None,
                 sub_hits = same_country
         fi, al = sub_hits[0]
         return _to_dict(fi, n_norm, 'alias', al, name)
-    # Stage 4: fuzzy match (Levenshtein ≤ 2 per token)
+    # Stage 4: fuzzy match (tightened — must share a meaningful prefix
+    # AND have low edit distance). Fixed §10x.152: previously 'Acme Bank'
+    # fuzzy-matched 'AmBank' (4 edits / 6 chars = within 20% tolerance).
+    # New rule: input must share a 3+ char prefix with the candidate to
+    # qualify as a fuzzy hit, OR have edit distance ≤ 2 absolute.
     best = None
     best_dist = 10**9
     for fi in pool:
         for candidate in [fi.canonical] + fi.aliases:
             c_norm = _normalise(candidate)
             d = _levenshtein(n_norm, c_norm)
-            # Allow up to ~20% of the longer string as edit distance
-            tolerance = max(2, len(c_norm) // 5)
-            if d <= tolerance and d < best_dist:
+            # Strict tolerance: ≤ 15% of longer string AND absolute ≤ 3,
+            # OR very small absolute distance (≤ 2) regardless of length
+            longer = max(len(n_norm), len(c_norm))
+            tolerance = min(3, longer // 7)
+            shares_prefix = (len(n_norm) >= 3 and len(c_norm) >= 3
+                              and n_norm[:3] == c_norm[:3])
+            qualifies = (d <= 2) or (d <= tolerance and shares_prefix)
+            if qualifies and d < best_dist:
                 best = (fi, candidate, d)
                 best_dist = d
     if best:
@@ -287,6 +303,30 @@ def canonicalise_or_flag(name: str, kind: Optional[str] = None,
     {canonical: name, was_corrected: False, confidence: 'unknown',
      suggestion: None, needs_user_verification: True}.
     """
+    # 🔥 §10x.152 — AMBIGUOUS BARE NAMES. Brands that operate as separate
+    # legal entities in BOTH Malaysia AND Singapore (AIA, HSBC, Allianz,
+    # Manulife, Tokio Marine, Etiqa, Citibank, Standard Chartered, OCBC,
+    # UOB, Maybank, Prudential, Great Eastern). When the input is JUST
+    # the brand without country qualifier AND no country_hint given,
+    # flag for user verification — don't silently pick one country.
+    AMBIGUOUS_BARE = {
+        'aia', 'hsbc', 'allianz', 'manulife', 'tokio marine', 'etiqa',
+        'citibank', 'standard chartered', 'ocbc', 'uob', 'maybank',
+        'prudential', 'great eastern', 'msig', 'sun life', 'zurich',
+        'sompo',
+    }
+    n_clean = (name or '').strip().lower()
+    if n_clean in AMBIGUOUS_BARE and not country_hint:
+        return {
+            'canonical': name.strip(),
+            'was_corrected': False,
+            'confidence': 'ambiguous',
+            'suggestion': None,
+            'needs_user_verification': True,
+            'ambiguous_country': True,
+            'kind': kind or '',
+            'original_input': name,
+        }
     m = match_institution(name, kind=kind, country_hint=country_hint)
     if not m:
         return {
@@ -300,12 +340,20 @@ def canonicalise_or_flag(name: str, kind: Optional[str] = None,
     canonical = m['canonical']
     was_corrected = (m['confidence'] in ('alias', 'fuzzy')
                      and _normalise(name) != _normalise(canonical))
+    # 🔥 §10x.152 — Even after a match, if the canonical's country differs
+    # from the country_hint, ALWAYS flag for verification. Example: input
+    # 'AIA' with country_hint='SG' should match AIA Singapore — but if
+    # the user typed bare 'AIA Insurance' and the file said 'Singapore'
+    # we still want them to confirm.
+    needs_verify = m['confidence'] == 'fuzzy'
+    if country_hint and m.get('country') and m['country'] != country_hint:
+        needs_verify = True
     return {
         'canonical': canonical,
         'was_corrected': was_corrected,
         'confidence': m['confidence'],
         'suggestion': canonical if was_corrected else None,
-        'needs_user_verification': m['confidence'] == 'fuzzy',
+        'needs_user_verification': needs_verify,
         'country': m['country'],
         'kind': m['kind'],
         'notes': m.get('notes', ''),
