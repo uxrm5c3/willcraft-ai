@@ -418,6 +418,32 @@ def plan_turn(
             ))
             return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
+    # 🔥 §10x.130 — STEP 3 EXECUTOR CONFIRM (must run BEFORE the asset
+    # walkthrough at line 439, otherwise pending gifts would pre-empt
+    # Step 3 and the user never sees the executor confirm card). When
+    # step2_data.executors was AUTO-populated via §10x.44 reconciliation
+    # (e.g. Lim Lay Cheng added as Sister-in-law and message named her
+    # as 'My Executor'), the planner used to silently advance to Step 5/6.
+    # User feedback: "after step 2 complete, should got to step 3
+    # executor. why jump to step 6 property". Same pattern as §10x.115
+    # for beneficiaries — ASK BEFORE ADVANCING.
+    completed_pre_assets = current_will_data.get('completed_steps') or []
+    if 'executors_confirmed' not in completed_pre_assets:
+        s2_pre = current_will_data.get('step2') or {}
+        execs_pre = (s2_pre.get('executors') if isinstance(s2_pre, dict) else []) or []
+        if execs_pre:
+            reply_parts.append(_step3_executors_confirm_card(execs_pre))
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
+
+    # 🔥 §10x.130 — STEP 5 BENEFICIARIES CONFIRM (same pattern, also
+    # needs to run BEFORE asset walkthrough so user sees beneficiary
+    # confirmation before being thrown into Step 6 gift assignment).
+    if 'beneficiaries_confirmed' not in completed_pre_assets:
+        s4_pre = current_will_data.get('step4')
+        if isinstance(s4_pre, list) and len(s4_pre) > 0:
+            reply_parts.append(_step5_beneficiaries_confirm_card(s4_pre))
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
+
     # ── 3.5 ASSET INVENTORY — walk one cleaned-up property at a time ───
     # Job-to-be-done: the WILL WRITER (chat user) gets messy image+message
     # dumps from CLIENTS. This phase cleans the dump up — groups multi-
