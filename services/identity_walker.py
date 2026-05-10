@@ -590,12 +590,24 @@ def link_duplicate_ic_documents(client_id: str, person):
 def parse_relationship(text: str) -> Optional[str]:
     """Find the first relationship keyword in user text. Returns the
     canonical label or None. Longer multi-word keywords win.
+
+    🔥 §10x.124 — delegates to services.role_registry.parse_role_from_freetext
+    so HYPHENATED, SPACED, CAMEL-CASE and NO-SEPARATOR variants of the
+    same role all resolve consistently. The legacy keyword table at
+    line 72 only had SPACED forms ('sister in law'), so a button value
+    like 'sister-in-law' (hyphenated) silently failed to match and the
+    save handler returned None → walker re-rendered the same card
+    forever. The role_registry is the single source of truth.
     """
     if not text:
         return None
-    t = ' ' + text.lower() + ' '  # pad so word-boundary checks work
-    for kw in sorted(RELATIONSHIP_KEYWORDS, key=len, reverse=True):
-        # Match as a whole-word phrase
-        if (' ' + kw + ' ') in t:
-            return RELATIONSHIP_KEYWORDS[kw]
-    return None
+    try:
+        from services.role_registry import parse_role_from_freetext
+        return parse_role_from_freetext(text)
+    except Exception:
+        # Defensive fallback: legacy keyword table
+        t = ' ' + text.lower() + ' '
+        for kw in sorted(RELATIONSHIP_KEYWORDS, key=len, reverse=True):
+            if (' ' + kw + ' ') in t:
+                return RELATIONSHIP_KEYWORDS[kw]
+        return None

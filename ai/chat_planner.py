@@ -29,6 +29,17 @@ def _qr_marker(quick: List[Dict[str, str]],
     """
     if not quick:
         return ''
+    # 🔥 §10x.124 — collapse same-canonical-role duplicates BEFORE
+    # rendering. Without this, the same role appears twice in the button
+    # row when one source spells it 'Sister-In-Law' (hyphens, value
+    # 'sister-in-law') and another spells it 'Sister In Law' (spaces,
+    # value 'sister in law'). The dedup is invisible to non-role values
+    # (yes / skip / delete / type / actual person names).
+    try:
+        from services.role_registry import dedup_quickreplies
+        quick = dedup_quickreplies(quick)
+    except Exception:
+        pass   # never block rendering on the dedup
     if not suppress_fallback:
         has_fallback = any((q.get('value') or '').lower() in ('other', 'none', 'type')
                            for q in quick)
