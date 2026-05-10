@@ -1329,12 +1329,47 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
     # When ai_props is empty, leave out['property'] alone (legacy path)
 
     # ── Properties: add H3 for AI-Summary properties not already covered
-    # 🔥 §10b — match by lot, title, normalised address, OR distinctive
-    # locality token (e.g. "Seri Alam", "Marina Cove", "Paradiso Nuova",
-    # "Sri Laguna", "Marsiling"). Image OCR addresses ("Phase 2D SERI
-    # ALAM") often differ from the AI Summary's verbatim user address
-    # ("No. 03 Jalan Gunung 4, Seri Alam Masai") for the same property —
-    # token overlap catches that.
+    # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥🔥🔥 §10x.133 META — RECURRING BUG CLASS GUARD 🔥🔥🔥             ║
+    # ║                                                                     ║
+    # ║  STOP. Before modifying ANY dedup logic in this section, READ:      ║
+    # ║    • CLAUDE.md §10x.39 row 106 (the META consolidation row)         ║
+    # ║    • CLAUDE.md §10hd (Strata: same lot ≠ same property)             ║
+    # ║    • CLAUDE.md §10b (Property Count == AI Summary Count)            ║
+    # ║                                                                     ║
+    # ║  The "missing properties from walkthrough" bug has been reported    ║
+    # ║  4+ times. Every reported instance had the SAME root cause: a new   ║
+    # ║  well-meaning dedup using a single signal (token overlap, mukim     ║
+    # ║  match, address prefix) caused two AI Summary properties to merge   ║
+    # ║  into one OR an unbound AI prop to be marked "covered".             ║
+    # ║                                                                     ║
+    # ║  HARD RULES for any dedup added below:                              ║
+    # ║    1. NEVER token-overlap dedup. Strata + same-Taman properties     ║
+    # ║       share locality tokens by construction.                        ║
+    # ║    2. NEVER mukim-only dedup. Mukim Plentong has 4 KOID properties. ║
+    # ║    3. NEVER address-prefix-only dedup. Different units in same      ║
+    # ║       building have similar address prefixes.                       ║
+    # ║    4. ONLY identity-equality:                                       ║
+    # ║       • Strata: lot == lot AND title == title (per §10hd)           ║
+    # ║       • Landed: address-norm[:60] == address-norm[:60]              ║
+    # ║    5. When in doubt, surface H3 placeholder + ASK USER (§10d).      ║
+    # ║       False-negative dedup is INFINITELY better than                ║
+    # ║       false-positive dedup.                                         ║
+    # ║    6. Property count N = len(_extract_ai_summary_properties()) —    ║
+    # ║       NEVER count from gift_walker pending or step5 saved.          ║
+    # ║                                                                     ║
+    # ║  Past offenders that re-introduced this bug class:                  ║
+    # ║    • §10x.95 (lexical address substring match — superseded by       ║
+    # ║      §10x.95 v2's pipeline binding)                                 ║
+    # ║    • §10b token-overlap (REMOVED in §10x.132 after 4 reports)       ║
+    # ║                                                                     ║
+    # ║  If you find yourself writing `if X and (X & covered_X)`, STOP.     ║
+    # ║  Use identity-equality. If identity-equality is genuinely too       ║
+    # ║  strict for your case, add an H3 placeholder + ask the user.        ║
+    # ╚════════════════════════════════════════════════════════════════════╝
+    # Original §10b intent: match by lot, title, normalised address. Token
+    # overlap was added later for OCR-vs-typed-address cases but caused
+    # 4+ regressions and is FORBIDDEN per §10x.132 / §10x.133.
     covered_lot_digits: set = set()
     covered_title_digits: set = set()
     covered_addr_norms: set = set()

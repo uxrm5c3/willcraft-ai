@@ -2690,6 +2690,17 @@ def _ai_props_already_handled(client_id: str,
     wizard (step5_data gift, or matched to an inventoried Document).
 
     Returns parallel-list of booleans len(ai_props).
+
+    🔥🔥🔥 §10x.133 META — RECURRING BUG CLASS GUARD 🔥🔥🔥
+    READ CLAUDE.md §10x.39 row 106 BEFORE modifying dedup logic here.
+    The "missing properties from walkthrough" bug has been reported 4+
+    times. Every instance was a single-signal dedup hiding a real
+    property. HARD RULES:
+      • Strata: lot+title BOTH must match (per §10hd)
+      • Landed: address-norm[:60] equality
+      • NEVER token-overlap, mukim-only, or address-prefix-only
+      • When in doubt, return False (surface H3 placeholder + ask user)
+    See gift_walker.py §10x.133 banner for the full pattern.
     """
     out = [False] * len(ai_props)
     if not ai_props:
