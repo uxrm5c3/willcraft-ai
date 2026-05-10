@@ -7362,8 +7362,17 @@ def _find_property_message_snippet(prop_dict: Dict[str, Any],
     toks.extend(unit_pat)
     if not toks:
         return ''
-    # Search line by line. Newlines OR period boundaries.
-    lines = re.split(r'(?:\r?\n|\.\s+)', recent_text)
+    # 🔥 §10x.141 — split on NEWLINES ONLY, NOT period-space.
+    # Previously: re.split(r'(?:\r?\n|\.\s+)', recent_text) — treated
+    # `. ` as a line boundary. AI Summary bullets like:
+    #   "• Unit C-30-08 ... owned 50/50 with Joshua. Testator's 50% to Esther."
+    # got split into TWO segments: "Unit C-30-08 ... Joshua" + "Testator's
+    # 50% to Esther". The first wins (has unit tokens C-30-08); the
+    # second loses (no locality tokens). Snippet returned just the first
+    # half → §10x.140 deducer never sees "Testator's 50% to Esther" →
+    # card said "No clear distribution" even after the §10x.140 fix.
+    # Fix: keep each AI Summary bullet (a single line) as ONE segment.
+    lines = re.split(r'\r?\n', recent_text)
     best_line = ''
     best_score = 0
     for L in lines:
@@ -7374,10 +7383,10 @@ def _find_property_message_snippet(prop_dict: Dict[str, Any],
             best_line = L
     if not best_line:
         return ''
-    # Trim and bound length
+    # Trim and bound length — bullets typically ~250 chars, allow up to 400
     snippet = best_line.strip()
-    if len(snippet) > 240:
-        snippet = snippet[:237] + '…'
+    if len(snippet) > 400:
+        snippet = snippet[:397] + '…'
     return snippet
 
 
