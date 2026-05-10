@@ -85,6 +85,30 @@
 
             <!-- PROPERTY PANEL -->
             {% set pd = gift.get('property_details', {}) %}
+            {# 🔥 §10x.150 — flag missing critical fields so the user
+               sees at-a-glance which property needs more info. Address
+               + (postcode OR city OR title OR lot) are minimum to
+               probate the gift. #}
+            {% set _missing = [] %}
+            {% if not pd.get('property_address') %}{% set _ = _missing.append('street address') %}{% endif %}
+            {% if not pd.get('postcode') %}{% set _ = _missing.append('postcode') %}{% endif %}
+            {% if not pd.get('city') %}{% set _ = _missing.append('city') %}{% endif %}
+            {% if not pd.get('title_number') %}{% set _ = _missing.append('title No.') %}{% endif %}
+            {% if not pd.get('lot_number') %}{% set _ = _missing.append('lot No.') %}{% endif %}
+            {% if not (pd.get('mukim') or pd.get('bandar_pekan')) %}{% set _ = _missing.append('mukim') %}{% endif %}
+            {% if gt == 'property' and _missing %}
+            <div class="mb-3 p-3 bg-amber-50 border-l-4 border-amber-400 rounded">
+                <div class="flex items-start gap-2">
+                    <span class="text-amber-600 text-lg">⚠️</span>
+                    <div class="flex-1">
+                        <p class="text-sm font-semibold text-amber-900">Missing field{{ 's' if _missing|length > 1 else '' }} for this property</p>
+                        <p class="text-xs text-amber-800 mt-0.5">
+                            <strong>{{ _missing|join(' · ') }}</strong> — please fill in below before generating the will. The will draft will omit these and the lawyer/firm will need to ask the client.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
             <div id="property-panel-{{ loop.index0 }}" class="{% if gt != 'property' %}hidden{% endif %} mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <h4 class="text-sm font-semibold text-blue-800 mb-3">Property Details (Malaysian Standard Format)</h4>
 
