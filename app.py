@@ -6074,9 +6074,40 @@ def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
         sib_name = (sib_ex.get('full_name') or '').strip().upper()
         sib_nric_digits = re.sub(r'\D', '', (sib_ex.get('nric_number') or '').strip())
         sib_addr = (sib_ex.get('address') or '').strip().upper()
-        if (nric_digits and sib_nric_digits and nric_digits == sib_nric_digits) \
-           or (name and sib_name and name == sib_name) \
-           or _addr_matches(address, sib_addr):
+        # 🔥 §10x.122 — refuse address-only sibling match when NRICs differ.
+        # Bug it prevents: testator + spouse + children all live at NO.600.
+        # Esther's IC processed first → 'nric'. Joshua's IC arrives with
+        # SAME address but DIFFERENT NRIC → previously matched on _addr only
+        # → marked 'duplicate' → Joshua never surfaces in IC walkthrough.
+        # Mirrors the §10x.151 fix already shipped for the Person-match path
+        # at line 6023 above. Same principle: address alone is WEAK; NRIC
+        # equality or name equality is required to dedup.
+        nric_match = nric_digits and sib_nric_digits and nric_digits == sib_nric_digits
+        name_match = name and sib_name and name == sib_name
+        addr_match = _addr_matches(address, sib_addr)
+        addr_only = addr_match and not nric_match and not name_match
+        # Refuse address-only when both sides have NRICs and they differ
+        if addr_only and nric_digits and sib_nric_digits and nric_digits != sib_nric_digits:
+            continue   # different people sharing residential address
+        # Refuse address-only when both sides have names and they differ
+        if addr_only and name and sib_name and name != sib_name:
+            continue
+        if nric_match or name_match or addr_match:
+            # 🔥 §10x.122 — RICHNESS-AWARE DEDUP. When the new doc carries
+            # MORE info than the sibling (e.g. front of IC has name+NRIC,
+            # sibling is back-of-IC with NRIC only), the FRONT is the
+            # canonical record. Promote new → 'nric', demote sib → 'duplicate'.
+            new_richness = (1 if name else 0) + (1 if nric_digits else 0) + (1 if address else 0)
+            sib_richness = (1 if sib_name else 0) + (1 if sib_nric_digits else 0) + (1 if sib_addr else 0)
+            if nric_match and new_richness > sib_richness:
+                # Swap: new doc keeps 'nric', sibling becomes 'duplicate'
+                sib.category = 'duplicate'
+                sib.description = (
+                    f'(duplicate of {doc.original_filename or doc.id[:8]} — '
+                    f'§10x.122 richness-swap)'
+                )
+                # Don't mark new as duplicate — it's the canonical now
+                continue
             doc.category = 'duplicate'
             doc.description = f'(duplicate of {sib.original_filename or sib.id[:8]})'
             return True
