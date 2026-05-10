@@ -998,7 +998,14 @@ _AI_BANK_LINE_RE = re.compile(
     # or being "Maybank". Strip a leading bare "Bank" sentence-starter
     # later (see _clean_bank_name) so "Bank POSB" → "POSB Bank".
     r'(?P<inst>(?:[A-Z][A-Za-z]*\s+){0,3}(?:Bank|BANK|Maybank|MAYBANK))\s*'
-    r'(?:\((?P<country>[^)]+)\))?\s*[,\-]?\s*'
+    # 🔥 §10x.141 — country can be in parens OR a bare word OR omitted
+    # ("POSB Bank (Singapore)" / "POSB Bank Singapore" / "POSB Bank")
+    r'(?:\((?P<country>[^)]+)\)|(?P<country2>Singapore|Malaysia|Malaysian|Singaporean))?\s*'
+    # Optional account-type word(s) before "Account No."
+    # ("Public Bank Malaysia Current Account No. ..." /
+    #  "Public Bank Malaysia Plus Saving Account No. ...")
+    r'(?P<acct_type_pre>(?:[A-Z][A-Za-z]*\s+){0,3})?'
+    r'\s*[,\-]?\s*'
     r'(?:Account|A/C|Acct)\s*(?:No\.?|Number)\s*[:\-]?\s*'
     r'(?P<acct>[\w\-/]+)'
     r'(?:\s*\((?P<acct_type>[^)]+)\))?',
@@ -1071,11 +1078,14 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
         seen.add(key)
         if acct_digits:
             seen_acct_digits.add(acct_digits)
+        country = (m.group('country') or m.group('country2') or '').strip()
+        acct_type = (m.group('acct_type')
+                     or (m.group('acct_type_pre') or '').strip()).strip()
         out.append({
             'bank_name':       _clean_bank_name(inst)[:80],
             'account_number':  acct[:40],
-            'country':         (m.group('country') or '').strip()[:40],
-            'account_type':    (m.group('acct_type') or '').strip()[:40],
+            'country':         country[:40],
+            'account_type':    acct_type[:40],
             'beneficiary':     '',   # filled by sibling parser if needed
             'beneficiary_share': '',
         })
