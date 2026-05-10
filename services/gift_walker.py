@@ -1421,8 +1421,32 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             continue
         if a_title and a_title in covered_title_digits:
             continue
-        if a_addr and a_addr in covered_addr_norms:
-            continue
+        # 🔥 §10x.147 — substring-aware address dedup.
+        # When _try_handle_h3_property_action saves a B-05-11 placeholder
+        # it appends the web-resolved address ("Paradiso Nuova, Bandar
+        # Medini ...") to the AI Summary's bare "Unit B-05-11
+        # Condominium Paradisonuava". After norm+[:60] the saved sig is
+        # "UNIT B 05 11 CONDOMINIUM PARADISONUAVA PARADISO NUOVA BANDAR"
+        # while the AI Summary sig is "UNIT B 05 11 CONDOMINIUM
+        # PARADISONUAVA" — the latter is a strict prefix of the former
+        # but plain `in` fails. Without this the same AI Summary slot
+        # re-surfaces every walker turn → infinite loop.
+        if a_addr:
+            if a_addr in covered_addr_norms:
+                continue
+            # Prefix/substring match: AI sig is a meaningful chunk of a
+            # saved sig (or vice versa). Min-length 20 chars to avoid
+            # short-token collisions.
+            _addr_collision = False
+            if len(a_addr) >= 20:
+                for cov in covered_addr_norms:
+                    if not cov:
+                        continue
+                    if cov.startswith(a_addr) or a_addr.startswith(cov):
+                        _addr_collision = True
+                        break
+            if _addr_collision:
+                continue
         # 🔥 §10x.132 — REMOVED token-overlap dedup entirely.
         # Original §10b intent was to dedup AI props vs image groups
         # when OCR addresses differ from user-typed addresses for the
