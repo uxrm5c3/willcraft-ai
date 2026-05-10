@@ -7042,11 +7042,29 @@ def _step6_property_question(pending_props, recent_text, will_data):
     evidence_block = '\n'.join(evidence_lines) if evidence_lines else ''
 
     # ── Deduce beneficiary from email text ───────────────────────
+    # 🔥 §10x.139 — SCOPE deduction to the ONE line that mentions THIS
+    # property. Bug: previously used `recent_text` globally → percentages
+    # from B-05-11 ("25% to Esther"), Shop ("50% Joshua"), banks ("100%
+    # Lim Bee Yan") all bled together → total 175% → not in valid set →
+    # deduced reset to [] → card said "No clear distribution" even when
+    # the SPECIFIC line clearly stated "Testator's 50% to Esther".
+    # Fix: build the per-property snippet first (same logic as
+    # _find_property_message_snippet), use that scoped text for the
+    # name+percent matching. Each property's beneficiaries are extracted
+    # ONLY from the bullet that names that property.
     deduced = []
-    if recent_text and candidates:
+    scoped_text = ''
+    if recent_text:
+        try:
+            scoped_text = _find_property_message_snippet(p, recent_text) or ''
+        except Exception:
+            scoped_text = ''
+    # Fallback to global if scoped match returned nothing (rare)
+    text_for_dedup = scoped_text or recent_text
+    if text_for_dedup and candidates:
         import re as _re
         norm = _re.sub(r'(\d+)\s*(?:percent|pct|per\s*cent)\b',
-                       r'\1%', recent_text, flags=_re.IGNORECASE)
+                       r'\1%', text_for_dedup, flags=_re.IGNORECASE)
         norm = _re.sub(r'(\d+)\s+%', r'\1%', norm)
         percent_hits = [(m.start(), m.group(0))
                         for m in _re.finditer(r'(?<!\d)(\d{1,3}%)', norm)]
