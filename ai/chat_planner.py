@@ -6767,11 +6767,24 @@ def _step6_property_question(pending_props, recent_text, will_data):
                 quick.append({'label': f'👤 {n.title()}',
                               'value': f'substitute specific {n}'})
         quick.append({'label': '⏭ No substitute clause', 'value': 'gift substitute skip'})
-        parts.append(
-            "_Or type a name: e.g. `substitute specific SARAH BT ALI`_"
-            if n_main == 1 else
-            "_Or type a name for a specific person outside this list._"
-        )
+        # 🔥 §10x.135 — example name MUST come from this client's identity
+        # list, never a hardcoded placeholder. User: "dont put SARAH BT ALI".
+        # Pick the first candidate that isn't a main beneficiary (so the
+        # example shows a plausible substitute name from the client's
+        # own family). Fall back to generic phrasing if no candidate.
+        _example_name = None
+        for n in candidates:
+            if n.upper() not in main_names_upper:
+                _example_name = n
+                break
+        if n_main == 1 and _example_name:
+            parts.append(
+                f"_Or type a name: e.g. `substitute specific {_example_name}`_"
+            )
+        else:
+            parts.append(
+                "_Or type a name for a specific person outside this list._"
+            )
         return {
             'text': '\n\n'.join(parts) + _qr_marker(quick),
             'focus_doc_id': p.get('document_id'),
@@ -7407,24 +7420,57 @@ def _step4_guardian_question(s3: dict, minors: list, recent_text: str = '') -> d
     has_sub = len([g for g in guardians if g.get('is_substitute')]) > 0
 
     if not has_primary:
+        # 🔥 §10x.135 — example name from THIS client's identity list,
+        # not a hardcoded placeholder. Pick first non-testator family
+        # member as the example (or generic phrasing if no candidate).
+        _example_g = ''
+        try:
+            _ids = will_data.get('identities') or []
+            _t_name = ((will_data.get('step1') or {}).get('full_name') or '').strip().upper()
+            for _id in _ids:
+                _n = (_id.get('full_name') or '').strip()
+                if _n and _n.upper() != _t_name:
+                    _example_g = _n
+                    break
+        except Exception:
+            pass
+        _hint = (f"_Reply with the guardian's full name (as per IC), e.g. `{_example_g}`._"
+                  if _example_g
+                  else "_Reply with the guardian's full name as per their IC._")
         parts = [
             "### 👶 Step 4: Guardian",
             f"There are minor children in this will: **{minor_label}**.",
             "The Wills Act 1959 (s.27) requires a testamentary guardian to be "
             "appointed to care for them. Who should be the **primary guardian**?",
-            "_Reply with the guardian's full name (as per IC), e.g. `CHAN MEI LIN`._",
+            _hint,
         ]
         quick = [
             {'label': '⏭ Skip — no minor children / will set later', 'value': 'guardian skip'},
         ]
     elif not has_sub:
         primary_name = next((g.get('full_name','') for g in guardians if not g.get('is_substitute')), 'primary guardian')
+        # 🔥 §10x.135 — same: pick example from identity list, not hardcode.
+        _example_s = ''
+        try:
+            _ids = will_data.get('identities') or []
+            _t_name = ((will_data.get('step1') or {}).get('full_name') or '').strip().upper()
+            _p_name_upper = (primary_name or '').strip().upper()
+            for _id in _ids:
+                _n = (_id.get('full_name') or '').strip()
+                if _n and _n.upper() not in (_t_name, _p_name_upper):
+                    _example_s = _n
+                    break
+        except Exception:
+            pass
+        _hint2 = (f"_Reply with name, e.g. `{_example_s}`, or tap Skip._"
+                   if _example_s
+                   else "_Reply with the substitute guardian's full name, or tap Skip._")
         parts = [
             "### 👶 Step 4: Guardian — Substitute",
             f"Primary guardian set: **{primary_name}**.",
             "Do you also want to appoint a **substitute guardian** (steps in if primary "
             "cannot act)?",
-            "_Reply with name, e.g. `LIM AH KENG`, or tap Skip._",
+            _hint2,
         ]
         quick = [
             {'label': '⏭ No substitute needed', 'value': 'guardian skip substitute'},
