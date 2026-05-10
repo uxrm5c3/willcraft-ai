@@ -9143,13 +9143,26 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
                     _ot = (_own_struct.get('type') or '').lower()
                     if _ot == 'sole': pi_e['ownership_type'] = 'Sole'
                     elif _ot == 'joint': pi_e['ownership_type'] = 'Joint'
-            # Lot/title/mukim from JSON if missing on entry
+            # Lot/title/mukim from JSON if missing on entry.
+            # Geographic fields (mukim/daerah/negeri): AI Summary values
+            # came from the curated §10ha _GEO_BRIDGE table (verified per
+            # rule). Doc OCR for these fields is unreliable — KOID Sri
+            # Laguna had OCR-extracted "Plentong/JOHOR/State of Malaya"
+            # (all wrong) while AI Summary had correct "Pulai/Johor
+            # Bahru/Johor". OVERRIDE doc OCR with AI Summary geographic
+            # values when AI Summary has them. Lot/title still only
+            # filled if missing (doc OCR is authoritative there).
             pi_e = entry.setdefault('property_info', {})
-            for k_dst, k_src in [('lot_number', 'lot'), ('title_number', 'title'),
-                                  ('mukim', 'mukim'), ('daerah', 'daerah'),
-                                  ('negeri', 'negeri')]:
+            for k_dst, k_src in [('lot_number', 'lot'), ('title_number', 'title')]:
                 if not pi_e.get(k_dst) and _ap.get(k_src):
                     pi_e[k_dst] = str(_ap.get(k_src))
+            # Geographic fields: AI Summary wins (geo bridge canonical)
+            for k_dst, k_src in [('mukim', 'mukim'), ('daerah', 'daerah'),
+                                  ('negeri', 'negeri')]:
+                ap_val = _ap.get(k_src)
+                if ap_val:
+                    pi_e[k_dst] = str(ap_val)
+                # Else keep whatever pipeline gave us (may be doc OCR)
     except Exception:
         pass
     # 🔥 §10x.137 — overlay web-resolved address into the gift if user
