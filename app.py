@@ -4456,6 +4456,30 @@ def _api_chat_message_impl(client_id):
                     'assistant_message': _serialise_chat_message(qa_msg),
                 })
 
+    # ╔════════════════════════════════════════════════════════════════════╗
+    # ║  🔥 §10x.126 — INTENT-AWARE PRE-ROUTER + NO-OP RECOVERY GATE        ║
+    # ║                                                                     ║
+    # ║  Systemic fix for the "card keep repeating" bug class. Before       ║
+    # ║  §10x.126, user inputs that didn't match any of the ~30 handlers    ║
+    # ║  silently fell through. The planner then re-derived state, found    ║
+    # ║  it unchanged, and emitted the SAME card as before — user saw       ║
+    # ║  their question repeated with no indication their reply was         ║
+    # ║  rejected. §10x.117 / §10x.124 / §10x.125 were each instances of    ║
+    # ║  this same root-cause class.                                        ║
+    # ║                                                                     ║
+    # ║  Two pieces:                                                        ║
+    # ║   (A) Intent detection — read the previous assistant card and       ║
+    # ║       label it (testator_address / identity_role / gift_main /…).   ║
+    # ║       Used by no-op recovery to compose a tailored hint.            ║
+    # ║   (B) No-op recovery — set later, after the dispatch chain. If      ║
+    # ║       `just` is still None AND user_text is non-trivial, plan_turn  ║
+    # ║       gets a recovery flag so it can emit a "didn't understand"     ║
+    # ║       card instead of re-rendering the same question.               ║
+    # ║                                                                     ║
+    # ║  See chat_planner.py for the recovery-card emitter.                 ║
+    # ╚════════════════════════════════════════════════════════════════════╝
+    _last_intent = _detect_chat_intent(client_id)
+
     just_assigned = _try_assign_pending_identity(client_id, user_text)
     if not just_assigned:
         just_assigned = _try_skip_pending_identity(client_id, user_text)
@@ -4594,6 +4618,38 @@ def _api_chat_message_impl(client_id):
             or just_gift_deleted or just_gift or just_assets_gate
             or just_inventory or just_guardian or just_trust
             or just_others or just_residuary_skip)
+
+    # 🔥 §10x.126 — NO-OP RECOVERY GATE.
+    # If user typed something non-trivial AND no handler claimed it AND
+    # no attachments came in, the planner is about to re-render the same
+    # card the user was just looking at. Detect this and inject a
+    # 'no_op_recovery' marker on the will_snapshot so plan_turn can emit
+    # a tailored "I didn't understand your reply" card with the previous
+    # intent's expected format hint.
+    _user_text_clean = (user_text or '').strip()
+    _user_typed_nontrivial = (
+        _user_text_clean
+        and len(_user_text_clean) >= 3
+        # Not just a pure quickreply value (those should always be claimed
+        # by SOME handler). If we got here with a quickreply value, it's
+        # a real bug — log loudly. The recovery card will help the user
+        # while we investigate the missing handler.
+        and not _user_text_clean.lower().startswith((
+            '▶', '✓', '⏭', '🗑', '✏', '📍', '✅', '🎉',
+        ))
+    )
+    _has_attachments = bool(artifacts)
+    if just is None and _user_typed_nontrivial and not _has_attachments:
+        try:
+            app.logger.warning(
+                f'§10x.126 NO-OP: client={client_id} intent={_last_intent} '
+                f'user_text={_user_text_clean[:120]!r} — emitting recovery card')
+        except Exception:
+            pass
+        will_snapshot['_no_op_recovery'] = {
+            'intent':    _last_intent,
+            'user_text': _user_text_clean[:200],
+        }
     will_snapshot['pending_gifts'] = pending_gifts
     will_snapshot['layer2_pending_props'] = _get_layer2_pending_props(client_id)
     # If a property_fill action produced a reply_override (e.g. the "how to
@@ -5127,6 +5183,95 @@ def api_chat_reject(client_id, message_id):
 
 
 # -- Directed chat helpers --------------------------------------------------
+
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║  🔥 §10x.126 — Chat-intent detection                                 ║
+# ║                                                                     ║
+# ║  Used by the no-op recovery gate (in api_chat_message) to emit a    ║
+# ║  tailored "I didn't understand your reply" card when no handler     ║
+# ║  claimed the user's input. Returns one of:                          ║
+# ║                                                                     ║
+# ║      'identity_role'      — Step 1 IC card asking for relationship  ║
+# ║      'testator_address'   — Step 2 asking for residential address   ║
+# ║      'testator_field'     — Step 2 asking for DOB / occupation etc. ║
+# ║      'executor_pick'      — Step 3 asking for executor              ║
+# ║      'guardian_pick'      — Step 4 asking for guardians             ║
+# ║      'beneficiaries_pick' — Step 5 asking for beneficiary list      ║
+# ║      'beneficiaries_confirm' — Step 5 confirming auto-list          ║
+# ║      'gift_main'          — Step 6 Layer 2 main beneficiary         ║
+# ║      'gift_substitute'    — Step 6 Layer 3 substitute beneficiary   ║
+# ║      'inventory_property' — Step 6 Layer 1 property confirm         ║
+# ║      'inventory_bank'     — Step 6 Layer 1 bank confirm             ║
+# ║      'inventory_insurance'— Step 6 Layer 1 insurance confirm        ║
+# ║      'residuary_main'     — Step 7 main residuary                   ║
+# ║      'residuary_sub'      — Step 7 substitute residuary             ║
+# ║      'asset_inventory'    — initial "▶️ Start — verify identities"  ║
+# ║      'unknown'            — could not determine                     ║
+# ║                                                                     ║
+# ║  Detection is lightweight pattern matching on the latest assistant  ║
+# ║  message content. NOT depended on by any save handler — only by     ║
+# ║  the recovery card.                                                 ║
+# ╚════════════════════════════════════════════════════════════════════╝
+def _detect_chat_intent(client_id: str) -> str:
+    """Return a label describing what the LATEST assistant card was
+    asking the user for. Pattern-matched against assistant message
+    content. Returns 'unknown' on no-match or no chat history.
+    """
+    if not client_id:
+        return 'unknown'
+    try:
+        cs = (ChatSession.query
+              .filter_by(client_id=client_id)
+              .order_by(ChatSession.created_at.desc())
+              .first())
+        if not cs:
+            return 'unknown'
+        last = (ChatMessage.query.filter_by(session_id=cs.id, role='assistant')
+                .order_by(ChatMessage.created_at.desc())
+                .first())
+        if not last or not last.content:
+            return 'unknown'
+        c = last.content
+        # Strip any HTML comments + lowercase for matching
+        cl = c.lower()
+        # Order matters — more-specific patterns FIRST
+        if '### 👤 step 1: identity' in cl or 'step 1: identity walk' in cl:
+            return 'identity_role'
+        if 'step 2: confirm testator' in cl or 'step 2: testator' in cl:
+            # Testator card — could be asking address OR another field
+            if 'address: ⚠️ required' in cl or 'address:' in cl and 'required' in cl:
+                return 'testator_address'
+            return 'testator_field'
+        if 'step 3: executor' in cl:
+            return 'executor_pick'
+        if 'step 4: guardian' in cl:
+            return 'guardian_pick'
+        if 'beneficiaries — confirm' in cl or 'step 5: beneficiaries' in cl:
+            if 'confirm the main beneficiar' in cl:
+                return 'beneficiaries_confirm'
+            return 'beneficiaries_pick'
+        # Step 6 — three layers per asset
+        if 'specific gift' in cl or 'property' in cl and 'of' in cl:
+            if 'substitute' in cl:
+                return 'gift_substitute'
+            if 'main beneficiary' in cl or 'who is the main' in cl:
+                return 'gift_main'
+            if 'unit' in cl or 'condominium' in cl or 'house' in cl or 'shop' in cl:
+                return 'inventory_property'
+        if 'reviewing bank' in cl:
+            return 'inventory_bank'
+        if 'reviewing insurance' in cl or 'insurance polic' in cl:
+            return 'inventory_insurance'
+        if 'step 7: residuary' in cl or 'residuary estate' in cl:
+            if 'substitute' in cl:
+                return 'residuary_sub'
+            return 'residuary_main'
+        if '▶️ start — verify identit' in cl or 'exhibits received' in cl:
+            return 'asset_inventory'
+    except Exception:
+        pass
+    return 'unknown'
+
 
 def _gather_recent_chat_text(client_id: str, max_chars: int = 20000) -> str:
     """Concat recent chat content for this client — user messages (all) plus

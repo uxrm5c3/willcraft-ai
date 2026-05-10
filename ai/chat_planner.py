@@ -67,6 +67,129 @@ def _ic_to_step1_patch(ic: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ╔════════════════════════════════════════════════════════════════════╗
+# ║  🔥 §10x.126 — NO-OP RECOVERY CARD                                  ║
+# ║                                                                     ║
+# ║  Emitted when the dispatcher in app.py exhausted all ~30 handlers   ║
+# ║  without claiming the user's input. The previous card's intent      ║
+# ║  drives the format hint so the user knows what's expected.          ║
+# ║                                                                     ║
+# ║  Without this card, the planner would re-derive state, find it      ║
+# ║  unchanged, and emit the SAME card the user just answered →         ║
+# ║  visible "card keep repeating" bug. With this card, the failure     ║
+# ║  is visible and actionable.                                         ║
+# ╚════════════════════════════════════════════════════════════════════╝
+_NO_OP_HINTS = {
+    'identity_role': (
+        "I expected you to **confirm a relationship** for the IC card "
+        "above. Tap one of the buttons (e.g. **✓ Yes — Son**), or type "
+        "the family relationship like `son`, `daughter`, `wife`, "
+        "`sister-in-law`, `father`, etc."
+    ),
+    'testator_address': (
+        "I expected your **testator's residential address** (e.g. "
+        "`NO.600, JALAN MUTIARA HIJAU 17, TAMAN MUTIARA HIJAU, 81000 "
+        "KULAI, JOHOR`). Either tap the **📍 Same as son** button if "
+        "the address matches, or type the full address with a postcode."
+    ),
+    'testator_field': (
+        "Tap one of the buttons above, OR if you're providing a field "
+        "manually, prefix it like:\n"
+        "  • `address: 10 Jalan ABC, 81200 Johor Bahru`\n"
+        "  • `dob: 04-12-1963`\n"
+        "  • `gender: Male`\n"
+        "  • `marital: Married`\n"
+        "  • `occupation: Engineer`"
+    ),
+    'executor_pick': (
+        "I expected an **executor's name** (an Identity from your family "
+        "list above). Tap one of the suggested executor buttons, OR "
+        "type the full name exactly as it appears in the Will Snapshot."
+    ),
+    'guardian_pick': (
+        "Tap **No minor children** if not applicable, or type the "
+        "guardian's full name as it appears in your family list."
+    ),
+    'beneficiaries_pick': (
+        "I expected a **beneficiary list** like:\n"
+        "  • `Lim Bee Yan 100%`\n"
+        "  • `Joshua 50%, Esther 50%`\n"
+        "Or tap one of the suggested buttons."
+    ),
+    'beneficiaries_confirm': (
+        "Tap **✅ Confirm** to accept the auto-populated beneficiaries, "
+        "or **✏️ Change** to edit them."
+    ),
+    'gift_main': (
+        "I expected the gift's **main beneficiary** like:\n"
+        "  • `Esther Koid En Hui 100%`\n"
+        "  • `Joshua 50%, Esther 50%`\n"
+        "Or tap one of the suggested buttons (e.g. **✓ Joshua + Esther equal**)."
+    ),
+    'gift_substitute': (
+        "I expected a **substitute beneficiary** for if the main "
+        "predeceases. Tap a default like **✅ surviving children equal**, "
+        "or type a name like `substitute specific Joshua Koid Teck Seng`."
+    ),
+    'inventory_property': (
+        "Tap one of the buttons (✅ Accept / 🗑 Remove / ⏭ Skip), or "
+        "describe what you want to do with this property in plain text."
+    ),
+    'inventory_bank': (
+        "Tap **✅ Include — add to wizard** to add this account, **🗑 "
+        "Remove** if it's not yours, or **⏭ Skip**."
+    ),
+    'inventory_insurance': (
+        "Tap **✅ Include — add to wizard** to add this policy, **🗑 "
+        "Remove** if not yours, or **⏭ Skip**."
+    ),
+    'residuary_main': (
+        "I expected the **residuary beneficiary** (everything else after "
+        "specific gifts). Type like `wife 100%` or `Joshua 50%, Esther "
+        "50%`, or tap a suggested button."
+    ),
+    'residuary_sub': (
+        "I expected a **substitute residuary beneficiary**. Tap a "
+        "suggested default, or type names + shares."
+    ),
+    'asset_inventory': (
+        "Tap **▶️ Start — verify identities** to begin the walkthrough, "
+        "or upload more documents."
+    ),
+}
+
+
+def _emit_no_op_recovery_card(no_op: Dict[str, Any],
+                               current_will_data: Dict[str, Any]) -> Dict[str, Any]:
+    """🔥 §10x.126 — emit the recovery card.
+
+    Returns the same shape as plan_turn: dict with reply, clarifying_questions,
+    proposed_patch, advice, focus_attachments.
+    """
+    intent = (no_op.get('intent') or 'unknown').strip()
+    user_text = (no_op.get('user_text') or '').strip()
+    hint = _NO_OP_HINTS.get(intent, (
+        "I couldn't determine what to do with your reply. Please use "
+        "one of the buttons above, or describe more clearly what you'd "
+        "like to do."
+    ))
+    short_text = user_text[:120] + ('…' if len(user_text) > 120 else '')
+    parts = [
+        f"⚠️ **I didn't understand your reply** — `{short_text}`",
+        hint,
+        "_If you keep seeing this message, the previous question is "
+        "still waiting for your input. Use one of the buttons or rephrase._",
+    ]
+    return {
+        'reply':                '\n\n'.join(parts),
+        'ack_reply':            '',
+        'clarifying_questions': [],
+        'proposed_patch':       None,
+        'advice':               [],
+        'focus_attachments':    [],
+    }
+
+
 def plan_turn(
     user_text: str,
     artifacts: List[Dict[str, Any]],
@@ -87,6 +210,18 @@ def plan_turn(
     """
     current_will_data = current_will_data or {}
     pending_ics = pending_ics or []
+
+    # 🔥 §10x.126 — NO-OP RECOVERY GATE.
+    # If the dispatcher in app.py couldn't find any handler that claimed
+    # the user's input, it stamps `_no_op_recovery` on current_will_data.
+    # Emit a clear "I didn't understand your reply" card with the format
+    # hint specific to the previous card's intent — INSTEAD of letting
+    # the planner re-derive state and emit the SAME card the user just
+    # answered (which causes the visible "card keep repeating" bug).
+    _no_op = (current_will_data or {}).get('_no_op_recovery')
+    if _no_op and isinstance(_no_op, dict):
+        return _emit_no_op_recovery_card(_no_op, current_will_data)
+
     # 🔥 §10x.80 — keep the ack ("✅ Saved X as Y") in its own bucket so the
     # caller can post it as a SEPARATE chat bubble from the next walkthrough
     # card. Mixing ack + next card in one bubble was confusing — the user
