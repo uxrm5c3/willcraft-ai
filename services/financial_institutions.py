@@ -39,7 +39,8 @@ class FinancialInstitution:
 _BANKS_MY: List[FinancialInstitution] = [
     FinancialInstitution('Maybank', ['Malayan Banking', 'May Bank', 'MBB'], 'MY', 'bank', 'Berhad'),
     FinancialInstitution('CIMB Bank', ['CIMB', 'C.I.M.B.', 'CIMB Bank Berhad'], 'MY', 'bank', 'Berhad'),
-    FinancialInstitution('Public Bank', ['Public Bank Berhad', 'PBB'], 'MY', 'bank', 'Berhad'),
+    # §10x.151c — Sample uses "Public Bank Berhad" (full legal name).
+    FinancialInstitution('Public Bank Berhad', ['Public Bank', 'PBB'], 'MY', 'bank', 'Berhad'),
     FinancialInstitution('RHB Bank', ['RHB', 'Rashid Hussain'], 'MY', 'bank', 'Berhad'),
     FinancialInstitution('Hong Leong Bank', ['HLB', 'Hong Leong'], 'MY', 'bank', 'Berhad'),
     FinancialInstitution('AmBank', ['Am Bank', 'AMMB', 'AMMB Holdings'], 'MY', 'bank', 'Berhad'),
@@ -157,8 +158,14 @@ _INSURANCE_SG: List[FinancialInstitution] = [
     FinancialInstitution('Liberty Insurance Singapore', ['Liberty SG'], 'SG', 'insurance', 'Pte Ltd'),
     FinancialInstitution('Manulife Singapore', ['Manulife SG'], 'SG', 'insurance', 'Pte Ltd'),
     FinancialInstitution('MSIG Singapore', ['MSIG SG', 'Mitsui Sumitomo Singapore'], 'SG', 'insurance', 'Pte Ltd'),
-    FinancialInstitution('Income Insurance', ['NTUC Income', 'Income', 'NTUC'], 'SG', 'insurance', 'Limited',
-                          notes='Was NTUC Income Co-operative; corporatised to Income Insurance Limited in 2022.'),
+    # 🔥 §10x.151c — Canonical retained as "NTUC Income" to match Phek/
+    # Alan & Tan firm convention in sample wills. The 2022 corporatised
+    # legal name "Income Insurance Limited" is real but Sample KOID BENG
+    # SUN .docx uses "NTUC Income Singapore" — the historical name the
+    # policyholder recognises. The legal entity change doesn't affect
+    # policy ownership, so the will references the policy issuer name.
+    FinancialInstitution('NTUC Income', ['Income Insurance', 'Income', 'NTUC'], 'SG', 'insurance', 'Singapore',
+                          notes='Sample template uses "NTUC Income Singapore". Income Insurance Limited is the post-2022 corporate name; original NTUC Income remains the policy issuer reference.'),
     FinancialInstitution('Prudential Singapore', ['Prudential SG', 'Prudential Assurance Singapore'], 'SG', 'insurance', 'Pte Ltd'),
     FinancialInstitution('QBE Insurance Singapore', ['QBE SG', 'QBE'], 'SG', 'insurance', 'Pte Ltd'),
     FinancialInstitution('Singlife', ['Singapore Life', 'Singlife with Aviva'], 'SG', 'insurance', 'Pte Ltd',

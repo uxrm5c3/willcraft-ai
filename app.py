@@ -893,6 +893,23 @@ def build_will_data():
             bb['nric_passport_birthcert'] = (bb.get('nric_passport')
                                              or bb.get('birth_cert_no')
                                              or '')
+        # 🔥 §10x.151b — fallback to Person registry by name when step4
+        # entry has empty NRIC. Common case: spouse added via §10x.42
+        # auto-reconcile, NRIC backfilled later via §10x.143b but
+        # _propagate_person_to_steps didn't run on the step4 row.
+        if not bb.get('nric_passport_birthcert'):
+            try:
+                cid_for_p = session.get('client_id') or ''
+                if cid_for_p and bb.get('full_name'):
+                    p = (Person.query
+                         .filter_by(client_id=cid_for_p)
+                         .filter(db.func.upper(Person.full_name) ==
+                                 bb['full_name'].strip().upper())
+                         .first())
+                    if p and p.nric_passport:
+                        bb['nric_passport_birthcert'] = p.nric_passport
+            except Exception:
+                pass
         # Drop nric_passport since model only knows nric_passport_birthcert
         bb.pop('nric_passport', None)
         bb.pop('relationship_to_testator', None)
