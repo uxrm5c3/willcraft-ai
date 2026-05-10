@@ -1394,9 +1394,63 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
 
     Each entry: {bank_name, account_number, country, account_type,
                  beneficiary (string), beneficiary_share (string)}.
+
+    🔥 §10x.149 — PREFER the structured JSON footer (`<!--AI_SUMMARY_JSON: {banks: [...]} -->`)
+    over the prose-regex extraction. JSON has explicit beneficiaries[]
+    arrays (per-bank distribution) which the prose regex flattens.
+    Falls back to prose-regex when JSON missing or banks key empty.
     """
     if not client_id:
         return []
+    # ── Structured JSON footer path (canonical) ──
+    try:
+        from database import db, ChatMessage, ChatSession
+        from sqlalchemy import select as _sa_select
+        sess_ids_subq = (_sa_select(ChatSession.id)
+                         .filter(ChatSession.client_id == client_id))
+        msg = (ChatMessage.query
+               .filter(ChatMessage.session_id.in_(sess_ids_subq))
+               .filter(ChatMessage.role == 'assistant')
+               .filter(ChatMessage.content.ilike('### 📨 AI Summary%'))
+               .order_by(ChatMessage.created_at.desc())
+               .first())
+        if msg and msg.content and '<!--AI_SUMMARY_JSON:' in msg.content:
+            jm = re.search(r'<!--AI_SUMMARY_JSON:\s*(\{.*?\})\s*-->',
+                           msg.content, re.DOTALL)
+            if jm:
+                payload = _json.loads(jm.group(1))
+                banks_raw = payload.get('banks') or []
+                if isinstance(banks_raw, list) and banks_raw:
+                    out: List[Dict[str, Any]] = []
+                    for b in banks_raw:
+                        if not isinstance(b, dict):
+                            continue
+                        bens = b.get('beneficiaries') or []
+                        first_ben = ''
+                        first_share = ''
+                        if isinstance(bens, list) and bens and isinstance(bens[0], dict):
+                            first_ben = (bens[0].get('name') or '').strip()
+                            first_share = str(bens[0].get('share_of_testator')
+                                                or bens[0].get('share') or '').strip()
+                        out.append({
+                            'bank_name':       (b.get('institution') or '').strip()[:80],
+                            'account_number':  (b.get('account_number') or '').strip()[:40],
+                            'country':         (b.get('country') or '').strip()[:40],
+                            'account_type':    (b.get('account_type') or '').strip()[:40],
+                            'beneficiary':     first_ben,
+                            'beneficiary_share': first_share,
+                            'beneficiaries':   [
+                                {'name': (x.get('name') or '').strip(),
+                                 'share_of_testator': str(x.get('share_of_testator') or x.get('share') or '').strip()}
+                                for x in bens if isinstance(x, dict) and x.get('name')
+                            ],
+                            '_source': 'json_footer',
+                        })
+                    if out:
+                        return out
+    except Exception:
+        pass
+    # ── Legacy prose-regex path (fallback) ──
     raw = _gather_summary_source_text(client_id)
     if not raw:
         return []
@@ -1472,9 +1526,60 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
 
 def _extract_ai_summary_insurance(client_id: str) -> List[Dict[str, Any]]:
     """Return one entry per insurance policy mentioned. Each entry:
-    {insurer, policy_number, beneficiary, beneficiary_share}."""
+    {insurer, policy_number, beneficiary, beneficiary_share}.
+
+    🔥 §10x.149 — PREFER structured JSON footer over prose regex. Same
+    rationale as `_extract_ai_summary_banks`.
+    """
     if not client_id:
         return []
+    # ── Structured JSON footer path (canonical) ──
+    try:
+        from database import db, ChatMessage, ChatSession
+        from sqlalchemy import select as _sa_select
+        sess_ids_subq = (_sa_select(ChatSession.id)
+                         .filter(ChatSession.client_id == client_id))
+        msg = (ChatMessage.query
+               .filter(ChatMessage.session_id.in_(sess_ids_subq))
+               .filter(ChatMessage.role == 'assistant')
+               .filter(ChatMessage.content.ilike('### 📨 AI Summary%'))
+               .order_by(ChatMessage.created_at.desc())
+               .first())
+        if msg and msg.content and '<!--AI_SUMMARY_JSON:' in msg.content:
+            jm = re.search(r'<!--AI_SUMMARY_JSON:\s*(\{.*?\})\s*-->',
+                           msg.content, re.DOTALL)
+            if jm:
+                payload = _json.loads(jm.group(1))
+                ins_raw = payload.get('insurance') or []
+                if isinstance(ins_raw, list) and ins_raw:
+                    out: List[Dict[str, Any]] = []
+                    for i in ins_raw:
+                        if not isinstance(i, dict):
+                            continue
+                        bens = i.get('beneficiaries') or []
+                        first_ben = ''
+                        first_share = ''
+                        if isinstance(bens, list) and bens and isinstance(bens[0], dict):
+                            first_ben = (bens[0].get('name') or '').strip()
+                            first_share = str(bens[0].get('share_of_testator')
+                                                or bens[0].get('share') or '').strip()
+                        out.append({
+                            'insurer':       (i.get('insurer') or '').strip()[:80] or 'Insurance Policy',
+                            'policy_number': (i.get('policy_number') or '').strip()[:60],
+                            'beneficiary':       first_ben,
+                            'beneficiary_share': first_share,
+                            'beneficiaries':   [
+                                {'name': (x.get('name') or '').strip(),
+                                 'share_of_testator': str(x.get('share_of_testator') or x.get('share') or '').strip()}
+                                for x in bens if isinstance(x, dict) and x.get('name')
+                            ],
+                            '_source': 'json_footer',
+                        })
+                    if out:
+                        return out
+    except Exception:
+        pass
+    # ── Legacy prose-regex path (fallback) ──
     raw = _gather_summary_source_text(client_id)
     if not raw:
         return []
@@ -1540,10 +1645,16 @@ def _gather_summary_source_text(client_id: str) -> str:
         from sqlalchemy import select as _sa_select
         sess_ids_subq = (_sa_select(ChatSession.id)
                          .filter(ChatSession.client_id == client_id))
+        # 🔥 §10x.149 — match ONLY the actual AI Summary card (header
+        # starts with `### 📨 AI Summary of your message`), not walker
+        # turn cards that mention "AI Summary" in their evidence text.
+        # Without the strict prefix, get_pending_gift_documents picks
+        # up an L2 property card and `_extract_ai_summary_banks` returns
+        # 0 because the L2 card body has no bank lines.
         msg = (ChatMessage.query
                .filter(ChatMessage.session_id.in_(sess_ids_subq))
                .filter(ChatMessage.role == 'assistant')
-               .filter(ChatMessage.content.ilike('%AI Summary%'))
+               .filter(ChatMessage.content.ilike('### 📨 AI Summary%'))
                .order_by(ChatMessage.created_at.desc())
                .first())
         if msg and msg.content:
