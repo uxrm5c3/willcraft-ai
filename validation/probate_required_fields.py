@@ -189,26 +189,32 @@ def missing_fields_for_property(pd: dict) -> List[str]:
 
 
 def missing_fields_for_bank(fd: dict) -> List[str]:
+    """Schema accepts BOTH the wizard's `financial_details.institution`
+    AND the chat's `bank_name` field. Same for account_number / country."""
     if not isinstance(fd, dict):
         return BANK_REQUIRED
     out = []
-    label_map = {'bank_name': 'bank name', 'account_number': 'account No.',
-                 'country': 'country (MY/SG)'}
-    for key in BANK_REQUIRED:
-        if is_missing(fd.get(key)):
-            out.append(label_map.get(key, key))
+    # bank_name: check both 'bank_name' and legacy 'institution'
+    if is_missing(fd.get('bank_name')) and is_missing(fd.get('institution')):
+        out.append('bank name')
+    if is_missing(fd.get('account_number')):
+        out.append('account No.')
+    if is_missing(fd.get('country')):
+        out.append('country (MY/SG)')
     return out
 
 
 def missing_fields_for_insurance(fd: dict) -> List[str]:
+    """Schema accepts BOTH `financial_details.institution` and `insurer`."""
     if not isinstance(fd, dict):
         return INSURANCE_REQUIRED
     out = []
-    label_map = {'insurer': 'insurer', 'policy_number': 'policy No.',
-                 'country': 'country (MY/SG)'}
-    for key in INSURANCE_REQUIRED:
-        if is_missing(fd.get(key)):
-            out.append(label_map.get(key, key))
+    if is_missing(fd.get('insurer')) and is_missing(fd.get('institution')):
+        out.append('insurer')
+    if is_missing(fd.get('policy_number')) and is_missing(fd.get('account_number')):
+        out.append('policy No.')
+    if is_missing(fd.get('country')):
+        out.append('country (MY/SG)')
     return out
 
 
