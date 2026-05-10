@@ -4660,16 +4660,25 @@ def _api_chat_message_impl(client_id):
                         .filter_by(client_id=client_id)
                         .order_by(ChatSession.created_at.desc()).first())
             if _prev_cs:
-                _prev_msg = (ChatMessage.query.filter_by(
+                # 🔥 §10x.127 — walk back through recent assistant messages
+                # and pick the QR marker from the FIRST non-recovery card.
+                # Skipping recovery cards means the same buttons survive an
+                # unbroken chain of unknown replies.
+                _recent = (ChatMessage.query.filter_by(
                                 session_id=_prev_cs.id, role='assistant')
-                             .order_by(ChatMessage.created_at.desc())
-                             .first())
-                if _prev_msg and _prev_msg.content:
+                           .order_by(ChatMessage.created_at.desc())
+                           .limit(10).all())
+                for _prev_msg in _recent:
+                    if not _prev_msg.content:
+                        continue
+                    if "I didn't understand your reply" in _prev_msg.content:
+                        continue   # skip recovery cards
                     _qr_match = re.search(
                         r'<!--quickreplies:(\[[\s\S]*?\])-->',
                         _prev_msg.content)
                     if _qr_match:
                         _prev_qr_marker = _qr_match.group(0)
+                    break
         except Exception:
             pass
         will_snapshot['_no_op_recovery'] = {
@@ -5240,9 +5249,12 @@ def api_chat_reject(client_id, message_id):
 # ║  the recovery card.                                                 ║
 # ╚════════════════════════════════════════════════════════════════════╝
 def _detect_chat_intent(client_id: str) -> str:
-    """Return a label describing what the LATEST assistant card was
-    asking the user for. Pattern-matched against assistant message
-    content. Returns 'unknown' on no-match or no chat history.
+    """Return a label describing what the LATEST REAL assistant card
+    was asking the user for. Pattern-matched against assistant message
+    content. SKIPS over §10x.126 recovery cards so an unknown reply
+    chain doesn't lose the original intent.
+
+    Returns 'unknown' on no-match or no chat history.
     """
     if not client_id:
         return 'unknown'
@@ -5253,9 +5265,21 @@ def _detect_chat_intent(client_id: str) -> str:
               .first())
         if not cs:
             return 'unknown'
-        last = (ChatMessage.query.filter_by(session_id=cs.id, role='assistant')
+        # 🔥 §10x.127 — skip recovery cards. Without this, every
+        # subsequent unknown reply walks back the chain to find ITS OWN
+        # recovery card → matches no intent → emits the generic fallback
+        # → user can't recover.
+        msgs = (ChatMessage.query.filter_by(session_id=cs.id, role='assistant')
                 .order_by(ChatMessage.created_at.desc())
-                .first())
+                .limit(10).all())
+        last = None
+        for m in msgs:
+            if not m.content:
+                continue
+            if "I didn't understand your reply" in m.content:
+                continue   # skip recovery cards
+            last = m
+            break
         if not last or not last.content:
             return 'unknown'
         c = last.content
