@@ -13490,9 +13490,16 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
             addr_str = (pd.get('property_address') or '')
             if addr_str:
                 import re as _re
-                # Postcode: 5 digits between word boundaries
+                # 🔥 §10x.154 — strip parenthetical metadata before
+                # extracting postcode/city/state. Otherwise the parser
+                # picks Title/Lot numbers (e.g. Lot 207922) inside
+                # parens as the postcode.
+                addr_clean = _re.sub(r'\s*\([^)]*\)', '', addr_str).strip()
+                if not addr_clean:
+                    addr_clean = addr_str
+                # Postcode: 5 digits between word boundaries (in cleaned addr)
                 if not pd.get('postcode'):
-                    pm = _re.search(r'\b(\d{5})\b', addr_str)
+                    pm = _re.search(r'\b(\d{5})\b', addr_clean)
                     if pm:
                         pd['postcode'] = pm.group(1)
                 # State: known Malaysian states at end (case-insensitive)
@@ -13502,18 +13509,79 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
                                 'Perak', 'Perlis', 'Sabah', 'Sarawak', 'Selangor',
                                 'Terengganu', 'Kuala Lumpur', 'Labuan', 'Putrajaya')
                     for st in _STATES:
-                        if _re.search(rf'\b{_re.escape(st)}\b', addr_str, _re.I):
+                        if _re.search(rf'\b{_re.escape(st)}\b', addr_clean, _re.I):
                             pd['state'] = st
                             break
                 # City: 2-3 words after the postcode (e.g. "81750 Masai")
                 if not pd.get('city') and pd.get('postcode'):
                     cm = _re.search(
                         rf'\b{pd["postcode"]}\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){{0,2}})',
-                        addr_str)
+                        addr_clean)
                     if cm:
                         cand = cm.group(1).strip()
                         if cand and cand.lower() not in ('johor', 'kedah'):
                             pd['city'] = cand
+            # 🔥 §10x.154 — strip noisy '(Title X, Lot Y, Mukim Z)' parens
+            # from displayed property_address. The lot/title/mukim are
+            # already shown in their dedicated form fields below; keeping
+            # them in the address string clutters the input and confuses
+            # the postcode parser.
+            if addr_str:
+                cleaned_addr = _re.sub(r'\s*\([^)]*\)\s*$', '', addr_str).strip().rstrip(',').strip()
+                if cleaned_addr and cleaned_addr != addr_str:
+                    pd['property_address'] = cleaned_addr
+            # 🔥 §10x.154 — derive testator_share / co_owners / ownership_type
+            # from chat-saved fields OR AI Summary ownership clause. The
+            # placeholder save path (line 7549) doesn't include these so the
+            # wizard rendered them as empty even when the AI Summary clearly
+            # said "joint 50/50 with X".
+            ts = (gg.get('testator_share') or pi.get('testator_share') or
+                   pd.get('testator_share') or '').strip()
+            co = gg.get('co_owners') or pi.get('co_owners') or pd.get('co_owners') or []
+            own_intent = (gg.get('ownership_intent') or '').strip()
+            # If still empty, try AI Summary ownership for this gift's slot
+            if (not ts or not co) and gg.get('_ai_summary_idx') is not None:
+                try:
+                    from ai.chat_planner import _extract_ai_summary_properties
+                    ai_props = _extract_ai_summary_properties(client_id) or []
+                    idx = gg.get('_ai_summary_idx')
+                    if 0 <= idx < len(ai_props):
+                        own_intent = own_intent or ai_props[idx].get('ownership', '')
+                except Exception:
+                    pass
+            if own_intent and (not ts or not co):
+                try:
+                    from services.asset_pipeline import _parse_ownership
+                    ts2, co2 = _parse_ownership(own_intent)
+                    ts = ts or ts2
+                    co = co or co2
+                except Exception:
+                    pass
+            # Default to sole if still nothing
+            if not ts:
+                ts = '1/1'
+            pd['testator_share'] = ts
+            pd['co_owners'] = co or []
+            # Ownership type: joint if testator_share != 1/1 OR co_owners non-empty
+            if not pd.get('ownership_type'):
+                pd['ownership_type'] = 'joint' if (ts and ts != '1/1') or co else 'sole'
+            # Country default
+            if not pd.get('country'):
+                pd['country'] = 'Malaysia'
+            # 🔥 §10aa cleaner — normalise mukim (strip OCR-noise suffixes
+            # like 'Plentongy' → 'Plentong')
+            mk = (pd.get('mukim') or '').strip()
+            if mk:
+                _NOISE_SUFFIX = ('y', 'g', '.', ',')
+                # Only strip if removing the suffix yields a known mukim
+                _KNOWN_MUKIM = ('Plentong', 'Pulai', 'Tebrau', 'Senai',
+                                 'Bandar Johor Bahru', 'Tanjung Kupang',
+                                 'Petaling', 'Klang', 'Kuala Lumpur')
+                for km in _KNOWN_MUKIM:
+                    if mk.lower().rstrip(' .,').startswith(km.lower()) and len(mk) <= len(km) + 2:
+                        pd['mukim'] = km
+                        pd['bandar_pekan'] = km
+                        break
             gg['property_details'] = pd
         # Financial: chat saves bank_name/account_number/insurer; template
         # reads financial_details.
