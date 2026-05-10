@@ -40,11 +40,29 @@ def _qr_marker(quick: List[Dict[str, str]],
         quick = dedup_quickreplies(quick)
     except Exception:
         pass   # never block rendering on the dedup
-    if not suppress_fallback:
-        has_fallback = any((q.get('value') or '').lower() in ('other', 'none', 'type')
-                           for q in quick)
-        if not has_fallback:
-            quick = list(quick) + [{'label': '✏️ None of above — I\'ll type', 'value': 'other'}]
+    # 🔥 §10x.128 — MAX 3 BUTTONS. User feedback: "Not more than 3
+    # options visible and clear for user to select". Bug class: cards
+    # like Step 6 inventory ended up with 4 buttons (✅ Accept / 🗑
+    # Remove / ⏭ Skip / ✏️ None of above — I'll type) which is too
+    # busy. Drop the auto-fallback when card already has ≥3 main
+    # buttons. User can still type free-text in the chat input box if
+    # none of the buttons match.
+    has_fallback = any((q.get('value') or '').lower() in ('other', 'none', 'type')
+                       for q in quick)
+    n_main = len([q for q in quick
+                   if (q.get('value') or '').lower() not in ('other', 'none', 'type')])
+    if not suppress_fallback and not has_fallback and n_main < 3:
+        quick = list(quick) + [{'label': "✏️ Other — type below", 'value': 'other'}]
+    # If we have more than 3 buttons total, drop the auto-fallback
+    # (it's the most generic). Hard cap at 4 buttons after that — never
+    # more than 4 visible at once including the fallback.
+    if len(quick) > 3:
+        non_fallback = [q for q in quick
+                         if (q.get('value') or '').lower() not in ('other', 'none', 'type')]
+        if len(non_fallback) >= 3:
+            quick = non_fallback[:3]   # 3 main buttons, fallback dropped
+        else:
+            quick = quick[:4]          # 3 main + 1 fallback
     return f"\n\n<!--quickreplies:{_json.dumps(quick)}-->"
 
 
@@ -105,6 +123,10 @@ _NO_OP_HINTS = {
         "I expected an **executor's name** (an Identity from your family "
         "list above). Tap one of the suggested executor buttons, OR "
         "type the full name exactly as it appears in the Will Snapshot."
+    ),
+    'executors_confirm': (
+        "Tap **✅ Confirm — proceed** to accept the auto-populated "
+        "executor(s), or **✏️ Change executor** to edit them."
     ),
     'guardian_pick': (
         "Tap **No minor children** if not applicable, or type the "
@@ -515,6 +537,19 @@ def plan_turn(
         reply_parts.append(q['text'])
         focus = [q['focus_doc_id']] if q.get('focus_doc_id') else []
         return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts, focus_attachments=focus)
+
+    # 🔥 §10x.130 — when step2_data.executors was AUTO-populated (e.g.
+    # via §10x.44 reconciliation when Lim Lay Cheng was added as
+    # Sister-in-law and the message named her as 'My Executor'), the
+    # user never explicitly confirmed it. Without an explicit confirm,
+    # the planner silently advances to Step 5/6 — user feedback:
+    # "after step 2 complete, should got to step 3 executor. why jump
+    # to step 6 property". Same pattern as §10x.115 for beneficiaries.
+    if 'executors_confirmed' not in completed:
+        execs = (s2.get('executors') if isinstance(s2, dict) else []) or []
+        if execs:
+            reply_parts.append(_step3_executors_confirm_card(execs))
+            return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # ── 4a. STEP 4: Guardians (mandatory if minor children present) ─────
     # Skip automatically when no minors. User can also tap ⏭ Skip to
@@ -3804,6 +3839,48 @@ def _step3_executor_question(will_data: Dict[str, Any], recent_text: str = '') -
             'focus_doc_id': candidate.get('document_id') if candidate else None}
 
 
+def _step3_executors_confirm_card(executors: list) -> str:
+    """🔥 §10x.130 — when step2_data.executors was AUTO-populated (e.g.
+    via §10x.44 reconciliation when Lim Lay Cheng was added as
+    Sister-in-law and the message named her as 'My Executor'), the user
+    never explicitly confirmed it. Without an explicit confirm, the
+    planner silently advances to Step 5/6 and the user feels their
+    Executor decision was bypassed. Same pattern as §10x.115 for
+    beneficiaries — ASK BEFORE ADVANCING.
+    """
+    parts = [
+        "### ⚖️ Step 3: Executor",
+        "I have these as your appointed Executor(s) — pulled from your "
+        "WhatsApp/email message and your identity list. **Confirm to "
+        "proceed**, or tell me what to change.",
+    ]
+    for e in (executors or []):
+        if not isinstance(e, dict):
+            continue
+        n   = (e.get('full_name') or '').strip()
+        rel = (e.get('relationship') or '').strip()
+        nric = (e.get('nric_passport') or '').strip()
+        role = (e.get('role') or 'Primary').strip()
+        if n:
+            line = f"- **{n}**"
+            if rel:
+                line += f" _({rel})_"
+            if role and role != 'Primary':
+                line += f"  •  {role}"
+            if nric:
+                line += f"  •  NRIC `{nric}`"
+            parts.append(line)
+    parts.append(
+        "_The Executor administers your estate and applies for probate. "
+        "If you predecease the Primary, the Substitute (if set) takes over._"
+    )
+    quick = [
+        {'label': '✅ Confirm — proceed', 'value': 'executors confirm'},
+        {'label': '✏️ Change executor',   'value': 'executors edit'},
+    ]
+    return '\n\n'.join(parts) + _qr_marker(quick)
+
+
 def _step5_beneficiaries_confirm_card(beneficiaries: list) -> str:
     """🔥 §10x.115 — when step4_data is auto-populated (via §10x.42
     reconciliation when a new identity is added mid-flow), surface an
@@ -5193,18 +5270,49 @@ def _asset_walkthrough_question(pending_gifts: Dict[str, Any],
                 return _orphan_card
         except Exception:
             pass
-        # Accurate sequence counter across two accepted-property paths:
-        #   Path A: accepted before placeholder fix → _inventoried=True, not in step5
-        #           → still in all_props, filtered from props → counted via (all-pending)
-        #   Path B: accepted after placeholder fix → document_id in step5_data
-        #           → excluded from all_props entirely → counted via step5_props
-        step5_props = [g for g in ((will_data or {}).get('step5') or [])
-                       if (g.get('kind') == 'property' or g.get('gift_type') == 'property')
-                       and g.get('document_id')]
-        n_in_step5  = len(step5_props)
-        n_reviewed  = n_in_step5 + (len(all_props) - len(props))
-        seq_num     = n_reviewed + 1
-        total_props = n_in_step5 + len(all_props)
+        # 🔥 §10x.129 — Use AI Summary count as the canonical N.
+        # User feedback: "where is 1 out of 4". Bug class: prior counter
+        # showed `Property 2 of 4` because:
+        #   total_props = n_in_step5_with_doc_id + len(pending)
+        # which counts orphan placeholder gifts (no _ai_summary_idx) AS
+        # properties + pending image groups, BUT misses AI-Summary H3
+        # properties not yet bound. The user sees gaps + wrong count.
+        # The AI Summary IS the canonical asset list (CLAUDE.md §10h);
+        # the walkthrough should walk all N AI-Summary properties in
+        # order. Sequence # = position of CURRENT target in AI Summary
+        # (1-based); total = AI Summary count.
+        seq_num     = 1
+        total_props = 0
+        try:
+            ai_props_for_count = _extract_ai_summary_properties(_client_id) or []
+            total_props = len(ai_props_for_count)
+            # Match current target to AI Summary by lot/title/address
+            t_ex   = target.get('extracted') or {}
+            t_lot  = (t_ex.get('lot_number') or '').strip()
+            t_title = (t_ex.get('title_number') or '').strip()
+            t_addr = (t_ex.get('property_address') or '').strip().lower()
+            for i, ap in enumerate(ai_props_for_count):
+                ap_addr  = (ap.get('address') or '').strip().lower()
+                ap_lot   = (ap.get('lot') or '').strip()
+                ap_title = (ap.get('title') or '').strip()
+                if (t_lot and ap_lot and t_lot == ap_lot) or \
+                   (t_title and ap_title and t_title == ap_title) or \
+                   (t_addr and ap_addr and t_addr[:30] == ap_addr[:30]):
+                    seq_num = i + 1
+                    break
+            # Also count saved gifts that have _ai_summary_idx → done
+            n_done = len([g for g in ((will_data or {}).get('step5') or [])
+                          if isinstance(g.get('_ai_summary_idx'), int)
+                          and (g.get('beneficiaries') or g.get('allocations'))])
+        except Exception:
+            # Fallback: legacy counter
+            step5_props = [g for g in ((will_data or {}).get('step5') or [])
+                           if (g.get('kind') == 'property' or g.get('gift_type') == 'property')
+                           and g.get('document_id')]
+            n_in_step5  = len(step5_props)
+            n_reviewed  = n_in_step5 + (len(all_props) - len(props))
+            seq_num     = n_reviewed + 1
+            total_props = n_in_step5 + len(all_props)
         return _walkthrough_property_card(target, seq_num, recent_text,
                                            total_props=total_props,
                                            n_props_left=len(props))

@@ -4565,6 +4565,15 @@ def _api_chat_message_impl(client_id):
                             if not just_residuary_skip:
                                 just_residuary_skip = _try_handle_residuary_skip(client_id, user_text)
                             if not just_residuary_skip:
+                                # 🔥 §10x.130 — explicit confirmation of auto-
+                                # populated step2_data.executors via
+                                # 'executors confirm'. Run BEFORE the executor
+                                # save handler so the quickreply value routes
+                                # correctly. Stamps `executors_confirmed` in
+                                # completed_steps so the planner advances.
+                                just_executor = (just_executor or
+                                                  _try_handle_executors_confirm(client_id, user_text))
+                            if not just_executor and not just_residuary_skip:
                                 # 🔥 §10x.115 — explicit confirmation of auto-
                                 # populated step4_data via 'beneficiaries confirm'.
                                 # Run BEFORE the legacy save handler.
@@ -5294,6 +5303,8 @@ def _detect_chat_intent(client_id: str) -> str:
                 return 'testator_address'
             return 'testator_field'
         if 'step 3: executor' in cl:
+            if 'confirm to proceed' in cl or 'i have these as your appointed executor' in cl:
+                return 'executors_confirm'
             return 'executor_pick'
         if 'step 4: guardian' in cl:
             return 'guardian_pick'
@@ -10193,6 +10204,53 @@ def _try_handle_role_match(client_id: str, user_text: str):
     db.session.commit()
 
     return {'name': p.full_name, 'role': 'executor', 'kind': 'role_match_confirmed'}
+
+
+def _try_handle_executors_confirm(client_id: str, user_text: str):
+    """🔥 §10x.130 — handle the user's response to the Step 3 executors
+    confirmation card. Mirrors §10x.115 beneficiaries-confirm pattern.
+
+    Quickreplies:
+      • `executors confirm` → stamp `executors_confirmed` so planner
+        advances to Step 4 / Step 5 / Step 6 as appropriate.
+      • `executors edit` → fall through to free-text editing (handled
+        by _try_save_executor with 'remove X' / 'add Y' patterns).
+    """
+    if not user_text:
+        return None
+    t = user_text.strip().lower()
+    if t != 'executors confirm':
+        return None
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return None
+    try:
+        completed = json.loads(will.completed_steps or '[]')
+        if not isinstance(completed, list):
+            completed = []
+    except Exception:
+        completed = []
+    if 'executors_confirmed' not in completed:
+        completed.append('executors_confirmed')
+        will.completed_steps = json.dumps(completed)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+    try:
+        s2 = json.loads(will.step2_data or '{}')
+    except Exception:
+        s2 = {}
+    execs = (s2.get('executors') if isinstance(s2, dict) else []) or []
+    return {
+        'kind': 'executors_confirmed',
+        'name': ', '.join((e.get('full_name') or '').strip() for e in execs
+                          if isinstance(e, dict) and e.get('full_name'))[:120],
+        'role': 'Executor',
+    }
 
 
 def _try_handle_beneficiaries_confirm(client_id: str, user_text: str):
