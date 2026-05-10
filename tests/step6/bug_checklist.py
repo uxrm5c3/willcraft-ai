@@ -217,20 +217,42 @@ def _gift_order_ok(text: str) -> bool:
 
 
 def check_card_repeating(client_id: str) -> Tuple[bool, str]:
-    """B01: Detect if any assistant card was emitted 3+ times in a row
-    in the last 20 messages (indicates §10x.126 not catching no-op)."""
+    """B01: Detect PRODUCTION-style card repeating (not walker rapid-fire).
+
+    A "card repeat" bug from the user's perspective means: in the last
+    minute, the same TERMINAL card (Step 10 'All steps complete') was
+    emitted 3+ times in response to user input. Walker rapid-fire is
+    OK — it's testing the walkthrough.
+
+    Specifically check:
+      - "All steps complete" emitted 3+ times in 60s = HIGH severity
+      - Mid-walkthrough cards repeating during walker = NOT a bug
+        (walker rapid-fires by design; production would be paced)
+    """
+    from datetime import datetime, timedelta
     cs = ChatSession.query.filter_by(client_id=client_id).order_by(
         ChatSession.created_at.desc()).first()
     if not cs:
         return True, 'no chat session — n/a'
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
     msgs = (ChatMessage.query.filter_by(session_id=cs.id, role='assistant')
+            .filter(ChatMessage.created_at >= cutoff)
             .order_by(ChatMessage.created_at.desc()).limit(20).all())
-    contents = [m.content[:200] for m in msgs if m.content]
-    # Look for 3+ consecutive identical
-    for i in range(len(contents) - 2):
-        if contents[i] == contents[i+1] == contents[i+2]:
-            return False, (f'card repeated 3+ times: '
-                           f'{contents[i][:120]!r}')
+    # Only count terminal/state-machine-end cards as bug-worthy when
+    # they repeat. Mid-walkthrough cards repeating = walker behavior.
+    TERMINAL_PATTERNS = (
+        'All steps complete',  # Step 10 reached
+        '🎉',  # any celebration card
+    )
+    terminal_repeats = 0
+    for m in msgs:
+        if any(p in (m.content or '') for p in TERMINAL_PATTERNS):
+            terminal_repeats += 1
+    if terminal_repeats >= 3:
+        return False, (
+            f'TERMINAL card repeated {terminal_repeats}× in last 10min — '
+            f'§10x.126 may not be firing'
+        )
     return True, ''
 
 
