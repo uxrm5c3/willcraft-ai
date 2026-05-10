@@ -5820,6 +5820,23 @@ def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
         if (nric_digits and p_nric_digits and nric_digits == p_nric_digits) \
            or (name and p_name and name == p_name) \
            or _addr_matches(address, p_addr):
+            # 🔥 §10x.143 — H3 PLACEHOLDER BACKFILL
+            # If matching Person was created from text (H3 placeholder per
+            # §10x.34) — empty NRIC, no document_id — and the IC carries
+            # NRIC/address now, BACKFILL the Person before marking the doc
+            # as duplicate. Otherwise the Person stays empty and the will
+            # generates "(MALAYSIA NRIC No. )" blanks.
+            try:
+                if not (p.nric_passport or '').strip() and nric_digits:
+                    canonical_nric = (extracted.get('nric_number') or '').strip()
+                    if canonical_nric:
+                        p.nric_passport = canonical_nric
+                if not (p.address or '').strip() and (extracted.get('address') or '').strip():
+                    p.address = (extracted.get('address') or '').strip()
+                if not p.document_id:
+                    p.document_id = doc.id   # Link IC doc to placeholder Person
+            except Exception:
+                pass
             doc.category = 'duplicate'
             doc.description = f'(duplicate of {p.full_name})'
             try:
