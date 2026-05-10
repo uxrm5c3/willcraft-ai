@@ -1604,6 +1604,35 @@ def _extract_ai_summary_json_block(content: str) -> List[Dict[str, Any]]:
         bens = p.get('beneficiaries') or []
         if not isinstance(bens, list):
             bens = []
+        # 🔥 §10x.142b — emit `ownership` as a STRING (legacy schema —
+        # downstream consumers do `.strip()`, slicing, regex on it). The
+        # dict form is preserved as `ownership_struct` for the few sites
+        # that need the components separately.
+        _otype = (own.get('type') or '').strip().lower()
+        _co    = (own.get('co_owner') or '').strip()
+        _ts    = str(own.get('testator_share') or '').strip()
+        if _otype == 'sole':
+            own_str = 'sole'
+        elif _otype == 'joint' and _co:
+            own_str = (f"joint with {_co} {_ts}".strip()
+                        if _ts else f"joint with {_co}")
+        elif _co:
+            own_str = (f"with {_co} {_ts}".strip()
+                        if _ts else f"with {_co}")
+        else:
+            own_str = _otype or ''
+        # Beneficiaries: emit as both legacy string ('beneficiary') and
+        # structured list ('beneficiaries').
+        bens_norm = [
+            {'name': (b.get('name') or '').strip(),
+             'share_of_testator': str(b.get('share_of_testator') or
+                                        b.get('share') or '').strip()}
+            for b in bens if isinstance(b, dict) and b.get('name')
+        ]
+        ben_str = ', '.join(
+            f"{b['name']} {b['share_of_testator']}".strip()
+            for b in bens_norm
+        )
         out.append({
             'name':    (p.get('label') or p.get('address') or '').strip(),
             'address': (p.get('address') or p.get('label') or '').strip(),
@@ -1612,16 +1641,10 @@ def _extract_ai_summary_json_block(content: str) -> List[Dict[str, Any]]:
             'mukim':   (p.get('mukim') or '').strip(),
             'daerah':  (p.get('daerah') or '').strip(),
             'negeri':  (p.get('negeri') or '').strip(),
-            'ownership': own,   # {type, co_owner, testator_share}
-            'beneficiaries': [
-                {'name': (b.get('name') or '').strip(),
-                 'share_of_testator': str(b.get('share_of_testator') or
-                                            b.get('share') or '').strip()}
-                for b in bens if isinstance(b, dict) and b.get('name')
-            ],
-            # Legacy compat — the prose-parser populated 'beneficiary' as a
-            # narrative string. Some callers still read it.
-            'beneficiary': '',
+            'ownership':       own_str,    # string, legacy-compatible
+            'ownership_struct': own,       # dict, original {type,co_owner,share}
+            'beneficiaries':   bens_norm,  # list of {name, share_of_testator}
+            'beneficiary':     ben_str,    # string, legacy-compatible
         })
     return out
 
@@ -2645,15 +2668,25 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
     the only thing missing is the title doc. We confirm and ask the user
     to upload OR type the missing legal-doc details after.
     """
-    name = (ai_prop.get('name') or 'this property').strip()
-    addr = (ai_prop.get('address') or '').strip()
-    own  = (ai_prop.get('ownership') or '').strip()
-    bene = (ai_prop.get('beneficiary') or '').strip()
-    mukim = (ai_prop.get('mukim') or '').strip()
-    daerah = (ai_prop.get('daerah') or '').strip()
-    negeri = (ai_prop.get('negeri') or '').strip()
-    lot = (ai_prop.get('lot') or '').strip()
-    title = (ai_prop.get('title') or '').strip()
+    # 🔥 §10x.142b — defensive coercion: `ownership` and `beneficiary`
+    # may be string (legacy prose-parser) OR dict/list (structured JSON
+    # footer). `_extract_ai_summary_json_block` normalises both shapes,
+    # but we coerce here too in case a caller passes a raw dict.
+    def _to_str(v):
+        if v is None:
+            return ''
+        if isinstance(v, (dict, list)):
+            return ''  # structured fields handled separately
+        return str(v).strip()
+    name = (_to_str(ai_prop.get('name')) or 'this property')
+    addr = _to_str(ai_prop.get('address'))
+    own  = _to_str(ai_prop.get('ownership'))
+    bene = _to_str(ai_prop.get('beneficiary'))
+    mukim = _to_str(ai_prop.get('mukim'))
+    daerah = _to_str(ai_prop.get('daerah'))
+    negeri = _to_str(ai_prop.get('negeri'))
+    lot = _to_str(ai_prop.get('lot'))
+    title = _to_str(ai_prop.get('title'))
 
     # 🔥 §10x.46 R1 — Layer 1 = ASSET IDENTITY ONLY. Strip Claude's
     # parenthetical annotations that leak Layer-2 / internal info into

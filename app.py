@@ -5375,12 +5375,36 @@ def _detect_chat_intent(client_id: str) -> str:
             return 'beneficiaries_pick'
         # Step 6 — three layers per asset
         if 'specific gift' in cl or 'property' in cl and 'of' in cl:
-            if 'substitute' in cl:
+            # 🔥 §10x.146 — Substitute card patterns. Strongest first:
+            # explicit "Specific Gift — Substitute" header, then phase-B
+            # textual hooks (always present on the substitute card).
+            if ('specific gift — substitute' in cl
+                or 'main beneficiary(ies):' in cl
+                or 'main beneficiary dies' in cl
+                or 'substitute clause' in cl):
                 return 'gift_substitute'
-            if 'main beneficiary' in cl or 'who is the main' in cl:
+            # 🔥 §10x.146 — L2 main beneficiary card patterns. The card
+            # text in any confidence tier always carries one of these.
+            # ('high confidence', 'medium confidence', 'no clear
+            # distribution', 'click confirm', 'pick the most likely',
+            # 'who inherits') — these are stable card phrases.
+            if ('main beneficiary' in cl
+                or 'who is the main' in cl
+                or 'who inherits' in cl
+                or 'high confidence' in cl
+                or 'medium confidence' in cl
+                or 'no clear distribution' in cl
+                or 'click confirm' in cl
+                or 'pick the most likely' in cl):
                 return 'gift_main'
             if 'unit' in cl or 'condominium' in cl or 'house' in cl or 'shop' in cl:
                 return 'inventory_property'
+            # 🔥 §10x.146 — fallback: any "Specific Gift — Property X
+            # of N" card without explicit substitute markers IS L2 main.
+            # Without this fallback, intent leaks to 'unknown' which
+            # residuary_main treats as permissive → wrong-step claim.
+            if 'specific gift' in cl:
+                return 'gift_main'
         if 'reviewing bank' in cl:
             return 'inventory_bank'
         if 'reviewing insurance' in cl or 'insurance polic' in cl:
@@ -10470,9 +10494,12 @@ def _try_save_residuary_substitute(client_id: str, user_text: str):
     # If user is on a property/bank/insurance card, this handler MUST NOT
     # claim the input even if step6 conditions look right.
     if not low.startswith('residuary substitute'):
+        # 🔥 §10x.146 — strict gate. Same reasoning as residuary_main —
+        # 'unknown' permitted property L2 input to leak through. Substitute
+        # card has unique "If a main beneficiary dies" text.
         try:
             _intent = _detect_chat_intent(client_id)
-            if _intent not in ('residuary_sub', 'residuary_main', 'unknown'):
+            if _intent not in ('residuary_sub', 'residuary_main'):
                 return None
         except Exception:
             pass
@@ -10676,9 +10703,16 @@ def _try_save_residuary_main(client_id: str, user_text: str):
     # check the latest assistant card's intent. If the user is NOT on
     # the residuary_main card, this handler returns None and the property
     # gift handler downstream gets to claim the input.
+    # 🔥 §10x.146 — residuary_main fires ONLY on the residuary_main card.
+    # 'unknown' was too permissive: any chat state where intent failed
+    # to classify (e.g. an L2 property card whose address didn't match
+    # the unit/condo keyword list) was treated as fair game and the
+    # residuary handler stole property L2 input. The Step 7 card has
+    # very explicit text ("Step 7: Residuary" + "Who inherits everything
+    # else") so a strict gate is safe.
     try:
         _intent = _detect_chat_intent(client_id)
-        if _intent not in ('residuary_main', 'unknown'):
+        if _intent != 'residuary_main':
             return None
     except Exception:
         pass   # fall through to legacy gates if intent detection fails
