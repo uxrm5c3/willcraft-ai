@@ -5826,14 +5826,44 @@ def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
         return shared >= 3
 
     # ── Check against existing Person rows (already confirmed) ──────
+    # 🔥 §10x.151 — STRONG MATCH FIRST. NRIC equality + Name equality
+    # both uniquely identify a person. Address match alone is WEAK
+    # (different family members often share an address — e.g. wife's
+    # IC has testator's mailing address) and used to incorrectly bind
+    # the late-arrival IC to whichever Person query returned first.
+    # Sort persons so strong matches resolve before weak ones.
     try:
         persons = Person.query.filter_by(client_id=client_id).all()
     except Exception:
         persons = []
+
+    def _match_strength(p):
+        p_name = (p.full_name or '').strip().upper()
+        p_nric_digits = re.sub(r'\D', '', (p.nric_passport or '').strip())
+        p_addr = (p.address or '').strip().upper()
+        if nric_digits and p_nric_digits and nric_digits == p_nric_digits:
+            return 3   # NRIC match — strongest
+        if name and p_name and name == p_name:
+            return 2   # Name match — strong
+        if _addr_matches(address, p_addr):
+            return 1   # Address match — weak (only if NRIC + name failed)
+        return 0
+    persons = sorted(persons, key=_match_strength, reverse=True)
+
     for p in persons:
         p_name = (p.full_name or '').strip().upper()
         p_nric_digits = re.sub(r'\D', '', (p.nric_passport or '').strip())
         p_addr = (p.address or '').strip().upper()
+        # 🔥 §10x.151 — refuse address-only match against a Person who
+        # already has a different NRIC. Otherwise wife's IC would link
+        # to husband's already-verified Person via shared address.
+        addr_only = (
+            not (nric_digits and p_nric_digits and nric_digits == p_nric_digits)
+            and not (name and p_name and name == p_name)
+            and _addr_matches(address, p_addr)
+        )
+        if addr_only and p_nric_digits and nric_digits and p_nric_digits != nric_digits:
+            continue   # different NRICs — addr alone isn't enough
         if (nric_digits and p_nric_digits and nric_digits == p_nric_digits) \
            or (name and p_name and name == p_name) \
            or _addr_matches(address, p_addr):
