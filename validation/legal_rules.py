@@ -231,6 +231,90 @@ def validate_will_data(will_data) -> List[ValidationResult]:
                     field="beneficiaries"
                 ))
 
+    # 🔥 §10x.133 — Rule 17: PROPERTY GIFT COMPLETENESS
+    # Every property gift in Step 6 must carry the legal identifiers
+    # the will clause needs — without them the generated text reads
+    # "the property known as <ADDRESS>" with no "held under <TITLE>
+    # No. <N>, Lot No. <N>, Mukim <X>, District of <Y>, State of <Z>"
+    # segment, which the lawyer cannot file for probate. Flag any
+    # property gift that's missing required identifiers as WARNING
+    # (so the user sees it on Step 10 review) but don't block —
+    # lawyer may want to fill in manually post-generation.
+    if will_data.gifts:
+        for i, gift in enumerate(will_data.gifts):
+            if gift.gift_type != 'property':
+                continue
+            pd = gift.property_details
+            if not pd:
+                results.append(ValidationResult(
+                    rule_id=f"PROPERTY_GIFT_{i+1}_NO_DETAILS",
+                    severity="ERROR",
+                    message=f"Gift {i+1}: property has NO details (no address, no title, no lot). The generated will clause will be a placeholder. Add details on Step 6.",
+                    field=f"gifts.{i}.property_details",
+                ))
+                continue
+            missing = []
+            if not (pd.property_address or '').strip():
+                missing.append('address')
+            if not (pd.title_number or '').strip():
+                missing.append('title number')
+            if not (pd.lot_number or '').strip():
+                missing.append('lot/PT number')
+            if not (pd.bandar_pekan or '').strip():
+                missing.append('Mukim')
+            if not (pd.daerah or '').strip():
+                missing.append('Daerah (District)')
+            if not (pd.negeri or '').strip():
+                missing.append('Negeri (State)')
+            if missing:
+                addr_disp = (pd.property_address or '(no address)').strip()[:50]
+                results.append(ValidationResult(
+                    rule_id=f"PROPERTY_GIFT_{i+1}_INCOMPLETE",
+                    # ERROR if address itself missing OR if NEITHER title nor lot
+                    # is present — those are the bare-minimum probate identifiers.
+                    # Otherwise WARNING so the lawyer sees it but generation can proceed.
+                    severity=("ERROR"
+                              if 'address' in missing
+                              or ('title number' in missing and 'lot/PT number' in missing)
+                              else "WARNING"),
+                    message=(f"Gift {i+1} ({addr_disp}) is missing: "
+                             f"{', '.join(missing)}. The will clause will "
+                             f"omit these identifiers — lawyer/firm should "
+                             f"fill them in before signing."),
+                    field=f"gifts.{i}.property_details",
+                ))
+
+    # 🔥 §10x.133 — Rule 18: FINANCIAL GIFT COMPLETENESS
+    # Bank/insurance/EPF clauses need at minimum institution + account/policy.
+    if will_data.gifts:
+        for i, gift in enumerate(will_data.gifts):
+            if gift.gift_type != 'financial':
+                continue
+            fd = gift.financial_details
+            if not fd:
+                results.append(ValidationResult(
+                    rule_id=f"FINANCIAL_GIFT_{i+1}_NO_DETAILS",
+                    severity="ERROR",
+                    message=f"Gift {i+1}: financial asset has NO details (no institution, no account number). Add on Step 6.",
+                    field=f"gifts.{i}.financial_details",
+                ))
+                continue
+            missing = []
+            if not (fd.institution or '').strip():
+                missing.append('institution')
+            if not (fd.account_number or '').strip():
+                missing.append('account/policy number')
+            if missing:
+                inst_disp = (fd.institution or '(no institution)').strip()[:30]
+                results.append(ValidationResult(
+                    rule_id=f"FINANCIAL_GIFT_{i+1}_INCOMPLETE",
+                    severity="ERROR",   # both fields are required for valid clause
+                    message=(f"Gift {i+1} ({inst_disp}) is missing: "
+                             f"{', '.join(missing)}. The will clause will "
+                             f"not be valid for probate without these."),
+                    field=f"gifts.{i}.financial_details",
+                ))
+
     return results
 
 

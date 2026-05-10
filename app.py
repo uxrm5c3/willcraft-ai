@@ -13231,9 +13231,12 @@ def _refresh_wizard_session_from_db():
 
 def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
     """🔥 §10x.131 — render-time-only enrichment. Build a SHALLOW COPY of
-    each gift with `documents[]` resolved from `document_id`. Used by the
-    wizard Step 6 GET handler; result is passed to the template and never
-    stored in session (which is cookie-backed and would exceed 4 KB).
+    each gift with `documents[]` resolved from `document_id` AND mirror
+    chat-saved `property_info` / financial fields into the legacy
+    `property_details` / `financial_details` shape that step6_gifts.html
+    reads. Used by the wizard Step 6 GET handler; result is passed to the
+    template and never stored in session (which is cookie-backed and
+    would exceed 4 KB).
     """
     if not isinstance(gifts, list):
         return gifts
@@ -13253,6 +13256,43 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
             out.append(g)
             continue
         gg = dict(g)   # shallow copy
+        # Mirror chat-schema fields → wizard-template fields so the
+        # collapsed summary + form pre-fill have the right values.
+        kind = (gg.get('kind') or gg.get('asset_type') or '').lower()
+        # Property: chat saves property_info; template reads property_details.
+        if kind == 'property' or gg.get('gift_type') == 'property':
+            pi = gg.get('property_info') or {}
+            pd = dict(gg.get('property_details') or {})
+            # Set gift_type for template radio button + summary
+            gg['gift_type'] = 'property'
+            # Merge: property_info overrides empty property_details fields
+            for k in ('property_address', 'title_number', 'lot_number',
+                      'daerah', 'negeri'):
+                v = pi.get(k) or gg.get(k)
+                if v and not pd.get(k):
+                    pd[k] = v
+            # Mukim: model uses 'bandar_pekan'; chat uses 'mukim'
+            mukim_val = pi.get('mukim') or pi.get('bandar_pekan') or pd.get('bandar_pekan') or pd.get('mukim')
+            if mukim_val:
+                pd.setdefault('bandar_pekan', mukim_val)
+                pd.setdefault('mukim', mukim_val)
+            tt = pi.get('title_type') or pd.get('title_type')
+            if tt:
+                pd['title_type'] = tt
+            gg['property_details'] = pd
+        # Financial: chat saves bank_name/account_number/insurer; template
+        # reads financial_details.
+        if kind in ('bank', 'insurance', 'epf', 'kwsp', 'mutual_fund',
+                    'unit_trust', 'shares', 'financial') \
+                or gg.get('gift_type') == 'financial':
+            fd = dict(gg.get('financial_details') or {})
+            fd.setdefault('institution', gg.get('institution') or gg.get('bank_name')
+                          or gg.get('insurer') or fd.get('institution', ''))
+            fd.setdefault('account_number', gg.get('account_number')
+                          or gg.get('policy_number') or fd.get('account_number', ''))
+            fd.setdefault('asset_type', gg.get('asset_type') or kind or fd.get('asset_type', ''))
+            gg['gift_type'] = 'financial'
+            gg['financial_details'] = fd
         if gg.get('documents'):
             out.append(gg); continue
         doc_id = (gg.get('document_id') or '').strip()
