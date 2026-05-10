@@ -1,0 +1,125 @@
+# 🐛 Template Bug Table — Phek Sample vs AI-Generated Will
+
+Schema: **# | Rule | What user saw | Root cause | Fix | Confidence**
+
+This table catalogues every formatting / data drift between the **AI-generated
+will** (Koid_Beng_Sun_Will - AI.pdf, 12 pages, generated 2026-05-10) and the
+**Phek Yi Ting verbatim sample template**
+(`documents/sample_will_phek_yi_ting.py`, the firm's canonical Alan & Tan
+format).
+
+Each entry follows the same schema as the Unified Bug Table (CLAUDE.md §10x.39)
+so future regressions can be diffed mechanically.
+
+**Inputs reviewed:**
+- AI will: `/Users/gan/Desktop/screenshot/Koid_Beng_Sun_Will - AI.pdf`
+- Phek canonical: `documents/sample_will_phek_yi_ting.py`
+- Reference templates: `LIM CHEN WEE`, `LIM WOON KIET`, `Sample KOID BENG SUN`
+  (in `/Users/gan/Desktop/screenshot/AI WIll/Will Template/`)
+
+---
+
+| # | Rule | What user saw | Root cause | Fix | Confidence |
+|---|------|---------------|------------|-----|------------|
+| T-1 | §10x.156 (testator address)  | Page 2 reads `This Will is made by me KOID BENG SUN ... of 10, JALAN SRI LAGUNA 1/7, TAMAN LAGUNA, 81200 JOHOR BAHRU, Johor.` Wrong address — KOID's residential is `NO.600, JALAN MUTIARA HIJAU 17, TAMAN MUTIARA HIJAU, 81000 KULAI`. The Sri Laguna address belongs to a property gift, not the testator. | `step1.residential_address` was overwritten somewhere in the wizard / build_will_data pipeline with the FIRST property gift's address. The pre-fill set it correctly to KULAI but a later step5 enrichment leaked the gift address into step1. | Audit the writer that touches `step1.residential_address`. Add a defensive guard in `build_will_data`: if `step1.residential_address` matches any `step5_gifts[*].property_address`, assume it was overwritten and fall back to the testator Person row's address. | HIGH (visible bug) |
+| T-2 | §10x.157 (executor address page break) | Page 2 ends mid-sentence "JOSHUA KOID TECK SENG (MALAYSIA NRIC No. 960525-07-5039) of 10". Page 3 opens with three centered ALL-CAPS H1-style headings: "**JALAN SRI LAGUNA 1/7**", "**TAMAN LAGUNA**", "**81200 JOHOR BAHRU**", then "JOHOR as my joint Executors of this Will." | The Joshua executor's address `10, JALAN SRI LAGUNA 1/7, TAMAN LAGUNA, 81200 JOHOR BAHRU, JOHOR` got passed through `\n\n` newlines (paragraph breaks) into the PDF generator. Each line was promoted to a new heading because the PDF generator treats trailing newlines as section breaks. Also: Joshua's actual address should be empty (his IC has no address) — system fell back to using a property's address. | (a) `_format_address_phek` in `documents/template_filler.py` MUST collapse all newlines to commas before emitting (per §10x.134 — already shipped but bypassed for executor addresses). (b) Stop fallback that uses any property address as a Person's address — leave blank instead. (c) PDF generator: never split inline executor address into headings; treat as one paragraph. | HIGH (page-3 layout broken) |
+| T-3 | §10x.158 (cover page logo) | Page 1 cover shows `ALAN TAN & ASSOCIATES 陈铭伦律师楼` logo + firm address `24-01 & 24-02, Jln Kempas Utama 2/4...` then "The Last Will & Testament of KOID BENG SUN (NRIC No. 631204-07-5743)". | Phek sample (the .py text) has NO cover page — the canonical wording starts immediately with `LAST WILL AND TESTAMENT OF PHEK YI TING`. The AI generator adds a cover page when `Will.include_logo=True` (set in `wizard_generate`). | Confirm with firm: (a) keep as-is and add cover page to Phek canonical text, OR (b) suppress cover page when `include_logo=False`. Currently `include_logo` defaults to True for new wills. Also: the firm's Chinese name `陈铭伦律师楼` should be configurable per-tenant. | LOW (cosmetic — firm preference) |
+| T-4 | §10x.159 (duplicate testator heading) | Page 2 shows top-of-page header `LAST WILL AND TESTAMENT OF` + `KOID BENG SUN`, then immediately a centered H1 heading `**KOID BENG SUN**` again, then the body opens with `This Will is made by me KOID BENG SUN ...`. Triple-redundant. | PDF generator emits the testator name BOTH in the running header (every page) AND as a body H1 on page 2. Phek sample's body has no separate H1 — it starts right at "This Will is made by me PHEK YI TING ...". | Remove the body-side H1 of testator name. The running header is sufficient. Edit `documents/pdf_generator.py` (or whichever renderer emits page 2's first paragraph) to skip the standalone name heading. | MEDIUM (cosmetic redundancy) |
+| T-5 | §10x.160 (bank name canonicalisation) | Clauses 4-7 show `Posb Bank Account No. 030-25917-3` (mixed case), `May Bank Account No. 14200692259` (split into two words), `Public Bank Account No. 3244955834` (missing "Current"), `Public Bank Account No. 5045324309` (missing "Plus Saving"). | The will was generated BEFORE §10x.149 (financial-institutions canonicalisation) was deployed. Saved gifts in step5_data still hold the misspelt bank_name from the AI Summary parser at save time. Re-running `_extract_ai_summary_banks` would now write `POSB Bank` / `Maybank` / `Public Bank` (Current) / `Public Bank` (Plus Savings). | (a) One-shot migration: re-run `_extract_ai_summary_banks` for every existing client, replace step5_data bank gifts' `bank_name` with the canonical. (b) At will-generation time, ALWAYS canonicalise via `services/financial_institutions.canonicalise_or_flag` immediately before the `template_filler` emits the bank clause. (c) Phek format requires `[BANK_NAME] [ACCOUNT_TYPE] Account No. [N]` — emit account_type ("Current Account", "Plus Savings Account") between bank name and "Account No." | MEDIUM (visible misspell, needs migration + render-time canonicalisation) |
+| T-6 | §10x.161 (insurance name canonicalisation) | Clauses 8-10 show `NTUC Income insurance policy No. ...`, `eaTiQa insurance policy No. ...`, `AIA insurance policy No. ...`. | Same as T-5 — generated before §10x.149/152 deploy. eaTiQa should be `Etiqa Insurance`, NTUC Income should be `Income Insurance Limited (formerly NTUC Income)`, AIA needs country qualifier (`AIA Bhd` Malaysia OR `AIA Singapore Pte Ltd`). | Re-run `_extract_ai_summary_insurance` migration on existing wills. At render time canonicalise. For ambiguous brands (AIA), the chat L1 card now asks user to pick country (§10x.152) — this gives a deterministic answer before save. | MEDIUM (visible misspell) |
+| T-7 | §10x.162 (property clause format — missing Geran/Title) | Clause 11 (Shop @ Jalan Gunung 4): `the property known as No. 03 Jalan Gunung 4, Seri Alam Masai, 81750 Masai, Johor Lot No. 127082, District of Johor Bahru, State of Johor`. **MISSING** `held under Geran No. X` (or HSD/Hakmilik), and missing `Mukim Plentong` between address and District. Phek format demands: `held under Geran No. [N], Lot No. [N], Mukim [M], District of [D], State of [S]`. | The AI generator's property-clause emitter doesn't have a dedicated slot for `title_type` + `title_number`. Even though step5_data has `title_number=251041` for this gift, the renderer skipped it because `title_type` field was empty. Mukim was also dropped (the field IS in step5 but the template doesn't insert it). | Update `models/gift.py::Gift._ownership_prefix` and the property-clause emitter to ALWAYS emit `held under [title_type or 'Geran'] No. [title_number]` when both fields present, AND insert `Mukim [mukim]` between the address line and `District of [daerah]`. Per §10x.24 the Phek format is non-negotiable. | HIGH (probate-critical: title number missing makes the clause unprobatable) |
+| T-8 | §10x.162 (property clause — missing address) | Clause 12 (B-05-11 Paradisonuava): `all my ½ undivided shares in the property known as Unit B-05-11, Condominium Paradisonuava District of Johor Bahru, State of Johor`. Missing: postcode, street address, Mukim, Lot No., Title No. Just has unit name + District + State. | The AI Summary saved B-05-11 as "Unit B-05-11 Condominium Paradisonuava" — no street. No title doc was uploaded. The renderer skipped Mukim and Lot because `title_number=''` (after my §10x.154 cleanup that removed the "TBD" placeholder). Result: the clause is legally inadequate. | (a) §10x.150 amber wizard banner now flags missing fields — but the will was generated BEFORE the user filled them in. (b) Add a hard pre-generation gate: if any property gift has empty `title_number` AND empty `lot_number`, BLOCK will-generation with a clarification card listing each incomplete property. Currently only validates "OR title OR lot" instead of insisting on at least one identifier. | HIGH (probate-blocking — unit name alone is not a valid property description in Malaysian probate) |
+| T-9 | §10x.162 (property clause — missing address with Mukim+Lot only) | Clause 15 (which is C-05-01): `the property known as Mukim Plentong, Johor Bahru Lot No. 207922, District of Johor Bahru, State of Johor`. Has NO street address, NO unit number, NO building name. Just Mukim + Lot. Same lot 207922 as the Marina Cove clause #13, so the property is identifiable from the lot — but a probate-grade clause REQUIRES the address. | Build_gift's address-source priority (§10x.48 Stage 4) fell back to OCR/extracted property_address which was empty for this strata title doc. Then the clause emitter, finding `property_address=''`, output only the Mukim+Lot. | The clause emitter MUST output a placeholder like `[ADDRESS REQUIRED]` instead of silently dropping the address and starting with "Mukim Plentong". Per §10ha, title docs don't have street addresses — they MUST come from the AI Summary. If both are empty → block generation. | HIGH (clause unusable for probate) |
+| T-10 | §10x.163 (executor name appears as "and") | Clause 2: `I hereby appoint my sister-in-law LIM LAY CHENG ... and my son JOSHUA KOID TECK SENG ...` — but the user's intent (per the WhatsApp message) was LIM LAY CHENG as PRIMARY and Joshua as SUBSTITUTE, NOT joint co-executors. The Phek sample uses `In the event that she is unable or unwilling to act ... I appoint my sister PHEK YI XIANG ... to be the Executor` for the substitute structure. | The wizard saved Lim Lay Cheng as `is_substitute=False` (Primary) and Joshua as `is_substitute=True` (Substitute), which IS correct in step2_data. But the will-clause emitter joined them with "and" as if joint, instead of using the Phek substitute phrasing. | `documents/template_filler.py::_render_executor_clause` MUST detect `is_substitute=True` for the second executor and emit Phek's substitute structure (`In the event that [primary] is unable or unwilling to act for whatsoever reason, then I appoint [substitute] to be the Executor of this Will`). Currently it always uses the joint pattern. | HIGH (legally different — joint vs substitute Executors have different probate effects) |
+| T-11 | §10x.164 (substitute clause — duplicate names) | Clause 23 (substitute for Property #12 B-05-11): `if my daughter ESTHER KOID EN HUI ... and my son JOSHUA KOID TECK SENG ... does not survive me, then the benefit he/she would have received shall be given to my daughter ESTHER KOID EN HUI ..., my son JOSHUA KOID TECK SENG ..., my daughter ESTHER KOID EN HUI ..., and my son JOSHUA KOID TECK SENG ... in equal shares.` Same two beneficiaries appear TWICE in the substitute list. | The substitute resolver pulled the gift's MAIN beneficiaries (Esther+Joshua) AND the §10x.14 default substitute (surviving children = Esther+Joshua, same people) — and concatenated both lists without dedup. | `_render_substitute_clause` already has dedup per §10x.130 (`sub_specific` deduped by name case-insensitive). The bug is upstream — the resolver passes both arrays to the renderer. Add dedup at the resolver too. Also: when main beneficiaries == substitute defaults (same person predeceasing themselves is impossible), emit `[ASK USER for substitute]` instead. | HIGH (ungrammatical legal text) |
+| T-12 | §10x.165 (clause 11 missing title type) | Same issue as T-7 specifically for Shop. The Shop has `title_number=251041` and `title_type=''` (or unset). Phek emits "Geran No. 433036" (title_type=geran). | Vision extracted `title_type=hsd` from the Shop's title doc (PDF page 4 view shows "HSD" land title plan). The clause emitter dropped the type because rendering chose 'Geran' as default but text says 'HSD' — should detect from extracted_data. | When `title_type` is set, emit it verbatim (`held under HSD No. 251041` or `held under Hakmilik No. X`). When unset, default to `Geran No.`. NEVER omit the prefix. | HIGH (probate ambiguity — different title types have different probate procedures) |
+| T-13 | §10x.166 (clause numbering — "of 10" cut-off) | Page 2 ends `... my son JOSHUA KOID TECK SENG (MALAYSIA NRIC No. 960525-07-5039) of 10` then page break. Joshua has NO address (his IC's address field is empty in extracted data) — but the renderer wrote "of " followed by the NEXT person's first numeric token "10" (from "10 JALAN SRI LAGUNA"). | When a Person's address is empty, the executor clause should emit nothing after `of` OR fall back to the testator's address with a parenthetical note `(c/o testator)`. Instead it leaked the next gift's address into the executor address slot. | (a) Stop the address fallback chain at "Person.address" — never use a property address. (b) When Person.address is empty, emit `of [ADDRESS REQUIRED]` placeholder so the firm/lawyer knows to fill it before signing. | HIGH (factually wrong address attached to the executor) |
+| T-14 | §10x.167 (Mukim missing in clauses 12, 13) | Clauses 12 (B-05-11), 13 (C-30-08), 14 (Sri Laguna): omit the "Mukim [X]" element entirely between `Lot No. [N]` and `District of [D]`. Phek sample 6: `held under Geran No. 433036, Lot No. 12058, Mukim Plentong, District of Johor Bahru, State of Johor unto ...` Mukim is required. | The clause emitter only inserts Mukim if `property_details.mukim` is set. step5 has mukim populated for all 5 properties (Plentong / Pulai). So the emitter is reading from a DIFFERENT field (e.g. `bandar_pekan` or `property_info.mukim`) and getting empty. | Audit `models/gift.py` for the field-read priority on Mukim. Per §10x.131 enrichment, `property_details.mukim` and `property_details.bandar_pekan` should both be set. The emitter needs to read EITHER and emit the value. Currently misses one OR the other. | HIGH (probate-relevant — Mukim is required in NLC property descriptions) |
+| T-15 | §10x.168 (clause 13 split shares wrong) | Clause 13 (C-30-08): goes 100% to ESTHER. But AI Summary text said "Unit C-30-08 — joint 50/50 with son Joshua. Testator's 50% to daughter Esther 100%." Testator's 50% to Esther = correct beneficiary share. Should read "all my ½ undivided shares ... unto my daughter ESTHER ..." (already says ½ ✓) — but should add "(jointly held with my son JOSHUA KOID TECK SENG)" parenthetical since Joshua is the co-owner. | The clause emitter dropped the co-owner annotation. Per Phek sample 6 (Phek's house: `½ undivided shares ... held under Geran No. 433036, Lot No. 12058, Mukim Plentong`), it doesn't add a co-owner parenthetical either — but probate practice often requires it for clarity. | Optional: add co-owner mention via `co_owners` array. Phek format doesn't strictly require it; firm should decide. Currently `co_owners=['Joshua Koid Teck Seng']` IS in step5_data after §10x.154, just not emitted. | LOW (firm preference — Phek doesn't require it) |
+| T-16 | §10x.169 (page-break inside body paragraph) | Clause 2 (executor) splits across pages 2-3 with the address torn into separate H1 headings. The Word/PDF renderer is inserting a page break inside a paragraph element AND treating each line as a heading. | The `\n\n` paragraph separators in the executor clause text (likely from `_format_address_phek` returning multi-line strings before §10x.134 collapsed them) are being rendered as new paragraphs by the PDF generator. The first word after a blank line is being styled as H1 because of a CSS / docx rule. | (a) Force the address to a single line via `_format_address_phek` (already done per §10x.134 but bypassed for the executor address — verify). (b) Use `keep_with_next` / `keep_together` on the executor clause paragraph in the docx generator so the page break can't fall mid-clause. | HIGH (catastrophic visual layout) |
+| T-17 | §10x.170 (footer "Page\| N" formatting) | Every page footer reads `Page\| 2`, `Page\| 3`, etc. with a pipe character. Phek-style firm letterhead would say `Page 2 of 11` or just `2`. | Cosmetic — `documents/pdf_generator.py` page footer template uses `Page\| {n}` literal. | Change to `Page {n} of {total}` per Phek convention. | LOW (cosmetic) |
+| T-18 | §10x.171 (signature page witness blocks empty) | Page 11 shows blank signature lines with labels: `Signature of the Testator: ___`, `Date of this Will: ___ (dd/mm/yyyy)`, then witness 1 + witness 2 blocks with Full Name, NRIC, Address, Contact No., all blank. ✓ matches Phek format exactly. | None — this is correct. Witness fields are intentionally left blank for the testator + lawyer to fill in physically. | No action. ✓ | n/a |
+| T-19 | §10x.172 (Tetuan Alan Tan footer) | Page 12 shows `PREPARED BY: Tetuan Alan Tan & Associates ADVOCATES & SOLICITORS 24-01 & 24-02, Jln Kempas Utama 2/4, Taman Kempas Utama, 81300 Johor Bahru, Johor Darul Ta'zim TEL NO: 011-3953 2638 EMAIL: enquiry@alantanjb.com`. | Wizard adds firm preparer block after the will body. NOT in Phek canonical template (the .py file ends at "- End of Document -"). | Confirm firm wants this. Most Malaysian firms add a "Prepared by" block — keep but make tenant-configurable. Add to the canonical sample so it's part of the comparison baseline. | LOW (firm preference) |
+| T-20 | §10x.173 (testator address — missing "MALAYSIA" suffix) | Page 2: `... of 10, JALAN SRI LAGUNA 1/7, TAMAN LAGUNA, 81200 JOHOR BAHRU, Johor.` Missing trailing `, MALAYSIA`. Phek sample: `... of NO. 68, JALAN SONGKIT 3, TAMAN SENTOSA, 80150 JOHOR BAHRU, JOHOR, MALAYSIA.` | `_format_address_phek` is supposed to append `, MALAYSIA` per §10x.134 but the executor address rendering bypassed this helper. | Apply `_format_address_phek` to the testator's residential address inside the opening clause too (currently only applied to executor addresses, per §10x.134). | MEDIUM (Phek-format compliance) |
+| T-21 | §10x.174 (residuary clause structure) | Clause 27: `Unless specifically stated to the contrary in this Will, my Trustee(s) shall hold the rest of my estate on trust to retain or sell any part thereof and:` then `(a) To pay debts ...` then `(b) To give the residue ('my residuary estate') to my wife LIM BEE YAN (MALAYSIA NRIC No. 661126-04-5182).` ✓ matches Phek structure exactly. | None — this is correct. | No action. ✓ | n/a |
+| T-22 | §10x.175 (declaration clauses 28+29) | Clauses 28 + 29 (`I have given due consideration ...`, `For the purpose of ascertaining entitlement ... thirty days ...`). ✓ matches Phek's declaration clauses 8 + 9 exactly (numbering shifted because KOID has 22 more clauses). | None. | No action. ✓ | n/a |
+| T-23 | §10x.176 (asterisk separator before signature page) | Page 10: `*****************the remaining page is intentionally left blank*****************`. ✓ matches Phek format exactly. | None. | No action. ✓ | n/a |
+| T-24 | §10x.177 (5th property mukim mismatch) | Clause 14 (House Sri Laguna): says `Lot No. 207922` but Sri Laguna's actual lot per ground-truth is `135402`. 207922 is the Marina Cove lot. Wrong property identifier on the wrong gift. | Per §10x.142, the AI Summary historically conflated identifiers across Plentong-mukim properties. The fix landed but the will was generated BEFORE re-running the walker, so step5_data still has the stale lot number. Actual Sri Laguna lot was never extracted (no title doc uploaded). | Re-run walker after deploying §10x.142. For Sri Laguna, since no title doc exists, lot_number should be EMPTY (not 207922 borrowed from Marina Cove). The §10x.150 amber banner will flag the missing lot for the user to fill in before generating. | HIGH (factually wrong property identifier — this clause would fail probate verification) |
+| T-25 | §10x.178 (Marina Cove C-30-08 missing title `564662/M1C/30/710`) | Clause 13 has `Lot No. 207922` only — missing `Title No. 564662/M1C/30/710` and Mukim. Marina Cove HAS a title doc (vision extracted both lot AND title). | Same root as T-7 / T-14 — the clause emitter doesn't insert title_number when title_type is empty. Vision extracted `title_type=hsd` for the Shop but for Marina Cove it left title_type empty even though title_number was extracted. | (a) Default `title_type='Hakmilik Strata'` for strata titles (detected via slash in title_number `/M1C/30/710`). (b) ALWAYS emit `Title No. [N]` even without a type prefix; let the type word default to "Hakmilik" if truly unknown. | HIGH (probate-critical) |
+
+---
+
+## Summary by severity
+
+| Severity | Count | Items |
+|---|---|---|
+| HIGH (probate-blocking or factually wrong) | 11 | T-1, T-2, T-7, T-8, T-9, T-10, T-11, T-12, T-13, T-14, T-16, T-24, T-25 |
+| MEDIUM (Phek-format drift, cosmetic-but-needs-fix) | 4 | T-4, T-5, T-6, T-20 |
+| LOW (firm preference, pure cosmetic) | 4 | T-3, T-15, T-17, T-19 |
+| Already correct (no action) | 4 | T-18, T-21, T-22, T-23 |
+
+## Cross-cutting fix priorities
+
+1. **Property-clause Phek-format compliance (T-7, T-8, T-9, T-12, T-14, T-15, T-25)** —
+   single root cause: `models/gift.py::Gift._ownership_prefix` and the
+   property-clause emitter don't always include `held under [title_type] No.
+   [title_number], Lot No. [lot_number], Mukim [mukim], District of [daerah],
+   State of [negeri]`. Need a strict template that emits placeholders
+   (`[TITLE NO REQUIRED]`) when fields are empty, never silently drops them.
+
+2. **Address handling (T-1, T-2, T-13, T-16, T-20)** — multiple symptoms of the
+   same bug: addresses leak between fields (gift → testator, gift → executor),
+   newlines get promoted to headings, `MALAYSIA` suffix missing. Need a single
+   `_canonicalise_address(addr) → string` helper used everywhere, and a strict
+   gate that Person.address NEVER falls back to a Property.address.
+
+3. **Pre-generation validation gate (T-7, T-8, T-9, T-12, T-14, T-25)** —
+   currently `validation/legal_rules.py` Rule 17 (§10x.133) flags missing
+   title/lot but only as a WARNING. Upgrade to ERROR (blocks generation) when
+   ALL of `title_number`, `lot_number`, `street_address` are empty for a
+   property gift. Currently lets through "Unit B-05-11 Condominium" with
+   nothing else.
+
+4. **Re-run walker on existing wills (T-5, T-6, T-24, T-25)** — many T-items
+   are stale data from gifts saved before §10x.149/152/142/154 deployed. Build
+   a one-shot migration script: for every Will, re-run `_extract_ai_summary_*`
+   and overwrite step5_data with canonical bank/insurance names + correct
+   property identifiers, OR add render-time canonicalisation in
+   `template_filler.py` so the canonical fixes apply at every will-generation
+   regardless of when the gift was saved.
+
+5. **Executor substitute structure (T-10)** — render Phek's specific phrasing
+   when `is_substitute=True` for any executor instead of joint "and" pattern.
+
+---
+
+## How to use this table
+
+When the user calls out a Phek-vs-AI difference:
+1. Check this table first — it may already be catalogued.
+2. If NEW, add a new row (T-N) at the bottom following the schema.
+3. Write or extend the §10x.N rule in CLAUDE.md (link to it in the Rule column).
+4. Add a snapshot test to `/tmp/sim_will_gen.py` that asserts the Phek
+   pattern is present in the AI output.
+5. Verify the test fails on the buggy code BEFORE shipping the fix.
+6. Verify the test passes after the fix.
+7. Mark the row with the deploy commit hash in the Fix column + bump
+   Confidence to HIGH (verified).
+
+## Source documents
+
+- **AI-generated will (under review):**
+  `/Users/gan/Desktop/screenshot/Koid_Beng_Sun_Will - AI.pdf` (12 pages,
+  2026-05-10)
+- **Phek canonical template:**
+  `documents/sample_will_phek_yi_ting.py`
+- **Reference firm samples:**
+  `/Users/gan/Desktop/screenshot/AI WIll/Will Template/`
+  (Sample KOID, LIM CHEN WEE, LIM WOON KIET)
+- **Generator code under audit:**
+  - `documents/template_filler.py` (clause emitters)
+  - `documents/pdf_generator.py` (PDF layout, headers, footers)
+  - `documents/will_docx.py` (DOCX rendering, page breaks)
+  - `models/gift.py` (Gift._ownership_prefix, FinancialDetails formatting)
+  - `app.py::build_will_data` (data assembly from sessions)
+  - `validation/legal_rules.py` (pre-generation gate, Rules 17 + 18)
