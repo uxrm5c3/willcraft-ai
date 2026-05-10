@@ -8776,11 +8776,24 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
     """
     if not user_text:
         return None
-    t = (user_text or '').strip().lower()
+    t_raw = (user_text or '').strip()
+    t = t_raw.lower()
     is_confirm = t.startswith('inventory h3 confirm')
     is_skip    = t.startswith('inventory h3 skip')
     if not (is_confirm or is_skip):
         return None
+    # 🔥 §10x.137 — extract the web-resolved address from the
+    # 'inventory h3 confirm webaddr <address>' quickreply value.
+    # When user taps "✅ Use this address" on the H3 card, the value
+    # carries the resolved address text after 'webaddr '. We persist
+    # it into the gift's property_info so the wizard renders the full
+    # address instead of just the user's informal building name.
+    web_resolved_addr = ''
+    if is_confirm and ' webaddr ' in t:
+        try:
+            web_resolved_addr = t_raw.split(' webaddr ', 1)[1].strip()
+        except Exception:
+            web_resolved_addr = ''
     # Distinct h3-prefix quick-reply values mean the regular inventory
     # handler doesn't intercept these — no kind-pending guard required.
 
@@ -8888,6 +8901,43 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
     entry['beneficiaries'] = entry.get('beneficiaries') or []
     entry['_ai_summary_idx'] = h3_idx
     entry['_layer1_confirmed'] = True if is_confirm else entry.get('_layer1_confirmed', False)
+    # 🔥 §10x.137 — overlay web-resolved address into the gift if user
+    # confirmed via "✅ Use this address" button. The web search returned
+    # a canonical address (e.g. 'Paradiso Nuova, Bandar Medini Iskandar,
+    # 79250, Johor Bahru, Johor') for the user's informal name
+    # ('Paradisonuava'). Persist it onto the gift's property_info so the
+    # wizard + will-generation see the resolved address, not the typo.
+    if web_resolved_addr:
+        pi = entry.setdefault('property_info', {})
+        # Only overlay if pi.property_address is empty/missing OR is
+        # just the user's informal name (no postcode/comma structure)
+        existing_addr = (pi.get('property_address') or '').strip()
+        has_postcode = bool(re.search(r'\b\d{5}\b', existing_addr))
+        if not existing_addr or not has_postcode:
+            # Combine: keep the user's building/unit text + append the
+            # web-resolved geographic context
+            base = existing_addr or (ai_props[h3_idx].get('name') or '')
+            full = f"{base}, {web_resolved_addr}" if base else web_resolved_addr
+            pi['property_address'] = full[:300]
+            entry['address'] = pi['property_address']
+            entry['_address_source'] = 'web_resolved'
+            entry['_address_confidence'] = 'medium'  # user confirmed but
+                                                     # not extracted from title doc
+        # Also persist resolved fields if missing
+        try:
+            from services.web_property_clues import search_property_clues
+            import anthropic, os
+            _client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+            _r = search_property_clues(
+                ai_props[h3_idx].get('name') or web_resolved_addr, _client)
+            if _r:
+                if not pi.get('mukim'):  pi['mukim']  = _r.mukim or ''
+                if not pi.get('daerah'): pi['daerah'] = _r.daerah or ''
+                if not pi.get('negeri'): pi['negeri'] = _r.negeri or ''
+                if not pi.get('postcode'): pi['postcode'] = _r.postcode or ''
+                if not pi.get('city'):   pi['city']   = _r.locality or ''
+        except Exception:
+            pass
     if is_skip:
         entry['_ai_summary_skipped'] = True
         entry['_h3_placeholder'] = False

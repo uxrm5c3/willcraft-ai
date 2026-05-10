@@ -2568,18 +2568,75 @@ def _walkthrough_property_card_h3(ai_prop: Dict[str, Any],
     # Note: testator-share % and beneficiary intent were here per §10x.13
     # display, but they belong to Layer 2. Removed per user feedback.
 
-    # No "Confidence: HIGH" label — confidence is internal scoring per
-    # §10x.46. Just say what's missing in plain language:
-    parts.append(
-        "📝 No title document attached yet. Confirm the property — you can "
-        "upload the title doc later or type the lot/title manually."
-    )
-    quick = [
-        {'label': '✅ Confirm', 'value': 'inventory h3 confirm'},
-        {'label': '📎 Upload title document', 'value': 'inbox start'},
-        {'label': '✏️ Type details manually', 'value': 'other'},
-        {'label': '⏭ Skip for now', 'value': 'inventory h3 skip'},
-    ]
+    # 🔥 §10x.137 — WEB-RESOLVED ADDRESS BLOCK.
+    # User feedback: 'I did a google search and find Address: Persiaran
+    # Medini Utara 3, 79100 Iskandar Puteri ... but because web search
+    # fail, could not match'. The §10x.136 typo retry now resolves
+    # informal building names (e.g. 'Paradisonuava' → 'Paradiso Nuova')
+    # — surface the resolved address ON THE CARD so user can either
+    # ✅ Confirm or ✏️ Provide actual.
+    #
+    # Two-step UX:
+    #   Step 1: web search → if resolved, show `📍 Web-resolved:` block
+    #           + ✅ Use this / ✏️ Type my own / ⏭ Skip
+    #   Step 2: web search returns None → tell user "couldn't auto-
+    #           resolve" + ✏️ Type full address (mandatory) / ⏭ Skip
+    web_resolved = None
+    try:
+        # Only attempt when address is non-trivial AND not already complete
+        # (has at least mukim+daerah+postcode) to avoid wasted calls.
+        _query = addr if len(addr) >= 8 else f"{name} {mukim} {daerah}".strip()
+        if _query and not (mukim and daerah and re.search(r'\b\d{5}\b', addr)):
+            from services.web_property_clues import search_property_clues
+            import anthropic, os
+            _client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+            web_resolved = search_property_clues(_query, _client)
+    except Exception:
+        web_resolved = None
+
+    if web_resolved:
+        # Build a clean one-line resolved-address summary
+        bits = []
+        if web_resolved.building_name and web_resolved.building_name.lower() not in name.lower():
+            bits.append(web_resolved.building_name)
+        if web_resolved.locality:
+            bits.append(web_resolved.locality)
+        if web_resolved.postcode:
+            bits.append(web_resolved.postcode)
+        if web_resolved.daerah:
+            bits.append(web_resolved.daerah)
+        if web_resolved.negeri:
+            bits.append(web_resolved.negeri)
+        resolved_line = ', '.join(b for b in bits if b)
+        sources_str = ''
+        if web_resolved.sources:
+            sources_str = f"\n  🔗 _Source: {web_resolved.sources[0]}_"
+        parts.append(
+            f"📍 **Web-resolved address (please confirm):**\n"
+            f"  `{resolved_line}`{sources_str}\n\n"
+            f"_If this matches your property, tap **✅ Use this address**. "
+            f"If wrong, tap **✏️ Type my own** to enter the correct one._"
+        )
+        quick = [
+            {'label': '✅ Use this address', 'value': f'inventory h3 confirm webaddr {resolved_line[:200]}'},
+            {'label': '✏️ Type my own',     'value': 'other'},
+            {'label': '⏭ Skip for now',    'value': 'inventory h3 skip'},
+        ]
+    else:
+        # Step 2: web search fully failed
+        parts.append(
+            "⚠️ **Could not auto-resolve this address.** I searched the web "
+            "for the building name and address but didn't find a confident "
+            "match.\n\n"
+            "_Please type the **full address** with postcode (e.g. "
+            "`Persiaran Medini Utara 3, 79100 Iskandar Puteri, Johor`), "
+            "OR upload the title document and I'll extract it for you._"
+        )
+        quick = [
+            {'label': '✏️ Type full address', 'value': 'other'},
+            {'label': '📎 Upload title doc',  'value': 'inbox start'},
+            {'label': '⏭ Skip for now',      'value': 'inventory h3 skip'},
+        ]
     return {
         'text': '\n\n'.join(parts) + _qr_marker(quick),
         'focus_doc_ids': [],
