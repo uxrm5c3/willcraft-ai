@@ -927,16 +927,22 @@ def build_will_data():
                         if raw_addr.startswith(_pref):
                             raw_addr = raw_addr[len(_pref):]
                             break
-                    # Detect title type from title_number prefix (HSD, GRN, GM, PTD…)
+                    # Title type: pre-set field wins; otherwise detect from
+                    # title_number prefix (HSD, GRN, GM, PTD…)
                     title_num_raw = (pd.get('title_number') or gd.get('title_number') or '').strip()
-                    title_type = ''
+                    title_type = (pd.get('title_type') or gd.get('title_type') or '').strip().upper()
                     title_num_clean = title_num_raw
-                    import re as _re_tt
-                    _tt_m = _re_tt.match(r'^(HSD|HSM|HS\(D\)|HS\(M\)|GRN|GM|GERAN|HAKMILIK|PAJAKAN|PTD|PTM)\s*:?\s*(.+)$',
-                                          title_num_raw, _re_tt.IGNORECASE)
-                    if _tt_m:
-                        title_type = _tt_m.group(1).upper()
-                        title_num_clean = _tt_m.group(2).strip()
+                    if not title_type:
+                        import re as _re_tt
+                        _tt_m = _re_tt.match(r'^(HSD|HSM|HS\(D\)|HS\(M\)|GRN|GM|GERAN|HAKMILIK|PAJAKAN|PTD|PTM)\s*:?\s*(.+)$',
+                                              title_num_raw, _re_tt.IGNORECASE)
+                        if _tt_m:
+                            title_type = _tt_m.group(1).upper()
+                            title_num_clean = _tt_m.group(2).strip()
+                    # If we have a title_type but title_number still has its
+                    # prefix (e.g. "HSD 251041"), strip it
+                    if title_type and title_num_clean.upper().startswith(title_type):
+                        title_num_clean = title_num_clean[len(title_type):].strip(' :')
                     pd_norm = {
                         'property_address':   raw_addr,
                         'title_type':         title_type,
