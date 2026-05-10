@@ -3622,6 +3622,17 @@ def _will_data_snapshot(will_record):
     completed = _j(will_record.completed_steps, [])
     if not isinstance(completed, list):
         completed = []
+    # 🔥 §10x.155 — chat snapshot must use the SAME enrichment as the
+    # wizard so the right-pane gift rows show postcode / city /
+    # ownership_type / co_owners derived at render time. Without this
+    # the chat UI sees raw step5 (no derived fields) and the user
+    # complains that the chat shows incomplete property info even
+    # after the wizard fixes (§10x.145, §10x.150, §10x.154) landed.
+    s5_norm = _normalise_gifts(_j(will_record.step5_data, []))
+    try:
+        s5_enriched = _enrich_gifts_with_documents(will_record.client_id, s5_norm)
+    except Exception:
+        s5_enriched = s5_norm
     return {
         'will_id': will_record.id,
         'client_id': will_record.client_id,
@@ -3631,7 +3642,7 @@ def _will_data_snapshot(will_record):
         'step2': _j(will_record.step2_data, {}),
         'step3': _j(will_record.step3_data, {}),
         'step4': _j(will_record.step4_data, []),
-        'step5': _normalise_gifts(_j(will_record.step5_data, [])),
+        'step5': s5_enriched,
         'step6': _j(will_record.step6_data, {}),
         'step7': _j(will_record.step7_data, {}),
         'step8': _j(will_record.step8_data, {}),
