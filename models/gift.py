@@ -162,6 +162,8 @@ class FinancialDetails(BaseModel):
     account_number: str = ""
     asset_type: str = ""        # savings, current, fixed_deposit, etc.
     description: str = ""
+    # §10x.152b — country distinguishes SG vs MY format in Phek template.
+    country: str = ""
 
     def to_formatted_description(self, ownership_prefix: str = "") -> str:
         """🔥 §10x.16/.23 — match Phek Yi Ting standard:
@@ -222,11 +224,34 @@ class FinancialDetails(BaseModel):
                     " together with all interests/dividends already accrued "
                     "due or accruing thereon"
                 )
+            # 🔥 §10x.152b — Sample format depends on country:
+            #   SG banks: "the monies in my Singapore POSB bank Account
+            #             No. 030-25917-3 together with..."
+            #     (country prefix + lowercase 'bank', NO account_type)
+            #   MY banks: "the monies in my Public Bank Berhad Current
+            #             Account No. 3244955834 together with..."
+            #     (NO country prefix, account_type included)
+            country = (getattr(self, 'country', '') or '').strip()
             base = "the monies in my"
-            if inst:
-                base += f' {inst}'
-            if acct_type:
-                base += f' {acct_type}'
+            if country and country.lower().startswith('s'):
+                # Singapore: country prefix, drop default account_type
+                # (Saving), keep distinctive types (Fixed Deposit etc.)
+                base += f' {country}'
+                if inst:
+                    # Lowercase 'bank' if institution ends with 'Bank'
+                    # per Sample ("POSB bank" not "POSB Bank")
+                    if inst.lower().endswith(' bank'):
+                        base += f' {inst[:-len(" Bank")]} bank'
+                    else:
+                        base += f' {inst}'
+                if acct_type and acct_type.lower() not in ('saving', 'savings'):
+                    base += f' {acct_type}'
+            else:
+                # Malaysia / unknown country: no prefix, account_type kept
+                if inst:
+                    base += f' {inst}'
+                if acct_type:
+                    base += f' {acct_type}'
             if acct:
                 base += f' Account No. {acct}'
             return base + (
