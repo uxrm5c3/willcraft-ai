@@ -1027,13 +1027,23 @@
 
     let body = '';
     if (fields && fields.length) {
-      body = '<table class="text-[11px] mt-1 ml-5"><tbody>';
+      body = '<table class="text-[11px] mt-1 ml-5 w-full"><tbody>';
       for (const [k, v] of fields) {
         if (!v) continue;
+        // 🔥 §10x.146 — visual treatment for incomplete rows. The chat
+        // snapshot was rendering as a plain white row even when the
+        // label said "⚠️ missing X" — visually it looked the same as
+        // a complete row. Add a yellow background + amber text when
+        // the value contains the missing-field warning marker.
+        const isMissing = typeof v === 'string' && v.includes('⚠️ missing');
+        const rowCls = isMissing
+          ? 'bg-amber-50 border-l-2 border-amber-300 pl-1'
+          : '';
+        const txtCls = isMissing ? 'text-amber-900' : 'text-gray-800';
         if (k) {
-          body += `<tr><td class="pr-2 py-px text-gray-500 align-top">${escapeHtml(k)}</td><td class="py-px text-gray-800">${escapeHtml(v)}</td></tr>`;
+          body += `<tr class="${rowCls}"><td class="pr-2 py-px text-gray-500 align-top">${escapeHtml(k)}</td><td class="py-px ${txtCls}">${escapeHtml(v)}</td></tr>`;
         } else {
-          body += `<tr><td colspan="2" class="py-px text-gray-700">${escapeHtml(v)}</td></tr>`;
+          body += `<tr class="${rowCls}"><td colspan="2" class="py-px ${isMissing ? 'text-amber-900' : 'text-gray-700'}">${escapeHtml(v)}</td></tr>`;
         }
       }
       body += '</tbody></table>';

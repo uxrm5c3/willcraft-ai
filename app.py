@@ -4735,6 +4735,23 @@ def legal_library_page():
     return render_template('legal_library.html', acts=list_available_acts())
 
 
+@app.route('/library/download/<slug>')
+@login_required
+def legal_library_download(slug):
+    """🔥 §10x.148 — serve a library PDF inline (preview) so users can
+    open the gold standard guide / any Act / book directly from the
+    library page."""
+    safe_slug = re.sub(r'[^a-z0-9_]+', '', (slug or '').lower())
+    if not safe_slug:
+        return jsonify({'ok': False, 'error': 'Invalid slug'}), 400
+    path = os.path.join(DATA_DIR, 'legal_acts', f"{safe_slug}.pdf")
+    if not os.path.isfile(path):
+        return jsonify({'ok': False, 'error': 'Not found'}), 404
+    return send_file(path, mimetype='application/pdf',
+                      as_attachment=False,
+                      download_name=f"{safe_slug}.pdf")
+
+
 @app.route('/api/legal-library/delete/<slug>', methods=['POST'])
 @login_required
 def api_legal_library_delete(slug):
@@ -13414,6 +13431,40 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
             tt = pi.get('title_type') or pd.get('title_type')
             if tt:
                 pd['title_type'] = tt
+            # 🔥 §10x.145 — parse postcode/city/state out of the address
+            # string when wizard form fields are empty. The chat saves the
+            # full address as one string ("Shop No. 03 Jalan Gunung 4,
+            # Seri Alam Masai, 81750 Masai, Johor"); the wizard expects
+            # SEPARATE postcode/city/state inputs. Without parsing, the
+            # postcode/city/state inputs render blank and the user thinks
+            # "address incomplete".
+            addr_str = (pd.get('property_address') or '')
+            if addr_str:
+                import re as _re
+                # Postcode: 5 digits between word boundaries
+                if not pd.get('postcode'):
+                    pm = _re.search(r'\b(\d{5})\b', addr_str)
+                    if pm:
+                        pd['postcode'] = pm.group(1)
+                # State: known Malaysian states at end (case-insensitive)
+                if not pd.get('state'):
+                    _STATES = ('Johor', 'Kedah', 'Kelantan', 'Melaka', 'Malacca',
+                                'Negeri Sembilan', 'Pahang', 'Penang', 'Pulau Pinang',
+                                'Perak', 'Perlis', 'Sabah', 'Sarawak', 'Selangor',
+                                'Terengganu', 'Kuala Lumpur', 'Labuan', 'Putrajaya')
+                    for st in _STATES:
+                        if _re.search(rf'\b{_re.escape(st)}\b', addr_str, _re.I):
+                            pd['state'] = st
+                            break
+                # City: 2-3 words after the postcode (e.g. "81750 Masai")
+                if not pd.get('city') and pd.get('postcode'):
+                    cm = _re.search(
+                        rf'\b{pd["postcode"]}\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+){{0,2}})',
+                        addr_str)
+                    if cm:
+                        cand = cm.group(1).strip()
+                        if cand and cand.lower() not in ('johor', 'kedah'):
+                            pd['city'] = cand
             gg['property_details'] = pd
         # Financial: chat saves bank_name/account_number/insurer; template
         # reads financial_details.

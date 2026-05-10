@@ -67,7 +67,10 @@
       <tbody>
         {% for a in acts_only %}
         <tr class="border-t border-gray-100 hover:bg-gray-50">
-          <td class="px-5 py-2.5 font-medium text-gray-900">{{ a.title }}</td>
+          <td class="px-5 py-2.5 font-medium">
+            <a href="/library/download/{{ a.slug }}" target="_blank"
+               class="text-primary-700 hover:underline">{{ a.title }}</a>
+          </td>
           <td class="px-5 py-2.5 text-gray-500 font-mono text-xs">{{ a.slug }}</td>
           <td class="px-5 py-2.5 text-right text-gray-600">{{ a.size_kb }} KB</td>
           <td class="px-5 py-2.5 text-right">
@@ -99,6 +102,7 @@
         <tr>
           <th class="px-5 py-2 text-left">Title</th>
           <th class="px-5 py-2 text-left">Slug</th>
+          <th class="px-5 py-2 text-left">Jurisdiction</th>
           <th class="px-5 py-2 text-right">Size</th>
           <th class="px-5 py-2 text-right">Action</th>
         </tr>
@@ -106,8 +110,28 @@
       <tbody>
         {% for a in books_only %}
         <tr class="border-t border-gray-100 hover:bg-gray-50">
-          <td class="px-5 py-2.5 font-medium text-gray-900">{{ a.title }}</td>
+          <td class="px-5 py-2.5 font-medium">
+            <a href="/library/download/{{ a.slug }}" target="_blank"
+               class="text-primary-700 hover:underline">{{ a.title }}</a>
+            {% if a.slug == 'will_drafting_gold_standard_guide' %}
+              <span class="ml-2 inline-block bg-primary-100 text-primary-800 text-[10px] font-semibold px-1.5 py-0.5 rounded">⭐ Gold Standard</span>
+            {% endif %}
+          </td>
           <td class="px-5 py-2.5 text-gray-500 font-mono text-xs">{{ a.slug }}</td>
+          <td class="px-5 py-2.5">
+            {% set j = a.jurisdiction or 'malaysia' %}
+            {% if j == 'malaysia' %}
+              <span class="inline-block bg-emerald-100 text-emerald-800 text-[11px] font-medium px-2 py-0.5 rounded">🇲🇾 Malaysia</span>
+            {% elif j == 'malaysia_singapore' %}
+              <span class="inline-block bg-emerald-100 text-emerald-800 text-[11px] font-medium px-2 py-0.5 rounded">🇲🇾🇸🇬 Malaysia / Singapore</span>
+            {% elif j == 'india' %}
+              <span class="inline-block bg-amber-100 text-amber-800 text-[11px] font-medium px-2 py-0.5 rounded" title="Not Malaysian law — Q&A engine cites this as DRAFTING PRINCIPLE only, never as authority">⚠️ 🇮🇳 India (principle only)</span>
+            {% elif j == 'uk' %}
+              <span class="inline-block bg-amber-100 text-amber-800 text-[11px] font-medium px-2 py-0.5 rounded" title="Not Malaysian law — Q&A engine cites this as DRAFTING PRINCIPLE only, never as authority">⚠️ 🇬🇧 UK (principle only)</span>
+            {% else %}
+              <span class="inline-block bg-gray-100 text-gray-700 text-[11px] font-medium px-2 py-0.5 rounded">{{ j }}</span>
+            {% endif %}
+          </td>
           <td class="px-5 py-2.5 text-right text-gray-600">{{ (a.size_kb / 1024)|round(1) }} MB</td>
           <td class="px-5 py-2.5 text-right">
             <button onclick="deleteAct('{{ a.slug }}', '{{ a.title }}')"

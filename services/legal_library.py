@@ -49,6 +49,44 @@ def _classify(slug: str) -> str:
     return 'book'
 
 
+# 🔥 §10x.147 — Country / jurisdiction tag per book. The Q&A engine
+# uses this to filter out non-Malaysian content and to add disclaimers
+# when surfacing only-foreign-jurisdiction excerpts. Malaysian Acts
+# default to 'malaysia'; foreign textbooks must be listed explicitly.
+_BOOK_JURISDICTION = {
+    # James Kessler QC + Leon Sartin — English law (UK)
+    'drafting_trusts_and_will_trusts_11ed': 'uk',
+    # Gopalakrishnan — Indian "Law of Wills" textbook
+    'law_of_wills_gopalakrishnan_11ed': 'india',
+    # G Raman — Singapore + Malaysia LexisNexis (treat as malaysia for
+    # citing purposes; the Singapore-only chapters are flagged at
+    # excerpt time when the section header mentions "Singapore" only)
+    'probate_administration_malaysia_singapore_3ed': 'malaysia_singapore',
+    # In-house guide — synthesises Malaysian Acts only
+    'will_drafting_gold_standard_guide': 'malaysia',
+}
+
+
+def jurisdiction(slug: str) -> str:
+    """Return jurisdiction code for a book/act slug. Unknown defaults to
+    'malaysia' (every Malaysian Act). Use this to filter Q&A excerpts so
+    foreign-law principles aren't quoted as if they were Malaysian law.
+    """
+    if not slug:
+        return 'malaysia'
+    return _BOOK_JURISDICTION.get(slug.lower(), 'malaysia')
+
+
+def is_malaysia_authoritative(slug: str) -> bool:
+    """True if this PDF can be quoted as authoritative Malaysian law.
+    'india' / 'uk' books fail this test — their content may inform
+    DRAFTING PRINCIPLES but must NOT be cited as if it were the
+    Malaysian rule.
+    """
+    j = jurisdiction(slug)
+    return j in ('malaysia', 'malaysia_singapore')
+
+
 def list_available_acts() -> List[Dict[str, str]]:
     """Return [{'slug', 'title', 'path', 'size_kb', 'category'}] for every
     PDF found. category is 'act' or 'book'."""
@@ -68,6 +106,8 @@ def list_available_acts() -> List[Dict[str, str]]:
             'slug': slug, 'title': _slug_to_title(slug),
             'path': path, 'size_kb': size_kb,
             'category': _classify(slug),
+            'jurisdiction': jurisdiction(slug),
+            'malaysia_authoritative': is_malaysia_authoritative(slug),
         })
     return out
 
@@ -189,7 +229,17 @@ def section_excerpt(slug: str, question: str, max_chars: int = 1600
     # Take top 2 sections, joined with separator, truncated
     top = [s[2] for s in scored[:2]]
     excerpt = '\n\n…\n\n'.join(top)[:max_chars]
-    return {'title': act['title'], 'slug': slug, 'excerpt': excerpt}
+    # 🔥 §10x.147 — disclaimer for foreign-law sources
+    if not act.get('malaysia_authoritative', True):
+        excerpt = (
+            f"⚠️ FOREIGN-LAW PRINCIPLE ONLY (jurisdiction: "
+            f"{act.get('jurisdiction', 'unknown').upper()}). NOT "
+            f"Malaysian law — use as drafting principle only, do "
+            f"NOT quote as authority.\n\n" + excerpt
+        )
+    return {'title': act['title'], 'slug': slug, 'excerpt': excerpt,
+            'jurisdiction': act.get('jurisdiction', 'malaysia'),
+            'malaysia_authoritative': act.get('malaysia_authoritative', True)}
 
 
 def relevant_excerpts(question: str, max_chars: int = 2400,
@@ -232,6 +282,21 @@ def relevant_excerpts(question: str, max_chars: int = 2400,
     act_scores.sort(key=lambda x: -x[0])
     top_acts = act_scores[:max_acts]
 
+    # 🔥 §10x.147 — Filter / re-rank by jurisdiction. Malaysia-authoritative
+    # sources go first; foreign-law books (Kessler UK / Gopalakrishnan India)
+    # only surface when no Malaysian text matched AND get a "principle only,
+    # not Malaysian law" disclaimer.
+    ms_first = [(h, a, t) for h, a, t in act_scores
+                if a.get('malaysia_authoritative')]
+    foreign  = [(h, a, t) for h, a, t in act_scores
+                if not a.get('malaysia_authoritative')]
+    if ms_first:
+        # Malaysia-authoritative sources cover the question — drop foreign.
+        top_acts = ms_first[:max_acts]
+    else:
+        # Only foreign sources matched — keep them but tag for disclaimer.
+        top_acts = foreign[:max_acts]
+
     out: List[Dict[str, str]] = []
     budget_left = max_chars
     for _hits, act, text in top_acts:
@@ -252,6 +317,21 @@ def relevant_excerpts(question: str, max_chars: int = 2400,
         cap = min(per_act_chars, budget_left)
         excerpt = excerpt[:cap]
         if excerpt:
-            out.append({'title': act['title'], 'excerpt': excerpt})
+            entry = {
+                'title': act['title'],
+                'excerpt': excerpt,
+                'jurisdiction': act.get('jurisdiction', 'malaysia'),
+                'malaysia_authoritative': act.get('malaysia_authoritative', True),
+            }
+            if not entry['malaysia_authoritative']:
+                # Prepend a disclaimer banner so Claude / the chat UI know
+                # this is principle-only, NOT Malaysian black-letter law.
+                entry['excerpt'] = (
+                    f"⚠️ FOREIGN-LAW PRINCIPLE ONLY (jurisdiction: "
+                    f"{entry['jurisdiction'].upper()}). NOT Malaysian "
+                    f"law — use as drafting principle only, do NOT "
+                    f"quote as authority.\n\n" + entry['excerpt']
+                )
+            out.append(entry)
             budget_left -= len(excerpt)
     return out
