@@ -13586,6 +13586,19 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
                             tt = _tt.upper() if _tt.lower() in ('hsd', 'hsm', 'grn') else _tt.title()
                 except Exception:
                     pass
+            # 🔥 §10x.204 — auto-set title_type for STRATA UNITS (condos /
+            # service apartments) when address matches "Unit X-NN-NN" or
+            # similar building+floor+unit pattern. Per NLC strata titles
+            # (Strata Titles Act 1985) every condo unit has a Strata Title
+            # Geran (Hakmilik Strata) — never plain Geran.
+            if not tt:
+                _addr = ((pi.get('property_address') or pd.get('property_address') or '')).lower()
+                import re as _re_strata
+                if (_re_strata.search(r'\bunit\s+[a-z]?-?\d+-\d+', _addr)
+                    or 'condominium' in _addr or 'apartment' in _addr
+                    or 'pangsapuri' in _addr or 'flat' in _addr
+                    or 'serviced apartment' in _addr or 'service apartment' in _addr):
+                    tt = 'Strata Title Geran'
             if tt:
                 pd['title_type'] = tt
             # 🔥 §10x.145 — parse postcode/city/state out of the address
@@ -13629,6 +13642,47 @@ def _enrich_gifts_with_documents(client_id: str, gifts: list) -> list:
                         cand = cm.group(1).strip()
                         if cand and cand.lower() not in ('johor', 'kedah'):
                             pd['city'] = cand
+            # 🔥 §10x.205 — CROSS-DOC ENRICHMENT. When postcode/city still
+            # missing, scan ALL OTHER property docs (Cukai Tanah / SPA / JMB
+            # bills) FOR THE SAME MUKIM and pull postcode/city from them.
+            # E.g. KOID's B-05-11 has no street address from chat but the
+            # Bandar Medini Cukai Tanah doc has "BANDAR MEDINI ISKANDAR,
+            # 79250" → can pre-fill since both are in Mukim Pulai.
+            if not pd.get('postcode') or not pd.get('city'):
+                gift_mukim = (pd.get('mukim') or pd.get('bandar_pekan') or '').strip().lower()
+                if gift_mukim:
+                    try:
+                        sib_docs = Document.query.filter(
+                            Document.client_id == client_id,
+                            Document.category.in_(('property_tax', 'property_spa',
+                                                    'loan_agreement', 'property_title'))
+                        ).all()
+                        import re as _re_sib
+                        for sd in sib_docs:
+                            try:
+                                sed = json.loads(sd.extracted_data or '{}')
+                            except Exception:
+                                sed = {}
+                            sib_mukim = (sed.get('mukim') or '').strip().lower()
+                            if sib_mukim != gift_mukim:
+                                continue
+                            sib_addr = (sed.get('property_address') or '').strip()
+                            if not sib_addr:
+                                continue
+                            # Pull postcode + the word after (city)
+                            pmatch = _re_sib.search(r'\b(\d{5})\b\s+([A-Z][A-Za-z\s]{2,30}?)(?:,|$)', sib_addr)
+                            if pmatch:
+                                if not pd.get('postcode'):
+                                    pd['postcode'] = pmatch.group(1)
+                                if not pd.get('city'):
+                                    cand = pmatch.group(2).strip().rstrip(',').strip()
+                                    # Skip state names that follow postcodes
+                                    if cand and cand.lower() not in ('johor', 'kedah', 'malaysia'):
+                                        pd['city'] = cand
+                                pd['_postcode_from_doc'] = sd.id
+                                break
+                    except Exception:
+                        pass
             # 🔥 §10x.154 — strip noisy '(Title X, Lot Y, Mukim Z)' parens
             # from displayed property_address. The lot/title/mukim are
             # already shown in their dedicated form fields below; keeping
