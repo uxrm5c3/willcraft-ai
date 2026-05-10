@@ -437,13 +437,17 @@
 
 <!-- Generate Section -->
 <div class="border-t border-gray-200 pt-8">
+    {# 🔥 §10x.121 — Generate-with-missing-fields override flow.
+       Errors no longer hard-block the button. Clicking Generate when
+       errors exist → opens override modal listing missing fields →
+       user must consciously click "Generate anyway" to proceed. #}
     {% set has_errors = validation_results|selectattr('severity', 'equalto', 'ERROR')|list|length > 0 if validation_results else false %}
 
     {% if has_errors %}
     <div class="text-center mb-6">
-        <div class="inline-flex items-center px-4 py-2 bg-red-50 text-red-700 rounded-lg text-sm font-medium">
-            <svg class="w-5 h-5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/></svg>
-            Please fix the errors above before generating your will.
+        <div class="inline-flex items-start gap-2 px-4 py-3 bg-amber-50 text-amber-800 rounded-lg text-sm font-medium border border-amber-200 max-w-xl text-left">
+            <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+            <span>Some required fields are still missing. You can complete them in the relevant wizard step, or click <strong>Generate</strong> below to proceed anyway — you'll be asked to confirm.</span>
         </div>
     </div>
     {% endif %}
@@ -451,7 +455,7 @@
     <div class="text-center">
         <p class="text-sm text-gray-500 mb-4">This will use Claude AI to draft your will. The process may take 30-60 seconds.</p>
 
-        <form method="POST" action="/wizard/generate" class="inline-block">
+        <form method="POST" action="/wizard/generate" class="inline-block" id="wizard-generate-form">
             {% if has_logo %}
             <div class="flex items-center justify-center gap-2 mb-4">
                 <input type="hidden" name="include_logo" value="0">
@@ -462,15 +466,71 @@
                 </label>
             </div>
             {% endif %}
-            <button type="submit" {% if has_errors %}disabled{% endif %}
+            {# Hidden override flag — set by JS only when user confirms in the modal #}
+            <input type="hidden" name="proceed_with_warnings" id="proceed-with-warnings-flag" value="">
+            <button type="submit"
                     class="w-full sm:w-auto px-8 sm:px-10 py-4 text-base sm:text-lg font-bold rounded-xl transition-colors shadow-lg
-                           {% if has_errors %}bg-gray-300 text-gray-500 cursor-not-allowed{% else %}bg-primary-600 text-white hover:bg-primary-700 hover:shadow-xl{% endif %}">
+                           {% if has_errors %}bg-amber-500 text-white hover:bg-amber-600{% else %}bg-primary-600 text-white hover:bg-primary-700{% endif %} hover:shadow-xl">
                 <svg class="inline mr-2 w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                Generate My Will with AI
+                {% if has_errors %}Generate with Missing Fields…{% else %}Generate My Will with AI{% endif %}
             </button>
         </form>
     </div>
 </div>
+
+{# 🔥 §10x.121 — Override Modal. Shown automatically when the server
+   redirected back here with `pending_override` set (i.e. user clicked
+   Generate, server detected missing required fields, asked for explicit
+   override). Also rendered (hidden) so client-side JS can show it on
+   the first Generate click without a server round-trip. #}
+{% if pending_override or has_errors %}
+<div id="override-modal" class="fixed inset-0 bg-black/60 z-50 {% if pending_override %}flex{% else %}hidden{% endif %} items-center justify-center p-4"
+     {% if pending_override %}data-auto-shown="1"{% endif %}>
+  <div class="bg-white rounded-2xl p-6 max-w-2xl w-full shadow-2xl">
+    <div class="flex items-start gap-3 mb-4">
+      <svg class="w-8 h-8 text-amber-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/>
+      </svg>
+      <div>
+        <h2 class="text-xl font-bold text-gray-900">Required fields are missing</h2>
+        <p class="text-sm text-gray-600 mt-1">The will draft will OMIT or use placeholders for these fields. The lawyer/firm will need to fill them in before signing. Are you sure you want to generate now?</p>
+      </div>
+    </div>
+
+    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 max-h-72 overflow-y-auto">
+      <div class="text-xs font-semibold text-amber-900 uppercase tracking-wide mb-2">Missing required fields</div>
+      <ul class="space-y-2 text-sm text-amber-900">
+        {% if pending_override and pending_override.errors %}
+          {% for err in pending_override.errors %}
+          <li class="flex gap-2">
+            <span class="font-mono text-xs text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">{{ err.field or err.rule_id }}</span>
+            <span>{{ err.message }}</span>
+          </li>
+          {% endfor %}
+        {% else %}
+          {% for err in (validation_errors or []) %}
+          <li class="flex gap-2">
+            <span class="font-mono text-xs text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded">{{ err.field or err.rule_id }}</span>
+            <span>{{ err.message }}</span>
+          </li>
+          {% endfor %}
+        {% endif %}
+      </ul>
+    </div>
+
+    <div class="flex flex-col sm:flex-row gap-3 justify-end">
+      <button type="button" id="override-cancel"
+              class="px-5 py-2.5 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">
+        Cancel — let me complete first
+      </button>
+      <button type="button" id="override-confirm"
+              class="px-5 py-2.5 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg transition-colors shadow">
+        ⚠️ Generate anyway with missing fields
+      </button>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <!-- Verification PDF -->
 <div class="flex justify-center py-3">
@@ -508,14 +568,70 @@
 {% block wizard_scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', function() {
-    const form = document.querySelector('form[action="/wizard/generate"]');
-    if (form) {
-        form.addEventListener('submit', function() {
-            document.getElementById('generate-overlay').classList.remove('hidden');
-            const btn = form.querySelector('button[type="submit"]');
-            if (btn) { btn.disabled = true; btn.textContent = 'Generating...'; }
+    const form           = document.getElementById('wizard-generate-form');
+    const overrideModal  = document.getElementById('override-modal');
+    const overrideFlag   = document.getElementById('proceed-with-warnings-flag');
+    const cancelBtn      = document.getElementById('override-cancel');
+    const confirmBtn     = document.getElementById('override-confirm');
+    const generateBtn    = form ? form.querySelector('button[type="submit"]') : null;
+    const overlay        = document.getElementById('generate-overlay');
+
+    if (!form) return;
+
+    // 🔥 §10x.121 — submit interceptor.
+    // First click of Generate when ERRORs exist → show modal instead of submit.
+    // Second click ("Generate anyway" in modal) → set override flag, submit.
+    const hasErrors = {{ 'true' if has_errors else 'false' }};
+    let userConfirmed = false;
+
+    function showOverlay() {
+        if (overlay) overlay.classList.remove('hidden');
+        if (generateBtn) {
+            generateBtn.disabled = true;
+            generateBtn.textContent = 'Generating...';
+        }
+    }
+
+    form.addEventListener('submit', function(ev) {
+        if (hasErrors && !userConfirmed) {
+            ev.preventDefault();
+            // Open modal
+            if (overrideModal) {
+                overrideModal.classList.remove('hidden');
+                overrideModal.classList.add('flex');
+            }
+            return false;
+        }
+        // Normal path — show loading overlay and let it submit
+        showOverlay();
+    });
+
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+            if (overrideModal) {
+                overrideModal.classList.add('hidden');
+                overrideModal.classList.remove('flex');
+            }
         });
     }
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', function() {
+            // Set the override flag and re-submit; bypass our interceptor
+            // by setting userConfirmed = true.
+            userConfirmed = true;
+            if (overrideFlag) overrideFlag.value = '1';
+            // Hide modal and show overlay before triggering submit
+            if (overrideModal) {
+                overrideModal.classList.add('hidden');
+                overrideModal.classList.remove('flex');
+            }
+            showOverlay();
+            form.submit();
+        });
+    }
+
+    // Auto-shown modal (server-side redirect after a Generate click)
+    // is already visible — wire the same handlers above; no extra work.
 });
 
 </script>

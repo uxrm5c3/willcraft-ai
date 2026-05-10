@@ -14435,6 +14435,13 @@ def wizard_step_review():
         if wr and wr.include_logo is not None:
             include_logo = wr.include_logo
 
+    # 🔥 §10x.121 — pop pending-override (set by /wizard/generate when
+    # user clicks Generate while ERRORs exist). The template renders
+    # an override modal with explicit "Generate anyway" / "Cancel"
+    # buttons so the user must consciously choose to proceed.
+    pending_override = session.pop('_pending_override', None)
+    if pending_override is not None:
+        session.modified = True
     return render_template(
         'wizard/step10_review.html',
         current_step=10,
@@ -14446,6 +14453,7 @@ def wizard_step_review():
         validation_warnings=warnings,
         validation_infos=infos,
         has_errors=len(errors) > 0,
+        pending_override=pending_override,
         has_logo=has_logo,
         include_logo=include_logo,
         has_versions=WillVersion.query.filter_by(will_id=session.get('will_id', '')).count() > 0 if session.get('will_id') else False,
@@ -14463,14 +14471,72 @@ def wizard_generate():
         flash(f'Error building will data: {e}', 'error')
         return redirect(url_for('wizard_step_review'))
 
-    # Run validation -- block on errors
-    from validation.legal_rules import validate_will_data, get_errors
+    # 🔥 §10x.121 — Generate-with-missing-fields override gate.
+    # User feedback: "When user click Generate AI Will, issue prompt on
+    # the missing fields and ask user whether to proceed. User need to
+    # manually over-ride to generate AI Will when there are missing fields."
+    # Behaviour:
+    #   • Run validation. If ERRORs, do NOT auto-block.
+    #   • If `proceed_with_warnings` form field is NOT set → flash each
+    #     missing-field message with category 'override_required' and
+    #     redirect back to review. The review template renders an
+    #     override modal with explicit "Generate anyway" / "Cancel" buttons.
+    #   • If `proceed_with_warnings=1` → continue generation but stamp
+    #     `_generated_with_warnings: [...]` on the Will so downstream
+    #     review (lawyer / approver) sees the deliberate override.
+    from validation.legal_rules import (validate_will_data, get_errors,
+                                          get_warnings)
     validation_results = validate_will_data(will_data)
     errors = get_errors(validation_results)
-    if errors:
-        for err in errors:
-            flash(f'Validation Error: {err.message}', 'error')
+    warnings = get_warnings(validation_results)
+    proceed = (request.form.get('proceed_with_warnings', '').strip()
+                in ('1', 'true', 'yes', 'on'))
+    if errors and not proceed:
+        # Stash structured missing-field list in session so the review
+        # template can render the override modal with rich detail.
+        session['_pending_override'] = {
+            'errors':   [{'rule_id': e.rule_id, 'field': e.field,
+                          'message': e.message} for e in errors],
+            'warnings': [{'rule_id': w.rule_id, 'field': w.field,
+                          'message': w.message} for w in warnings],
+        }
+        session.modified = True
         return redirect(url_for('wizard_step_review'))
+    # Override path — proceed even with missing fields. Record the
+    # deliberate override on the Will record for audit.
+    will_id_for_override = session.get('will_id')
+    if errors and proceed and will_id_for_override:
+        wr_for_override = db.session.get(Will, will_id_for_override)
+        if wr_for_override:
+            try:
+                cur = json.loads(wr_for_override.completed_steps or '[]')
+            except Exception:
+                cur = []
+            override_marker = {
+                '_generated_with_warnings': True,
+                'errors':   [{'rule_id': e.rule_id, 'field': e.field,
+                              'message': e.message[:200]} for e in errors],
+                'override_at': datetime.utcnow().isoformat(),
+                'override_by': session.get('user_id'),
+            }
+            # Stash on the Will via a new column or piggyback on
+            # extracted_data-style JSON. Store on completed_steps as an
+            # entry tagged 'generated_with_warnings' for audit.
+            if 'generated_with_warnings' not in cur:
+                cur.append('generated_with_warnings')
+                wr_for_override.completed_steps = json.dumps(cur)
+            try:
+                # Persist on a dedicated audit column if exists; otherwise
+                # log to ApiCallLog / app.logger so we have a trail.
+                app.logger.warning(
+                    f'§10x.121 override: will={will_id_for_override} '
+                    f'generated with {len(errors)} errors: '
+                    f'{[e.rule_id for e in errors]}')
+            except Exception:
+                pass
+            db.session.commit()
+    # Clear any stale override prompt
+    session.pop('_pending_override', None)
 
     # Draft will using AI (or mock)
     try:
