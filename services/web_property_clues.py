@@ -190,6 +190,91 @@ def _normalise_clues_cache_key(address: str) -> str:
     return s[:120]
 
 
+_TYPO_NORMALISE_PROMPT = """You are normalising a Malaysian property address that may
+contain INFORMAL or MISSPELLED building / development names. The user typed
+the address in WhatsApp; expect transliterations, abbreviations, or local
+nicknames.
+
+Task: suggest at most 1 alternative search query that's MORE LIKELY to find
+the canonical building/address. Common patterns:
+  • "Paradisonuava" → "Paradiso Nuova" (Italian, Bandar Medini)
+  • "PangsaBay" → "Pangsapuri Bayu"
+  • "BMC" → "Bandar Medini City"
+  • "PJU" → "Petaling Jaya Utara"
+
+If the address looks complete and CORRECTLY spelled, return null.
+
+Return JSON ONLY:
+  {"alt_query": "<rewritten address>"} OR {"alt_query": null}
+"""
+
+
+def _typo_retry_search(address: str, claude_client, model: str,
+                        max_tokens: int) -> Optional[PropertyClues]:
+    """🔥 §10x.136 — typo-tolerant retry. Ask Claude to suggest a
+    canonical spelling; if it differs, re-run the web search with the
+    canonical query. Bounded at 1 retry to cap cost.
+    """
+    try:
+        norm = claude_client.messages.create(
+            model=model,
+            max_tokens=200,
+            temperature=0,
+            system=_TYPO_NORMALISE_PROMPT,
+            messages=[{'role': 'user', 'content': address.strip()}],
+        )
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(norm, call_site='services.web_property_clues.typo_retry')
+        except Exception:
+            pass
+        blocks = [b for b in norm.content if getattr(b, 'type', '') == 'text']
+        text_out = blocks[-1].text if blocks else ''
+        data = json.loads(_extract_json(text_out))
+        alt = (data.get('alt_query') or '').strip()
+        if not alt or alt.lower() == address.strip().lower():
+            return None
+    except Exception:
+        return None
+
+    # Re-search with canonical query — but DON'T cache under canonical
+    # key (caller will cache under original key).
+    try:
+        msg = claude_client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=0,
+            system=PROPERTY_CLUES_SYSTEM_PROMPT,
+            tools=[{'type': 'web_search_20250305', 'name': 'web_search'}],
+            messages=[{'role': 'user', 'content': f'Address: {alt}'}],
+        )
+        try:
+            from ai.cost_tracker import log_usage
+            log_usage(msg, call_site='services.web_property_clues.search_retry')
+        except Exception:
+            pass
+        blocks = [b for b in msg.content if getattr(b, 'type', '') == 'text']
+        text_out = blocks[-1].text if blocks else ''
+        data = json.loads(_extract_json(text_out))
+        if data.get('address_not_found'):
+            return None
+        # Build PropertyClues from the retry result; carry sources through
+        return PropertyClues(
+            address=address.strip(),
+            type=data.get('type') or 'unknown',
+            tenure=data.get('tenure') or 'unknown',
+            locality=data.get('locality') or '',
+            mukim=data.get('mukim') or '',
+            daerah=data.get('daerah') or '',
+            negeri=data.get('negeri') or '',
+            building_name=data.get('building_name') or '',
+            postcode=data.get('postcode') or '',
+            sources=tuple(data.get('sources') or []),
+        )
+    except Exception:
+        return None
+
+
 def search_property_clues(
     address: str,
     claude_client,
@@ -330,6 +415,18 @@ def search_property_clues(
                 pass
 
     if data.get("address_not_found"):
+        # 🔥 §10x.136 — TYPO-TOLERANT RETRY.
+        # First search failed because the query contained an
+        # informal/transliterated building name (e.g. KOID's
+        # "Paradisonuava" — the actual building is "Merak Kayangan
+        # @ Paradiso Nuova" but user typed an informal name). Ask
+        # Claude to suggest 1-2 likely canonical spellings, then retry
+        # the web search with the canonical query. Cap at 1 retry to
+        # bound cost.
+        retry_clues = _typo_retry_search(address, claude_client, model, max_tokens)
+        if retry_clues is not None:
+            _store_in_cache(retry_clues)
+            return retry_clues
         _store_in_cache(None)
         return None
 
