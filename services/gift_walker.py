@@ -1388,7 +1388,18 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
             continue
         if a_addr and a_addr in covered_addr_norms:
             continue
-        if a_toks and (a_toks & covered_tokens):
+        # 🔥 §10x.132 — STRATA-SAFE TOKEN MATCH.
+        # Bug fixed: 'MARINA' + 'COVE' overlapped between C-30-08 image
+        # and C-05-01 AI prop → C-05-01 marked "covered" → no H3
+        # placeholder → walker only saw 2 of 5 properties. Same for
+        # 'LAGUNA' (Sri Laguna), 'SERI ALAM MASAI' (Shop). User: "why
+        # property 1 missing / mismatch with AI summary".
+        # Per CLAUDE.md §10hd (strata: same lot ≠ same property),
+        # different units in the same building share locality tokens.
+        # Require ≥2 distinctive tokens (raised from ≥1) so MARINA+COVE
+        # alone doesn't dedupe two units. STILL too lenient if both
+        # share 'CONDOMINIUM' + 'BAYU' but those are stop-words anyway.
+        if a_toks and len(a_toks & covered_tokens) >= 2:
             continue
         # H3 placeholder per §10hg — confirm-then-complete card
         out['property'].append({

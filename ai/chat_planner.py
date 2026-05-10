@@ -7012,20 +7012,45 @@ def _step6_property_question(pending_props, recent_text, will_data):
             if total != 100:
                 deduced = []
 
-    # 🔥 §10x.45 — compute progress across ALL gift kinds (not just
-    # properties) so the user sees TRUE walkthrough position.
+    # 🔥 §10x.132 — counter uses AI Summary count (canonical per §10h),
+    # not gift_walker pending count. Without this, Layer 2 card showed
+    # "Property 2 of 2" when AI Summary actually has 5 properties — user
+    # complained "where is property 1 missing". The pending count is
+    # always smaller than AI Summary count once any property is saved
+    # OR garbage placeholders block H3 surfacing.
+    # Same pattern as §10x.129 (Layer 1 card) — AI Summary IS canonical.
     _client_id_local = (will_data or {}).get('client_id') or ''
     n_total_pending = len(pending_props)
     progress_suffix = ''
     if _client_id_local:
         try:
+            ai_props_count = _extract_ai_summary_properties(_client_id_local) or []
+            n_props_total = len(ai_props_count)
             from services.gift_walker import get_pending_gift_documents as _gpd
             pg = _gpd(_client_id_local) or {}
-            n_props_total = len(pg.get('property') or [])
             n_banks_total = len(pg.get('bank') or [])
             n_ins_total   = len(pg.get('insurance') or [])
+            # Walker N for properties = AI Summary count; banks + insurance
+            # use gift_walker count (which already enumerates AI summary
+            # banks/insurance via H3 placeholders).
             n_total_all = n_props_total + n_banks_total + n_ins_total
-            this_idx = max(1, n_props_total - len(pending_props) + 1)
+            # Position: match current target prop to its AI Summary index
+            target_p = pending_props[0] if pending_props else None
+            this_idx = 1
+            if target_p and ai_props_count:
+                t_ex = target_p.get('extracted') or {}
+                t_lot = (t_ex.get('lot_number') or '').strip()
+                t_title = (t_ex.get('title_number') or '').strip()
+                t_addr = (t_ex.get('property_address') or '').strip().lower()
+                for i, ap in enumerate(ai_props_count):
+                    ap_addr  = (ap.get('address') or '').strip().lower()
+                    ap_lot   = (ap.get('lot') or '').strip()
+                    ap_title = (ap.get('title') or '').strip()
+                    if (t_lot and ap_lot and t_lot == ap_lot) or \
+                       (t_title and ap_title and t_title == ap_title) or \
+                       (t_addr and ap_addr and t_addr[:30] == ap_addr[:30]):
+                        this_idx = i + 1
+                        break
             progress_suffix = (
                 f" — Property {this_idx} of {n_props_total}"
                 f" ({n_total_all} total: {n_props_total} props · "
