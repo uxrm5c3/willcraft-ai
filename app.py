@@ -5377,9 +5377,16 @@ def _detect_chat_intent(client_id: str) -> str:
         # the Step 7 announcement message contains "Specific gifts done"
         # → matches Step 6's 'specific gift' filter. Order matters.
         if ('moving to **step 7' in cl or 'step 7: residuary' in cl
-            or 'residuary estate' in cl or 'main residuary beneficiary' in cl):
-            if ('substitute' in cl and ('layer 3' in cl or 'fallback' in cl
-                                         or 'doesn' in cl)):
+            or 'residuary estate' in cl or 'main residuary beneficiary' in cl
+            or 'substitute residuary beneficiary' in cl):
+            # Substitute card: explicit "Layer 2: SUBSTITUTE" or "Layer 3"
+            # header. Don't trip on the "(Substitute / fallback will be
+            # asked next)" line on the MAIN card.
+            if ('layer 2: substitute' in cl
+                or 'layer 3: substitute' in cl
+                or 'substitute residuary beneficiary' in cl
+                or 'step 7 — layer 2' in cl
+                or 'step 7 — layer 3' in cl):
                 return 'residuary_sub'
             return 'residuary_main'
         # Step 6 — three layers per asset
