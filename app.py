@@ -11516,7 +11516,7 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
         except Exception:
             pass
 
-    ensure_person(
+    pid = ensure_person(
         client_id, name,
         nric=h3_nric,
         address=h3_address,
@@ -11526,6 +11526,18 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
         document_id=h3_doc_id,
     )
     db.session.commit()
+
+    # 🔥 §10x.143c — propagate backfilled NRIC/address into any step2/4/5
+    # entries that already reference this Person (by person_id OR name).
+    # Without this, the will generates '(MALAYSIA NRIC No. )' blanks
+    # because step2/step4 cached the empty values from the H3 placeholder
+    # before the IC arrived.
+    try:
+        if (h3_nric or h3_address) and pid:
+            _propagate_person_to_steps(client_id, pid, name, h3_nric, h3_address)
+    except Exception:
+        import traceback as _tb
+        app.logger.warning(f'§10x.143c propagation failed: {_tb.format_exc()}')
     # 🔥 §10x.42 — Mid-flow identity add MUST trigger downstream
     # reconciliation. If this person is named as a beneficiary in the
     # message (e.g. "All my Bank Savings go my wife (Lim Bee Yan)"),
@@ -11538,6 +11550,72 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
         app.logger.error(
             f'§10x.42 reconciliation failed for {name}: {_tb.format_exc()}')
     return {'name': name, 'role': chosen_role, 'kind': 'identity'}
+
+
+def _propagate_person_to_steps(client_id: str, person_id: str,
+                                 name: str, nric: str, address: str) -> None:
+    """🔥 §10x.143c — When a Person row gets backfilled with NRIC/address
+    via §10x.143b, propagate those values into existing step2 (executors)
+    / step4 (beneficiaries) / step5 (gift allocations) entries that
+    already reference this Person. Without this, the will generates
+    blanks because the step data was cached BEFORE the IC arrived.
+
+    Match by person_id first (strict), fall back to name (case-insensitive).
+    Only fills EMPTY fields — never overwrites a non-empty NRIC.
+    """
+    if not (nric or address):
+        return
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return
+    name_upper = (name or '').strip().upper()
+    changed = False
+
+    def _matches(entry: dict) -> bool:
+        if entry.get('person_id') == person_id:
+            return True
+        return (entry.get('full_name') or '').strip().upper() == name_upper
+
+    def _update(entry: dict) -> bool:
+        local_changed = False
+        if nric and not (entry.get('nric_passport') or '').strip():
+            entry['nric_passport'] = nric
+            local_changed = True
+        if address and not (entry.get('address') or '').strip():
+            entry['address'] = address
+            local_changed = True
+        return local_changed
+
+    # step2_data (executors)
+    try:
+        s2_raw = json.loads(will.step2_data or '{}') or {}
+        if isinstance(s2_raw, dict):
+            execs = s2_raw.get('executors') or []
+            for e in execs:
+                if _matches(e) and _update(e):
+                    changed = True
+            if changed:
+                will.step2_data = json.dumps(s2_raw)
+    except Exception:
+        pass
+    # step4_data (beneficiaries)
+    try:
+        s4 = json.loads(will.step4_data or '[]')
+        if isinstance(s4, dict):
+            s4_list = s4.get('beneficiaries') or []
+        else:
+            s4_list = s4
+        for b in s4_list:
+            if _matches(b) and _update(b):
+                changed = True
+        if changed:
+            will.step4_data = json.dumps(s4)
+    except Exception:
+        pass
+    if changed:
+        db.session.commit()
 
 
 def _reconcile_downstream_for_new_identity(client_id: str, name: str,
