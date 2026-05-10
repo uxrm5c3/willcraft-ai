@@ -712,7 +712,13 @@ def draft_will_mock(will_data) -> str:
 {next_clause}.  In this Will unless it is specifically stated to the contrary, my Executor(s) shall also act as my Trustee(s)."""
         next_clause += 1
 
-    # Residuary estate
+    # 🔥 §10x.151 — Residuary estate built AFTER non-residuary so its
+    # clause number lands AFTER all gift clauses (sample order: gifts 4-N,
+    # then residuary clause N+1). Previously residuary was built FIRST
+    # using next_clause=5, then non-residuary used clauses 6-32, then
+    # residuary appeared at the end with clause 5 — out of order.
+    # We DEFER the residuary number assignment until after non-residuary.
+    _RESIDUARY_PLACEHOLDER = '__RESIDUARY_CLAUSE_NUM__'
     residuary_text = ""
     if will_data.residuary_estate and will_data.residuary_estate.main_beneficiaries:
         roman_numerals = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x']
@@ -763,7 +769,7 @@ def draft_will_mock(will_data) -> str:
             rel_str = f"my {relationship} " if relationship else ""
             residuary_text = f"""Residuary Estate
 
-{next_clause}.  My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and :
+{_RESIDUARY_PLACEHOLDER}.  My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and :
 
 (a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
 
@@ -772,32 +778,77 @@ def draft_will_mock(will_data) -> str:
             # Multiple residuary beneficiaries
             residuary_text = f"""Residuary Estate
 
-{next_clause}.  My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and :
+{_RESIDUARY_PLACEHOLDER}.  My Trustee(s) shall hold the rest of my estate on trust to retain or sell it and :
 
 (a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any lien on any of my immovable properties, funeral and executorship expenses.
 
 (b) To divide the residue ('my residuary estate') among the following beneficiaries named below in the shares indicated.
 
 {chr(10).join(ben_lines)}{sub_clause_c}"""
-        next_clause += 1
+        # Note: next_clause NOT incremented here — placeholder substituted later
 
     # Non-residuary gifts
-    non_residuary_text = f"""Non Residuary Gift(s)
+    # 🔥 §10x.151 — Make the 3 default phantom clauses CONDITIONAL.
+    # Sample template (Phek Yi Ting / Alan & Tan firm) does NOT include
+    # these unless the data warrants. Always emitting them creates
+    # spurious clauses ("joint banks", "all banks → executor", "EPF
+    # nomination fallback") that don't apply to KOID's data.
+    non_residuary_text = "Non Residuary Gift(s)"
+
+    # (a) Joint bank accounts — only if any gift is_joint
+    _has_joint_bank = False
+    try:
+        for g in (will_data.gifts or []):
+            if (getattr(g, 'gift_type', '') == 'financial' and
+                getattr(g, 'is_joint_account', False)):
+                _has_joint_bank = True
+                break
+    except Exception:
+        pass
+    if _has_joint_bank:
+        non_residuary_text += f"""
 
 {next_clause}.  I hereby devise and bequeath the moneys standing to my credit in all my joint bank accounts to the respective joint account holder(s), if more than one in equal shares."""
-    next_clause += 1
+        next_clause += 1
 
-    # Bank accounts gift
-    non_residuary_text += f"""
+    # (b) "All bank accounts to my Executor" — only if user didn't
+    # specifically gift every bank. If every bank is in step5, this
+    # clause is redundant and contradicts the specific gifts.
+    _all_banks_specific = True
+    _any_bank = False
+    try:
+        for g in (will_data.gifts or []):
+            ft = getattr(g, 'financial_details', None)
+            if ft and getattr(ft, 'asset_type', '') == 'bank':
+                _any_bank = True
+                # Check if this bank is "specifically given" — i.e. has
+                # named beneficiaries via allocations.
+                if not (g.allocations or []):
+                    _all_banks_specific = False
+                    break
+    except Exception:
+        pass
+    if not _any_bank or not _all_banks_specific:
+        non_residuary_text += f"""
 
 {next_clause}.  I hereby devise and bequeath to my Executor the moneys standing to my credit in all my bank accounts. If my Executor does not survive me, then the benefit shall form part of my residuary estate. The expression 'all bank accounts' in this clause shall exclude any account which has been specifically given away in this Will."""
-    next_clause += 1
+        next_clause += 1
 
-    # EPF fallback
-    non_residuary_text += f"""
+    # (c) EPF fallback — only if any EPF/KWSP gift exists.
+    _has_epf = False
+    try:
+        for g in (will_data.gifts or []):
+            ft = getattr(g, 'financial_details', None)
+            if ft and getattr(ft, 'asset_type', '') in ('epf', 'kwsp'):
+                _has_epf = True
+                break
+    except Exception:
+        pass
+    if _has_epf:
+        non_residuary_text += f"""
 
 {next_clause}.  If the nomination(s) made by me in my Employees' Provident Fund do(es) not take effect for whatsoever reason, then I hereby devise and bequeath the benefits of the nomination(s) to form part of my residuary estate."""
-    next_clause += 1
+        next_clause += 1
 
     # Specific gift clauses
     specific_gifts_text = ""
@@ -908,6 +959,13 @@ def draft_will_mock(will_data) -> str:
 
 {next_clause}.  Pursuant to Clause {ref_clause} above, if {mb_rel_str}{a.beneficiary_name.upper()}{mb_id_str} does not survive me, then the benefit {he_she} would have received shall be given to {sub_text}{trailing}."""
                 next_clause += 1
+
+    # 🔥 §10x.151 — Substitute the deferred residuary clause number now
+    # that all non-residuary clauses have consumed their numbers.
+    if residuary_text and _RESIDUARY_PLACEHOLDER in residuary_text:
+        residuary_text = residuary_text.replace(_RESIDUARY_PLACEHOLDER,
+                                                  str(next_clause))
+        next_clause += 1
 
     # Declaration
     declaration_text = f"""Declaration
