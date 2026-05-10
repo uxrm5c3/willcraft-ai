@@ -10358,6 +10358,16 @@ def _try_save_residuary_substitute(client_id: str, user_text: str):
         return None
     t = user_text.strip()
     low = t.lower()
+    # 🔥 §10x.134 — INTENT GATE (mirrors residuary_main).
+    # If user is on a property/bank/insurance card, this handler MUST NOT
+    # claim the input even if step6 conditions look right.
+    if not low.startswith('residuary substitute'):
+        try:
+            _intent = _detect_chat_intent(client_id)
+            if _intent not in ('residuary_sub', 'residuary_main', 'unknown'):
+                return None
+        except Exception:
+            pass
     if not low.startswith('residuary substitute'):
         # Also accept free-text NAMES if planner is at Layer 3.
         # Only fire when step6 has main beneficiaries but no substitute yet.
@@ -10545,6 +10555,25 @@ def _try_save_residuary_main(client_id: str, user_text: str):
         return None
     t = user_text.strip()
     low = t.lower()
+
+    # 🔥 §10x.134 — INTENT GATE.
+    # Bug fixed: this handler used to fire whenever step4 was populated
+    # AND step5 had any gift (including garbage placeholders) AND s6 wasn't
+    # yet saved. That meant when user typed "Esther 50% + Joshua 50%" at
+    # the Property Layer 2 card (Step 6), residuary_main claimed it FIRST
+    # in the dispatch chain → saved as residuary instead of as the property
+    # gift → property card re-rendered → user reported "card keep
+    # repeating".
+    # Mirrors §10x.126 pattern: handlers that are step-specific MUST
+    # check the latest assistant card's intent. If the user is NOT on
+    # the residuary_main card, this handler returns None and the property
+    # gift handler downstream gets to claim the input.
+    try:
+        _intent = _detect_chat_intent(client_id)
+        if _intent not in ('residuary_main', 'unknown'):
+            return None
+    except Exception:
+        pass   # fall through to legacy gates if intent detection fails
 
     # Don't intercept SKIP — let _try_handle_residuary_skip handle it
     if low == 'residuary skip':
