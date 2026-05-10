@@ -11612,8 +11612,13 @@ def _propagate_person_to_steps(client_id: str, person_id: str,
     """
     if not (nric or address):
         return
-    will = (Will.query.filter_by(client_id=client_id, status='draft')
+    # 🔥 §10x.143c — match the LATEST active will (any status except deleted),
+    # not just 'draft'. Users may upload Lim Bee Yan IC mid-flow AFTER an
+    # initial will generation; the propagation must still update step2/step4
+    # on the generated will so subsequent re-generations include the NRIC.
+    will = (Will.query.filter_by(client_id=client_id)
             .filter(Will.deleted_at.is_(None))
+            .filter(Will.status.in_(('draft', 'generated', 'approved')))
             .order_by(Will.updated_at.desc()).first())
     if not will:
         return
