@@ -486,6 +486,17 @@ def group_documents(client_id: str) -> List[DocGroup]:
                     'building_name', 'township', 'owner_name'):
             vals = [(m['extracted'].get(key) or '').strip() for m in members]
             vals = [v for v in vals if v]
+            # 🔥 §10x.152h SOURCE-LAYER fix — reject "Folio N" / "Vol. N"
+            # / "Title No. (unreadable)" / "(unreadable)" tokens for
+            # title_number. Folio is a Singapore Land Registry reference,
+            # NOT a Malaysian NLC title. Without this filter, the bad value
+            # propagates into step5_data.property_info.title_number AND the
+            # wizard renders it under "Title:" — user sees "Folio 5 ??".
+            if key == 'title_number':
+                vals = [v for v in vals if not re.match(
+                    r'^\s*(folio|vol\.?|page|title\s*no\.?\s*\(.*\)|\(.*\))\s*\d*\s*$',
+                    v.lower()) and 'unreadable' not in v.lower()
+                    and 'cannot read' not in v.lower()]
             if vals:
                 merged[key] = vals[0]
 

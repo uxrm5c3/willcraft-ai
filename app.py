@@ -12758,10 +12758,16 @@ def _step4_add_beneficiary(will, person, name, role):
     if any((b.get('full_name') or '').upper() == name.upper()
             for b in s4 if isinstance(b, dict)):
         return
+    # 🔥 §10x.151b — Write BOTH field names for compatibility:
+    # `nric_passport_birthcert` is the canonical Beneficiary model field;
+    # `nric_passport` is what some legacy chat handlers / wizard reads.
+    # Without both, downstream code reads None.
     s4.append({
         'full_name':              name,
         'nric_passport_birthcert': person.nric_passport or '',
+        'nric_passport':          person.nric_passport or '',
         'relationship':           role,
+        'address':                person.address or '',
         'person_id':              person.id,
         'nationality':            person.nationality or 'Malaysian',
         '_added_by':              '§10x.42 reconcile (Step 5: Beneficiary)',
