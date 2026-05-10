@@ -11,9 +11,12 @@
 <!-- Validation Results -->
 {% if validation_results %}
 <div class="space-y-3 mb-8">
-    {% set errors = validation_results|selectattr('severity', 'equalto', 'error')|list %}
-    {% set warnings = validation_results|selectattr('severity', 'equalto', 'warning')|list %}
-    {% set infos = validation_results|selectattr('severity', 'equalto', 'info')|list %}
+    {# 🔥 §10x.133 — case-insensitive match. ValidationResult.severity is
+       upper-case ("ERROR"/"WARNING"/"INFO") but template originally
+       compared lower-case → banners never rendered. #}
+    {% set errors = validation_results|selectattr('severity', 'equalto', 'ERROR')|list %}
+    {% set warnings = validation_results|selectattr('severity', 'equalto', 'WARNING')|list %}
+    {% set infos = validation_results|selectattr('severity', 'equalto', 'INFO')|list %}
 
     {% if errors %}
     <div class="p-4 bg-red-50 border border-red-200 rounded-lg">
@@ -428,7 +431,7 @@
 
 <!-- Generate Section -->
 <div class="border-t border-gray-200 pt-8">
-    {% set has_errors = validation_results|selectattr('severity', 'equalto', 'error')|list|length > 0 if validation_results else false %}
+    {% set has_errors = validation_results|selectattr('severity', 'equalto', 'ERROR')|list|length > 0 if validation_results else false %}
 
     {% if has_errors %}
     <div class="text-center mb-6">
