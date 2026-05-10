@@ -39,6 +39,37 @@ ssh ubuntu@47.130.249.28 "cd ~/willcraft && \
   docker compose up -d web"
 ```
 
+### 🔥 §10x.191 — POST-DEPLOY VISUAL VERIFICATION VIA CHROME MCP (mandatory for UI changes)
+
+**Every UI / template / chat-snapshot / wizard-render change MUST be verified
+visually via Chrome MCP after deploy. Do NOT mark a UI fix "done" without
+the screenshot.**
+
+User explicit instruction (2026-05-10): "use chrome MCP to read and edit.
+always use chrome MCP to check after commit and deploy".
+
+Why: server-side fixes (commit + deploy + curl health-check) only prove the
+code reached the box — they don't prove the rendered HTML/CSS actually shows
+the right thing to the user. Real failures observed in this session:
+  • White-text-on-white-button (toast Refresh) shipped HIGH-confidence-✓
+    in CLAUDE.md, screenshot still showed the bug because Tailwind class
+    `text-accent-700` was undefined and inherited white. Curl + DB-side
+    verification both passed; only Chrome MCP screenshot caught it.
+  • Wizard amber banner (§10x.150) marked deployed but never appeared on
+    the user's screenshot for B-05-11; only Chrome MCP zoom would have
+    confirmed the empty-fields list rendered.
+
+Mandatory after every UI deploy:
+  1. `mcp__Claude_in_Chrome__list_connected_browsers` → select_browser
+  2. `tabs_context_mcp` → navigate to the touched page
+  3. Screenshot the visible state
+  4. If toast / overlay / hover-only element → use `javascript_tool` to
+     trigger it, THEN screenshot
+  5. `computer.zoom` on the specific element to confirm text/colour/layout
+  6. Check `read_console_messages` with onlyErrors=true for JS errors
+  7. Only THEN bump Confidence to HIGH ✓ in the bug table
+
+
 ### 🔥 §10x.49 — POST-DEPLOY AUDIT GATE (mandatory for matching code)
 
 Every deploy that touches `services/asset_pipeline.py`,
