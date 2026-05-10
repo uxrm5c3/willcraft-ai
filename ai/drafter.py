@@ -32,11 +32,15 @@ def _is_malaysian_nric(id_str: str) -> bool:
 
 def format_id_for_will(nric_passport: str, nationality: str = "Malaysian") -> str:
     """Format person ID for will text in parentheses.
-    - Malaysian NRIC: 'MALAYSIA (NRIC No. 123456-01-1234)'
+    - Malaysian NRIC: '(MALAYSIA NRIC No. 123456-01-1234)' per Sample
     - Foreign ID: '([COUNTRY] Identification No. AB1234567)'
+
+    🔥 §10x.152f — Sample template uses '(MALAYSIA NRIC No. ...)' with
+    parens wrapping BOTH the country and the NRIC number. Previous
+    output was 'MALAYSIA (NRIC No. ...)' with parens around NRIC only.
     """
     if _is_malaysian_nric(nric_passport):
-        return f"MALAYSIA (NRIC No. {nric_passport})"
+        return f"(MALAYSIA NRIC No. {nric_passport})"
     else:
         nat = (nationality or 'Malaysian').upper()
         # Map common nationality values to country names
@@ -605,6 +609,10 @@ Draft the complete will now, following the professional format and clause orderi
     will_text = _re.sub(r'\(MALAYSIA \(NRIC', r'MALAYSIA (NRIC', will_text)
     will_text = _re.sub(r'\(\(FEDERAL', r'(FEDERAL', will_text)
     will_text = _re.sub(r'No\.\s*[\w\-/]+\)\)', lambda m: m.group(0)[:-1], will_text)  # Remove trailing extra )
+    # 🔥 §10x.152f — Convert legacy LLM output 'MALAYSIA (NRIC No. ...)'
+    # to Sample format '(MALAYSIA NRIC No. ...)'.
+    will_text = _re.sub(r'(?<!\()MALAYSIA\s*\(NRIC\s*No\.\s*([\d\-]+)\)',
+                          r'(MALAYSIA NRIC No. \1)', will_text)
 
     # Post-process: inject missing specific substitute clauses
     will_text = _inject_missing_substitutes(will_text, will_data)

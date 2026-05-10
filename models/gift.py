@@ -84,6 +84,14 @@ class PropertyDetails(BaseModel):
         tt_raw = (self.title_type or '').strip()
         tn = (self.title_number or '').strip()
         ln = (self.lot_number or '').strip()
+        # 🔥 §10x.152h — "Folio N" is a Singapore Land Registry reference,
+        # NOT a Malaysian NLC title number. Reject (treat as empty) so
+        # the will doesn't emit "Geran No. Folio 5". Same for variants
+        # like "Vol. N", "Page N", "Title No. (unreadable)".
+        _tn_low = tn.lower().strip()
+        if (re.match(r'^\s*(folio|vol\.?|page|title\s*no\.?\s*\(.*\))\s*\d*\s*$', _tn_low)
+            or 'unreadable' in _tn_low or 'cannot read' in _tn_low):
+            tn = ''
         # Auto-detect title type from title_number pattern
         if tn and not tt_raw:
             if '/' in tn:
@@ -152,6 +160,14 @@ class PropertyDetails(BaseModel):
             head = title_parts[0]   # "held under <type> No. N"
             rest = title_parts[1:]
             joined = head + (", " + ", ".join(rest) if rest else '')
+            # 🔥 §10x.152g — When no title/lot exists, the first item is
+            # "Mukim X" (not "held under ..."). Use comma separator instead
+            # of space-no-comma, otherwise output reads:
+            #   "...80050 JOHOR Mukim Pulai..."
+            # The Mukim/Daerah/Negeri block becomes part of the address
+            # description rather than a "held under" clause.
+            if not head.startswith('held under'):
+                return f"{parts[0]}, {joined}"
             return f"{parts[0]} {joined}"
         return parts[0]
 
