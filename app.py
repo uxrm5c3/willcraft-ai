@@ -5373,8 +5373,17 @@ def _detect_chat_intent(client_id: str) -> str:
             if 'confirm the main beneficiar' in cl:
                 return 'beneficiaries_confirm'
             return 'beneficiaries_pick'
+        # 🔥 §10x.148 — Check Step 7 transition BEFORE Step 6, because
+        # the Step 7 announcement message contains "Specific gifts done"
+        # → matches Step 6's 'specific gift' filter. Order matters.
+        if ('moving to **step 7' in cl or 'step 7: residuary' in cl
+            or 'residuary estate' in cl or 'main residuary beneficiary' in cl):
+            if ('substitute' in cl and ('layer 3' in cl or 'fallback' in cl
+                                         or 'doesn' in cl)):
+                return 'residuary_sub'
+            return 'residuary_main'
         # Step 6 — three layers per asset
-        if 'specific gift' in cl or 'property' in cl and 'of' in cl:
+        if 'specific gift' in cl or ('property' in cl and 'of' in cl):
             # 🔥 §10x.146 — Substitute card patterns. Strongest first:
             # explicit "Specific Gift — Substitute" header, then phase-B
             # textual hooks (always present on the substitute card).
@@ -5399,11 +5408,12 @@ def _detect_chat_intent(client_id: str) -> str:
                 return 'gift_main'
             if 'unit' in cl or 'condominium' in cl or 'house' in cl or 'shop' in cl:
                 return 'inventory_property'
-            # 🔥 §10x.146 — fallback: any "Specific Gift — Property X
-            # of N" card without explicit substitute markers IS L2 main.
-            # Without this fallback, intent leaks to 'unknown' which
-            # residuary_main treats as permissive → wrong-step claim.
-            if 'specific gift' in cl:
+            # 🔥 §10x.146 — fallback: any L2-style "Specific Gift" card
+            # without explicit substitute markers IS L2 main. Restricted
+            # to cards with the "Property X of N" header so the Step 7
+            # transition message ("Specific gifts done") is excluded.
+            if 'specific gift' in cl and re.search(
+                    r'property\s+\d+\s+of\s+\d+', cl):
                 return 'gift_main'
         if 'reviewing bank' in cl:
             return 'inventory_bank'
