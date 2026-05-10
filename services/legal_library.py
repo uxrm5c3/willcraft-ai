@@ -74,6 +74,19 @@ def _extract_pdf_text(path: str) -> str:
 # encounter new question types.
 _TOPIC_HINTS: List[tuple] = [
     # (regex pattern in lowered question, slug to prefer)
+    # 🔥 §10x.135 — TEXTBOOK references (more comprehensive than statutes
+    # for "how do I draft" / "what's good practice" questions). Listed
+    # FIRST so drafting/practice questions hit the textbook before falling
+    # to statute. Each rule must include a citation pattern that lands on
+    # actual content, not the wrong-question topic.
+    (r'\bdraft|drafting|trust deed|will trust|how do i (?:draft|write)|'
+     r'best practice|gold.standard|sample clause|precedent|template',
+     'drafting_trusts_and_will_trusts_11ed'),
+    (r'\bprobate procedure|grant application|caveat|estate administration|'
+     r'contested probate|small estate|sijil faraid|distribution scheme',
+     'probate_administration_in_malaysia_and_singapore_3ed'),
+    (r'\bcommunity|hindu|christian|muslim|chinese custom|adat|customary',
+     'law_of_wills_gopalakrishnan_11ed'),
     (r'\bwill\b|testament|testator|witness|attest|revoke|codicil',
      'wills_act_1959'),
     (r'\bprobate|grant of probate|letters of administration|administrator|executor',
