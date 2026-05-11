@@ -11,6 +11,52 @@
     </div>
 </div>
 
+{# 🔥 §10x.167 — UPFRONT AGGREGATE BANNER at top of Step 6.
+   Same source of truth as the per-gift §10x.193 inline banners + Step 10
+   review banner: pd_missing dict per gift index. When ANY gift has
+   missing required fields, show the at-a-glance "N gifts have missing
+   required fields" header here so user sees it BEFORE scrolling through
+   12 gift cards.
+
+   Each missing gift links to its own anchor (gift-N) so click jumps
+   directly to the offending card. #}
+{% set _gifts_with_missing = [] %}
+{% set gifts_for_count = data.get('gifts', []) %}
+{% for g in gifts_for_count %}
+    {% set _gm = pd_missing.get(loop.index0, []) %}
+    {% if _gm and (g.get('gift_type') == 'property' or g.get('kind') == 'property') %}
+        {% if _gifts_with_missing.append({'idx': loop.index, 'label': (g.get('property_details', {}).get('property_address', '') or g.get('description', ''))[:60], 'missing': _gm}) %}{% endif %}
+    {% endif %}
+{% endfor %}
+{% if _gifts_with_missing %}
+<div class="mb-6 p-4 bg-amber-50 border-l-4 border-amber-500 rounded">
+    <div class="flex items-start gap-3">
+        <span class="text-amber-600 text-2xl leading-none">⚠️</span>
+        <div class="flex-1">
+            <h3 class="text-base font-semibold text-amber-900">
+                {{ _gifts_with_missing|length }} gift{{ 's' if _gifts_with_missing|length > 1 else '' }} {{ 'have' if _gifts_with_missing|length > 1 else 'has' }} missing required fields
+            </h3>
+            <p class="text-sm text-amber-800 mt-1">
+                Probate filing (Borang 14A) needs every property to have Title No., Lot/PT No., Mukim, Daerah, and Negeri. The gift{{ 's' if _gifts_with_missing|length > 1 else '' }} below {{ 'are' if _gifts_with_missing|length > 1 else 'is' }} incomplete — click any row to jump to that gift's card:
+            </p>
+            <ul class="mt-2 space-y-1">
+                {% for entry in _gifts_with_missing %}
+                <li class="text-sm">
+                    <a href="#gift-{{ entry.idx }}" class="inline-flex items-center gap-1 text-amber-700 hover:text-amber-900 hover:underline font-medium">
+                        Gift {{ entry.idx }}{% if entry.label %}: <span class="text-amber-800 font-normal">{{ entry.label }}{% if entry.label|length >= 60 %}…{% endif %}</span>{% endif %}
+                    </a>
+                    <span class="text-xs text-amber-600 ml-2">— missing: {{ entry.missing|join(', ') }}</span>
+                </li>
+                {% endfor %}
+            </ul>
+            <p class="text-xs text-amber-700 mt-2 italic">
+                The will draft will omit empty fields — the firm will need to follow up with the client to fill them in before probate filing.
+            </p>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <form method="POST" action="/wizard/step/6" class="space-y-6">
     <div id="gifts-container">
         {% set gifts = data.get('gifts', []) %}
