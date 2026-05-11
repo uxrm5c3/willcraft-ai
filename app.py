@@ -270,7 +270,37 @@ def inject_global_context():
         # automatically. No more manual ?v=… bumps and no more telling
         # users to hard-refresh.
         'asset_version': _asset_version,
+        # 🔥 §10x.140 — expose probate_required_fields helpers so the
+        # step10 review template can render per-gift "missing fields"
+        # banner inline (no click-to-edit-each-card needed).
+        'probate_missing_property': _probate_missing_property_safe,
+        'probate_missing_bank':     _probate_missing_bank_safe,
+        'probate_missing_insurance': _probate_missing_insurance_safe,
     }
+
+
+def _probate_missing_property_safe(pd):
+    try:
+        from validation.probate_required_fields import missing_fields_for_property
+        return missing_fields_for_property(pd or {})
+    except Exception:
+        return []
+
+
+def _probate_missing_bank_safe(fd):
+    try:
+        from validation.probate_required_fields import missing_fields_for_bank
+        return missing_fields_for_bank(fd or {})
+    except Exception:
+        return []
+
+
+def _probate_missing_insurance_safe(fd):
+    try:
+        from validation.probate_required_fields import missing_fields_for_insurance
+        return missing_fields_for_insurance(fd or {})
+    except Exception:
+        return []
 
 
 def _asset_version(filename: str) -> str:

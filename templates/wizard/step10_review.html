@@ -8,6 +8,74 @@
     <p class="text-gray-600 mt-1">Review all your will information before generating the final document.</p>
 </div>
 
+{# 🔥 §10x.140 UPFRONT MISSING-FIELDS SUMMARY — before the user even
+   thinks about clicking Generate, surface every gift's missing fields
+   in one prominent banner. User feedback: "B-05-11... lot No. / PT /
+   PTD · encumbrance status — please fill in below before generating
+   the will". This means the user wants to see the gap UPFRONT, not
+   discover it via the override modal after clicking Generate.
+
+   Aggregates ALL missing fields across ALL gifts into one banner so
+   the user sees: "3 gifts have 5 missing required fields. Please fill
+   them before generating." with a per-gift breakdown. #}
+{% set _all_missing_summary = [] %}
+{% for gift in (will_data.get('gifts') or []) %}
+    {% set _gt = gift.get('gift_type', 'other') %}
+    {% set _pd = gift.get('property_details', {}) %}
+    {% set _fd = gift.get('financial_details', {}) %}
+    {% if _gt == 'property' %}
+        {% set _gm = probate_missing_property(_pd) %}
+        {% set _label = _pd.get('property_address', 'Property ' ~ loop.index) %}
+    {% elif _gt == 'financial' %}
+        {% set _akind = (_fd.get('asset_type') or '').lower() %}
+        {% if 'insurance' in _akind or 'policy' in _akind %}
+            {% set _gm = probate_missing_insurance(_fd) %}
+            {% set _label = (_fd.get('insurer') or _fd.get('institution') or 'Insurance ' ~ loop.index) %}
+        {% else %}
+            {% set _gm = probate_missing_bank(_fd) %}
+            {% set _label = (_fd.get('institution') or _fd.get('bank_name') or 'Bank ' ~ loop.index) ~ ' ' ~ (_fd.get('account_number') or '') %}
+        {% endif %}
+    {% else %}
+        {% set _gm = [] %}
+        {% set _label = gift.get('description', 'Gift ' ~ loop.index) %}
+    {% endif %}
+    {% if not (gift.get('allocations') or []) %}
+        {% set _gm = _gm + ['main beneficiary'] %}
+    {% endif %}
+    {% if _gm %}
+        {% set _ = _all_missing_summary.append({'idx': loop.index, 'label': _label, 'missing': _gm}) %}
+    {% endif %}
+{% endfor %}
+{% if _all_missing_summary %}
+<div class="mb-6 p-5 bg-amber-50 border-2 border-amber-300 rounded-lg shadow-sm">
+    <div class="flex items-start">
+        <div class="flex-shrink-0 mt-0.5">
+            <svg class="w-7 h-7 text-amber-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
+        </div>
+        <div class="ml-3 flex-1">
+            <h3 class="text-base font-bold text-amber-900">
+                ⚠️ {{ _all_missing_summary|length }} gift{% if _all_missing_summary|length != 1 %}s have{% else %} has{% endif %} missing required fields
+            </h3>
+            <p class="text-sm text-amber-800 mt-1">
+                Please fill these in before generating — otherwise the lawyer/firm will need to ask you for them before the will can be signed.
+            </p>
+            <div class="mt-3 space-y-1.5">
+                {% for entry in _all_missing_summary %}
+                <div class="text-sm bg-white px-3 py-2 rounded border border-amber-200">
+                    <strong class="text-amber-900">Gift {{ entry.idx }}:</strong>
+                    <span class="text-gray-700">{{ entry.label[:60] }}{% if entry.label|length > 60 %}…{% endif %}</span>
+                    <span class="text-amber-700">→ {{ entry.missing|join(' · ') }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            <a href="/wizard/step/6" class="inline-block mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold rounded transition">
+                ← Go to Step 6 to fill missing fields
+            </a>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Validation Results -->
 {% if validation_results %}
 <div class="space-y-3 mb-8">
@@ -247,10 +315,33 @@
             {% if gifts %}
             <div class="space-y-3">
                 {% for gift in gifts %}
-                <div class="text-sm border-b border-gray-100 pb-3 last:border-0 last:pb-0">
-                    {% set gt = gift.get('gift_type', 'other') %}
-                    {% set pd = gift.get('property_details', {}) %}
-                    {% set fd = gift.get('financial_details', {}) %}
+                {# 🔥 §10x.193 + §10x.140 — per-gift missing-fields banner.
+                   User feedback: "if incomplete info, make it obvious there
+                   is incomplete info without having to click in one by one".
+                   Pre-compute missing field list using probate_required_fields
+                   helpers; render as INLINE amber pill on the card so the
+                   user sees the gap without clicking Edit. #}
+                {% set gt = gift.get('gift_type', 'other') %}
+                {% set pd = gift.get('property_details', {}) %}
+                {% set fd = gift.get('financial_details', {}) %}
+                {% if gt == 'property' %}
+                    {% set missing = probate_missing_property(pd) %}
+                {% elif gt == 'financial' %}
+                    {% set asset_kind = (fd.get('asset_type') or '').lower() %}
+                    {% if 'insurance' in asset_kind or 'policy' in asset_kind %}
+                        {% set missing = probate_missing_insurance(fd) %}
+                    {% else %}
+                        {% set missing = probate_missing_bank(fd) %}
+                    {% endif %}
+                {% else %}
+                    {% set missing = [] %}
+                {% endif %}
+                {% set has_beneficiary = (gift.get('allocations') or [])|length > 0 %}
+                {% if not has_beneficiary %}
+                    {% set missing = missing + ['main beneficiary'] %}
+                {% endif %}
+                <div class="text-sm border-b border-gray-100 pb-3 last:border-0 last:pb-0
+                    {% if missing %}border-l-4 border-l-amber-400 pl-3{% endif %}">
                     <p class="font-medium text-gray-900 mb-1">
                         Gift {{ loop.index }}:
                         <span class="text-xs font-normal px-2 py-0.5 rounded-full
@@ -263,7 +354,19 @@
                         {% if pd.get('encumbrance_status') == 'encumbered' %}
                         <span class="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700">Encumbered</span>
                         {% endif %}
+                        {% if missing %}
+                        <span class="inline-flex items-center text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold ml-1" title="Probate-blocking missing fields">
+                            ⚠️ {{ missing|length }} missing
+                        </span>
+                        {% endif %}
                     </p>
+                    {% if missing %}
+                    <p class="text-xs text-amber-700 mb-2 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+                        <strong>Please fill in:</strong> {{ missing|join(' · ') }} —
+                        the lawyer/firm will need to ask you for this before signing.
+                        <a href="/wizard/step/6" class="underline font-semibold ml-1">Fill now →</a>
+                    </p>
+                    {% endif %}
                     {% if gt == 'property' %}
                     <p class="text-gray-700">{{ pd.get('property_address', '-') }}</p>
                     {% if pd.get('title_type') or pd.get('lot_number') %}
