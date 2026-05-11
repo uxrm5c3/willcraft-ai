@@ -548,13 +548,17 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
 
     for i, c in enumerate(candidates):
         # Highlight title/lot non-emptiness — the LLM should prefer docs
-        # with REAL identifiers over docs with just an address match
-        # (the wizard banner needs the Geran/lot, not just confirmation
-        # that a doc exists for the address).
+        # with REAL identifiers over docs with just an address match.
         has_real_id = bool(c['title_number'] and c['title_number'].lower()
                             not in ('folio', 'vol', 'unreadable'))
         marker = '⭐ has-id' if has_real_id else '○ no-id'
-        prompt += (f"  [{i}] {marker} cat={c['category']} "
+        # 🔥 §10x.160 — pass pre-classified granularity level to the
+        # LLM. Otherwise the LLM does its own (less accurate) classify
+        # using only owner heuristics. The canonical classifier sees
+        # category, title shape, owner pattern, description — much
+        # richer signals.
+        lvl = c.get('doc_level', 'unknown')
+        prompt += (f"  [{i}] {marker} level={lvl} cat={c['category']} "
                    f"addr={c['address']!r} title={c['title_number']!r} "
                    f"lot={c['lot_number']!r} mukim={c['mukim']!r} "
                    f"daerah={c['daerah']!r} owners={c['owners']!r}\n")
@@ -579,10 +583,12 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
         f"authoritative. 'master' docs do NOT carry the unit's title.\n"
         f"  - For lot_number: same — strata/sub_parcel only.\n\n"
         f"REASONING STEPS (do these in order, then output JSON):\n"
-        f"  Step 1 — for each candidate doc, classify its level "
-        f"({{'strata' | 'sub_parcel' | 'master' | 'unknown'}}).\n"
-        f"  Step 2 — drop master/unknown docs from the {field} pool "
-        f"(they cannot supply this field). KEEP them as supporting_docs.\n"
+        f"  Step 1 — each candidate already has level=<strata|sub_parcel"
+        f"|master|unknown> pre-classified by the canonical classifier. "
+        f"Trust it. Don't reclassify.\n"
+        f"  Step 2 — drop level=master and level=unknown docs from the "
+        f"{field} pool (they cannot supply this field). KEEP them as "
+        f"supporting_docs (they may contribute mukim/daerah/co_owners).\n"
         f"  Step 3 — among remaining strata/sub_parcel docs, pick the "
         f"one MOST LIKELY for THIS specific property using these "
         f"signals (in priority order):\n"
@@ -620,7 +626,7 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
             model='claude-haiku-4-5',
             # 🔥 §10x.160 — chain-of-thought needs more tokens for the
             # reasoning_steps + supporting_docs + missing_fields arrays.
-            max_tokens=600,
+            max_tokens=1200,
             temperature=0,
             messages=[{'role': 'user', 'content': prompt}],
         )
