@@ -195,6 +195,14 @@ BUG_CHECKS: List[Dict[str, Any]] = [
         'user_quote': 'if incomplete info, make it obvious there is incomplete info without having to click in one by one',
         'kind': 'wizard_banner',
     },
+    {
+        'id': 'B17',
+        'rule': '§10x.206 / §10x.24',
+        'priority': 'HIGH',
+        'name': 'Generated will conforms to canonical Alan & Tan firm template',
+        'user_quote': 'AI chat missed this / you did not compare against template line by line and missed out all these details',
+        'kind': 'template_structure',
+    },
 ]
 
 
@@ -411,6 +419,27 @@ def main():
                     except Exception as e:
                         ok = False
                         reason = f'check exception: {e}'
+
+            elif kind == 'template_structure':
+                # B17 — §10x.206 snapshot regression against §10x.24 patterns.
+                # Reuse the will_text we already generated (no double-render).
+                if not will_text or will_text.startswith('__ERROR__'):
+                    ok = False
+                    reason = f'will gen failed: {will_text[:80]}'
+                else:
+                    try:
+                        from tests.will_gen.test_template_structure import run_checks
+                        passes, fails, failures = run_checks(will_text)
+                        if fails:
+                            ok = False
+                            reason = (f'{fails}/{fails + passes} §10x.24 '
+                                      'pattern(s) violated: '
+                                      + '; '.join(f'[{r}] {n}'
+                                                  for r, n, _ in failures[:3])
+                                      + ('…' if len(failures) > 3 else ''))
+                    except Exception as e:
+                        ok = False
+                        reason = f'snapshot exception: {type(e).__name__}: {e}'
 
             mark = '✅' if ok else '❌'
             print(f'  {mark} [{chk["id"]}] [{chk["priority"]}] {chk["name"]}')

@@ -2602,10 +2602,48 @@ is no longer rendered by the asset walkthrough.
 
 ---
 
-### 10x.24  ⚡ Will-clause format MUST follow Phek Yi Ting standard ⚡
+### 10x.24  ⚡ Will-clause format MUST follow Alan & Tan firm template ⚡
 
-**Source of truth:** `documents/sample_will_phek_yi_ting.py`. Every
-specific gift clause in the generated will MUST follow these patterns.
+**Sources of truth (two — must agree):**
+- `documents/sample_will_phek_yi_ting.py` — PHEK sample (sister beneficiaries,
+  joint property)
+- `documents/sample_will_koid.py` — KOID sample (full asset variety: SG+MY
+  banks, sole + joint properties, strata + landed, insurance combined,
+  sister-in-law executor with substitute, wife residuary + survivor cascade)
+
+Every specific gift clause in the generated will MUST follow these patterns.
+
+### 🔥 Canonical phrasing rules (verified against BOTH samples)
+
+| Format rule | Pattern |
+|---|---|
+| **Address suffix** | NEVER append `, MALAYSIA` to Malaysian addresses. End with state name. |
+| **State word** | `Negeri of <TitleCase>` (Malay + Title Case — NOT "State of JOHOR") |
+| **Title prefix** | Bare type then bare number: `Geran 528881`, `Strata Title Geran 564662/M1C/30/710`, `Hakmilik Strata 528881`, `H.S.(D) 251041`, `PTD 127082`, `Pajakan Negeri 12345`. NO `No.` between type and number. |
+| **Lot prefix** | `Lot <number>` — NO `No.` between |
+| **Leading zeros** | STRIP from title_number AND lot_number. `00528881` → `528881` |
+| **Equal-share idiom** | SINGULAR: `in equal share`. NEVER `in equal shares` (even for 3+ beneficiaries — firm convention) |
+| **Beneficiary name case** | UPPERCASE in every clause body: `LIM BEE YAN`, not `Lim Bee Yan` |
+| **Revocation clause** | `By signing this Will, I revoke all earlier Wills…` — NO `hereby` (current firm convention; differs from PHEK historical sample) |
+| **Executor substitute single** | `In the event that my <relationship> is unwilling or unable to act for whatsoever reason, then I appoint <substitute_id> to be the Executor of this Will.` |
+| **Executor substitute address** | Pull from `Person.residential_address` (residence), NEVER from any gift address |
+| **Sole property w/ building-type** | `all my shares in the <building_type> known as` — e.g. `Single Storey Medium Low Cost Shop`. Field `description_prefix` / `building_type` on PropertyDetails. |
+| **Sole property w/o building-type** | `all my shares in the property known as` (NOT `the property known as` alone, NOT `my undivided share in the property known as`) |
+| **Joint property** | `all my <fraction> undivided shares in the property known as` — e.g. `all my ½ undivided shares` |
+| **Bank type-name strip** | Drop marketing prefixes like `Plus` from account_type. `Public Bank Berhad Saving Account` not `Public Bank Berhad Plus Saving Account` |
+| **Bank country prefix** | SG banks: `Singapore <bank> Account No. <N>` (country prefix, lowercase 'bank', drop account_type if default). MY banks: `<bank> <account_type> Account No. <N>` (no country prefix). |
+| **Insurance position** | AFTER all property clauses (right before residuary) |
+| **Insurance format** | Single combined clause: `If any nomination under my insurance policies below fails, is invalid, revoked or otherwise ineffective, the proceeds shall be given to <BEN> absolutely.` followed by roman-numeral list: `(i) Policy No. <N> <Insurer> <Country>` |
+| **Bank substitute position** | IMMEDIATELY after the bank clauses (e.g. clause 8 for 4 banks 4-7), NOT after properties |
+| **Bank substitute wording** | `In the event my <main_id> does not survive me, my monies bequeathed to her in Clause <FROM>-<TO> above shall be given to <SUB_IDS> in equal share.` |
+| **Sibling order in substitutes** | Family-role order: spouse → son(s) → daughter(s) → others. NEVER alphabetical. |
+| **Residuary main "absolutely"** | `To give the residue ('my residuary estate') to my wife <ID> absolutely. If my wife…` — the word `absolutely` MUST appear between the NRIC paren and the next sentence |
+| **Property substitute INLINE** | EVERY property gift with a substitute clause MUST emit it INLINE within the same clause, NOT as a separate post-loop clause. Format: `… in equal share. If either of my children does not survive me, then the benefit which that child would have received shall be given to and vest in the surviving child absolutely.` |
+| **Address case** | Property addresses rendered ALL CAPS (`NO.10, JALAN SRI LAGUNA 1/7…`) |
+| **Signing page parenthetical** | `signed by the Testator (appeared thoroughly to understand this WILL and approve it) in the presence of us both…` |
+| **Witness blocks** | Numbered `First Witness Full Name:` / `Second Witness Full Name:` (NOT just `Full Name:`). Includes `First Witness Identification:` / `First Witness Address:` / `First Witness Contact Number:`. |
+| **Discharge-charge boilerplate** | After EVERY property gift clause: `Unless specifically stated to the contrary in this Will, I direct that any sums required to discharge a charge or to withdraw a private caveat or lien attached to this property shall be paid out of my residuary estate.` |
+| **Historical title parenthetical** | When a property has previous title references (HS(D), PTD, etc.) that have since been replaced by a final Geran, render INLINE in the lot description: `Lot 135402 (Formerly known as HS(D) 431161 PTD 143086)` |
 
 ### Property — joint (testator's share is fractional)
 
@@ -2711,14 +2749,25 @@ change.
 **Question the user keeps asking:** "is there a saved template that the
 AI refers to and follows strictly when generating wills?"
 
-**Answer:** YES — two things working together:
+**Answer:** YES — three things working together (TWO canonical samples
++ deterministic drafter):
 
-1. **`documents/sample_will_phek_yi_ting.py`** — verbatim Alan & Tan
-   firm template, source of truth for format/wording.
-2. **`ai/drafter.py::draft_will_mock(will_data)`** — programmatic
-   clause generator that emits Phek-compliant text from `WillData`.
+1. **`documents/sample_will_phek_yi_ting.py`** — Alan & Tan firm template
+   sample #1 (PHEK: sister beneficiaries, joint property).
+2. **`documents/sample_will_koid.py`** — Alan & Tan firm template sample
+   #2 (KOID: full asset variety — SG+MY banks, sole + joint properties,
+   strata + landed titles with sub-tokens and historical-titles, insurance
+   combined clause, sister-in-law executor with substitute, wife
+   residuary with survivor cascade).
+3. **`ai/drafter.py::draft_will_mock(will_data)` → `documents/template_filler.py`**
+   — deterministic clause emitter that produces text matching BOTH samples.
    The drafter does NOT freely paraphrase; it follows the patterns
-   codified in **§10x.24** for every gift kind.
+   codified in **§10x.24** + **§10x.206** for every gift kind.
+
+The snapshot regression `tests/will_gen/test_template_structure.py`
+catches any drafter drift from §10x.24 patterns. It runs in the
+§10x.49 pre-deploy audit gate (`tests/step6/run_audit.py`) AND in the
+§10x.39 bug-checklist (`tests/step6/bug_checklist.py`).
 
 ### Strict-follow checklist
 
@@ -2762,12 +2811,19 @@ gets caught before it ships.
 ### Where format change requests go
 
 If the firm wants to update the will format:
-1. Edit `documents/sample_will_phek_yi_ting.py` (the canonical source)
-2. Update §10x.24 patterns in CLAUDE.md
+1. Edit BOTH `documents/sample_will_phek_yi_ting.py` AND
+   `documents/sample_will_koid.py` (the canonical sources MUST agree)
+2. Update §10x.24 patterns AND §10x.206 (canonical clause structure)
+   in CLAUDE.md
 3. Update `models/gift.py::FinancialDetails.to_formatted_description`
-   AND `Gift._ownership_prefix` to match
-4. Run `sim_will_gen.py` to verify
-5. Have the Approver compare a generated sample against the new
+   AND `Gift._ownership_prefix` to match. Update
+   `documents/template_filler.py` for clause-shape changes.
+4. Run BOTH snapshot tests to verify:
+   - `tests/will_gen/test_template_structure.py` (drafter output
+     matches §10x.24 patterns)
+   - `data/sim_will_gen.py` (legacy PHEK-pattern snapshot)
+5. Run the full §10x.49 audit gate: `tests/step6/run_audit.py`
+6. Have the Approver compare a generated sample against the new
    firm template side-by-side before deploying
 
 ### Symptom of regression
@@ -4028,6 +4084,7 @@ or open).
 | 146 | §10x.146 | User: *"New chat update / Refresh / keep popping up, after refresh, pop up again with same message"*. Wizard right-pane chat-update toast spammed every 6s — even immediately after Refresh, the next poll re-popped it with the same "Chat added 5 new identities" message. | `templates/wizard/layout.html` toast logic built baseline `lastIdsKey` from `window._personRegistry` (server-side `persons` template var, indexed by `Person.id`) but each 6s poll fetched `/api/chat/{cid}/history` whose `identities` list has DIFFERENT id format (or no id). Mismatched signatures → `key !== lastIdsKey` on every poll → toast spam, even after Refresh (reload re-baselined from persons → first poll 6s later saw diff key from history → fired again). | Shipped commit 731708b. Three pieces: (1) Stable signature `full_name+relationship` lowercased+sorted — invariant to which source format provides IDs; persons (template) and identities (api) produce same key when underlying data matches. (2) FIRST poll captures baseline only — never shows toast on initial render (page already shows current state). (3) Dismiss button suppresses toast for 60s + silently refreshes baseline so the same change doesn't immediately re-pop on the next 6s poll. **Verified live via Chrome MCP**: navigated to Step 10, waited 8+ seconds, no toast appeared (clean view). | HIGH ✓ (Chrome-MCP-verified) |
 | 147 | §10x.146-stale-cache | User: *"main beneficiary (open Step 6 to fill) / why main beneficiary not completed"*. After §10x.145 deployed the AI suggester for main_beneficiary, the user still saw "(open Step 6 to fill)" punt text. | Browser HTML cache — user's page was rendered BEFORE my deploy. Reloading without cache-bust didn't pick up the new `_LABEL_TO_FIELD['main beneficiary'] = 'main_beneficiary'` map entry. So the `{% if field %}` Jinja branch saw `field=''` and rendered the punt fallback. | No code change needed — fix was already shipped in §10x.145. Force-reloaded with cache-bust query param (`?_=v3`) and verified live via Chrome MCP that all 5 property gifts now show `main beneficiary:` text input pre-filled with AI suggestion + green ✓ Save button + "✨ AI suggested: from your message" hint. Underlying `asset_version()` template helper auto-cache-busts JS/CSS but NOT HTML pages — those are reloaded by the user's browser per its caching policy. **Action**: hard-refresh (Cmd+Shift+R) after any UI deploy to bypass HTML cache. Future improvement: add `Cache-Control: no-cache` header to wizard step pages to prevent stale render. | MEDIUM ✓ (verified — not a code bug, browser cache) |
 | 148 | §10x.147 | User: *"why title number missing? not extracted from images"*. Title No. for B-05-11 + Sri Laguna remained blank in the banner even after §10x.145 cross-ref. | TWO bugs combined: (1) Quick-fix endpoint writes saved values to `property_info`. Subsequent renders did `g.get('property_info') or g.get('property_details')` — first-truthy wins. Once user saved city → property_info became `{city: "Marina Cove"}` (truthy dict) → property_details (with the address) was IGNORED. So Gift 4's beneficiary suggester returned None because it couldn't find the address. (2) For unbound H3 gifts (B-05-11, Sri Laguna), the user's uploaded property docs DO contain the right property but their addresses OCR'd wrong (Sri Laguna SPA OCR'd as "Marsiling Lane Singapore"). Token-match couldn't find them. | Shipped commits 30dde22 + d7a3cad. (a) MERGE both schemas: `pi = {}; pi.update(property_details); pi.update(non-empty property_info)` — fixes Gift 4 beneficiary suggestion. Applied to 5 sites in the suggester. (b) NEW `suggest_title_or_lot_via_llm` — when token-match fails, sends ALL property docs (with title/lot/address/owners) + gift's address to Claude Haiku and asks "which doc index is MOST LIKELY the official title doc for this property? Address may be OCR-garbled — consider owner names, building name tokens too." Process-level cache keyed by (client_id, addr-hash, field). First render ~$0.005 for 5 property gifts; subsequent renders hit cache. Rejects placeholder values (Folio N / Vol. N) per §10x.152h. **Verified live via Chrome MCP**: Gift 4 C-05-01 → "Esther Koid En Hui 100%" ✓ pre-filled. Title No. for B-05-11 + Sri Laguna still blank — honest explanation: NO uploaded doc has a valid Malaysian NLC title for them. Sample template titles (528881, 337203) came from confidential land registry searches, not user's uploads. LLM correctly identifies the right doc but its `title_number` field is empty or "Folio 5" (Singapore Land Registry ref, rejected). User must type these manually OR upload the actual Geran/HSD title doc. | HIGH ✓ (Chrome-MCP-verified; honest about title-not-extractable when source data lacks it) |
+| 163 | §10x.206 | User: *"AI chat missed this / you did not compare against template line by line and missed out all these details"*. After the §10x.174 / §10x.205 ship the AI-generated will visually matched KOID's Alan & Tan firm template (commits ab608ff + 53ebc33), but there was NO automated regression catching future drafter drift. Past sessions had drifted multiple times — §10x.151 (a/b/c/d/e/f), §10x.152 (b/c/d/e/f/g/h), §10x.174 (B0-B10), §10x.175 — every cycle started by manually comparing two large documents. | Drafter clause shape relied on §10x.24 patterns documented in CLAUDE.md alone. ONE canonical sample (PHEK) existed but the snapshot test (`data/sim_will_gen.py`) only checked a handful of legacy patterns. No comprehensive comparison against the KOID firm template existed in code form. So any new drafter commit could silently break a §10x.24 pattern + escape into prod until the user spotted it. | Shipped this commit. **Three pieces**: (a) `documents/sample_will_koid.py` — second canonical source-of-truth (full asset variety: SG+MY banks, sole + joint properties, strata + landed, insurance combined, sister-in-law executor, wife residuary). Both samples cross-referenced via §10x.25. (b) §10x.24 extended with 24-row format table covering EVERY phrasing rule verified against both samples — title prefix, leading-zero stripping, equal-share idiom, building-type descriptor, bank country prefix, insurance position, bank substitute, sibling order, residuary "absolutely", inline property substitute, historical-title parenthetical, etc. (c) §10x.206 burn-in rule + `tests/will_gen/test_template_structure.py` snapshot regression test (asserts every §10x.24 pattern against KOID-fixture drafter output). Wired into B17 check in `tests/step6/bug_checklist.py` and §10x.49 audit gate in `tests/step6/run_audit.py`. **Drafter code is correct as of 53ebc33; this commit LOCKS the shipped behaviour against future drift.** Any §10x.24 pattern breaking in future = snapshot test red = deploy blocked. | HIGH ✓ (locked — drafter unchanged; only docs + tests + canonical-format file added) |
 | 162 | §10x.175 | User: *"Step 7: Residuary Estate / No data entered yet / residuary must be completed, COMPULSORY"*. Full wizard audit (Chrome MCP + DB query of all 10 steps) showed Step 1-6, 9 OK but Step 7 + Step 8 summary cards showed "No data entered yet" / "No testamentary trust" despite step6_data and step7_data being populated. Plus residuary `substitute_specific` wrongly included the wife (the main beneficiary) — wife as substitute for herself. | Two schema-fallback bugs + one save-handler bug: (a) Step 7 summary template read `residuary.main_beneficiaries` (canonical). Step 7 save handler wrote to `residuary_beneficiary_name` (single name string, legacy chat-side) and `beneficiaries` (canonical list — but sometimes left empty). Result: template's empty-state branch fired even when residuary was configured. (b) Step 8 summary template read `trust.trust_beneficiaries[]` (canonical). Chat-saved trust used `{wants_trust:true, distribution_age, trustee_name}` legacy fields → "No testamentary trust" rendered despite trust being configured. (c) Substitute save handler accepted user input like "all 3 equal" and saved `substitute_specific=[Lim Bee Yan 1/3, Joshua 1/3, Esther 1/3]` — wife wrongly listed as substitute for herself. Drafter §10x.174 Piece 5 caught this at WILL-GEN time but SAVED state was still wrong. | Shipped commit 1ecea02 + 4100a7c. **3 fixes**: (a) Step 7 summary template now reads main beneficiaries in fallback order: `main_beneficiaries` → `beneficiaries` (legacy) → `residuary_beneficiary_name` (single name → wrapped as `[{name, share:'1/1'}]`). Substitutes: `substitute_groups` → `substitute_specific` with main beneficiary auto-filtered. Empty-state message changed from "No data entered yet" to "⚠️ Residuary Estate is required" with link to Step 7. (b) Step 8 summary template adds `has_legacy_trust` check on `wants_trust + distribution_age|trustee_name`; renders a "Trust configured" block with distribution age + trustee when canonical schema is missing but legacy is set. (c) `_try_save_residuary_substitute` now filters main beneficiary names out of sub_list BEFORE persist, and re-normalises 1/N shares so remaining substitutes split evenly. (d) Data migration: KOID step6_data patched — `beneficiaries=[Lim Bee Yan 1/1]`, `substitute_specific=[Joshua 1/2, Esther 1/2]`, `skipped` flag cleared. **Chrome-MCP-verified**: Step 7 now shows "MAIN BENEFICIARIES: Lim Bee Yan 1/1 / SUBSTITUTE BENEFICIARIES: Joshua 1/2, Esther 1/2"; Step 8 shows "TRUST CONFIGURED / 📅 Distribution age: 25 years old / 👤 Trustee: LIM LAY CHENG". | HIGH ✓ (Chrome-MCP-verified end-to-end) |
 | 161 | §10x.174 | User: *"Click. generate will with AI no response / Chceck against the template bugs / ANZ Singapore this is wrong / beneficiaries missing and gone undetected / do the comparison thoroughly, list down all the bugs, Fix, deploy, test using chrome MCP"*. After thorough clause-by-clause comparison of the AI-generated will vs KOID's Alan & Tan gold-standard template (Sample KOID BENG SUN The Last Will and Testament .docx), found 10 critical bugs in the generated will. | TEN distinct issues: (B0) NameError 're' not imported in template_filler.py — every Generate-with-AI POST 500'd before will-gen could complete. (B1) "[BENEFICIARIES TO BE CONFIRMED]" on B-05-11/C-05-01/Sri Laguna — Step 6 form POST handler (§10x.164 MERGE) was still letting form_overlay.allocations=[] overwrite saved beneficiaries when user had zero allocation rows in form. (B2) AIA mis-labeled as "ANZ Singapore" — insurance gifts had `asset_type=''` so render-time canonicalisation used bank pool → fuzzy match returned ANZ Singapore. (B3) B-05-11 lot=00528861 (master Cukai's wrong OCR'd value) instead of 194139 — property_info.lot_number had stale value, master_lot_from_doc had stale value; only property_details was patched. (B4) C-30-08 strata sub-token /M1C/30/710 stripped from saved data → drafter only saw master title 564662. (B5) C-05-01 same as B4 + title_type was 'Geran' instead of 'Strata Title Geran'. (B6) Sri Laguna's "(Formerly known as HS(D) 431161 PTD 143086)" parenthetical not rendered — historical_titles not in step5_data + build_will_data didn't pass it to PropertyDetails. (B7) Joint properties showed "the property" instead of "all my ½ undivided shares" — build_will_data was reading ownership_type/testator_share from TOP-LEVEL but chat-saved gifts store them on property_details sub-dict. (B8) Residuary substitute included the wife (the main beneficiary) — auto-built substitute_groups[0] was [wife, son, daughter]; wife can't substitute for herself. (B9) Insurance rendered as 3 separate bank-style clauses instead of ONE combined Insurance Act 1996 s.130 clause — drafter routed based on asset_type which was empty. (B10) Bank clauses missing canonical "the monies in my [Country] [Bank] [Type] Account No. X together with all interests/dividends already accrued due or accruing thereon" phrasing — FinancialDetails.to_formatted_description had right logic but asset_type was empty → fell through to legacy fallback. | Shipped 5 commits (0350cc3 + a67477a + 9aa30c4 + KOID step5 patch). **Fixes**: (B0) `documents/template_filler.py` — added `import re` at top. (B1) Step 6 POST `wizard_step_gifts` — only let form_overlay overwrite allocations when form actually has non-empty list; else preserve existing (§10x.174 Piece 1). Plus `wizard_generate` calls `_refresh_wizard_session_from_db()` before `build_will_data` so inline-edit saves from /api/wizard/gift-quick-fix propagate (Piece 2). Plus one-shot restored allocations on B-05-11/C-05-01/Sri Laguna step5 entries. (B2 + B9) Patched step5 financial gifts with `asset_type='insurance'` (NTUC/Etiqa/AIA) and `asset_type='bank'` (POSB/Maybank/Public Bank) — render-time canonicalisation now uses correct pool; drafter routes insurance to combined-clause; bank format renders canonical phrasing. (B3) Patched B-05-11 lot=00194139 across property_info + property_details + top-level + _master_lot_from_doc. (B4/B5) Restored strata sub-tokens 564662/M1C/30/710 and 564662/M1C/5/517 on C-30-08 + C-05-01. (B6) Added historical_titles=[{HS(D) 431161, PTD 143086}] to Sri Laguna's property_details. Plus build_will_data passes historical_titles through to PropertyDetails Pydantic model (Piece 4). (B7) build_will_data reads ownership_type/testator_share/joint_owners/encumbrance/debt_source from property_details fallback when top-level empty (Piece 3). (B8) template_filler.py residuary clause filters out main beneficiary from substitute_groups[0] before rendering inline substitute (Piece 5). **Chrome-MCP-verified end-to-end**: regenerated will now matches template — Clause 11 "all my ½ undivided shares in the property known as Unit B-05-11... held under HAKMILIK STRATA No. 00528881/M1B/5/209, Lot No. 00194139, Mukim Pulai... unto my son JOSHUA and my daughter ESTHER in equal shares". Clause 13 Sri Laguna: "Lot No. 135402 (Formerly known as HS(D) 431161 PTD 143086)" parenthetical present. Insurance clause 8 combined: "If any nomination under my insurance policies below fails... (i) NTUC Income Singapore, (ii) Etiqa Insurance Malaysia, (iii) AIA Bhd Malaysia". Banks 4-7 in canonical "monies in my X Account No. Y together with all interests/dividends" format. Residuary substitute lists son+daughter only, not wife. | HIGH ✓ (Chrome-MCP-verified end-to-end against KOID gold-standard template; all 10 critical bugs cleared) |
 | 160 | §10x.173 | User: *"after save the error still there ... have a simpler and more user friendly way that is robust"*. The inline-save flow had a UX gap: clicking ✓ Save on a missing-field input AJAX-persisted the value but the BANNER HEADER COUNT stayed "N gifts have missing required fields" until full page reload. User saw what looked like a broken save — value was saved but banner still complained. | The JS inline-save handler (§10x.143 on Step 10, §10x.171 on Step 6) was minimal: AJAX → disable input → show ✓ saved → fade row (Step 10 only). It NEVER updated the aggregate header text, NEVER decremented the gift-count, NEVER auto-dismissed the banner when count hit zero. The banner was server-rendered and only refreshed on page reload. | Shipped commit f03623d. **Live-update logic** on BOTH banner JS handlers (Step 10 §10x.143 + Step 6 §10x.171). After each successful ✓ Save: (a) re-tally remaining UNFINISHED gift rows (those still having ≥1 visible ✓ Save button); (b) update the header text in real-time with the new count ("N gifts have missing required fields"); (c) when a gift's LAST field saves, collapse the gift row with smooth animation (opacity + max-height transition); (d) when count reaches 0, header becomes "✅ All required fields filled — ready to generate the will." with green success colour, then banner auto-dismisses with fade + collapse transition (no reload required). Step 6's handler ALSO collapses the per-gift inline §10x.193 banner when all its fields are saved. **Chrome-MCP-verified end-to-end**: temporarily cleared KOID Gift 3 allocations → banner showed "1 gift has missing required fields" → clicked ✓ Save (pre-filled "Joshua 50%, Esther 50%") → quick-fix endpoint persisted as 2 allocations + 2 beneficiaries + default substitute → JS updated header to "✅ All required fields filled" → banner faded + collapsed to zero height + display:none. No reload required. Same behaviour shipped on Step 6 with both upfront aggregate banner and per-gift inline banners. | HIGH ✓ (Chrome-MCP-verified end-to-end including header text update + auto-dismiss animation) |
@@ -5611,6 +5668,112 @@ has been violated. Look at the narrative-fallback path and verify
 - §10x.12 — every AI-Summary item is its own gift (banks/insurance get
   their own gifts via `_extract_ai_summary_banks` / `_extract_ai_summary_insurance`,
   NOT by leaking into the property list)
+
+---
+
+### 10x.206  🔥🔥🔥 BURN-IN — CANONICAL CLAUSE STRUCTURE (KOID-aligned firm template) 🔥🔥🔥
+
+**Every will the drafter produces MUST follow the canonical clause structure
+codified in §10x.24. The structure is locked against TWO real firm
+templates (PHEK YI TING + KOID BENG SUN) committed to the repo:**
+
+- `documents/sample_will_phek_yi_ting.py`
+- `documents/sample_will_koid.py`
+
+**Future drafter changes that break ANY pattern in §10x.24 are CONTRACT
+VIOLATIONS — the snapshot test
+`tests/will_gen/test_template_structure.py` catches them pre-deploy.**
+
+### The locked clause structure
+
+```
+  1     Revocation                          (no "hereby" — firm convention)
+  2     Primary executor + INLINE substitute executor
+  3     Trustee = Executor (boilerplate)
+
+  4..M  Bank gifts                          (one clause per bank account,
+                                             SG / MY format per §10x.152b)
+  M+1   Bank substitute (consolidated)      ("…in Clause 4-M above…")
+
+  M+2..P  Property gifts                    (one clause per property,
+                                             with INLINE substitute per
+                                             §10x.152c, and the
+                                             discharge-charge boilerplate
+                                             paragraph below each)
+
+  P+1   Insurance combined clause           (Insurance Act 1996 s.130
+                                             nomination-fallback wording,
+                                             roman-numeral policy list)
+                                             — or ABSENT if no insurance gifts
+
+  P+2   Residuary estate                    ("absolutely" + survivor cascade)
+
+  P+3   Declaration (Beneficiaries Considered)
+  P+4   Declaration (30-day survivor)
+
+  -     Signing page (with §10x.24 parenthetical)
+        + First Witness block (numbered)
+        + Second Witness block (numbered)
+        + "- End of Document -"
+```
+
+### Hard rules
+
+1. **Both samples MUST agree.** Any pattern that appears in one sample
+   but not the other is FORBIDDEN unless the user explicitly approves
+   the divergence. A divergence between the two samples is a bug in
+   one of them.
+
+2. **The drafter NEVER deviates from §10x.24.** All clause shape is in
+   `documents/template_filler.py` + `models/gift.py`. The drafter does
+   NOT call any LLM for clause text — it's pure deterministic
+   formatting.
+
+3. **The snapshot test runs on every commit** that touches:
+   - `ai/drafter.py`
+   - `documents/template_filler.py`
+   - `models/gift.py`
+   - `documents/sample_will_phek_yi_ting.py`
+   - `documents/sample_will_koid.py`
+   - the canonical clause patterns in this file (CLAUDE.md §10x.24)
+
+4. **Adding a NEW asset kind** (e.g. cryptocurrency, business interest)
+   requires:
+   - Adding the canonical phrasing to §10x.24
+   - Adding example clauses to BOTH samples (if the firm has a
+     reference for it; otherwise document the new pattern in §10x.24
+     with a citation)
+   - Adding snapshot-test assertions for the new pattern
+   - Running the audit gate
+
+### Where this is enforced
+
+| File | Mechanism |
+|------|-----------|
+| `tests/will_gen/test_template_structure.py` | Snapshot regression — asserts every §10x.24 pattern appears in the drafter output for KOID fixture |
+| `tests/step6/bug_checklist.py` (B17) | Calls the snapshot test as part of the autonomous loop |
+| `tests/step6/run_audit.py` (per fixture) | Pre-deploy gate — calls the snapshot test for every fixture client |
+| `documents/sample_will_phek_yi_ting.py` | Canonical sample #1 |
+| `documents/sample_will_koid.py` | Canonical sample #2 |
+| `documents/template_filler.py` | Deterministic clause emitter (the only place clause text is shaped) |
+| `models/gift.py` | Per-asset descriptor formatting (e.g. `FinancialDetails.to_formatted_description`, `Gift._ownership_prefix`) |
+
+### Litmus test
+
+```
+Run the snapshot test against KOID fixture
+(2a2b527e-d870-447b-b386-8d97b21bb849):
+  - All §10x.24 patterns present in drafter output       → ✓ ship
+  - Any pattern missing / drifted                        → ✗ block deploy
+
+The snapshot test prints the failing pattern + a snippet of the
+generated will so the fix is obvious.
+```
+
+If a drafter PR ships green snapshot test but the firm's Approver still
+spots a format drift, the §10x.24 patterns are incomplete — extend the
+table + add the missing pattern as an assert in the snapshot test, do
+NOT patch the drafter output post-hoc.
 
 ---
 

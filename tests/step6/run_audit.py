@@ -118,6 +118,28 @@ def run_one(client_id: str, name: str, expected_mode: str) -> bool:
     else:
         print('⚠ sim_will_gen.py not found — Phek snapshot skipped')
 
+    # 4. 🔥 §10x.206 — Template-structure snapshot. Asserts every §10x.24
+    # canonical phrasing pattern against the drafter output for THIS
+    # fixture's client. Locks the KOID-aligned firm template format so
+    # future drafter changes can't silently drift.
+    repo_tests = os.path.join(os.path.dirname(HERE), 'will_gen')
+    template_test = os.path.join(repo_tests, 'test_template_structure.py')
+    if os.path.isdir('/app/tests/will_gen'):
+        template_test = '/app/tests/will_gen/test_template_structure.py'
+    if os.path.isfile(template_test):
+        res = subprocess.run(['python', template_test, client_id],
+                             capture_output=True, text=True)
+        if res.returncode != 0:
+            print(f'❌ §10x.206 template-structure snapshot FAIL '
+                  f'(rc={res.returncode})')
+            print(res.stdout[-1200:])
+            print(res.stderr[-400:])
+            return False
+        print('✓ §10x.206 template-structure snapshot passes')
+    else:
+        print('⚠ tests/will_gen/test_template_structure.py not found — '
+              '§10x.206 snapshot skipped')
+
     print('✓ fixture passed')
     return True
 

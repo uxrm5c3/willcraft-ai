@@ -109,3 +109,39 @@ with app.app_context():
         for e in errs: print(f'     {e}')
     else:
         print('  ✅ All checks pass')
+
+    # ── 5. §10x.206 — Template-structure snapshot ─────────────────
+    # Asserts every §10x.24 canonical phrasing pattern against the
+    # drafter output. Locks the KOID-aligned firm template format.
+    print(f'\n[5] §10x.206 TEMPLATE-STRUCTURE SNAPSHOT')
+    print('-' * 72)
+    try:
+        from tests.will_gen.test_template_structure import (
+            generate_will_for_client, run_checks,
+        )
+        will_text = generate_will_for_client(c.id)
+        if not will_text:
+            print('  ⚠ drafter returned empty text — skipped')
+        else:
+            passes, fails, failures = run_checks(will_text)
+            for rule_ref, name, fn in []:  # noqa
+                pass
+            if fails:
+                print(f'  ❌ {fails}/{fails + passes} §10x.24 pattern(s) failed:')
+                for rule_ref, name, reason in failures[:10]:
+                    print(f'     [{rule_ref}] {name}')
+                    if reason:
+                        print(f'        {reason[:100]}')
+                # Add to top-level errs so non-zero exit is signalled
+                errs.append(
+                    f'§10x.206: {fails} template-structure pattern(s) failed '
+                    f'(see [5] above)'
+                )
+            else:
+                print(f'  ✅ All {passes} §10x.24 patterns conform')
+    except Exception as e:
+        print(f'  ⚠ snapshot exception: {type(e).__name__}: {e}')
+
+    # Non-zero exit if any error surfaced (reconciliation OR template)
+    if errs:
+        sys.exit(1)

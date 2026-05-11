@@ -1,11 +1,33 @@
 """Verbatim Alan & Tan sample will text — PHEK YI TING DRAFT.
 
+CANONICAL FORMAT — Alan & Tan firm template (Sample #1).
+Source-of-truth file referenced in CLAUDE.md §10x.24 + §10x.25 + §10x.206.
+
+Verified against:
+  - PHEK YI TING sample (this file — sister beneficiaries, joint property)
+  - KOID BENG SUN sample (documents/sample_will_koid.py — full asset variety:
+    SG+MY banks, sole + joint properties, strata + landed, insurance combined,
+    sister-in-law executor with substitute, wife residuary with survivor cascade)
+
+Last updated: 2026-05-12 (template-conformance shipping — commit 53ebc33)
+
 Used by the admin Will Format Preview to show what the firm's standard format
 looks like when rendered through the current PDF generator. Compared
 side-by-side against the original sample PDF to identify and fix any format
 drift before AI uses the same templates for real wills.
 
 Source: /Users/gan/Downloads/PHEK YI TING DRAFT The Last Will and Testament 2 (1).pdf
+
+------------------------------------------------------------------------------
+DO NOT add patterns that don't appear in BOTH samples without user confirmation.
+The snapshot test (tests/will_gen/test_template_structure.py) catches any
+drafter drift from the patterns codified in CLAUDE.md §10x.24 + §10x.206.
+------------------------------------------------------------------------------
+
+Note: this sample uses "I hereby revoke" (with "hereby"), whereas KOID's sample
+uses "I revoke" (without). The drafter emits the no-"hereby" form per current
+firm convention. PHEK is preserved verbatim for historical comparison; the
+drift is intentional and predates the KOID-format ship.
 """
 
 # Each clause is rendered as the AI would output it. The PDF generator handles
