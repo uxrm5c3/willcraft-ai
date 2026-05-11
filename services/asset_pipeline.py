@@ -651,6 +651,9 @@ def group_documents(client_id: str) -> List[DocGroup]:
             'content_hash': getattr(d, 'content_hash', None),
             'lot': digits(ex.get('lot_number') or ''),
             'title': digits(ex.get('title_number') or ''),
+            # 🔥 §10x.217 — raw title preserved for strata master-prefix
+            # comparisons (digits-only loses the '/' separator).
+            'title_raw': (ex.get('title_number') or '').strip(),
             # §10x.165 — union of current + historical identifiers.
             # Used for cross-conversion grouping ONLY (not displayed).
             'title_union': {digits(ex.get('title_number') or '')} | hist_title_digits,
@@ -709,13 +712,18 @@ def group_documents(client_id: str) -> List[DocGroup]:
                 if (a['is_strata'] or b['is_strata']) and a['title'] and b['title'] \
                    and a['title'] != b['title']:
                     # 🔥 §10x.217 — exception to the exception: when one
-                    # title is the MASTER prefix of the other strata title
-                    # (digit-strip), AND both docs share the same unit
-                    # address, they're the SAME physical unit at different
-                    # OCR granularities (master-only Geran vs strata
-                    # sub-parcel). Merge.
-                    a_master = a['title'].split('/', 1)[0] if '/' in a['title'] else a['title']
-                    b_master = b['title'].split('/', 1)[0] if '/' in b['title'] else b['title']
+                    # title is the MASTER prefix of the other strata title,
+                    # AND both docs share the same unit address, they're
+                    # the SAME physical unit at different OCR granularities
+                    # (master-only Geran vs strata sub-parcel). Merge.
+                    # Use title_raw (preserves '/') to extract master prefix.
+                    def _master(t_raw, t_digits):
+                        # If raw has slash → master is digits before slash.
+                        if '/' in (t_raw or ''):
+                            return digits(t_raw.split('/', 1)[0])
+                        return t_digits
+                    a_master = _master(a.get('title_raw') or '', a['title'])
+                    b_master = _master(b.get('title_raw') or '', b['title'])
                     same_master = (a_master and b_master and a_master == b_master)
                     addrs_match = (
                         a['addr'] and b['addr']
