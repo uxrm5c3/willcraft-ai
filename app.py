@@ -13341,10 +13341,19 @@ def _step2_add_executor(will, person, name, role):
     role_l_local = (role or '').lower()
     escaped_role = re.escape(role_l_local)
     role_rx_local = escaped_role.replace(r'\-', r'[\s\-]+')
+    # Pattern B: "my executor my <role>"  (raw forward text style)
     is_explicit = bool(role_rx_local) and bool(re.search(
         rf'\bmy\s+executor[^\.\n]{{0,60}}my\s+{role_rx_local}',
         text_l_local))
-    # Also accept name in close proximity to "executor" (Pattern A)
+    # Pattern C: "<role> as executor" / "his <role> as executor"
+    # (AI-summary paraphrase style: "appoint his sister-in-law as executor")
+    if not is_explicit and role_rx_local:
+        if re.search(
+            rf'\b(?:my\s+|his\s+|her\s+)?{role_rx_local}[^\.\n]{{0,40}}'
+            rf'\bas\s+(?:my\s+|his\s+|her\s+)?executor',
+            text_l_local):
+            is_explicit = True
+    # Pattern A: name in close proximity to "executor"
     if not is_explicit and name and name.lower() in text_l_local:
         ni = text_l_local.find(name.lower())
         ki = text_l_local.find('executor')
