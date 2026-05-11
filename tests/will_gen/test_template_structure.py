@@ -57,7 +57,12 @@ def generate_will_for_client(client_id: str) -> str:
     try:
         from app import app, db, Will  # noqa: F401
         from app import _refresh_wizard_session_from_db, build_will_data
-        from ai.drafter import draft_will_mock
+        # Use the PRODUCTION drafter path (draft_will, NOT draft_will_mock).
+        # `draft_will()` calls `documents/template_filler.fill_will()` which
+        # is the deterministic template-fill path the wizard's Generate
+        # button uses. `draft_will_mock` is a legacy code path with
+        # different clause shape and would not exercise the locked format.
+        from ai.drafter import draft_will
     except ImportError as e:
         print(f'❌ Cannot import drafter ({e}). Run inside the willcraft-web '
               'container or with the repo root on sys.path.')
@@ -83,7 +88,7 @@ def generate_will_for_client(client_id: str) -> str:
             try:
                 _refresh_wizard_session_from_db()
                 will_data = build_will_data()
-                return draft_will_mock(will_data)
+                return draft_will(will_data)
             except Exception as e:
                 print(f'❌ Drafter raised: {type(e).__name__}: {e}')
                 import traceback

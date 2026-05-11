@@ -331,9 +331,12 @@ def check_card_repeating(client_id: str) -> Tuple[bool, str]:
 
 
 def run_will_generation(client_id: str) -> str:
-    """Generate will via draft_will_mock; return text or '' on error."""
+    """Generate will via the PRODUCTION drafter (draft_will → template_filler).
+    Returns the will text or '' on error. Uses the same code path the wizard's
+    Generate button invokes — NOT the legacy draft_will_mock which has
+    drifted clause shape and would not exercise §10x.24 canonical patterns."""
     from app import _refresh_wizard_session_from_db, build_will_data
-    from ai.drafter import draft_will_mock
+    from ai.drafter import draft_will
     # Per §10x.120 — accept any active will status, not just 'draft'.
     ACTIVE_STATUSES = ('draft', 'generated', 'pending_approval', 'approved')
     w = (Will.query.filter_by(client_id=client_id)
@@ -350,7 +353,7 @@ def run_will_generation(client_id: str) -> str:
         try:
             _refresh_wizard_session_from_db()
             will_data = build_will_data()
-            return draft_will_mock(will_data)
+            return draft_will(will_data)
         except Exception as e:
             return f'__ERROR__ {e}'
 
