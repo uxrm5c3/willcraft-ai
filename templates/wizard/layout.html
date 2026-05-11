@@ -403,32 +403,78 @@
 </div>
 <script>
 (function () {
+    // 🔥 §10x.146 — Toast was re-firing on every 6s poll because the
+    // baseline `lastIdsKey` was built from `window._personRegistry`
+    // (server-side `persons` template var, indexed by Person.id) but
+    // each poll fetches `/api/chat/{cid}/history` whose `identities`
+    // list can have DIFFERENT id shapes (or empty ids). Mismatched
+    // signatures → key !== lastIdsKey on every poll → toast spam even
+    // after Refresh.
+    //
+    // Fix: compare on a stable signature derived from the SAME source.
+    // Run an initial baseline poll BEFORE arming the diff check, and
+    // use full_name+relationship as the signature so it's invariant
+    // to id format. After dismissing the toast, suppress for 60s so
+    // late-arriving polls don't immediately re-pop.
     const CLIENT_ID = "{{ session.client_id }}";
-    let lastIdsCount = (window._personRegistry || []).length;
-    let lastIdsKey = (window._personRegistry || []).map(p => (p.id || p.full_name)).sort().join('|');
-    setInterval(async function () {
+    let lastIdsKey = null;     // null = baseline not yet captured
+    let lastIdsCount = 0;
+    let suppressUntil = 0;     // unix ms; suppress toast until this time
+
+    function sigOf(persons) {
+        // Stable signature: lowercased "name|role" sorted. Doesn't
+        // depend on which id format the source uses.
+        return (persons || [])
+            .map(p => ((p.full_name || p.name || '') + '|' +
+                       (p.relationship || p.role || '')).toLowerCase().trim())
+            .filter(s => s !== '|')
+            .sort()
+            .join(';');
+    }
+
+    async function poll() {
         if (document.visibilityState !== 'visible') return;
         try {
             const r = await fetch(`/api/chat/${CLIENT_ID}/history`);
             const d = await r.json();
             if (!d.ok) return;
             const ids = (d.will && d.will.identities) || [];
-            const key = ids.map(p => p.id).sort().join('|');
-            if (key !== lastIdsKey) {
-                const added = ids.length - lastIdsCount;
-                const t = document.getElementById('wizard-chat-toast');
-                const body = document.getElementById('wizard-toast-body');
-                if (added > 0) {
-                    body.textContent = `Chat added ${added} new ident${added > 1 ? 'ities' : 'ity'}: ${ids.slice(-added).map(p => p.full_name + ' (' + (p.relationship || '?') + ')').join(', ')}. Refresh to see.`;
-                } else {
-                    body.textContent = `Chat updated identities. Refresh to see latest.`;
-                }
-                t.classList.remove('hidden');
-                lastIdsCount = ids.length;
+            const key = sigOf(ids);
+            // First poll: just capture baseline; never show toast on
+            // initial render — the page already shows current state.
+            if (lastIdsKey === null) {
                 lastIdsKey = key;
+                lastIdsCount = ids.length;
+                return;
             }
+            if (key === lastIdsKey) return;     // no change
+            if (Date.now() < suppressUntil) {
+                lastIdsKey = key; lastIdsCount = ids.length;
+                return;          // user just dismissed — refresh baseline silently
+            }
+            const added = ids.length - lastIdsCount;
+            const t = document.getElementById('wizard-chat-toast');
+            const body = document.getElementById('wizard-toast-body');
+            if (added > 0) {
+                body.textContent = `Chat added ${added} new ident${added > 1 ? 'ities' : 'ity'}: ${ids.slice(-added).map(p => p.full_name + ' (' + (p.relationship || '?') + ')').join(', ')}. Refresh to see.`;
+            } else {
+                body.textContent = `Chat updated identities. Refresh to see latest.`;
+            }
+            t.classList.remove('hidden');
+            lastIdsKey = key;
+            lastIdsCount = ids.length;
         } catch (e) { /* silent */ }
-    }, 6000);
+    }
+
+    // Wire Dismiss to also suppress for 60s so the same change doesn't
+    // immediately re-trigger on the next poll.
+    document.addEventListener('click', function(ev) {
+        if (ev.target.closest('#wizard-chat-toast button:nth-child(2)')) {
+            suppressUntil = Date.now() + 60_000;
+        }
+    });
+
+    setInterval(poll, 6000);
 })();
 </script>
 {% endif %}
