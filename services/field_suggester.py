@@ -360,13 +360,33 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
                    f"owners={c['owners']!r}\n")
     prompt += (
         f"\nWhich doc index is MOST LIKELY the official title document "
-        f"for this property? Consider: address keywords (even if OCR is "
-        f"wrong), owner names, building name, area. Even if address "
-        f"looks completely wrong, the OWNER name or BUILDING NAME tokens "
-        f"can give it away.\n\n"
+        f"for this property?\n\n"
+        f"🔥 §10x.156 CRITICAL — addresses on legal forms are OFTEN a "
+        f"PARTY's residence, NOT the subject property:\n"
+        f"  • SPA: 'address' shown is usually the PURCHASER's residence "
+        f"(can be in a different city, even Singapore). The subject "
+        f"property is described in the FIRST SCHEDULE.\n"
+        f"  • Charge / Loan agreement (Borang 16A): 'address' is "
+        f"typically the CHARGOR's residence. The subject property is in "
+        f"the SECURITY / CHARGED LAND schedule.\n"
+        f"  • Cukai Tanah: address is the bill-to mailing address; the "
+        f"property is identified by Lot + Mukim.\n"
+        f"  → DO NOT reject a doc just because its 'address' field "
+        f"differs from the will's property address. Use mukim, lot No., "
+        f"title No., and OWNER NAME as primary signals.\n\n"
+        f"🔥 §10x.157 — OCR FIELD-SWAP awareness: vision regularly "
+        f"swaps title and lot fields on Charge / Loan / SPA forms "
+        f"because multiple numeric IDs (charge account No., title No., "
+        f"lot No.) are printed close together. A 6-7-digit value in the "
+        f"'lot' field MAY actually be the Geran/title No., and vice "
+        f"versa. Consider both possibilities when scoring.\n\n"
+        f"🔥 §10x.152h — REJECT bogus values: 'Folio N' / 'Vol N' / "
+        f"'(unreadable)' / 'Page N' are NOT valid Malaysian NLC titles. "
+        f"If the matching doc's title field has any such value, return "
+        f"best_doc_index=null.\n\n"
         f"Respond with ONLY a JSON object: "
         f'{{"best_doc_index": <int>, "confidence": "high"|"medium"|"low", '
-        f'"reason": "<one short sentence>"}}\n'
+        f'"reason": "<one short sentence — explain WHICH signal won>"}}\n'
         f"If NO doc plausibly matches, respond "
         f'{{"best_doc_index": null, "confidence": "low", '
         f'"reason": "no match"}}.\n'
