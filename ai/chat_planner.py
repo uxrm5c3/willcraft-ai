@@ -1432,9 +1432,14 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
                             first_ben = (bens[0].get('name') or '').strip()
                             first_share = str(bens[0].get('share_of_testator')
                                                 or bens[0].get('share') or '').strip()
+                        # 🔥 §10x.210 — JSON footer field names drift between
+                        # prompt revisions. Accept BOTH legacy ('account_number',
+                        # 'bank_name') AND newer/Claude-natural variants
+                        # ('account', 'institution'). Empty account_number broke
+                        # bank L1 dedup → infinite duplicate gifts (s5=67 bug).
                         out.append({
-                            'bank_name':       (b.get('institution') or '').strip()[:80],
-                            'account_number':  (b.get('account_number') or '').strip()[:40],
+                            'bank_name':       ((b.get('institution') or b.get('bank_name') or '').strip())[:80],
+                            'account_number':  ((b.get('account_number') or b.get('account') or '').strip())[:40],
                             'country':         (b.get('country') or '').strip()[:40],
                             'account_type':    (b.get('account_type') or '').strip()[:40],
                             'beneficiary':     first_ben,
@@ -1563,9 +1568,12 @@ def _extract_ai_summary_insurance(client_id: str) -> List[Dict[str, Any]]:
                             first_ben = (bens[0].get('name') or '').strip()
                             first_share = str(bens[0].get('share_of_testator')
                                                 or bens[0].get('share') or '').strip()
+                        # 🔥 §10x.210 — accept legacy + newer field names per
+                        # banks fix above (insurer/insurance_company, policy/
+                        # policy_number/account).
                         out.append({
-                            'insurer':       (i.get('insurer') or '').strip()[:80] or 'Insurance Policy',
-                            'policy_number': (i.get('policy_number') or '').strip()[:60],
+                            'insurer':       ((i.get('insurer') or i.get('insurance_company') or i.get('company') or '').strip())[:80] or 'Insurance Policy',
+                            'policy_number': ((i.get('policy_number') or i.get('policy') or i.get('account') or '').strip())[:60],
                             'beneficiary':       first_ben,
                             'beneficiary_share': first_share,
                             'beneficiaries':   [

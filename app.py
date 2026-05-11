@@ -10128,12 +10128,23 @@ def _try_save_bank_layered_gift(client_id, user_text):
 
     # Layer 1
     if low.startswith('bank_l1'):
+        # 🔥 §10x.210 — also dedup by AI Summary INDEX (`_ai_summary_bank_idx`)
+        # so even when account_number is missing/empty (extractor field-name
+        # drift), repeated clicks don't keep appending new gifts. Caps at
+        # len(ai_banks) total bank gifts.
+        saved_idx_set = set()
+        for g in gifts:
+            if isinstance(g, dict) and g.get('kind') == 'bank':
+                if isinstance(g.get('_ai_summary_bank_idx'), int):
+                    saved_idx_set.add(g['_ai_summary_bank_idx'])
         # Find first AI bank with no saved entry yet
         target = None
         target_idx = -1
         for i, b in enumerate(ai_banks):
+            if i in saved_idx_set:
+                continue
             ak = re.sub(r'\W+', '', b.get('account_number') or '')
-            if ak in saved_bank_by_acct:
+            if ak and ak in saved_bank_by_acct:
                 continue
             target = b; target_idx = i; break
         if not target:
@@ -10325,10 +10336,19 @@ def _try_save_insurance_layered_gift(client_id, user_text):
         if pn: saved_ins_by_pol[pn] = g
 
     if low.startswith('insurance_l1'):
+        # 🔥 §10x.210 — dedup by AI Summary INDEX as fallback (same as banks).
+        saved_idx_set = set()
+        for g in gifts:
+            if isinstance(g, dict) and g.get('kind') == 'insurance':
+                if isinstance(g.get('_ai_summary_insurance_idx'), int):
+                    saved_idx_set.add(g['_ai_summary_insurance_idx'])
         target = None; target_idx = -1
         for i, ins in enumerate(ai_ins):
+            if i in saved_idx_set:
+                continue
             pn = re.sub(r'\W+', '', ins.get('policy_number') or '')
-            if pn in saved_ins_by_pol: continue
+            if pn and pn in saved_ins_by_pol:
+                continue
             target = ins; target_idx = i; break
         if not target:
             return None
