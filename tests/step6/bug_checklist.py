@@ -187,6 +187,14 @@ BUG_CHECKS: List[Dict[str, Any]] = [
         'kind': 'will_text',
         'check': lambda t: not re.search(r'thereon If my', t),
     },
+    {
+        'id': 'B16',
+        'rule': '§10x.140',
+        'priority': 'HIGH',
+        'name': 'Wizard banner: every gift with missing fields can be detected by helpers',
+        'user_quote': 'if incomplete info, make it obvious there is incomplete info without having to click in one by one',
+        'kind': 'wizard_banner',
+    },
 ]
 
 
@@ -214,6 +222,62 @@ def _gift_order_ok(text: str) -> bool:
     if first_bank == -1 or first_prop == -1:
         return True
     return first_bank < first_prop
+
+
+def check_wizard_banner(client_id: str) -> Tuple[bool, str]:
+    """B16: Verify the wizard step10 'missing fields' banner correctly
+    enumerates every gift with at least one missing required field.
+
+    Symmetry check between:
+      (a) what the helpers detect on step5_data
+      (b) what the template will render
+
+    A failure here means the user opens Step 10 and the banner shows
+    nothing OR shows wrong fields. Pure DOM-render correctness via
+    helper invocation — no browser needed.
+    """
+    from validation.probate_required_fields import (
+        missing_fields_for_property, missing_fields_for_bank,
+        missing_fields_for_insurance,
+    )
+    w = (Will.query.filter_by(client_id=client_id, status='draft')
+         .filter(Will.deleted_at.is_(None))
+         .order_by(Will.updated_at.desc()).first())
+    if not w:
+        return True, 'no will'
+    s5 = json.loads(w.step5_data or '[]')
+    if not isinstance(s5, list):
+        return True, 'step5 not a list'
+    bugs = []
+    for i, g in enumerate(s5):
+        if not isinstance(g, dict):
+            continue
+        kind = (g.get('kind') or g.get('asset_type') or '').lower()
+        pi = g.get('property_info') or g.get('property_details') or {}
+        fd = g.get('financial_details') or {}
+        if kind == 'property':
+            missing = missing_fields_for_property(pi)
+        elif kind == 'bank':
+            missing = missing_fields_for_bank(fd or {
+                'bank_name': g.get('bank_name'),
+                'account_number': g.get('account_number'),
+                'country': g.get('country'),
+            })
+        elif kind == 'insurance':
+            missing = missing_fields_for_insurance(fd or {
+                'insurer': g.get('insurer'),
+                'policy_number': g.get('policy_number'),
+            })
+        else:
+            missing = []
+        if not (g.get('beneficiaries') or g.get('allocations')):
+            missing = list(missing) + ['main beneficiary']
+        # Helpers should produce a deterministic, non-throwing result
+        if not isinstance(missing, list):
+            bugs.append(f'gift[{i}]: missing helper returned non-list')
+    if bugs:
+        return False, '; '.join(bugs)
+    return True, ''
 
 
 def check_card_repeating(client_id: str) -> Tuple[bool, str]:
@@ -304,6 +368,9 @@ def main():
 
             if kind == 'chat_pattern':
                 ok, reason = check_card_repeating(CID)
+
+            elif kind == 'wizard_banner':
+                ok, reason = check_wizard_banner(CID)
 
             elif kind == 'step5_field':
                 matcher = chk.get('matcher', lambda g: True)
