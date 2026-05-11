@@ -11181,6 +11181,29 @@ def _try_save_residuary_substitute(client_id: str, user_text: str):
             for s in sub_list:
                 s['share'] = f'1/{n}' if n > 1 else '1/1'
 
+    # 🔥 §10x.175 — filter MAIN beneficiary out of substitute list.
+    # Wife (or any main beneficiary) can't be substitute for herself.
+    # Real KOID failure: substitute_specific was saved as
+    # [Lim Bee Yan 1/3, Joshua 1/3, Esther 1/3] because the chat
+    # handler accepted "all 3 equal" without checking. Now: filter
+    # main_names out and re-normalise shares to 1/N.
+    if sub_list:
+        _main_names_lc = {(n or '').lower().strip() for n in (
+            (b.get('name') or b.get('full_name'))
+            for b in (s6.get('beneficiaries') or [])
+        ) if n}
+        sub_list = [s for s in sub_list
+                    if (s.get('name') or '').lower().strip() not in _main_names_lc]
+        # Re-normalise equal shares if any was 'equal' or fractional with N
+        # that no longer matches list length
+        if sub_list and len(sub_list) >= 1:
+            shares_now = [s.get('share', '') for s in sub_list]
+            # If shares look like 1/N or all equal, re-divide
+            if all(re.match(r'^1/\d+$', sh or '') for sh in shares_now) \
+               and any(sh != f'1/{len(sub_list)}' for sh in shares_now):
+                for s in sub_list:
+                    s['share'] = '1/1' if len(sub_list) == 1 else f'1/{len(sub_list)}'
+
     # Persist + stamp residuary_confirmed (Layer 2 + Layer 3 done)
     s6['substitute_mode'] = sub_mode or 'none'
     s6['substitute_specific'] = sub_list if sub_list else None

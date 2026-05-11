@@ -475,8 +475,19 @@
             <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Executors</h4>
             <div class="space-y-3 mb-4">
                 {% for exec in executors %}
+                {# 🔥 §10x.175 — derive role from is_substitute when role is
+                   None/empty. Old code defaulted role='Primary' which
+                   caused the substitute executor to display as Primary
+                   (e.g. KOID had Joshua tagged is_substitute=True but
+                   role=None — Step 10 showed both LIM LAY CHENG and
+                   Joshua as Primary). #}
+                {% set _exec_role = exec.get('role')
+                                    or ('Substitute' if exec.get('is_substitute') else 'Primary') %}
+                {% set _role_classes = 'bg-blue-100 text-blue-700' if _exec_role == 'Primary'
+                                       else ('bg-amber-100 text-amber-700' if _exec_role == 'Substitute'
+                                       else 'bg-gray-100 text-gray-600') %}
                 <div class="flex items-start gap-3 text-sm">
-                    <span class="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs font-medium rounded">{{ exec.get('role', 'Primary') }}</span>
+                    <span class="px-2 py-0.5 {{ _role_classes }} text-xs font-medium rounded">{{ _exec_role }}</span>
                     <div>
                         <p class="font-medium text-gray-900">{{ exec.get('full_name', '-') }}</p>
                         <p class="text-gray-500">{{ exec.get('nric_passport', '-') }} &middot; {{ exec.get('relationship', '-') }}</p>
@@ -688,28 +699,72 @@
             <a href="/wizard/step/7" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
+            {# 🔥 §10x.175 — Residuary IS COMPULSORY. The Step 7 save handler
+               wrote to `residuary_beneficiary_name` + `substitute_specific`
+               (legacy chat-side schema) but NOT the canonical
+               `main_beneficiaries` + `substitute_groups`. Summary template
+               must read BOTH shapes so it surfaces residuary data even when
+               only the legacy fields are populated.
+            #}
             {% set residuary = will_data.get('residuary', {}) %}
             {% set main_bens = residuary.get('main_beneficiaries', []) %}
+            {# Fall back to legacy `beneficiaries` (chat-side canonical list) #}
+            {% if not main_bens and residuary.get('beneficiaries') %}
+                {% set main_bens = residuary.get('beneficiaries') %}
+            {% endif %}
+            {# Fall back to single residuary_beneficiary_name (legacy) #}
+            {% if not main_bens and residuary.get('residuary_beneficiary_name') %}
+                {% set main_bens = [{
+                    'beneficiary_name': residuary.get('residuary_beneficiary_name'),
+                    'name': residuary.get('residuary_beneficiary_name'),
+                    'share': '1/1',
+                }] %}
+            {% endif %}
+            {# Same for substitutes #}
+            {% set sub_groups = residuary.get('substitute_groups', []) %}
+            {% if not sub_groups and residuary.get('substitute_specific') %}
+                {# Filter wife (or any main beneficiary) out of substitute list. #}
+                {% set _main_names_lc = main_bens|map(attribute='beneficiary_name')|select|list +
+                                          main_bens|map(attribute='name')|select|list %}
+                {% set _main_names_lc = _main_names_lc|map('lower')|list %}
+                {% set filtered_subs = [] %}
+                {% for s in residuary.get('substitute_specific') %}
+                    {% set _nm = (s.get('beneficiary_name') or s.get('name') or '').lower() %}
+                    {% if _nm and _nm not in _main_names_lc %}
+                        {% set _ = filtered_subs.append({
+                            'beneficiary_name': s.get('beneficiary_name') or s.get('name'),
+                            'share': s.get('share'),
+                        }) %}
+                    {% endif %}
+                {% endfor %}
+                {% if filtered_subs %}
+                    {% set sub_groups = [filtered_subs] %}
+                {% endif %}
+            {% endif %}
+
             {% if main_bens %}
             <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Main Beneficiaries</h4>
             <div class="space-y-1 mb-4">
                 {% for ben in main_bens %}
                 <div class="text-sm flex justify-between">
-                    <span class="font-medium text-gray-900">{{ ben.get('beneficiary_name', '-') }}</span>
-                    <span class="text-gray-600">{{ ben.get('share', '-')|to_fraction }}</span>
+                    <span class="font-medium text-gray-900">{{ ben.get('beneficiary_name') or ben.get('name') or '-' }}</span>
+                    <span class="text-gray-600">{{ (ben.get('share') or '-')|to_fraction }}</span>
                 </div>
                 {% endfor %}
             </div>
-            {% set sub_groups = residuary.get('substitute_groups', []) %}
             <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 mt-3">Substitute Beneficiaries</h4>
             {% if sub_groups %}
             {% for group in sub_groups %}
             <div class="mb-2">
+                {% if sub_groups|length > 1 %}
                 <p class="text-xs text-gray-400 mb-1">↳ Group {{ loop.index }}:</p>
+                {% else %}
+                <p class="text-xs text-gray-400 mb-1">↳ If main beneficiary predeceases:</p>
+                {% endif %}
                 {% for sub in group %}
                 <div class="text-sm flex justify-between ml-5">
-                    <span class="text-gray-900">{{ sub.get('beneficiary_name', '-') }}</span>
-                    <span class="text-gray-600">{{ sub.get('share', '-')|to_fraction }}</span>
+                    <span class="text-gray-900">{{ sub.get('beneficiary_name') or sub.get('name') or '-' }}</span>
+                    <span class="text-gray-600">{{ (sub.get('share') or '-')|to_fraction }}</span>
                 </div>
                 {% endfor %}
             </div>
@@ -721,7 +776,7 @@
             <p class="text-sm text-gray-500 mt-3"><strong>Notes:</strong> {{ residuary.get('additional_notes') }}</p>
             {% endif %}
             {% else %}
-            <p class="text-sm text-gray-400 italic">No data entered yet.</p>
+            <p class="text-sm text-gray-400 italic">⚠️ <strong class="text-red-600">Residuary Estate is required.</strong> <a href="/wizard/step/7" class="text-primary-600 hover:text-primary-800 underline">Add residuary beneficiary in Step 7</a></p>
             {% endif %}
         </div>
     </div>
