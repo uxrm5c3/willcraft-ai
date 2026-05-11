@@ -64,11 +64,16 @@ def generate_will_for_client(client_id: str) -> str:
         return ''
 
     with app.app_context():
-        w = (Will.query.filter_by(client_id=client_id, status='draft')
+        # Per §10x.120 — accept ANY active status, not just 'draft'. The
+        # KOID fixture is post-approval; the snapshot test must still run.
+        ACTIVE_STATUSES = ('draft', 'generated', 'pending_approval', 'approved')
+        w = (Will.query.filter_by(client_id=client_id)
+             .filter(Will.status.in_(ACTIVE_STATUSES))
              .filter(Will.deleted_at.is_(None))
              .order_by(Will.updated_at.desc()).first())
         if not w:
-            print(f'❌ No draft will found for client {client_id}')
+            print(f'❌ No active will found for client {client_id} '
+                  f'(searched {ACTIVE_STATUSES})')
             return ''
         with app.test_request_context('/'):
             from flask import session

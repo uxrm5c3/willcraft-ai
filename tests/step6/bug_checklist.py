@@ -248,7 +248,9 @@ def check_wizard_banner(client_id: str) -> Tuple[bool, str]:
         missing_fields_for_property, missing_fields_for_bank,
         missing_fields_for_insurance,
     )
-    w = (Will.query.filter_by(client_id=client_id, status='draft')
+    _ACTIVE = ('draft', 'generated', 'pending_approval', 'approved')
+    w = (Will.query.filter_by(client_id=client_id)
+         .filter(Will.status.in_(_ACTIVE))
          .filter(Will.deleted_at.is_(None))
          .order_by(Will.updated_at.desc()).first())
     if not w:
@@ -332,7 +334,10 @@ def run_will_generation(client_id: str) -> str:
     """Generate will via draft_will_mock; return text or '' on error."""
     from app import _refresh_wizard_session_from_db, build_will_data
     from ai.drafter import draft_will_mock
-    w = (Will.query.filter_by(client_id=client_id, status='draft')
+    # Per §10x.120 — accept any active will status, not just 'draft'.
+    ACTIVE_STATUSES = ('draft', 'generated', 'pending_approval', 'approved')
+    w = (Will.query.filter_by(client_id=client_id)
+         .filter(Will.status.in_(ACTIVE_STATUSES))
          .filter(Will.deleted_at.is_(None))
          .order_by(Will.updated_at.desc()).first())
     if not w:
@@ -359,11 +364,13 @@ def main():
     passes = 0
 
     with app.app_context():
-        w = (Will.query.filter_by(client_id=CID, status='draft')
+        ACTIVE_STATUSES = ('draft', 'generated', 'pending_approval', 'approved')
+        w = (Will.query.filter_by(client_id=CID)
+             .filter(Will.status.in_(ACTIVE_STATUSES))
              .filter(Will.deleted_at.is_(None))
              .order_by(Will.updated_at.desc()).first())
         if not w:
-            print(f'❌ NO_WILL — client {CID} has no draft will')
+            print(f'❌ NO_WILL — client {CID} has no active will')
             sys.exit(2)
         s4 = json.loads(w.step4_data or '[]')
         s5 = json.loads(w.step5_data or '[]')
