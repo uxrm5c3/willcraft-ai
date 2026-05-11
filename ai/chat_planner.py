@@ -1861,9 +1861,29 @@ def _extract_ai_summary_json_block(content: str) -> List[Dict[str, Any]]:
             f"{b['name']} {b['share_of_testator']}".strip()
             for b in bens_norm
         )
+        # 🔥 §10x.218 — when `label` contains a unit-identifier (Unit B-05-11,
+        # #30-08, etc.) that does NOT appear in `address`, the AI Summary
+        # LLM has stuffed the master-Cukai's OCR'd parcel address into the
+        # unit's address field. Per §10ha title docs don't carry street
+        # addresses for individual units. Prefer the user's natural
+        # description (`label`) as the address in that case — it's what
+        # the user actually wrote in WhatsApp, and downstream code expects
+        # to find the unit identifier in `address` for matching.
+        _lab = (p.get('label') or '').strip()
+        _addr = (p.get('address') or '').strip()
+        _unit_re_pp = re.compile(r"\b[A-Z]?-?\d{1,3}[\-/]\d{1,4}(?:[\-/]\d{1,4})?\b")
+        _lab_units  = set(_unit_re_pp.findall(_lab.upper()))
+        _addr_units = set(_unit_re_pp.findall(_addr.upper()))
+        # Filter out short numeric noise (postcode-only is 5 digits — keep)
+        _lab_units  = {u for u in _lab_units  if len(u.replace('-', '').replace('/', '')) >= 3}
+        _addr_units = {u for u in _addr_units if len(u.replace('-', '').replace('/', '')) >= 3}
+        # If label has unit token(s) not in address → label wins as address
+        _canonical_addr = _addr
+        if _lab and _lab_units and not (_lab_units & _addr_units):
+            _canonical_addr = _lab
         out.append({
-            'name':    (p.get('label') or p.get('address') or '').strip(),
-            'address': (p.get('address') or p.get('label') or '').strip(),
+            'name':    (_lab or _addr).strip(),
+            'address': (_canonical_addr or _lab).strip(),
             'lot':     str(p.get('lot') or '').strip(),
             'title':   str(p.get('title') or '').strip(),
             'mukim':   (p.get('mukim') or '').strip(),
@@ -3177,37 +3197,80 @@ def _ai_props_already_handled(client_id: str,
                 out[sig] = True
 
     # ── Pass 2: signature match (lot/title/address) ─────────────────────
-    handled_sigs = set()
+    # 🔥 §10x.217 — STRATA-AWARE SIG MATCHING
+    # Build per-gift signature tuples (lot, title_master, title_full, addr).
+    # An AI Summary prop is handled when:
+    #   • Landed (no slash in title): lot match OR addr exact match
+    #   • Strata-shaped (slash in title): lot AND master-title BOTH match
+    # This prevents AI[1] C-30-08 (title=564662) being marked handled
+    # by a saved gift[1] (ai_idx=2, title=564662/M1C/30/710) that has
+    # same lot+master-title-prefix but different parcel-level title.
+    gift_sigs = []   # list of {lot, title_master, title_full, addr}
     for g in s5:
         if not isinstance(g, dict):
             continue
         if g.get('kind') == 'property' or g.get('asset_type') == 'property':
             pi = g.get('property_info') or g.get('property_details') or {}
             sig_lot = _digits(pi.get('lot_number') or g.get('lot_number') or '')
-            sig_title = _digits(pi.get('title_number') or g.get('title_number') or '')
+            t_raw = (pi.get('title_number') or g.get('title_number') or '').strip()
+            sig_title_full = _digits(t_raw)
+            # master title = digits before first slash
+            sig_title_master = _digits((t_raw.split('/', 1)[0] if t_raw else ''))
             sig_addr = re.sub(r'[^a-z0-9]+', '',
                               (pi.get('property_address') or
                                g.get('property_address') or
                                g.get('address') or '').lower())[:40]
-            if sig_lot:
-                handled_sigs.add(('lot', sig_lot))
-            if sig_title:
-                handled_sigs.add(('title', sig_title))
-            if sig_addr:
-                handled_sigs.add(('addr', sig_addr))
+            gift_sigs.append({
+                'lot':           sig_lot,
+                'title_full':    sig_title_full,
+                'title_master':  sig_title_master,
+                'addr':          sig_addr,
+                'is_strata':     '/' in t_raw,
+            })
 
     for i, p in enumerate(ai_props):
         if out[i]:
             continue
         plot = _digits(p.get('lot') or '')
-        ptit = _digits(p.get('title') or '')
+        ptit_raw = (p.get('title') or '').strip()
+        ptit_full = _digits(ptit_raw)
+        ptit_master = _digits((ptit_raw.split('/', 1)[0] if ptit_raw else ''))
         paddr = re.sub(r'[^a-z0-9]+', '', (p.get('address') or '').lower())[:40]
-        if plot and ('lot', plot) in handled_sigs:
-            out[i] = True
-        elif ptit and ('title', ptit) in handled_sigs:
-            out[i] = True
-        elif paddr and ('addr', paddr) in handled_sigs:
-            out[i] = True
+        p_is_strata = '/' in ptit_raw
+        for gs in gift_sigs:
+            # STRATA: both lot AND a title token must match
+            if p_is_strata or gs['is_strata']:
+                lot_ok = bool(plot and gs['lot']) and plot == gs['lot']
+                # title match: full == full OR master == master (handles
+                # OCR drift on parcel suffix). But if EITHER side has full
+                # strata title and the OTHER has only master, that's NOT
+                # a match — different parcels in same building (§10hd).
+                title_ok = False
+                if ptit_full and gs['title_full']:
+                    if p_is_strata == gs['is_strata']:
+                        title_ok = (ptit_full == gs['title_full'])
+                    # mismatched strata-ness → different parcel-level
+                if lot_ok and title_ok:
+                    out[i] = True
+                    break
+                # Also handle the case where BOTH have only master-title
+                # (no slash): same building → could still be different
+                # units. Require addr match too.
+                if lot_ok and not p_is_strata and not gs['is_strata']:
+                    if paddr and gs['addr'] and paddr == gs['addr']:
+                        out[i] = True
+                        break
+                continue
+            # LANDED: lot match OR exact addr match
+            if plot and gs['lot'] and plot == gs['lot']:
+                out[i] = True
+                break
+            if ptit_full and gs['title_full'] and ptit_full == gs['title_full']:
+                out[i] = True
+                break
+            if paddr and gs['addr'] and paddr == gs['addr']:
+                out[i] = True
+                break
 
     # ── Pass 3: STRICT classify match against saved gifts ──────────────
     # 🔥 BURN-IN §10x.22 — for synthetic groups (built from saved step5

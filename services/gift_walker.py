@@ -1392,6 +1392,24 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         return out_t
 
     covered_mukims: set = set()
+    # 🔥 §10x.217 — track unit identifiers from covered/saved properties so
+    # prefix-address dedup can refuse false-merges between different strata
+    # units that share a building name. Unit tokens look like:
+    #   C-30-08, B-05-11, A/12/3, #30-08, Unit C-05-01
+    # When an AI Summary prop has a DIFFERENT unit token from every covered
+    # group, the prefix-address rule MUST NOT fire.
+    _UNIT_RE = re.compile(r"\b[A-Z]?-?\d{1,3}[\-/]\d{1,4}(?:[\-/]\d{1,4})?\b")
+
+    def _unit_tokens(*texts):
+        out_u: set = set()
+        for t in texts:
+            for m in _UNIT_RE.findall((t or '').upper()):
+                # Reject pure date-shape tokens (5-digit postcode is fine).
+                if len(m.replace('-', '').replace('/', '')) >= 3:
+                    out_u.add(m.lstrip('#').replace('/', '-'))
+        return out_u
+
+    covered_unit_tokens: set = set()
     for grp in out['property']:
         ex = (grp.get('extracted') or {}) if grp else {}
         ld = _digits_only(_clean_id_value(ex.get('lot_number') or ''))
@@ -1404,10 +1422,23 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         if an:  covered_addr_norms.add(an)
         if mk:  covered_mukims.add(mk)
         covered_tokens.update(_addr_tokens(addr_raw))
+        covered_unit_tokens.update(_unit_tokens(addr_raw, grp.get('name') or ''))
     # Also mark properties already saved to step5_data as covered
     for sig in referenced_lot_addr_sigs:
         if sig[0]: covered_lot_digits.add(sig[0])
         if sig[1]: covered_addr_norms.add(sig[1])
+    # 🔥 §10x.217 — also harvest unit tokens from saved gifts (name + address)
+    for g in gifts or []:
+        if not isinstance(g, dict):
+            continue
+        if g.get('kind') and g.get('kind') != 'property':
+            continue
+        pi = g.get('property_info') or g.get('property_details') or {}
+        covered_unit_tokens.update(_unit_tokens(
+            pi.get('property_address') or '',
+            g.get('name') or '',
+            g.get('description') or '',
+        ))
 
     for ap in ai_props:
         a_lot = _digits_only(ap.get('lot') or '')
@@ -1432,21 +1463,36 @@ def get_pending_gift_documents(client_id: str) -> Dict[str, List[Dict[str, Any]]
         # but plain `in` fails. Without this the same AI Summary slot
         # re-surfaces every walker turn → infinite loop.
         if a_addr:
+            # 🔥 §10x.217 — unit-token disambiguation. Compute the AI prop's
+            # unit token(s) BEFORE falling into address-prefix dedup. If
+            # AI prop has a unit token DIFFERENT from every covered unit
+            # token, the AI prop is a DIFFERENT strata unit and must NOT
+            # be deduped by address-prefix alone. Symptom this prevents:
+            # AI[2] C-05-01 with bare address 'Marina Cove, Johor Bahru'
+            # was prefix-collapsing into saved C-30-08's longer norm sig
+            # → 5 properties → only 4 ever surfaced.
+            a_units = _unit_tokens(a_addr_raw, ap.get('name') or '')
+            a_has_distinct_unit = bool(a_units) and bool(covered_unit_tokens) \
+                and not (a_units & covered_unit_tokens)
             if a_addr in covered_addr_norms:
-                continue
-            # Prefix/substring match: AI sig is a meaningful chunk of a
-            # saved sig (or vice versa). Min-length 20 chars to avoid
-            # short-token collisions.
-            _addr_collision = False
-            if len(a_addr) >= 20:
-                for cov in covered_addr_norms:
-                    if not cov:
-                        continue
-                    if cov.startswith(a_addr) or a_addr.startswith(cov):
-                        _addr_collision = True
-                        break
-            if _addr_collision:
-                continue
+                if a_has_distinct_unit:
+                    pass  # different unit, surface anyway (H3)
+                else:
+                    continue
+            else:
+                # Prefix/substring match: AI sig is a meaningful chunk of a
+                # saved sig (or vice versa). Min-length 20 chars to avoid
+                # short-token collisions.
+                _addr_collision = False
+                if len(a_addr) >= 20 and not a_has_distinct_unit:
+                    for cov in covered_addr_norms:
+                        if not cov:
+                            continue
+                        if cov.startswith(a_addr) or a_addr.startswith(cov):
+                            _addr_collision = True
+                            break
+                if _addr_collision:
+                    continue
         # 🔥 §10x.132 — REMOVED token-overlap dedup entirely.
         # Original §10b intent was to dedup AI props vs image groups
         # when OCR addresses differ from user-typed addresses for the
