@@ -196,13 +196,28 @@ def suggest_financial_field(fd: Dict[str, Any], field: str,
         except Exception:
             return None
 
-        # Direct match (returns dict or None)
-        try:
-            m = match_institution(institution, kind=kind)
-        except Exception:
-            m = None
+        # 🔥 §10x.145 — Wizard rewrites strip `kind=insurance`; gifts come
+        # through here as `bank` even when they're insurance policies.
+        # AIA in bank-only pool fuzzy-matches ANZ Singapore (wrong).
+        # Strategy: try BOTH bank + insurance pools. If only one returns
+        # an EXACT/ALIAS match (high-confidence), use that. If both return
+        # only fuzzy hits, return None rather than risk wrong match.
+        kinds_to_try = [kind] if kind in ('insurance', 'takaful') else [
+            'insurance', 'bank']
+        best = None
+        for k in kinds_to_try:
+            try:
+                m = match_institution(institution, kind=k)
+            except Exception:
+                m = None
+            if m and m.get('confidence') in ('exact', 'alias'):
+                best = m
+                break  # high-confidence match wins
+            if m and best is None:
+                best = m  # fuzzy fallback only if nothing better
 
-        if m and m.get('country'):
+        m = best
+        if m and m.get('country') and m.get('confidence') != 'fuzzy':
             country_label = {'MY': 'Malaysia', 'SG': 'Singapore'}.get(
                 m['country'], m['country'])
             return {'value': country_label,
@@ -328,20 +343,55 @@ def suggest_main_beneficiary(gift: Dict[str, Any],
     JSON for property gifts. Each AI Summary property has its own
     `beneficiaries[]` array — return as a comma-joined "Name share%,
     Name share%" suggestion.
+
+    Match strategies (in order):
+      1. `_ai_summary_idx` field (chat-side schema)
+      2. Address fuzzy match (Step 6-rewritten schema drops the idx)
     """
     if not client_id:
-        return None
-    ai_idx = gift.get('_ai_summary_idx')
-    if ai_idx is None:
         return None
     try:
         from ai.chat_planner import _extract_ai_summary_properties
         ai_props = _extract_ai_summary_properties(client_id) or []
     except Exception:
         return None
-    if not (0 <= int(ai_idx) < len(ai_props)):
+    if not ai_props:
         return None
-    ap = ai_props[int(ai_idx)]
+
+    ap = None
+    # Strategy 1: explicit ai_summary_idx
+    ai_idx = gift.get('_ai_summary_idx')
+    if ai_idx is not None and 0 <= int(ai_idx) < len(ai_props):
+        ap = ai_props[int(ai_idx)]
+
+    # Strategy 2: address fuzzy match
+    if ap is None:
+        pi = gift.get('property_info') or gift.get('property_details') or {}
+        gift_addr = (pi.get('property_address') or
+                     gift.get('address') or '').lower()
+        if not gift_addr:
+            return None
+        # Token overlap
+        SKIP = {'jalan', 'taman', 'bandar', 'condominium', 'unit', 'no',
+                'malaysia', 'singapore', 'johor', 'bahru', 'persiaran',
+                'mukim', 'daerah', 'negeri', 'state', 'block', 'house', 'shop'}
+        gift_tokens = {t for t in re.findall(r'[a-z0-9\-]{3,}', gift_addr)
+                       if t not in SKIP}
+        if not gift_tokens:
+            return None
+        best_score = 0
+        for cand in ai_props:
+            cand_addr = ((cand.get('address') or '') + ' ' +
+                         (cand.get('name') or '')).lower()
+            cand_tokens = {t for t in re.findall(r'[a-z0-9\-]{3,}', cand_addr)
+                           if t not in SKIP}
+            score = len(gift_tokens & cand_tokens)
+            if score > best_score:
+                best_score = score
+                ap = cand
+        if best_score == 0:
+            return None
+
     bens = ap.get('beneficiaries') or []
     if not bens:
         return None
@@ -388,6 +438,18 @@ def suggest_for_gift(gift: Dict[str, Any], field: str,
             return suggest_title_or_lot_from_docs(gift, field, client_id)
         return None
     fd = gift.get('financial_details') or {}
-    if 'insurance' in kind or 'policy' in kind:
+    # 🔥 §10x.145 — Heuristic: account_number starting with a letter or
+    # being unusually long suggests insurance policy. Insurer field
+    # populated also signals insurance. Bank account numbers are
+    # numeric. When in doubt, suggester tries BOTH pools per
+    # suggest_financial_field's new strategy.
+    acct = (fd.get('account_number') or '').strip()
+    looks_like_policy = (
+        bool(acct) and (
+            re.match(r'^[A-Za-z]', acct)  # starts with letter (e.g. L516911049)
+            or len(acct) > 12  # unusually long
+        )
+    )
+    if 'insurance' in kind or 'policy' in kind or fd.get('insurer') or looks_like_policy:
         return suggest_financial_field(fd, field, kind='insurance')
     return suggest_financial_field(fd, field, kind='bank')
