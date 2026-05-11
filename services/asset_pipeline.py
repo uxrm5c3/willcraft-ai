@@ -725,9 +725,18 @@ def group_documents(client_id: str) -> List[DocGroup]:
                     a_master = _master(a.get('title_raw') or '', a['title'])
                     b_master = _master(b.get('title_raw') or '', b['title'])
                     same_master = (a_master and b_master and a_master == b_master)
+                    # Address comparison: strip leading "Unit ", "#", numbers
+                    # and punctuation to find the building-token signature.
+                    def _norm_unit_addr(s):
+                        s2 = (s or '').lower().strip()
+                        s2 = re.sub(r'^(unit\s+|#)', '', s2)
+                        # Drop the unit number itself: "c-30-08," → ""
+                        s2 = re.sub(r'^[a-z]?-?\d+[\-/]\d+(?:[\-/]\d+)?[,\s]*', '', s2)
+                        return s2[:30]
                     addrs_match = (
                         a['addr'] and b['addr']
-                        and a['addr'][:30] == b['addr'][:30]
+                        and _norm_unit_addr(a['addr']) == _norm_unit_addr(b['addr'])
+                        and len(_norm_unit_addr(a['addr'])) >= 10
                     )
                     if same_master and addrs_match:
                         union(a['id'], b['id'])
