@@ -15230,6 +15230,17 @@ def wizard_step_gifts():
         existing_gifts = session.get('step5_gifts', []) or []
         if gi < len(existing_gifts) and isinstance(existing_gifts[gi], dict):
             merged = dict(existing_gifts[gi])
+            # 🔥 §10x.174 — preserve allocations + beneficiaries from
+            # existing entry when form supplies EMPTY. Step 6 form POST
+            # used to wipe allocations=[] when the user hadn't added MB
+            # rows to that gift, which then cascaded to "[BENEFICIARIES
+            # TO BE CONFIRMED]" in the generated will even though Step 10
+            # inline-edit had pre-filled them. Fix: only let form override
+            # allocations / beneficiaries when form actually has values.
+            _form_allocs = form_overlay.get('allocations') or []
+            if not _form_allocs and (merged.get('allocations') or merged.get('beneficiaries')):
+                form_overlay = {k: v for k, v in form_overlay.items()
+                                 if k != 'allocations'}
             # Top-level overlay: form values replace existing
             merged.update(form_overlay)
             # property_details deep-merge: form values replace existing,
@@ -15595,6 +15606,16 @@ def wizard_step_review():
 @app.route('/wizard/generate', methods=['POST'])
 @login_required
 def wizard_generate():
+    # 🔥 §10x.174 — refresh session from DB BEFORE build_will_data so any
+    # inline-edit saves (via /api/wizard/gift-quick-fix) that happened
+    # AFTER the Step 10 page load are reflected. Without this, session
+    # holds stale gifts and the generated will shows
+    # "[BENEFICIARIES TO BE CONFIRMED]" even though the user typed
+    # beneficiaries via the inline-edit banner.
+    try:
+        _refresh_wizard_session_from_db()
+    except Exception:
+        pass
     try:
         will_data = build_will_data()
     except Exception as e:
