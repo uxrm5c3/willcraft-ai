@@ -424,7 +424,26 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
 
     # Same lookup for the in-prompt context block below.
     will_mukim = will_mukim_pre.title() if will_mukim_pre else ''
-    if will_mukim_pre and family_set_pre:
+    # Cross-AssetItem ambiguity check: if MORE THAN ONE AssetItem (in
+    # this client's will) resolves to the same Mukim via geo bridge,
+    # mukim+family-owner alone is insufficient to pick a specific gift.
+    # The canonical matcher (services/asset_pipeline) handles these via
+    # candidate-with-confirm cards in the chat flow. Wizard banner here
+    # falls through to the LLM (which appropriately returns null when
+    # ambiguous) so the field stays blank and the user picks via chat.
+    n_in_same_mukim = 0
+    if will_mukim_pre:
+        try:
+            from services.asset_pipeline import parse_canonical_assets
+            for ai in parse_canonical_assets(client_id):
+                if ai.kind != 'property':
+                    continue
+                m = (ai.fields.get('mukim') or '').lower().strip()
+                if m == will_mukim_pre:
+                    n_in_same_mukim += 1
+        except Exception:
+            n_in_same_mukim = 99   # fail-safe: skip det match on error
+    if (will_mukim_pre and family_set_pre and n_in_same_mukim == 1):
         det_hits = []
         for c in candidates:
             cm = (c.get('mukim') or '').lower().strip()
@@ -444,15 +463,17 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
             if owner_hit:
                 det_hits.append(c)
         if len(det_hits) == 1:
-            # Single deterministic match — use it without paying for LLM
+            # Single deterministic match (sole property in this mukim,
+            # single matching family-owner doc) — pick it without LLM.
             matched = det_hits[0]
             value = (matched.get('title_number') if field == 'title_number'
                      else matched.get('lot_number') or '')
             if value:
                 out = {
                     'value': value,
-                    'source': (f"deterministic match (mukim={will_mukim_pre} "
-                               f"+ family-owner): {matched['category']} doc"),
+                    'source': (f"deterministic match (sole property in "
+                               f"Mukim {will_mukim_pre.title()} + "
+                               f"family-owner): {matched['category']} doc"),
                 }
                 _LLM_MATCH_CACHE[cache_key] = out
                 return out
