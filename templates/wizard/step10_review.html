@@ -171,6 +171,60 @@
                                     {% endif %}
                                 </div>
                                 {% endif %}
+                                {# 🔥 §10x.160 Phase 2 — two-tier surfacing.
+                                   Show CoT reasoning_steps in a collapsible
+                                   <details>, supporting_docs as a separate
+                                   "context only" list, and fields_still_missing
+                                   as a final hint. Renders only when the
+                                   suggester returned the new CoT outputs. #}
+                                {% if _sug and (_sug._reasoning_steps or _sug._supporting_docs or _sug._fields_still_missing) %}
+                                <details class="ml-[110px] pl-2 mt-1">
+                                    <summary class="text-xs text-blue-700 cursor-pointer hover:underline">
+                                        🔍 AI reasoning &amp; supporting evidence
+                                    </summary>
+                                    <div class="mt-1 space-y-1 border-l-2 border-blue-200 pl-2 py-1 bg-blue-50/40 rounded">
+                                        {% if _sug._reasoning_steps %}
+                                        <div class="text-xs text-gray-700">
+                                            <strong class="text-blue-800">Step-by-step reasoning:</strong>
+                                            <ol class="list-decimal ml-4 mt-0.5 space-y-0.5">
+                                                {% for step in _sug._reasoning_steps %}
+                                                <li class="text-xs">{{ step|truncate(220, True) }}</li>
+                                                {% endfor %}
+                                            </ol>
+                                        </div>
+                                        {% endif %}
+                                        {% if _sug._supporting_docs %}
+                                        <div class="text-xs text-gray-700 mt-1">
+                                            <strong class="text-amber-800">📎 Supporting evidence (context only — not authoritative for this field):</strong>
+                                            <ul class="list-disc ml-4 mt-0.5">
+                                                {% for sd in _sug._supporting_docs %}
+                                                <li class="text-xs">
+                                                    Doc <code>[{{ sd.idx }}]</code> at <span class="font-mono">{{ sd.level }}</span> level
+                                                    {% if sd.contributes %}— contributes: {{ sd.contributes|join(', ') }}{% endif %}
+                                                    {% if sd.note %}<br><span class="italic text-gray-600">{{ sd.note|truncate(180, True) }}</span>{% endif %}
+                                                </li>
+                                                {% endfor %}
+                                            </ul>
+                                        </div>
+                                        {% endif %}
+                                        {% if _sug._fields_still_missing %}
+                                        <div class="text-xs text-red-700 mt-1">
+                                            <strong>⚠️ Still missing for probate:</strong> {{ _sug._fields_still_missing|join(', ') }}
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </details>
+                                {% endif %}
+                                {# When suggester returned NO match but it was an honest
+                                   "no doc at the right granularity" — show that explicitly
+                                   so user knows the system tried, didn't guess. #}
+                                {% if _sug is none and not _sv %}
+                                <div class="text-xs text-gray-500 ml-[110px] pl-2 italic">
+                                    🤷 No uploaded doc carries this field at the right
+                                    granularity. Type the value or upload a strata title /
+                                    Geran doc.
+                                </div>
+                                {% endif %}
                             </div>
                             {% else %}
                             <div class="text-xs text-amber-700 italic flex-1">
