@@ -690,7 +690,8 @@ def plan_turn(
         # 🔥 §10x.213 — pass AI Summary residuary suggestion (if any)
         # so the default button reflects the user's stated intent rather
         # than a generic "equal-among-all" guess.
-        _ai_res = _extract_ai_summary_residuary(client_id)
+        _cid_res = (current_will_data or {}).get('client_id') or ''
+        _ai_res = _extract_ai_summary_residuary(_cid_res) if _cid_res else {}
         reply_parts.append(_step7_residuary_question(s4_list, ai_residuary=_ai_res))
         return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
     if (s6.get('substitute_specific') is None
@@ -700,7 +701,8 @@ def plan_turn(
         s4_list = current_will_data.get('step4') or []
         # 🔥 §10x.213 — feed AI Summary's contingent_beneficiaries (if any)
         # as the suggested substitute default.
-        _ai_res = _extract_ai_summary_residuary(client_id)
+        _cid_res2 = (current_will_data or {}).get('client_id') or ''
+        _ai_res = _extract_ai_summary_residuary(_cid_res2) if _cid_res2 else {}
         reply_parts.append(
             _step7_residuary_substitute_question(
                 s6.get('beneficiaries') or [], s4_list,
