@@ -12804,6 +12804,38 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
     if any((' ' + s + ' ') in text_lower for s in _SKIP_TOKENS):
         return None  # user said skip — leave for next turn
 
+    # 🔥 §10x.209 — H3 placeholder fast-path. When the card was rendered
+    # for an H3 placeholder (no IC doc; per §10x.34) the role was already
+    # surfaced ON the card via `_h3_role`. Confirming with bare "yes"
+    # must use that role directly — the LLM deducer might return the
+    # will-role ("Executor") which §10x.30 rejects, and the
+    # outsider-elimination fallback can't match because H3 has no
+    # doc_id/nric to anchor on. Without this fast-path the walker
+    # spins on every H3 card forever.
+    _WILL_ROLES = {'Executor', 'Trustee', 'Guardian', 'Witness',
+                    'Beneficiary'}
+    if target.get('_h3_placeholder') and target.get('_h3_role'):
+        if any((' ' + c + ' ') in text_lower for c in _CONFIRM_TOKENS):
+            _h3_role_raw = (target.get('_h3_role') or '').strip()
+            if _h3_role_raw and _h3_role_raw not in _WILL_ROLES:
+                # Normalize to canonical case via role_registry
+                try:
+                    from services.role_registry import canonical
+                    _h3_role_norm = canonical(_h3_role_raw) or _h3_role_raw
+                except Exception:
+                    _h3_role_norm = _h3_role_raw
+                _h3_chosen = _h3_role_norm
+                # Skip past deducer/outsider-elimination — go straight to
+                # ensure_person at end of function.
+                rel = _h3_chosen
+            else:
+                rel = None
+        else:
+            rel = parse_relationship(user_text)
+    else:
+        # Non-H3 path: parse from user text directly
+        rel = parse_relationship(user_text)
+
     # 🔥 §10x.30 / §10x.21 — Step 1 (Identity) is for FAMILY relations
     # only. Will-roles (Executor / Trustee / Guardian / Witness /
     # Beneficiary) are set in LATER steps. If a deducer (LLM) returns
@@ -12811,9 +12843,6 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
     # via outsider-elimination. Saving "LIM LAY CHENG = Executor" in
     # Step 1 would make her invisible to the family identity registry
     # and corrupt later steps that key off relationship.
-    _WILL_ROLES = {'Executor', 'Trustee', 'Guardian', 'Witness',
-                    'Beneficiary'}
-    rel = parse_relationship(user_text)
     chosen_role = None
     if rel and rel not in _WILL_ROLES:
         chosen_role = rel
