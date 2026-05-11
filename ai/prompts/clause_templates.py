@@ -19,7 +19,7 @@ PREAMBLE_TEMPLATE = """This Will is made by me {testator_name} (MALAYSIA NRIC No
 
 REVOCATION_TEMPLATE = """Revocation
 
-1.  By signing this Will, I hereby revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly."""
+1.  By signing this Will, I revoke all earlier Wills and exclude my movable and immovable assets located in any country in which I have a separate Will made according to the laws of that country before my demise. In the event I do not have a separate Will made according to the laws of a particular country where my assets are located, then those assets shall form part of this Will and shall be distributed accordingly."""
 
 # ============================================================
 # APPOINTMENT OF EXECUTOR(S) (Clause 2) — Alan & Tan inline-substitute pattern
@@ -33,7 +33,7 @@ EXECUTOR_SINGLE_TEMPLATE = """Appointment of Executor(s)
 # Single executor + inline substitute (matches PHEK YI TING sample, clause 2)
 EXECUTOR_SINGLE_WITH_SUBSTITUTE_TEMPLATE = """Appointment of Executor(s)
 
-2.  I hereby appoint my {relationship} {executor_name} (MALAYSIA NRIC No. {nric}) of {address} as the Executor of this Will. In the event that {he_she} is unable or unwilling to act for whatsoever reason, then I appoint my {sub_relationship} {substitute_name} (MALAYSIA NRIC No. {sub_nric}) of {sub_address} to be the Executor of this Will."""
+2.  I hereby appoint my {relationship} {executor_name} (MALAYSIA NRIC No. {nric}) of {address} as the Executor of this Will. In the event that my {relationship} is unwilling or unable to act for whatsoever reason, then I appoint my {sub_relationship} {substitute_name} (MALAYSIA NRIC No. {sub_nric}) of {sub_address} to be the Executor of this Will."""
 
 # Joint executors
 EXECUTOR_JOINT_TEMPLATE = """Appointment of Executor(s)
@@ -71,7 +71,7 @@ GUARDIAN_ALLOWANCE_TEMPLATE = """I direct my Executor to pay to the guardian(s) 
 NON_RESIDUARY_HEADING = """Non-Residuary Gift(s)"""
 
 # Joint bank accounts - give to joint holder(s)
-JOINT_BANK_ACCOUNTS_TEMPLATE = """{clause_num}.  I give the moneys standing to my credit in all my joint bank accounts to the respective joint account holder(s), if more than one in equal shares."""
+JOINT_BANK_ACCOUNTS_TEMPLATE = """{clause_num}.  I give the moneys standing to my credit in all my joint bank accounts to the respective joint account holder(s), if more than one in equal share."""
 
 # Sole bank accounts - give directly to beneficiary with inline substitute
 BANK_ACCOUNTS_DIRECT_TEMPLATE = """{clause_num}.  I give to my {relationship} {beneficiary_name} MALAYSIA NRIC No. {nric} the moneys standing to my credit in all my bank accounts. If my {relationship} does not survive me, then the benefit {he_she} would have received shall be given to {substitute_clause}.
@@ -161,7 +161,7 @@ RESIDUARY_MULTIPLE_TEMPLATE = """{clause_num}.  Unless specifically stated to th
 
 (a) To pay debts including any sums required to secure a discharge of any charge or a withdrawal of any private caveat or lien on any of my immovable properties, funeral and executorship expenses;
 
-(b) To give the residue ('my residuary estate') to {beneficiary_list_text} in equal shares."""
+(b) To give the residue ('my residuary estate') to {beneficiary_list_text} in equal share."""
 
 # ============================================================
 # TESTAMENTARY TRUST

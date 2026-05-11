@@ -94,7 +94,9 @@ def _ben_phrase(name: str, nric: str, nationality: str = 'Malaysian',
     else:
         id_block = f"{(nationality or '').upper()} Identification No. {nric}"
     pref = f"my {with_relationship.lower()} " if with_relationship else ''
-    return f"{pref}{name} ({id_block})"
+    # 🔥 §10x.201 — beneficiary names render UPPERCASE per template
+    # ("LIM BEE YAN" not "Lim Bee Yan").
+    return f"{pref}{(name or '').upper()} ({id_block})"
 
 
 def _format_address_phek(address: str, nationality: str = 'Malaysian') -> str:
@@ -148,11 +150,10 @@ def _format_address_phek(address: str, nationality: str = 'Malaysian') -> str:
         if last.lower() in ms_states:
             parts[-1] = last.upper()
     s = ', '.join(parts)
-    # Append ", MALAYSIA" if nationality is Malaysian and country isn't
-    # already there
-    if (nationality or '').strip().lower() == 'malaysian':
-        if not _re.search(r',\s*MALAYSIA\s*$', s, _re.IGNORECASE):
-            s = s + ', MALAYSIA'
+    # 🔥 §10x.201 — DO NOT append ", MALAYSIA" suffix. Template never
+    # appends it (KOID Sample addresses end at the state name). If the
+    # source data already has it, strip.
+    s = _re.sub(r',\s*MALAYSIA\s*$', '', s, flags=_re.IGNORECASE).strip().rstrip(',')
     return s
 
 
@@ -167,7 +168,7 @@ def _format_gift_property(gift) -> str:
 
 def _allocations_phrase(gift, beneficiaries_index: dict, *,
                          absolutely: bool = False) -> str:
-    """Render the trailing 'unto X (and Y in equal shares)' phrase for a gift.
+    """Render the trailing 'unto X (and Y in equal share)' phrase for a gift.
     🔒 Phek format: gift body comes FIRST, then 'unto <beneficiary>'.
     Returns the 'unto …' suffix WITHOUT a leading space; caller joins with ' '.
     beneficiaries_index maps name → (nric, relationship, nationality).
@@ -197,7 +198,7 @@ def _allocations_phrase(gift, beneficiaries_index: dict, *,
     shares = [str(a.share or '').strip() for a in allocs]
     all_equal = len(set(shares)) == 1
     if all_equal:
-        return f"unto {joined} in equal shares"
+        return f"unto {joined} in equal share"
     return f"unto {joined} in the shares specified herein"
 
 
@@ -230,7 +231,7 @@ def _render_property_clause(clause_num: int, gift, beneficiaries_index: dict) ->
         "I hereby devise and bequeath all my ¼ undivided shares in the
          property known as <ADDRESS> held under Geran No. ..., Lot No. ...,
          Mukim ..., District of ..., State of ... unto my sister X
-         (MALAYSIA NRIC No. ...) and my sister Y (...) in equal shares.
+         (MALAYSIA NRIC No. ...) and my sister Y (...) in equal share.
 
          Unless specifically stated to the contrary in this Will, I direct
          that any sums required to discharge a charge or to withdraw a
@@ -333,7 +334,7 @@ def _inline_property_substitute_phrase(gift, beneficiaries_index: dict) -> str:
         return ("If any of the above-named beneficiaries does not "
                  "survive me, then the benefit which that beneficiary "
                  "would have received shall be given to the surviving "
-                 "beneficiaries in equal shares absolutely.")
+                 "beneficiaries in equal share absolutely.")
 
     # Pattern B: single MB with single substitute
     if len(allocs) == 1 and len(sub_specific) == 1:
@@ -366,7 +367,7 @@ def _render_financial_clause(clause_num: int, gift, beneficiaries_index: dict) -
     """Bank / mutual fund / EPF — Phek format word order:
         "I hereby devise and bequeath the monies in my UOB Saving Account
          No. ... together with all interests/dividends already accrued due
-         or accruing thereon unto my sister X ... in equal shares."
+         or accruing thereon unto my sister X ... in equal share."
 
     🔥 §10x.196 — appends ' absolutely' for single-beneficiary 100% (T-26/T-43)
     """
@@ -503,9 +504,21 @@ def _consolidate_financial_substitute(gifts: list,
         mb_info.get('nationality', 'Malaysian'),
         with_relationship=mb_info.get('relationship', ''))
 
+    # 🔥 §10x.201 — Order substitutes by family-role order (spouse →
+    # son → daughter → others) per template ordering, NOT alphabetical.
+    _role_order = {
+        'wife': 0, 'husband': 0, 'spouse': 0,
+        'son': 1, 'father': 2, 'brother': 3,
+        'daughter': 4, 'mother': 5, 'sister': 6,
+    }
+    def _sub_key(sn_upper):
+        info = beneficiaries_index.get(sn_upper, {})
+        rel = (info.get('relationship') or '').lower()
+        return (_role_order.get(rel, 99), sn_upper)
+    ordered_sub_uppers = sorted(sub_uppers, key=_sub_key)
     # Render substitute phrases
     sub_phrases = []
-    for sn_upper in sub_uppers:
+    for sn_upper in ordered_sub_uppers:
         s_info = beneficiaries_index.get(sn_upper, {})
         # Recover original case
         sn_name = sn_upper.title() if not s_info else None
@@ -612,9 +625,9 @@ def _render_substitute_clause(clause_num: int, ref_clause: int, gift,
     if len(sub_phrases) == 1:
         sub_str = sub_phrases[0]
     elif len(sub_phrases) == 2:
-        sub_str = " and ".join(sub_phrases) + " in equal shares"
+        sub_str = " and ".join(sub_phrases) + " in equal share"
     else:
-        sub_str = ", ".join(sub_phrases[:-1]) + ", and " + sub_phrases[-1] + " in equal shares"
+        sub_str = ", ".join(sub_phrases[:-1]) + ", and " + sub_phrases[-1] + " in equal share"
     he_she = "he/she"   # neutral — not always derivable
     return (f"{clause_num}.  With reference to Clause {ref_clause} above, "
             f"if {main_str} does not survive me, then the benefit "
@@ -633,7 +646,7 @@ def fill_will(will_data) -> str:
     parts: List[str] = []
 
     # ── Title + Preamble ────────────────────────────────────────────────
-    parts.append(TITLE_TEMPLATE.format(testator_name=t.full_name))
+    parts.append(TITLE_TEMPLATE.format(testator_name=(t.full_name or '').upper()))
     parts.append('')
     # 🔥 §10x.134 — match Phek format:
     #   1. Collapse multi-line addresses to single comma-joined line
@@ -643,7 +656,7 @@ def fill_will(will_data) -> str:
     addr = _format_address_phek(t.residential_address,
                                  nationality=t.nationality or 'Malaysian')
     parts.append(PREAMBLE_TEMPLATE.format(
-        testator_name=t.full_name,
+        testator_name=(t.full_name or '').upper(),
         nric=t.nric_passport,
         address=addr,
     ))
@@ -666,25 +679,25 @@ def fill_will(will_data) -> str:
     if len(primary) >= 2:
         e1, e2 = primary[0], primary[1]
         parts.append(EXECUTOR_JOINT_TEMPLATE.format(
-            rel1=e1.relationship.lower(), name1=e1.full_name,
+            rel1=e1.relationship.lower(), name1=(e1.full_name or '').upper(),
             nric1=e1.nric_passport, address1=_exec_addr(e1),
-            rel2=e2.relationship.lower(), name2=e2.full_name,
+            rel2=e2.relationship.lower(), name2=(e2.full_name or '').upper(),
             nric2=e2.nric_passport, address2=_exec_addr(e2),
         ))
     elif len(primary) == 1 and substitutes:
         e1 = primary[0]
         s1 = substitutes[0]
         parts.append(EXECUTOR_SINGLE_WITH_SUBSTITUTE_TEMPLATE.format(
-            relationship=e1.relationship.lower(), executor_name=e1.full_name,
+            relationship=e1.relationship.lower(), executor_name=(e1.full_name or '').upper(),
             nric=e1.nric_passport, address=_exec_addr(e1),
             he_she=_he_she(e1, will_data),
-            sub_relationship=s1.relationship.lower(), substitute_name=s1.full_name,
+            sub_relationship=s1.relationship.lower(), substitute_name=(s1.full_name or '').upper(),
             sub_nric=s1.nric_passport, sub_address=_exec_addr(s1),
         ))
     elif len(primary) == 1:
         e1 = primary[0]
         parts.append(EXECUTOR_SINGLE_TEMPLATE.format(
-            relationship=e1.relationship.lower(), executor_name=e1.full_name,
+            relationship=e1.relationship.lower(), executor_name=(e1.full_name or '').upper(),
             nric=e1.nric_passport, address=_exec_addr(e1),
         ))
     else:
@@ -853,16 +866,18 @@ def fill_will(will_data) -> str:
         nm = (rb.beneficiary_name or '').strip()
         info = bidx.get(nm.upper(), {})
         # Build clause text with optional INLINE substitute per §10x.199
+        # 🔥 §10x.201 — name UPPERCASE per template
         clause_text = RESIDUARY_TEMPLATE.format(
             clause_num=clause_num,
             relationship=(info.get('relationship', '') or '').lower(),
-            beneficiary_name=nm,
+            beneficiary_name=nm.upper(),
             nric=info.get('nric', ''),
         )
-        # Append " absolutely" to (b) line if not already present
+        # 🔥 §10x.201 — Append " absolutely" to (b) line. Template requires
+        # "...to my wife LIM BEE YAN (MALAYSIA NRIC No. ...) absolutely."
         clause_text = re.sub(
             r"(\(b\)\s+To give the residue \('my residuary estate'\) to "
-            r"my (?:\w+\s+)?[A-Z][A-Z\s]+\s*\(MALAYSIA NRIC No\. [^)]+\))(\.)",
+            r"[^.]+?\(MALAYSIA NRIC No\. [^)]+\))(\.)",
             r"\1 absolutely\2", clause_text)
         # 🔥 §10x.199 (T-33/T-47) — INLINE substitute clause
         # 🔥 §10x.174 — filter the MAIN beneficiary out of substitutes.
@@ -877,6 +892,15 @@ def fill_will(will_data) -> str:
                                   not in _main_names_upper]
             res_subs = res_subs_filtered
         if res_subs:
+            # 🔥 §10x.201 — Order by family-role (spouse → son → daughter)
+            _role_order = {'wife': 0, 'husband': 0, 'spouse': 0,
+                           'son': 1, 'father': 2, 'brother': 3,
+                           'daughter': 4, 'mother': 5, 'sister': 6}
+            def _r_key(rb):
+                info_r = bidx.get((rb.beneficiary_name or '').strip().upper(), {})
+                rel = (info_r.get('relationship') or '').lower()
+                return (_role_order.get(rel, 99), (rb.beneficiary_name or '').upper())
+            res_subs = sorted(res_subs, key=_r_key)
             sub_phrases = [_ben_phrase_for(rb) for rb in res_subs]
             if len(sub_phrases) == 1:
                 sub_str = sub_phrases[0]
@@ -918,9 +942,11 @@ def fill_will(will_data) -> str:
     parts.append('')
     parts.append('Date of this Will: ___________________________________(dd/mm/yyyy)')
     parts.append('')
-    parts.append('This Last Will and Testament was signed by the Testator in the '
-                  'presence of us both and attested by us in the presence of both '
-                  'Testator and of each other:')
+    # 🔥 §10x.201 — Restore parenthetical per template signing page.
+    parts.append('This Last Will and Testament was signed by the Testator '
+                  '(appeared thoroughly to understand this WILL and approve it) '
+                  'in the presence of us both and attested by us in the presence '
+                  'of both Testator and of each other:')
     parts.append('')
     # 🔥 §10x.200 (T-34) — prefix every witness field with "First Witness" /
     # "Second Witness" per Phek format (KOID Sample). Also rename "NRIC /

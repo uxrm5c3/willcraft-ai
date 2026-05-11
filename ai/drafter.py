@@ -194,7 +194,7 @@ def format_will_data(will_data) -> str:
             mb_allocs = [a for a in g.allocations if a.role == 'MB']
             if sub_mode == 'equal':
                 if len(mb_allocs) > 1:
-                    gift_lines.append(f"    Substitute: If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares or to the survivor of them if one of them does not survive me.")
+                    gift_lines.append(f"    Substitute: If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal share or to the survivor of them if one of them does not survive me.")
                 else:
                     gift_lines.append(f"    Substitute: (single beneficiary — use specific substitutes if needed)")
             elif sub_mode == 'prorata':
@@ -352,7 +352,7 @@ def format_will_data(will_data) -> str:
                     if len(sub_parts) == 1:
                         sub_text = sub_parts[0]
                     else:
-                        sub_text = " and ".join(sub_parts) + " in equal shares or to the survivor of them if one of them does not survive me"
+                        sub_text = " and ".join(sub_parts) + " in equal share or to the survivor of them if one of them does not survive me"
                     sub_clauses.append(f"  - If {mb_rel_str}{a.beneficiary_name.upper()}{mb_id_str} does not survive me, then the benefit {he_she} would have received shall be given to {sub_text}.")
 
     if sub_clauses:
@@ -430,7 +430,7 @@ def _inject_missing_substitutes(will_text: str, will_data) -> str:
                 trailing = "."
             else:
                 sub_text = " and ".join(sub_parts)
-                trailing = " in equal shares or to the survivor of them if one of them does not survive me."
+                trailing = " in equal share or to the survivor of them if one of them does not survive me."
 
             # Find clause numbers that reference this gift's MB
             ref_clauses = []
@@ -641,44 +641,70 @@ def draft_will_mock(will_data) -> str:
     primary_executors = [e for e in executors if e.role in ("Primary", "Joint")]
     substitute_executors = [e for e in executors if e.role == "Substitute"]
 
+    # 🔥 §10x.201 — Normalise person addresses via template_filler.
+    def _person_addr(p):
+        addr = getattr(p, 'address', '') or ''
+        try:
+            from documents.template_filler import _format_address_phek
+            return _format_address_phek(
+                addr,
+                nationality=getattr(p, 'nationality', '') or 'Malaysian'
+            )
+        except Exception:
+            return addr
+
     def _format_executor(e):
         """Format an executor — individual or corporate."""
         is_corp = getattr(e, 'is_corporate', False) or (hasattr(e, 'relationship') and e.relationship == 'Corporate Trustee')
         if is_corp:
-            return f"{e.full_name.upper()} (Company No. {e.nric_passport}) of {e.address}"
-        return f"my {e.relationship.lower()} {e.full_name.upper()} {_fid(e)} of {e.address}"
+            return f"{e.full_name.upper()} (Company No. {e.nric_passport}) of {_person_addr(e)}"
+        return f"my {e.relationship.lower()} {e.full_name.upper()} {_fid(e)} of {_person_addr(e)}"
 
+    # 🔥 §10x.201 — Template inlines the substitute executor in clause 2
+    # with wording: "In the event that my <relationship> is unwilling or
+    # unable to act for whatsoever reason, then I appoint my <sub_rel>
+    # <SUB_NAME>...". No separate clause 3.
+    def _format_sub_exec(s):
+        is_corp = getattr(s, 'is_corporate', False) or (hasattr(s, 'relationship') and s.relationship == 'Corporate Trustee')
+        if is_corp:
+            return f"{s.full_name.upper()} (Company No. {s.nric_passport}) of {_person_addr(s)}"
+        return f"my {s.relationship.lower()} {s.full_name.upper()} {_fid(s)} of {_person_addr(s)}"
+
+    substitute_clause = ""
     if len(primary_executors) >= 2:
         pe0, pe1 = primary_executors[0], primary_executors[1]
         exec_clause = f"""Appointment of Executor(s)
 
 2.  I hereby appoint {_format_executor(pe0)} and {_format_executor(pe1)} as my joint Executors. If any of them is unwilling or unable to act for whatsoever reason then the remaining Executor named herein shall act as my sole Executor."""
+        # Substitute executor (if any) goes as separate clause 3
+        next_clause = 3
+        if substitute_executors:
+            if len(substitute_executors) >= 2:
+                sub_names = " and ".join(_format_sub_exec(s) for s in substitute_executors)
+                substitute_clause = f"""
+{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I hereby appoint {sub_names} as my joint Substitute Executors. If any of them is unwilling or unable to act for whatsoever reason then the remaining Substitute Executor named herein shall act as my sole Executor."""
+            else:
+                sub = substitute_executors[0]
+                sub_text = _format_sub_exec(sub)
+                substitute_clause = f"""
+{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I hereby appoint {sub_text} as my Substitute Executor."""
+            next_clause += 1
+    elif primary_executors and substitute_executors:
+        # 🔥 §10x.201 — Single primary + single (or more) substitute → INLINE
+        pe0 = primary_executors[0]
+        sub = substitute_executors[0]
+        rel = (pe0.relationship or '').lower()
+        sub_text = _format_sub_exec(sub)
+        exec_clause = f"""Appointment of Executor(s)
+
+2.  I hereby appoint {_format_executor(pe0)} as the Executor of this Will. In the event that my {rel} is unwilling or unable to act for whatsoever reason, then I appoint {sub_text} to be the Executor of this Will."""
+        next_clause = 3
     elif primary_executors:
         pe0 = primary_executors[0]
         exec_clause = f"""Appointment of Executor(s)
 
 2.  I hereby appoint {_format_executor(pe0)} as my sole Executor."""
-
-    next_clause = 3
-    substitute_clause = ""
-    if substitute_executors:
-        def _format_sub_exec(s):
-            """Format a substitute executor — individual or corporate."""
-            is_corp = getattr(s, 'is_corporate', False) or (hasattr(s, 'relationship') and s.relationship == 'Corporate Trustee')
-            if is_corp:
-                return f"{s.full_name.upper()} (Company No. {s.nric_passport}) of {s.address}"
-            return f"my {s.relationship.lower()} {s.full_name.upper()} {_fid(s)} of {s.address}"
-
-        if len(substitute_executors) >= 2:
-            sub_names = " and ".join(_format_sub_exec(s) for s in substitute_executors)
-            substitute_clause = f"""
-{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I hereby appoint {sub_names} as my joint Substitute Executors. If any of them is unwilling or unable to act for whatsoever reason then the remaining Substitute Executor named herein shall act as my sole Executor."""
-        else:
-            sub = substitute_executors[0]
-            sub_text = _format_sub_exec(sub)
-            substitute_clause = f"""
-{next_clause}.  With reference to Clause 2 above, if all the persons named therein are unable or unwilling to act for whatsoever reason, then I hereby appoint {sub_text} as my Substitute Executor."""
-        next_clause += 1
+        next_clause = 3
 
     # Trustee clause
     if will_data.trustee_same_as_executor:
@@ -816,7 +842,7 @@ def draft_will_mock(will_data) -> str:
     if _has_joint_bank:
         non_residuary_text += f"""
 
-{next_clause}.  I hereby devise and bequeath the moneys standing to my credit in all my joint bank accounts to the respective joint account holder(s), if more than one in equal shares."""
+{next_clause}.  I hereby devise and bequeath the moneys standing to my credit in all my joint bank accounts to the respective joint account holder(s), if more than one in equal share."""
         next_clause += 1
 
     # (b) "All bank accounts to my Executor" — only if user didn't
@@ -962,7 +988,7 @@ def draft_will_mock(will_data) -> str:
                 ben_text = ", ".join(alloc_parts[:-1]) + " and " + alloc_parts[-1]
                 shares = [_to_fraction(a.share) for a in g.allocations]
                 if all(s == shares[0] for s in shares):
-                    share_text = f" in equal shares ({shares[0]} each)"
+                    share_text = f" in equal share ({shares[0]} each)"
                 else:
                     share_text = f" in the shares indicated ({', '.join(shares)})"
 
@@ -974,7 +1000,7 @@ def draft_will_mock(will_data) -> str:
             sub_mode = getattr(g, 'substitute_mode', 'equal') or 'equal'
             mb_allocs = [a for a in g.allocations if a.role == 'MB']
             if sub_mode == 'equal' and len(mb_allocs) > 1:
-                specific_gifts_text += f" If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal shares or to the survivor of them if one of them does not survive me."
+                specific_gifts_text += f" If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in equal share or to the survivor of them if one of them does not survive me."
             elif sub_mode == 'prorata' and len(mb_allocs) > 1:
                 specific_gifts_text += f" If any beneficiary named in this clause does not survive me, then the benefit that beneficiary would have received shall be given to the other surviving beneficiaries in the same ratio as their respective shares."
             elif sub_mode == 'specific':
@@ -1019,7 +1045,7 @@ def draft_will_mock(will_data) -> str:
                         _trailing = ""
                     else:
                         _sub_text = " and ".join(_sub_parts)
-                        _trailing = " in equal shares or to the survivor of them if one of them does not survive me"
+                        _trailing = " in equal share or to the survivor of them if one of them does not survive me"
                     _inlines.append(
                         f"If {_mb_rs}{_a.beneficiary_name.upper()}{_mb_id} does "
                         f"not survive me, then the benefit {_hs} would have "
@@ -1081,7 +1107,7 @@ def draft_will_mock(will_data) -> str:
                     trailing = ""
                 else:
                     sub_text = " and ".join(sub_parts)
-                    trailing = " in equal shares or to the survivor of them if one of them does not survive me"
+                    trailing = " in equal share or to the survivor of them if one of them does not survive me"
 
                 specific_gifts_text += f"""
 
@@ -1155,10 +1181,18 @@ def draft_will_mock(will_data) -> str:
 
 ----------------------- THE REST OF THE PAGE IS INTENTIONALLY LEFT BLANK -----------------------"""
 
+    # 🔥 §10x.201 — Normalise testator address via template_filler so
+    # ", MALAYSIA" suffix gets stripped + multi-line collapsed.
+    try:
+        from documents.template_filler import _format_address_phek
+        _t_addr = _format_address_phek(t.residential_address or '',
+                                        nationality=t.nationality or 'Malaysian').upper()
+    except Exception:
+        _t_addr = (t.residential_address or '').upper()
     will_text = f"""LAST WILL AND TESTAMENT OF
 {t.full_name.upper()}
 
-This Will is made by me {t.full_name.upper()} {t_id} of {t.residential_address.upper()}.
+This Will is made by me {t.full_name.upper()} {t_id} of {_t_addr}.
 
 Revocation
 

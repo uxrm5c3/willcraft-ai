@@ -77,6 +77,10 @@ class PropertyDetails(BaseModel):
             # Fall back to original collapse-only behaviour
             addr = re.sub(r'\s*,\s*', ', ', addr)
             addr = re.sub(r'\s+', ' ', addr).strip().rstrip(',')
+        # 🔥 §10x.201 — Property addresses render UPPERCASE per template
+        # (e.g. "NO.10, JALAN SRI LAGUNA 1/7, TAMAN LAGUNA, 81200 JOHOR
+        # BAHRU, JOHOR"). Mukim/District/Negeri suffix keeps mixed case.
+        addr = addr.upper()
         parts = [f"{prefix} known as {addr}"]
         title_parts = []
         # 🔥 §10x.193 + §10x.39 — Phek format demands a "held under [TYPE] No. N"
@@ -115,19 +119,33 @@ class PropertyDetails(BaseModel):
                    'HS(M)': 'H.S.(M)', 'PTD': 'PTD', 'PTM': 'PTM',
                    'STRATA TITLE GERAN': 'Strata Title Geran'}
         tt = tt_map.get(tt_raw.upper(), tt_raw) if tt_raw else ''
+
+        # 🔥 §10x.201 — Strip leading zeros from title_number and
+        # lot_number. Template uses bare numbers: "Geran 528881" not
+        # "Geran No. 00528881". Preserve embedded zeros (e.g. strata
+        # sub-tokens "1/M1B/5/209").
+        def _strip_lz(s: str) -> str:
+            if not s:
+                return s
+            return re.sub(r'\b0+(?=\d)', '', s)
+        tn = _strip_lz(tn)
+        ln = _strip_lz(ln)
+
+        # 🔥 §10x.201 — Template drops "No." prefix on Geran/Lot/HSD/PTD.
+        # Format: "Geran 528881, Lot 194139" (NOT "Geran No. 528881, Lot No.").
         if tt and tn:
-            title_parts.append(f"held under {tt} No. {tn}")
+            title_parts.append(f"held under {tt} {tn}")
         elif tn:  # have title number but no type — emit anyway with default
-            title_parts.append(f"held under Geran No. {tn}")
+            title_parts.append(f"held under Geran {tn}")
         if ln:
-            # 🔥 §10x.31 / T-31 — HSD-titled properties use PTD prefix not Lot No.
+            # 🔥 §10x.31 / T-31 — HSD-titled properties use PTD prefix not Lot.
             tt_upper = (tt or tt_raw).upper()
             if 'HSD' in tt_upper or 'HS(D)' in tt_upper or 'H.S.(D)' in tt_upper:
                 title_parts.append(f"PTD {ln}")
             elif 'HSM' in tt_upper or 'HS(M)' in tt_upper:
                 title_parts.append(f"PT {ln}")
             else:
-                title_parts.append(f"Lot No. {ln}")
+                title_parts.append(f"Lot {ln}")
 
         # 🔥 §10x.165 — "Formerly known as" parenthetical for properties
         # that went through NLC title-conversion (HS(D)/PTD → Geran/Lot).
@@ -186,11 +204,9 @@ class PropertyDetails(BaseModel):
                 if negeri_val.upper().startswith(pfx.upper()):
                     negeri_val = negeri_val[len(pfx):]
                     break
-            # 🔒 Phek uses plain state name ("State of Johor") — no
-            # "Darul Ta'zim" honorific appended. The lookup table is
-            # available below for cases where the firm explicitly wants
-            # the honorific, but DEFAULT is plain.
-            title_parts.append(f"State of {negeri_val}")
+            # 🔥 §10x.201 — Template uses Malay "Negeri of <Title>" with
+            # state name in Title Case (e.g. "Negeri of Johor").
+            title_parts.append(f"Negeri of {negeri_val.title()}")
         # 🔒 Phek format: address is followed by " held under" (SPACE, no
         # comma). The remaining title-parts are then comma-joined together
         # AFTER "held under". Verbatim:
@@ -253,6 +269,8 @@ class FinancialDetails(BaseModel):
             acct_type = (self.description or '').strip()
             # Common normalisations
             if acct_type:
+                # 🔥 §10x.201 — Template drops "Plus" — emit bare "Saving"
+                # not "Plus Saving" (e.g. "Public Bank Berhad Saving Account").
                 _t_map = {'saving': 'Saving', 'savings': 'Saving',
                            'current': 'Current',
                            'current account': 'Current',
@@ -261,8 +279,8 @@ class FinancialDetails(BaseModel):
                            'fixed deposit': 'Fixed Deposit',
                            'fixed_deposit': 'Fixed Deposit',
                            'fd': 'Fixed Deposit',
-                           'plus saving': 'Plus Saving',
-                           'plus saving account': 'Plus Saving'}
+                           'plus saving': 'Saving',
+                           'plus saving account': 'Saving'}
                 acct_type = _t_map.get(acct_type.lower(), acct_type)
                 # 🔥 §10x.151d — strip trailing " Account" to prevent
                 # duplicate when we append " Account No. ..." below.
@@ -272,6 +290,9 @@ class FinancialDetails(BaseModel):
                 # Account Account No. ...".
                 if acct_type.lower().endswith(' account'):
                     acct_type = acct_type[:-len(' account')].strip()
+                # 🔥 §10x.201 — drop leading "Plus " marketing prefix.
+                if acct_type.lower().startswith('plus '):
+                    acct_type = acct_type[len('plus '):].strip()
             if ownership_prefix and 'joint' in ownership_prefix.lower():
                 # joint-account variant
                 base = f'{ownership_prefix} {inst}' if inst else ownership_prefix
@@ -404,16 +425,19 @@ class Gift(BaseModel):
         if self.gift_type == "property":
             ts = (self.testator_share or '').strip()
             ot = (self.ownership_type or '').strip().lower()
+            # 🔥 §10x.201 — Template wording for sole ownership is "all my
+            # shares in the property" (NOT "the property"). Joint with
+            # fraction stays "all my <frac> undivided shares".
             # Sole ownership — full property
             if ts in ('1/1', '1', '') and ot != 'joint':
-                return "the property"
+                return "all my shares in the property"
             # Joint ownership — testator's share only
             if ts and ts not in ('1/1', '1'):
                 share_glyph = _FRAC.get(ts, ts)
                 return f"all my {share_glyph} undivided shares in the property"
             if ot == "joint":
                 return "my undivided share in the property"
-            return "the property"
+            return "all my shares in the property"
         elif self.gift_type == "financial":
             if self.ownership_type == "joint":
                 return "my share of the moneys in my joint account at"
