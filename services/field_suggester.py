@@ -684,6 +684,36 @@ def suggest_title_or_lot_from_docs(gift: Dict[str, Any], field: str,
         return None
     candidates.sort(key=lambda c: -c['score'])
     top = candidates[0]
+
+    # 🔥 §10x.156 — unit-mismatch guard. If gift address has a unit-like
+    # identifier (B-05-11, C-30-08, No. 10, A1-22) and the matched doc's
+    # address has a DIFFERENT unit identifier, the doc is for a different
+    # physical unit in the same neighbourhood. Don't pre-fill — too risky.
+    # Tokens like "medini", "79250", "iskandar" are locality-only and
+    # don't disambiguate units.
+    UNIT_RE = re.compile(
+        r'\b(?:no\.?\s*)?(?:[a-z]?-?\d+(?:[-/]\d+)+|[a-z]\d+|\d+\s*[a-z]?)\b',
+        re.IGNORECASE
+    )
+    gift_units = set()
+    for m in UNIT_RE.finditer(addr):
+        u = m.group(0).strip().lower()
+        # Filter out postcodes (5 digits) and bare years
+        if re.fullmatch(r'\d{5}', u): continue
+        if re.fullmatch(r'19\d\d|20\d\d', u): continue
+        gift_units.add(u)
+    doc_units = set()
+    for m in UNIT_RE.finditer(top.get('doc_addr', '')):
+        u = m.group(0).strip().lower()
+        if re.fullmatch(r'\d{5}', u): continue
+        if re.fullmatch(r'19\d\d|20\d\d', u): continue
+        doc_units.add(u)
+    if gift_units and doc_units and not (gift_units & doc_units):
+        # Gift and doc have unit identifiers AND none overlap → different
+        # physical units. Skip pre-fill; user should pick via chat
+        # candidate-with-confirm card (§10x.158).
+        return None
+
     others = [c['value'] for c in candidates[1:4] if c['value'] != top['value']]
     src = (f"matched doc with address {top['doc_addr']!r} "
            f"(shared {top['score']} address tokens)")
