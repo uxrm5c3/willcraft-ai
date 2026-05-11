@@ -41,12 +41,16 @@ def ensure_person(client_id, name, nric='', address='', relationship='',
     nric = (nric or '').strip()
     clean_name = name.strip()
     rel = (relationship or '').strip()
+    # 🔥 §10x.226 — collapse whitespace/newlines in address. Vision OCR
+    # routinely returns IC addresses with embedded \n that pollute every
+    # downstream consumer (will clause, wizard form, "Same as X" buttons).
+    addr_clean = ' '.join((address or '').split()) if address else ''
     existing = Person.query.filter_by(client_id=client_id, full_name=clean_name).first()
     if existing:
         if not existing.nric_passport and nric:
             existing.nric_passport = nric
-        if not existing.address and address:
-            existing.address = address
+        if not existing.address and addr_clean:
+            existing.address = addr_clean
         if not existing.relationship and rel:
             existing.relationship = rel
         if not existing.date_of_birth and dob:
@@ -72,7 +76,7 @@ def ensure_person(client_id, name, nric='', address='', relationship='',
         client_id=client_id,
         full_name=clean_name,
         nric_passport=nric,
-        address=address or None,
+        address=addr_clean or None,
         relationship=rel,
         date_of_birth=normalise_dob(dob) or None,
         nationality=nationality or 'Malaysian',

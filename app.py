@@ -6683,7 +6683,12 @@ def _dedupe_ic_against_existing(client_id: str, doc, extracted: dict) -> bool:
                     if canonical_nric:
                         p.nric_passport = canonical_nric
                 if not (p.address or '').strip() and (extracted.get('address') or '').strip():
-                    p.address = (extracted.get('address') or '').strip()
+                    # 🔥 §10x.226 — strip newlines from OCR'd IC address.
+                    try:
+                        from services.identity_walker import clean_person_address as _cpa
+                        p.address = _cpa(extracted.get('address') or '')
+                    except Exception:
+                        p.address = ' '.join((extracted.get('address') or '').split())
                 if not p.document_id:
                     p.document_id = doc.id   # Link IC doc to placeholder Person
             except Exception:
@@ -12614,6 +12619,16 @@ def _try_save_testator_address(client_id: str, user_text: str):
                 .first())
     if not testator:
         return None
+
+    # 🔥 §10x.226 — addresses NEVER carry embedded newlines.
+    # Vision OCR of IC photos returns multi-line address text; for
+    # will-clauses the canonical form is single comma-separated line.
+    if s1_key == 'residential_address':
+        try:
+            from services.identity_walker import clean_person_address
+            raw_value = clean_person_address(raw_value)
+        except Exception:
+            raw_value = ' '.join(raw_value.split())
 
     # Update Person AND step1_data
     if hasattr(testator, person_attr):

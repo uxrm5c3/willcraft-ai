@@ -611,3 +611,110 @@ def parse_relationship(text: str) -> Optional[str]:
             if (' ' + kw + ' ') in t:
                 return RELATIONSHIP_KEYWORDS[kw]
         return None
+
+
+# ---------------------------------------------------------------------------
+# 🔥🔥🔥 §10x.227 — Extract testator/executor address from forward text
+# ---------------------------------------------------------------------------
+def extract_address_for_person_from_text(text: str, name: str = '',
+                                          nric: str = '') -> str:
+    """Find an address clause `of <ADDRESS>` near the given person's
+    name or NRIC in the WhatsApp/email forward text.
+
+    Common patterns the WhatsApp forward uses:
+
+        "My name is KOID BENG SUN, NRIC 631204-07-5743, of NO.600,
+         JALAN MUTIARA HIJAU 17, TAMAN MUTIARA HIJAU, 81000 KULAI, JOHOR."
+
+        "I, JANE TAN (NRIC 800101-01-1234) of 12 Jalan Bahagia,
+         Petaling Jaya, hereby ..."
+
+        "Executor: MARY SMITH of 5 Jalan Tun Razak, Kuala Lumpur."
+
+    Pattern: <NAME>...NRIC <id> of <ADDRESS> [.|\\n]   (any order)
+    or       <NAME>...of <ADDRESS> [.|\\n]
+    The address terminates at the first `.`, `\\n`, or `;`.
+
+    Returns a cleaned single-line address string, or '' when not found.
+    """
+    if not text or not (name or nric):
+        return ''
+    # Build anchor candidates: (a) exact name (case-insens),
+    # (b) canonical NRIC digits.
+    anchors: list = []
+    if name:
+        anchors.append(re.escape(name.strip()))
+    if nric:
+        digits = re.sub(r'\D', '', nric)
+        if len(digits) == 12:
+            anchors.append(re.escape(f'{digits[:6]}-{digits[6:8]}-{digits[8:]}'))
+            anchors.append(re.escape(digits))
+    if not anchors:
+        return ''
+
+    # Search a generous window around each anchor for `of <ADDRESS>`.
+    # The clause ends at `.`, newline, or `;`. Limit length to 250 chars.
+    for anchor in anchors:
+        # Pattern A: anchor ... of <ADDR>
+        pat = re.compile(
+            anchor + r'[\s\S]{0,200}?\bof\s+(?P<addr>[^.\n;]{8,250})',
+            re.IGNORECASE)
+        m = pat.search(text)
+        if m:
+            raw = (m.group('addr') or '').strip()
+            cleaned = _clean_address_clause(raw)
+            if _looks_like_address(cleaned):
+                return cleaned
+        # Pattern B (reverse): <ADDR> ... anchor
+        # Less common but covers "of <ADDR>, my name is <NAME>".
+        pat_rev = re.compile(
+            r'\bof\s+(?P<addr>[^.\n;]{8,250}?)[,\.\s\n]{1,4}[\s\S]{0,80}?' + anchor,
+            re.IGNORECASE)
+        m = pat_rev.search(text)
+        if m:
+            raw = (m.group('addr') or '').strip()
+            cleaned = _clean_address_clause(raw)
+            if _looks_like_address(cleaned):
+                return cleaned
+    return ''
+
+
+def _clean_address_clause(raw: str) -> str:
+    """Strip noise from a captured address clause."""
+    if not raw:
+        return ''
+    # Collapse whitespace + newlines into single spaces (§10x.226 also
+    # strips embedded newlines from any address coming back through here).
+    s = re.sub(r'\s+', ' ', raw).strip()
+    # Drop trailing connectors: hereby, and, who, that, has, holding, ...
+    s = re.sub(
+        r'(?i)\s+(?:hereby|and|who|whose|that|has|holding|appoint(?:s|ed)?|wishes?|do(?:es)?)\b.*$',
+        '', s)
+    # Drop trailing comma/punctuation noise
+    s = s.rstrip(',;: ')
+    return s
+
+
+def _looks_like_address(s: str) -> bool:
+    """Heuristic check: address must have postcode OR a street keyword."""
+    if not s or len(s) < 8:
+        return False
+    if re.search(r'\b\d{5}\b', s):
+        return True
+    addr_kw = ('jalan ', 'lorong ', 'taman ', 'persiaran', 'lot ',
+              'no.', 'no ', 'kampung ', 'kg ', 'jln ', 'apartment',
+              'condominium', 'unit ', 'block ')
+    sl = s.lower()
+    return any(kw in sl for kw in addr_kw)
+
+
+def clean_person_address(addr: str) -> str:
+    """🔥 §10x.226 — Normalise a Person.address value.
+
+    OCR'd IC addresses contain literal newlines (multi-line IC text dump).
+    Will-generation clauses want a single comma-separated line. Always
+    collapse whitespace runs to single spaces.
+    """
+    if not addr:
+        return ''
+    return re.sub(r'\s+', ' ', addr).strip()

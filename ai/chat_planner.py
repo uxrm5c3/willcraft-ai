@@ -501,6 +501,7 @@ def plan_turn(
             reply_parts.append(_step2_question(
                 testator_info,
                 identities=current_will_data.get('identities') or [],
+                client_id=client_id,
             ))
             return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
@@ -4118,7 +4119,8 @@ _STEP2_REQUIRED_FIELDS = [
 
 
 def _step2_question(s1: Dict[str, Any],
-                    identities: Optional[List[Dict[str, Any]]] = None) -> str:
+                    identities: Optional[List[Dict[str, Any]]] = None,
+                    client_id: Optional[str] = None) -> str:
     """🔥 §10x.124 + §10x.224 — testator info card with auto-derived non-
     address fields AND explicit occupation prompt.
 
@@ -4190,9 +4192,39 @@ def _step2_question(s1: Dict[str, Any],
         )
         quick: List[Dict[str, str]] = []
 
+        # 🔥 §10x.227 — PRIORITY 1: extract from forward text.
+        # WhatsApp / email body often states the testator's address verbatim:
+        #   "My name is KOID BENG SUN, NRIC 631204..., of NO.600, JALAN
+        #    MUTIARA HIJAU 17, ..., 81000 KULAI, JOHOR."
+        # If present, pre-suggest it as the FIRST quickreply with a
+        # ✅ ✨-style label so the user can one-click confirm.
+        text_addr = ''
+        if client_id:
+            try:
+                from services.identity_walker import (
+                    extract_address_for_person_from_text as _ex_addr,
+                )
+                # Need to import here to avoid circular deps; gather text
+                # via the lightweight helper that planner already uses.
+                from app import _gather_recent_chat_text as _gather
+                _rec = _gather(client_id) or ''
+                text_addr = _ex_addr(_rec, name, nric)
+            except Exception:
+                text_addr = ''
+        if text_addr:
+            short = text_addr[:60] + ('…' if len(text_addr) > 60 else '')
+            quick.append({
+                'label': f'✅ ✨ From your message: {short}',
+                'value': f'address: {text_addr}',
+            })
+
         # §10x.124 — surface family-member addresses (spouse / children /
         # parent) as one-click options. Most testators live with their
         # spouse / children, so 'Same as wife' is usually correct.
+        # 🔥 §10x.228 — but only when family address is a GENUINE residence
+        # source (came from their IC doc — i.e. identity carries doc_id
+        # AND its address is non-property-shaped). Skip when family
+        # address is empty.
         if identities:
             seen_addrs = set()
             family_rels = ('spouse', 'wife', 'husband', 'son', 'daughter',
@@ -4206,8 +4238,14 @@ def _step2_question(s1: Dict[str, Any],
                 addr_i = (i.get('address') or '').strip()
                 if not addr_i:
                     continue
+                # Collapse newlines + whitespace runs into a single line
+                # so the button stays compact (§10x.226 normalisation).
                 addr_one_line = ' '.join(addr_i.split())
                 if addr_one_line in seen_addrs:
+                    continue
+                # If we already pre-suggested from text, don't repeat
+                # the SAME address as a "Same as <family>" button.
+                if text_addr and addr_one_line.lower() == text_addr.lower():
                     continue
                 seen_addrs.add(addr_one_line)
                 short = addr_one_line[:50] + ('…' if len(addr_one_line) > 50 else '')
