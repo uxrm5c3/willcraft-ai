@@ -865,6 +865,17 @@ def fill_will(will_data) -> str:
             r"my (?:\w+\s+)?[A-Z][A-Z\s]+\s*\(MALAYSIA NRIC No\. [^)]+\))(\.)",
             r"\1 absolutely\2", clause_text)
         # 🔥 §10x.199 (T-33/T-47) — INLINE substitute clause
+        # 🔥 §10x.174 — filter the MAIN beneficiary out of substitutes.
+        # Wife can't be substitute for herself. Real failure from KOID:
+        # main=wife; substitute_groups[0]=[wife, son, daughter] (auto-built
+        # from family list including wife). After filter: [son, daughter].
+        if res_subs:
+            _main_names_upper = {(b.beneficiary_name or '').strip().upper()
+                                  for b in res_main}
+            res_subs_filtered = [rb for rb in res_subs
+                                  if (rb.beneficiary_name or '').strip().upper()
+                                  not in _main_names_upper]
+            res_subs = res_subs_filtered
         if res_subs:
             sub_phrases = [_ben_phrase_for(rb) for rb in res_subs]
             if len(sub_phrases) == 1:

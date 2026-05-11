@@ -1081,6 +1081,11 @@ def build_will_data():
                         'bandar_pekan':       pd.get('mukim') or gd.get('mukim') or pd.get('bandar_pekan') or '',
                         'daerah':             pd.get('daerah') or gd.get('daerah') or '',
                         'negeri':             pd.get('negeri') or gd.get('negeri') or '',
+                        # 🔥 §10x.174 / §10x.165 — historical_titles pass-through
+                        # so drafter renders the "(Formerly known as HS(D) X
+                        # PTD Y)" parenthetical per KOID gold-standard clause 12.
+                        'historical_titles':  (pd.get('historical_titles') or
+                                                gd.get('_historical_titles') or None),
                     }
                     if any(pd_norm.values()):
                         try:
@@ -1127,6 +1132,30 @@ def build_will_data():
                     fin_details = FinancialDetails(**fd)
                 except Exception:
                     fin_details = None
+            # 🔥 §10x.174 — fall back to property_details / property_info
+            # for ownership_type + testator_share + joint_owners +
+            # encumbrance fields. Chat-saved gifts store these on the
+            # property_details sub-dict (not top-level). Without this
+            # fallback, Gift._ownership_prefix() returns "the property"
+            # (not "all my ½ undivided shares") because testator_share
+            # is None.
+            _pd_fallback = (gd.get('property_details') or
+                            gd.get('property_info') or {})
+            if not isinstance(_pd_fallback, dict):
+                _pd_fallback = {}
+            _ownership_type = (gd.get('ownership_type')
+                                or _pd_fallback.get('ownership_type')
+                                or 'sole')
+            _testator_share = (gd.get('testator_share')
+                                or _pd_fallback.get('testator_share'))
+            _joint_owners = (gd.get('joint_owners')
+                              or (', '.join(_pd_fallback.get('co_owners') or [])
+                                   if _pd_fallback.get('co_owners') else None))
+            _encumbrance = (gd.get('encumbrance_status')
+                             or _pd_fallback.get('encumbrance_status')
+                             or 'clean')
+            _debt_source = (gd.get('debt_source')
+                             or _pd_fallback.get('debt_source'))
             try:
                 gifts.append(Gift(
                     gift_type=gift_type,
@@ -1138,11 +1167,11 @@ def build_will_data():
                     subject_to_guardian_allowance=gd.get('subject_to_guardian_allowance', False),
                     sell_property=gd.get('sell_property', False),
                     substitute_mode=gd.get('substitute_mode', 'equal'),
-                    ownership_type=gd.get('ownership_type', 'sole'),
-                    testator_share=gd.get('testator_share'),
-                    joint_owners=gd.get('joint_owners'),
-                    encumbrance_status=gd.get('encumbrance_status', 'clean'),
-                    debt_source=gd.get('debt_source'),
+                    ownership_type=_ownership_type,
+                    testator_share=_testator_share,
+                    joint_owners=_joint_owners,
+                    encumbrance_status=_encumbrance,
+                    debt_source=_debt_source,
                     account_ownership=gd.get('account_ownership', 'individual'),
                 ))
             except Exception:
