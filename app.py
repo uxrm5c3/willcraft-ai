@@ -13214,11 +13214,24 @@ def _reconcile_downstream_for_new_identity(client_id: str, name: str,
     name_l = name.lower()
     role_l = (role or '').lower()
 
+    # 🔥 §10x.232 — role-matching regex MUST treat space-and-hyphen
+    # in-law variants as equivalent. The text says "My Sister in law"
+    # (spaces) but `role_l` is "sister-in-law" (canonical hyphens).
+    # Without tolerance, Pattern B + C fail and the reconciler never
+    # marks the sister-in-law as executor → wrong person becomes
+    # primary executor.
+    def _role_regex(r: str) -> str:
+        # Replace hyphens or whitespace with a character class matching
+        # either, so "sister-in-law" matches "sister in law" too.
+        escaped = re.escape(r)
+        return re.sub(r'(?:\\-|\s)+', r'[\\s\\-]+', escaped)
+
     # ── Helper: does message name this person/role with given will-role keyword?
     def _named_with(will_role_kw: str) -> bool:
         """e.g. will_role_kw='executor' — check if message has
         'my executor X', 'executor: Y', 'my <role> as executor', etc."""
         kw = will_role_kw.lower()
+        role_rx = _role_regex(role_l) if role_l else ''
         # Pattern A: "my <role> X" or "X (my <role>)" — name proximity
         if name_l and name_l in text_l:
             ni = text_l.find(name_l)
@@ -13226,14 +13239,14 @@ def _reconcile_downstream_for_new_identity(client_id: str, name: str,
             if ki >= 0 and ni >= 0 and abs(ki - ni) < 120:
                 return True
         # Pattern B: "my <kw> my <family-role>" — KOID-style
-        # ("My Executor My Sister in law")
-        if role_l and re.search(
-            rf'\bmy\s+{re.escape(kw)}[^\.\n]{{0,40}}my\s+{re.escape(role_l)}',
+        # ("My Executor My Sister in law" — space variant tolerated)
+        if role_rx and re.search(
+            rf'\bmy\s+{re.escape(kw)}[^\.\n]{{0,40}}my\s+{role_rx}',
             text_l):
             return True
         # Pattern C: "my <family-role> as <kw>" / "<family-role> as my <kw>"
-        if role_l and re.search(
-            rf'\b(?:my\s+)?{re.escape(role_l)}[^\.\n]{{0,40}}\bas\s+(?:my\s+)?{re.escape(kw)}',
+        if role_rx and re.search(
+            rf'\b(?:my\s+)?{role_rx}[^\.\n]{{0,40}}\bas\s+(?:my\s+)?{re.escape(kw)}',
             text_l):
             return True
         return False
@@ -13296,6 +13309,12 @@ def _step4_add_beneficiary(will, person, name, role):
 
 
 def _step2_add_executor(will, person, name, role):
+    """🔥 §10x.232 — When the message EXPLICITLY names a non-child as
+    executor (e.g. "My Executor: My Sister in law LIM LAY CHENG"), that
+    person MUST be the PRIMARY executor — even if children were added
+    first as a default fallback. Previously, children registered first
+    via the IC walkthrough always claimed Primary, leaving the
+    message-named executor as Substitute or absent."""
     try:
         s2 = json.loads(will.step2_data) if will.step2_data else {}
     except (json.JSONDecodeError, TypeError):
@@ -13305,21 +13324,58 @@ def _step2_add_executor(will, person, name, role):
     execs = s2.get('executors') or []
     if any((e.get('full_name') or '').upper() == name.upper() for e in execs):
         return
-    is_first = len(execs) == 0
-    execs.append({
+
+    # Detect EXPLICIT message-named executor — patterns like
+    # "My Executor: My <role> NAME" or "Executor — NAME". Uses the same
+    # role-regex tolerance as _named_with above.
+    text_l_local = ''
+    try:
+        from ai.chat_planner import _gather_summary_source_text
+        text_l_local = (_gather_summary_source_text(will.client_id) or '').lower()
+    except Exception:
+        pass
+    role_l_local = (role or '').lower()
+    escaped_role = re.escape(role_l_local)
+    role_rx_local = re.sub(r'(?:\\-|\s)+', r'[\\s\\-]+', escaped_role)
+    is_explicit = bool(role_rx_local) and bool(re.search(
+        rf'\bmy\s+executor[^\.\n]{{0,60}}my\s+{role_rx_local}',
+        text_l_local))
+    # Also accept name in close proximity to "executor" (Pattern A)
+    if not is_explicit and name and name.lower() in text_l_local:
+        ni = text_l_local.find(name.lower())
+        ki = text_l_local.find('executor')
+        if ki >= 0 and ni >= 0 and abs(ki - ni) < 120:
+            is_explicit = True
+
+    new_entry = {
         'full_name':     name,
         'nric_passport': person.nric_passport or '',
         'relationship':  role,
         'address':       person.address or '',
-        'role':          'Primary' if is_first else 'Substitute',
         'person_id':     person.id,
         'nationality':   person.nationality or 'Malaysian',
         '_added_by':     '§10x.44 reconcile (Step 3: Executor)',
-    })
+    }
+
+    if is_explicit:
+        # Promote to PRIMARY; demote any existing Primary to Substitute
+        for e in execs:
+            if (e.get('role') or '').lower() == 'primary':
+                e['role'] = 'Substitute'
+                e['_added_by'] = (e.get('_added_by') or '') + ' + §10x.232 demoted'
+        new_entry['role'] = 'Primary'
+        # Place at index 0 so wizard renders Primary first
+        execs.insert(0, new_entry)
+    else:
+        new_entry['role'] = 'Primary' if len(execs) == 0 else 'Substitute'
+        execs.append(new_entry)
+
     s2['executors'] = execs
     will.step2_data = json.dumps(s2)
     db.session.commit()
-    app.logger.info(f'§10x.44 added {name} ({role}) to step2 (Executor)')
+    app.logger.info(
+        f'§10x.44 added {name} ({role}) to step2 as '
+        f'{new_entry["role"]} (explicit={is_explicit})')
 
 
 def _step3_add_guardian(will, person, name, role):

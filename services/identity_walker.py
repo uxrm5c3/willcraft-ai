@@ -394,12 +394,34 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
         return []
     out: list = []
     seen: set = set()
-    FAM_ROLES = ('wife', 'husband', 'spouse', 'son', 'daughter',
-                  'father', 'mother', 'brother', 'sister',
-                  'sister-in-law', 'brother-in-law',
-                  'mother-in-law', 'father-in-law',
-                  'son-in-law', 'daughter-in-law')
+    # 🔥 §10x.230 — include SPACED variants of in-law roles BEFORE hyphenated
+    # forms so regex alternation prefers the longer/specific form. Without
+    # this, "My Sister in law LIM LAY CHENG" would match role='sister' and
+    # name='in law LIM LAY CHENG' — completely wrong.
+    FAM_ROLES = (
+        # spaced in-law variants (longest-first for proper alternation)
+        'sister in law', 'brother in law',
+        'mother in law', 'father in law',
+        'son in law', 'daughter in law',
+        # hyphenated in-law variants
+        'sister-in-law', 'brother-in-law',
+        'mother-in-law', 'father-in-law',
+        'son-in-law', 'daughter-in-law',
+        # single-word family roles
+        'wife', 'husband', 'spouse', 'son', 'daughter',
+        'father', 'mother', 'brother', 'sister',
+    )
     role_alt = '|'.join(re.escape(r) for r in FAM_ROLES)
+
+    def _canon_role(r: str) -> str:
+        """Normalise role to Title-Case canonical form. Maps spaced
+        in-law forms back to hyphenated canonical (Sister-in-law)."""
+        s = r.strip().lower()
+        # Map "sister in law" → "sister-in-law" before titlecase
+        s = re.sub(r'\s+in\s+law\b', '-in-law', s)
+        # Title-case each component
+        parts = s.split('-')
+        return '-'.join(p.capitalize() if i == 0 else p for i, p in enumerate(parts))
     name_pat = (r"[A-Z][A-Za-z\-\']{1,}"
                 r"(?:\s+[A-Z][A-Za-z\-\']{1,}){1,4}")
 
@@ -409,7 +431,7 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
         rf'(?:\b(?:my|his|her)\s+|,\s*|\band\s+)(?P<role>{role_alt})\s*\(\s*(?P<name>{name_pat})\s*\)',
         text, re.IGNORECASE):
         nm  = m.group('name').strip()
-        role = m.group('role').strip().title()
+        role = _canon_role(m.group('role'))
         if nm and (nm.upper() not in seen):
             seen.add(nm.upper())
             out.append((nm, role))
@@ -419,7 +441,7 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
         rf'\b(?P<name>{name_pat})\s*\(\s*(?P<role>{role_alt})\s*\)',
         text, re.IGNORECASE):
         nm  = m.group('name').strip()
-        role = m.group('role').strip().title()
+        role = _canon_role(m.group('role'))
         if nm and (nm.upper() not in seen):
             seen.add(nm.upper())
             out.append((nm, role))
@@ -429,7 +451,7 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
         rf'\b(?P<name>{name_pat})\(\s*(?P<role>{role_alt})\s*\)',
         text, re.IGNORECASE):
         nm  = m.group('name').strip()
-        role = m.group('role').strip().title()
+        role = _canon_role(m.group('role'))
         if nm and (nm.upper() not in seen):
             seen.add(nm.upper())
             out.append((nm, role))
@@ -439,7 +461,7 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
         rf'\bmy\s+(?P<role>{role_alt})\s+(?P<name>{name_pat})\b',
         text, re.IGNORECASE):
         nm  = m.group('name').strip()
-        role = m.group('role').strip().title()
+        role = _canon_role(m.group('role'))
         if nm and (nm.upper() not in seen):
             seen.add(nm.upper())
             out.append((nm, role))
@@ -452,7 +474,7 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
         rf'(?:\b(?:my|his|her)\s+|,\s*|\band\s+)(?P<role>{role_alt})\s+(?P<name>{name_pat})\b',
         text, re.IGNORECASE):
         nm  = m.group('name').strip()
-        role = m.group('role').strip().title()
+        role = _canon_role(m.group('role'))
         if nm and (nm.upper() not in seen):
             seen.add(nm.upper())
             out.append((nm, role))
@@ -465,14 +487,21 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
     cleaned: list = []
     for nm, role in out:
         toks = re.split(r'\s+', nm.strip())
+        # 🔥 §10x.230 — strip TRAILING junk tokens. Pattern 4/5 can greedy-
+        # match "LIM LAY CHENG NRIC" because NRIC is also capitalised. Drop
+        # trailing JUNK tokens before length validation rather than reject
+        # the whole entry.
+        while toks and toks[-1].upper() in JUNK:
+            toks.pop()
         if not (2 <= len(toks) <= 5):
             continue
+        # Reject if interior tokens (not just trailing) are junk
         if any(t.upper() in JUNK for t in toks):
             continue
         # Each token must start with uppercase
         if not all(re.match(r"^[A-Z][A-Za-z'\-]{1,}$", t) for t in toks):
             continue
-        cleaned.append((nm, role))
+        cleaned.append((' '.join(toks), role))
     return cleaned
 
 

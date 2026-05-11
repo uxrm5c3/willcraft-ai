@@ -20,8 +20,24 @@ def normalise_dob(dob):
     return dob
 
 
+def _address_looks_like_property(addr: str) -> bool:
+    """🔥 §10x.231 — Detect when an address payload is actually a property
+    legal description (LOT/PTD/HSD/GERAN/MUKIM tokens) rather than a
+    residential address. Property docs (property_title / property_spa
+    etc.) sometimes leak through writebacks into Person.address; this
+    pollutes the will and the wizard. Refuse to write such payloads."""
+    if not addr:
+        return False
+    upper = addr.upper()
+    PROP_TOKENS = ('LOT ', 'PTD ', 'HSD ', 'HS(D)', 'GERAN', 'MUKIM',
+                   'HAKMILIK', 'PERSIARAN MEDINI UTARA',
+                   'NO. PETAK', 'NO. TINGKAT', 'PARCEL')
+    return any(t in upper for t in PROP_TOKENS)
+
+
 def ensure_person(client_id, name, nric='', address='', relationship='',
-                  dob='', nationality='Malaysian', document_id=None):
+                  dob='', nationality='Malaysian', document_id=None,
+                  source_category='nric'):
     """Create or update a Person for this client and return its id.
 
     🔥 §10x.41 — RELATIONSHIP IS REQUIRED FOR NEW PERSONS.
@@ -45,6 +61,20 @@ def ensure_person(client_id, name, nric='', address='', relationship='',
     # routinely returns IC addresses with embedded \n that pollute every
     # downstream consumer (will clause, wizard form, "Same as X" buttons).
     addr_clean = ' '.join((address or '').split()) if address else ''
+    # 🔥 §10x.231 — REFUSE property-style addresses unless the source is
+    # explicitly an NRIC document. Property gift saves / asset pipelines
+    # MUST NOT write owner addresses to Person — the address on a property
+    # doc is the PROPERTY's address, not the owner's residence.
+    if addr_clean and source_category != 'nric' and _address_looks_like_property(addr_clean):
+        try:
+            from flask import current_app
+            current_app.logger.warning(
+                f'§10x.231 REFUSED property-style address for Person={clean_name!r} '
+                f'source={source_category!r}: {addr_clean[:80]!r}'
+            )
+        except Exception:
+            pass
+        addr_clean = ''
     existing = Person.query.filter_by(client_id=client_id, full_name=clean_name).first()
     if existing:
         if not existing.nric_passport and nric:
