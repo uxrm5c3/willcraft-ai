@@ -581,6 +581,33 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
         _LLM_MATCH_CACHE[cache_key] = {
             'value': '', 'source': 'matched doc has empty ' + field}
         return None
+
+    # 🔥 §10x.156 — same unit-mismatch guard as the token suggester:
+    # if gift addr has unit identifier (B-05-11, No.10) and matched
+    # doc's addr has DIFFERENT unit, reject. The LLM keeps picking
+    # docs whose address mostly matches but the unit differs (e.g.
+    # No.9 Cukai for No.10 Sri Laguna).
+    UNIT_RE = re.compile(
+        r'\b(?:no\.?\s*)?(?:[a-z]?-?\d+(?:[-/]\d+)+|[a-z]\d+|\d+\s*[a-z]?)\b',
+        re.IGNORECASE
+    )
+    def _units(s: str) -> set:
+        u = set()
+        for mm in UNIT_RE.finditer(s or ''):
+            t = mm.group(0).strip().lower()
+            if re.fullmatch(r'\d{5}', t): continue
+            if re.fullmatch(r'19\d\d|20\d\d', t): continue
+            u.add(t)
+        return u
+    gift_units = _units(gift_addr)
+    doc_units  = _units(matched.get('address') or '')
+    if gift_units and doc_units and not (gift_units & doc_units):
+        _LLM_MATCH_CACHE[cache_key] = {
+            'value': '',
+            'source': (f'rejected: gift unit {sorted(gift_units)[:2]} '
+                       f'differs from doc unit {sorted(doc_units)[:2]}'),
+        }
+        return None
     # 🔥 §10x.147 — Reject Folio/Vol/Page/(unreadable) per §10x.152h.
     # Singapore Land Registry references ('Folio 5') or OCR garbage are
     # NOT valid Malaysian NLC titles. Don't surface them as suggestions.
