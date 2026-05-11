@@ -13223,8 +13223,12 @@ def _reconcile_downstream_for_new_identity(client_id: str, name: str,
     def _role_regex(r: str) -> str:
         # Replace hyphens or whitespace with a character class matching
         # either, so "sister-in-law" matches "sister in law" too.
+        # NOTE: re.escape('sister-in-law') yields 'sister\\-in\\-law'.
+        # We want to substitute the escaped-hyphen sequence with a
+        # char class [\s\-]+ in the FINAL pattern string.
         escaped = re.escape(r)
-        return re.sub(r'(?:\\-|\s)+', r'[\\s\\-]+', escaped)
+        # Replace each escaped-hyphen with the separator class.
+        return escaped.replace(r'\-', r'[\s\-]+')
 
     # ── Helper: does message name this person/role with given will-role keyword?
     def _named_with(will_role_kw: str) -> bool:
@@ -13336,7 +13340,7 @@ def _step2_add_executor(will, person, name, role):
         pass
     role_l_local = (role or '').lower()
     escaped_role = re.escape(role_l_local)
-    role_rx_local = re.sub(r'(?:\\-|\s)+', r'[\\s\\-]+', escaped_role)
+    role_rx_local = escaped_role.replace(r'\-', r'[\s\-]+')
     is_explicit = bool(role_rx_local) and bool(re.search(
         rf'\bmy\s+executor[^\.\n]{{0,60}}my\s+{role_rx_local}',
         text_l_local))
