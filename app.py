@@ -1857,6 +1857,138 @@ def api_will_edit_text(will_id):
 
 
 # ---------------------------------------------------------------------------
+# 🔥 §10x.143 — Inline gift-field quick-fix (PATCH single field)
+# Lets the Step 10 review banner save a missing field RIGHT FROM the
+# banner without navigating to Step 6 and finding the field. User
+# request: "improve the UI in wizard that user can provide answer
+# without clicking in and find the field".
+# ---------------------------------------------------------------------------
+
+@app.route('/api/wizard/gift-quick-fix', methods=['POST'])
+@login_required
+def api_wizard_gift_quick_fix():
+    """PATCH a single field on a single gift in step5_data.
+
+    Request JSON:
+        {
+            "client_id": "...",
+            "gift_idx": 0,           # 1-indexed (matches banner display)
+            "field":    "country",   # one of country/postcode/city/state/
+                                     # title_type/title_number/lot_number/
+                                     # mukim/daerah/negeri/ownership_type/
+                                     # testator_share/encumbrance_status
+            "value":    "Singapore"
+        }
+
+    Returns:
+        {ok: true, missing_now: ['title type', ...]}  # remaining missing
+        {ok: false, error: '...'} on failure
+    """
+    data = request.get_json(silent=True) or {}
+    client_id = (data.get('client_id') or '').strip()
+    try:
+        gift_idx = int(data.get('gift_idx', 0)) - 1   # convert to 0-indexed
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'invalid gift_idx'}), 400
+    field = (data.get('field') or '').strip()
+    value = (data.get('value') or '').strip()
+    if not client_id or gift_idx < 0 or not field:
+        return jsonify({'ok': False, 'error': 'missing required field'}), 400
+
+    # Whitelist allowed fields per gift kind
+    PROPERTY_FIELDS = {
+        'postcode', 'city', 'state', 'country',
+        'title_type', 'title_number', 'lot_number',
+        'mukim', 'daerah', 'negeri',
+        'ownership_type', 'testator_share', 'encumbrance_status',
+        'property_address',
+    }
+    FINANCIAL_FIELDS = {'country', 'institution', 'account_number',
+                        'asset_type', 'description', 'insurer',
+                        'policy_number', 'bank_name'}
+    if field not in PROPERTY_FIELDS and field not in FINANCIAL_FIELDS:
+        return jsonify({'ok': False, 'error': f'field "{field}" not allowed'}), 400
+
+    will = (Will.query.filter_by(client_id=client_id)
+            .filter(Will.deleted_at.is_(None))
+            .filter(Will.status.in_(ACTIVE_WILL_STATUSES))
+            .order_by(Will.updated_at.desc()).first())
+    if not will:
+        return jsonify({'ok': False, 'error': 'no active will'}), 404
+
+    try:
+        s5 = json.loads(will.step5_data or '[]')
+        if not isinstance(s5, list) or gift_idx >= len(s5):
+            return jsonify({'ok': False, 'error': 'gift_idx out of range'}), 400
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'step5 parse: {e}'}), 500
+
+    g = s5[gift_idx]
+    if not isinstance(g, dict):
+        return jsonify({'ok': False, 'error': 'gift not a dict'}), 400
+
+    kind = (g.get('kind') or g.get('asset_type') or '').lower()
+    if kind == 'property' or g.get('gift_type') == 'property':
+        if field not in PROPERTY_FIELDS:
+            return jsonify({'ok': False, 'error': f'field {field} not valid for property gift'}), 400
+        pi = g.setdefault('property_info', {})
+        pi[field] = value
+        # Also mirror onto property_details (legacy schema some readers use)
+        pd = g.setdefault('property_details', {})
+        pd[field] = value
+        # Mirror onto top-level too
+        g[field] = value
+    else:
+        # Financial / bank / insurance
+        if field not in FINANCIAL_FIELDS:
+            return jsonify({'ok': False, 'error': f'field {field} not valid for financial gift'}), 400
+        fd = g.setdefault('financial_details', {})
+        fd[field] = value
+        g[field] = value
+
+    g['_quickfix_applied'] = (g.get('_quickfix_applied') or []) + [
+        {'field': field, 'value': value[:80],
+         'at': datetime.utcnow().isoformat()}
+    ]
+    s5[gift_idx] = g
+    will.step5_data = json.dumps(s5)
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': f'commit: {e}'}), 500
+
+    # Recompute missing fields for this gift so the banner can update inline
+    try:
+        from validation.probate_required_fields import (
+            missing_fields_for_property, missing_fields_for_bank,
+            missing_fields_for_insurance,
+        )
+        if kind == 'property' or g.get('gift_type') == 'property':
+            still_missing = missing_fields_for_property(g.get('property_info') or {})
+        elif kind == 'insurance':
+            still_missing = missing_fields_for_insurance(g.get('financial_details') or {})
+        else:
+            still_missing = missing_fields_for_bank(g.get('financial_details') or {})
+        if not (g.get('beneficiaries') or g.get('allocations')):
+            still_missing = list(still_missing) + ['main beneficiary']
+    except Exception:
+        still_missing = []
+
+    app.logger.info(
+        f'§10x.143 gift-quick-fix client={client_id} gift={gift_idx+1} '
+        f'field={field} value={value[:40]!r} missing_now={still_missing}'
+    )
+    return jsonify({
+        'ok': True,
+        'gift_idx': gift_idx + 1,
+        'field': field,
+        'value': value,
+        'missing_now': still_missing,
+    })
+
+
+# ---------------------------------------------------------------------------
 # AI Redraft (clean up edited will text)
 # ---------------------------------------------------------------------------
 

@@ -46,35 +46,183 @@
         {% set _ = _all_missing_summary.append({'idx': loop.index, 'label': _label, 'missing': _gm}) %}
     {% endif %}
 {% endfor %}
+{# 🔥 §10x.143 — Inline edit-in-banner. User: "improve the UI in
+   wizard that user can provide answer without clicking in and find
+   the field". Each missing field gets an inline input + Save button
+   so user fills it RIGHT FROM the banner. AJAX saves to
+   /api/wizard/gift-quick-fix and re-renders the row. #}
+{% set _LABEL_TO_FIELD = {
+    'street address': 'property_address',
+    'postcode': 'postcode', 'city': 'city',
+    'state': 'state', 'country': 'country',
+    'country (MY/SG)': 'country',
+    'title type (Geran/HSD/Hakmilik)': 'title_type',
+    'title No.': 'title_number',
+    'lot No. / PT / PTD': 'lot_number',
+    'mukim': 'mukim',
+    'daerah (district)': 'daerah',
+    'negeri': 'negeri',
+    'ownership type (sole/joint)': 'ownership_type',
+    "testator's share": 'testator_share',
+    'encumbrance status': 'encumbrance_status',
+    'bank name': 'bank_name',
+    'account No.': 'account_number',
+    'insurer': 'insurer',
+    'policy No.': 'policy_number',
+} %}
 {% if _all_missing_summary %}
-<div class="mb-6 p-5 bg-amber-50 border-2 border-amber-300 rounded-lg shadow-sm">
+<div id="quick-fix-banner" class="mb-6 p-5 bg-amber-50 border-2 border-amber-300 rounded-lg shadow-sm">
     <div class="flex items-start">
         <div class="flex-shrink-0 mt-0.5">
             <svg class="w-7 h-7 text-amber-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/></svg>
         </div>
         <div class="ml-3 flex-1">
-            <h3 class="text-base font-bold text-amber-900">
+            <h3 id="quick-fix-header" class="text-base font-bold text-amber-900">
                 ⚠️ {{ _all_missing_summary|length }} gift{% if _all_missing_summary|length != 1 %}s have{% else %} has{% endif %} missing required fields
             </h3>
             <p class="text-sm text-amber-800 mt-1">
-                Please fill these in before generating — otherwise the lawyer/firm will need to ask you for them before the will can be signed.
+                Fill them inline below — your answer saves immediately. No need to navigate away.
             </p>
-            <div class="mt-3 space-y-1.5">
+            <div id="quick-fix-rows" class="mt-3 space-y-3">
                 {% for entry in _all_missing_summary %}
-                <a href="/wizard/step/6#gift-{{ entry.idx }}" class="block text-sm bg-white hover:bg-amber-100 px-3 py-2 rounded border border-amber-200 transition no-underline">
-                    <strong class="text-amber-900">Gift {{ entry.idx }}:</strong>
-                    <span class="text-gray-700">{{ entry.label[:60] }}{% if entry.label|length > 60 %}…{% endif %}</span>
-                    <span class="text-amber-700">→ {{ entry.missing|join(' · ') }}</span>
-                    <span class="text-xs text-amber-600 ml-2">Click to fill →</span>
-                </a>
+                <div class="quick-fix-gift bg-white px-3 py-3 rounded border border-amber-200" data-gift-idx="{{ entry.idx }}">
+                    <div class="flex items-baseline justify-between mb-2">
+                        <div class="text-sm">
+                            <strong class="text-amber-900">Gift {{ entry.idx }}:</strong>
+                            <span class="text-gray-700">{{ entry.label[:60] }}{% if entry.label|length > 60 %}…{% endif %}</span>
+                        </div>
+                        <a href="/wizard/step/6#gift-{{ entry.idx }}" class="text-xs text-amber-600 hover:underline">Open in Step 6 →</a>
+                    </div>
+                    <div class="quick-fix-fields grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {% for label in entry.missing %}
+                            {% set field = _LABEL_TO_FIELD.get(label, '') %}
+                            {% if field %}
+                            <div class="quick-fix-field flex items-center gap-2" data-field="{{ field }}">
+                                <label class="text-xs text-amber-800 font-medium min-w-[110px]">{{ label }}:</label>
+                                {% if field == 'country' %}
+                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
+                                    <option value="">-- Select --</option>
+                                    <option value="Malaysia">Malaysia</option>
+                                    <option value="Singapore">Singapore</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                                {% elif field == 'ownership_type' %}
+                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
+                                    <option value="">-- Select --</option>
+                                    <option value="sole">Sole</option>
+                                    <option value="joint">Joint</option>
+                                </select>
+                                {% elif field == 'encumbrance_status' %}
+                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
+                                    <option value="">-- Select --</option>
+                                    <option value="clean">Clean (No Loan)</option>
+                                    <option value="encumbered">Has Loan / Encumbered</option>
+                                </select>
+                                {% elif field == 'title_type' %}
+                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
+                                    <option value="">-- Select --</option>
+                                    <option value="Geran">Geran</option>
+                                    <option value="Hakmilik">Hakmilik</option>
+                                    <option value="HSD">H.S.(D)</option>
+                                    <option value="HSM">H.S.(M)</option>
+                                    <option value="Strata Title Geran">Strata Title Geran</option>
+                                </select>
+                                {% elif field == 'state' or field == 'negeri' %}
+                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
+                                    <option value="">-- Select --</option>
+                                    {% for st in ['Johor', 'Kedah', 'Kelantan', 'Melaka', 'Negeri Sembilan', 'Pahang', 'Perak', 'Perlis', 'Pulau Pinang', 'Sabah', 'Sarawak', 'Selangor', 'Terengganu', 'Kuala Lumpur', 'Labuan', 'Putrajaya'] %}
+                                    <option value="{{ st }}">{{ st }}</option>
+                                    {% endfor %}
+                                </select>
+                                {% elif field == 'testator_share' %}
+                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
+                                    <option value="">-- Select --</option>
+                                    <option value="1/1">1/1 (sole owner)</option>
+                                    <option value="1/2">1/2</option>
+                                    <option value="1/3">1/3</option>
+                                    <option value="2/3">2/3</option>
+                                    <option value="1/4">1/4</option>
+                                    <option value="3/4">3/4</option>
+                                </select>
+                                {% else %}
+                                <input type="text" class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}" placeholder="{{ label }}">
+                                {% endif %}
+                                <button type="button" class="qf-save text-xs px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded transition disabled:opacity-50" data-gift-idx="{{ entry.idx }}" data-field="{{ field }}">Save</button>
+                                <span class="qf-status text-xs text-green-700 hidden">✓</span>
+                            </div>
+                            {% else %}
+                            <div class="text-xs text-amber-700 italic flex-1">
+                                {{ label }} (open Step 6 to fill)
+                            </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
                 {% endfor %}
             </div>
             <a href="/wizard/step/6" class="inline-block mt-3 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold rounded transition">
-                ← Go to Step 6 to fill missing fields
+                ← Or go to Step 6 to fill missing fields the long way
             </a>
         </div>
     </div>
 </div>
+
+<script>
+(function(){
+    const banner = document.getElementById('quick-fix-banner');
+    if (!banner) return;
+    const CLIENT_ID = '{{ session.get("client_id", "") }}';
+
+    banner.addEventListener('click', async function(ev) {
+        const btn = ev.target.closest('.qf-save');
+        if (!btn) return;
+        ev.preventDefault();
+        const giftIdx = parseInt(btn.getAttribute('data-gift-idx'), 10);
+        const field = btn.getAttribute('data-field');
+        const fieldDiv = btn.closest('.quick-fix-field');
+        const input = fieldDiv.querySelector('.qf-input');
+        const status = fieldDiv.querySelector('.qf-status');
+        const value = (input.value || '').trim();
+        if (!value) {
+            input.classList.add('ring-2', 'ring-red-400');
+            setTimeout(()=>input.classList.remove('ring-2','ring-red-400'), 1500);
+            return;
+        }
+        btn.disabled = true; btn.textContent = 'Saving…';
+        try {
+            const r = await fetch('/api/wizard/gift-quick-fix', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({client_id: CLIENT_ID, gift_idx: giftIdx, field, value}),
+            });
+            const j = await r.json();
+            if (j.ok) {
+                fieldDiv.classList.add('opacity-50');
+                input.disabled = true;
+                btn.classList.add('hidden');
+                status.classList.remove('hidden');
+                status.textContent = '✓ saved';
+                // If this gift now has 0 missing, fade the row
+                const giftBox = btn.closest('.quick-fix-gift');
+                const remainingFields = giftBox.querySelectorAll('.qf-save:not(.hidden)');
+                if (remainingFields.length === 0) {
+                    giftBox.classList.add('bg-green-50', 'border-green-300');
+                    const hdr = giftBox.querySelector('strong');
+                    if (hdr) hdr.classList.add('text-green-700');
+                    setTimeout(()=>giftBox.style.transition='opacity 0.5s', 100);
+                    setTimeout(()=>{giftBox.style.opacity='0.4';}, 1500);
+                }
+            } else {
+                btn.disabled = false; btn.textContent = 'Save';
+                alert('Save failed: ' + (j.error || 'unknown'));
+            }
+        } catch(e) {
+            btn.disabled = false; btn.textContent = 'Save';
+            alert('Save error: ' + e.message);
+        }
+    });
+})();
+</script>
 {% endif %}
 
 <!-- Validation Results -->
