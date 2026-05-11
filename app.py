@@ -15115,12 +15115,19 @@ def wizard_step_gifts():
                     # If postcode/city/state are in separate fields, strip them from address
                     clean_addr = clean_addr[:matches[0].start()].rstrip(', ')
 
+            # 🔥 §10x.164 — read NEW gift_prop_mukim_* form input (was
+            # previously missing; mukim used to live ONLY in
+            # bandar_pekan/bandar field). When form has explicit
+            # gift_prop_mukim_X, that wins; else fall back to bandar.
+            form_mukim = request.form.get(f'gift_prop_mukim_{gi}', '').strip()
+            form_bandar = request.form.get(f'gift_prop_bandar_{gi}', '').strip()
             property_details = {
                 'property_address': clean_addr or prop_addr,
                 'title_type': request.form.get(f'gift_prop_title_type_{gi}', '').strip(),
                 'title_number': request.form.get(f'gift_prop_title_number_{gi}', '').strip(),
                 'lot_number': request.form.get(f'gift_prop_lot_number_{gi}', '').strip(),
-                'bandar_pekan': request.form.get(f'gift_prop_bandar_{gi}', '').strip(),
+                'bandar_pekan': form_bandar,
+                'mukim': form_mukim or form_bandar,   # §10x.164 — capture mukim
                 'daerah': request.form.get(f'gift_prop_daerah_{gi}', '').strip(),
                 'negeri': state or request.form.get(f'gift_prop_negeri_{gi}', '').strip(),
                 'state': state,
@@ -15193,7 +15200,22 @@ def wizard_step_gifts():
         except (json.JSONDecodeError, TypeError):
             gift_docs = []
 
-        gifts.append({
+        # 🔥 §10x.164 — MERGE form fields onto existing gift entry instead
+        # of full-reconstruct. The full-reconstruct pattern dropped EVERY
+        # chat-side metadata field on every Step 6 POST:
+        #   • mukim (no form input historically)
+        #   • co_owners (no form input)
+        #   • _ai_summary_idx (chat binding to AI Summary slot)
+        #   • _doc_level (§10x.159/162 granularity tag)
+        #   • _property_hierarchy (§10x.162 Phase 4 typed levels)
+        #   • _master_lot_from_doc (§10x.159 audit trail)
+        #   • _match_via / _match_tier / _match_evidence
+        #   • doc_evidence_owners (§10x.162 doc-owner audit)
+        #   • beneficiaries (canonical list — only allocations kept)
+        #   • kind, _h3_placeholder, variant, etc.
+        # Now: start with the EXISTING step5_data entry (if any) and
+        # OVERLAY form values on top. Form-less fields stay intact.
+        form_overlay = {
             'gift_type': gift_type,
             'description': desc,
             'property_details': property_details,
@@ -15204,7 +15226,40 @@ def wizard_step_gifts():
             'sell_property': sell_property,
             'substitute_mode': substitute_mode,
             'documents': gift_docs,
-        })
+        }
+        existing_gifts = session.get('step5_gifts', []) or []
+        if gi < len(existing_gifts) and isinstance(existing_gifts[gi], dict):
+            merged = dict(existing_gifts[gi])
+            # Top-level overlay: form values replace existing
+            merged.update(form_overlay)
+            # property_details deep-merge: form values replace existing,
+            # but PRESERVE fields the form has no input for (mukim,
+            # co_owners, encumbrance_status when not in form, etc.)
+            existing_pd = existing_gifts[gi].get('property_details') or {}
+            if isinstance(existing_pd, dict):
+                merged_pd = dict(existing_pd)
+                # Apply form-supplied property_details on top
+                for k, v in (property_details or {}).items():
+                    if v != '' and v is not None:
+                        merged_pd[k] = v
+                    elif k not in merged_pd:
+                        # Form supplied empty but no existing — record empty
+                        merged_pd[k] = v
+                merged['property_details'] = merged_pd
+            # Same for financial_details
+            existing_fd = existing_gifts[gi].get('financial_details') or {}
+            if isinstance(existing_fd, dict):
+                merged_fd = dict(existing_fd)
+                for k, v in (financial_details or {}).items():
+                    if v != '' and v is not None:
+                        merged_fd[k] = v
+                    elif k not in merged_fd:
+                        merged_fd[k] = v
+                merged['financial_details'] = merged_fd
+            gifts.append(merged)
+        else:
+            # New gift — no existing entry to merge with
+            gifts.append(form_overlay)
 
     # Reorder gifts if user changed order via drag-and-drop or sort
     gift_order_str = request.form.get('gift_order', '')
