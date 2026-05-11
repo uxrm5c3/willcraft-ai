@@ -563,57 +563,64 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
     if will_mukim:
         prompt += f"Property's resolved Mukim (from address geo bridge): {will_mukim}\n"
     prompt += (
-        f"\nWhich doc index is MOST LIKELY the official title document "
-        f"for this property AND has a USABLE title No. or lot No. "
-        f"(non-empty, not 'Folio N', not '(unreadable)')?\n\n"
-        f"⭐ marker = doc has a real identifier; ○ = doc has only an "
-        f"empty / placeholder value. Prefer ⭐ docs unless ○ is "
-        f"obviously the subject (e.g. exact address + owner match).\n\n"
-        f"PRIORITY ORDER OF SIGNALS (strongest first):\n"
-        f"  1. Title No. or Lot No. that the will already mentions "
-        f"(direct identifier match — rare but decisive)\n"
-        f"  2. Owner name matches a known family/testator name\n"
-        f"  3. Mukim/Daerah agreement with the property's resolved Mukim\n"
-        f"  4. Address keywords (LEAST reliable on SPA/Charge/Loan because "
-        f"those forms typically print the PARTY's residence, not the "
-        f"subject property)\n\n"
-        f"🔥 §10x.156 CRITICAL — addresses on legal forms are OFTEN a "
-        f"PARTY's residence, NOT the subject property:\n"
-        f"  • SPA: 'address' shown is usually the PURCHASER's residence "
-        f"(can be in a different city, even Singapore). The subject "
-        f"property is described in the FIRST SCHEDULE.\n"
-        f"  • Charge / Loan agreement (Borang 16A): 'address' is "
-        f"typically the CHARGOR's residence. The subject property is in "
-        f"the SECURITY / CHARGED LAND schedule.\n"
-        f"  • Cukai Tanah: address is the bill-to mailing address; the "
-        f"property is identified by Lot + Mukim.\n"
-        f"  → DO NOT reject a doc just because its 'address' field "
-        f"differs from the will's property address. Use mukim, lot No., "
-        f"title No., and OWNER NAME as primary signals.\n\n"
-        f"🔥 §10x.157 — OCR FIELD-SWAP awareness: vision regularly "
-        f"swaps title and lot fields on Charge / Loan / SPA forms "
-        f"because multiple numeric IDs (charge account No., title No., "
-        f"lot No.) are printed close together. A 6-7-digit value in the "
-        f"'lot' field MAY actually be the Geran/title No., and vice "
-        f"versa. Consider both possibilities when scoring.\n\n"
-        f"🔥 §10x.152h — REJECT bogus values: 'Folio N' / 'Vol N' / "
-        f"'(unreadable)' / 'Page N' are NOT valid Malaysian NLC titles. "
-        f"If the matching doc's title field has any such value, return "
-        f"best_doc_index=null.\n\n"
-        f"Respond with ONLY a JSON object: "
-        f'{{"best_doc_index": <int>, "confidence": "high"|"medium"|"low", '
-        f'"reason": "<one short sentence — explain WHICH signal won>"}}\n'
-        f"If NO doc plausibly matches, respond "
-        f'{{"best_doc_index": null, "confidence": "low", '
-        f'"reason": "no match"}}.\n'
-        f"Output ONLY the JSON, no other text."
+        f"\n🔥 §10x.160 — REASON STEP-BY-STEP about granularity before "
+        f"picking. Property docs in Malaysia exist at DIFFERENT LEVELS:\n"
+        f"  • strata     → Hakmilik Strata (per-unit; title has sub-token "
+        f"like '564662/M1C/30/710'). Authoritative for unit's title+lot.\n"
+        f"  • sub_parcel → landed Geran OR SPA/Charge schedule for a "
+        f"specific unit. Authoritative for that unit's title+lot.\n"
+        f"  • master     → Cukai Tanah / Hakmilik Induk / developer-owned "
+        f"parent parcel (owners often include a Berhad/Bhd developer + "
+        f"individuals). Carries master_lot, NOT the unit's strata No. "
+        f"USEFUL for filling mukim/daerah/negeri/co_owners on the gift, "
+        f"but NEVER use its master_lot as the unit's lot_number.\n\n"
+        f"FIELD REQUESTED IS: {field}.\n"
+        f"  - For title_number: only 'strata' or 'sub_parcel' docs are "
+        f"authoritative. 'master' docs do NOT carry the unit's title.\n"
+        f"  - For lot_number: same — strata/sub_parcel only.\n\n"
+        f"REASONING STEPS (do these in order, then output JSON):\n"
+        f"  Step 1 — for each candidate doc, classify its level "
+        f"({{'strata' | 'sub_parcel' | 'master' | 'unknown'}}).\n"
+        f"  Step 2 — drop master/unknown docs from the {field} pool "
+        f"(they cannot supply this field). KEEP them as supporting_docs.\n"
+        f"  Step 3 — among remaining strata/sub_parcel docs, pick the "
+        f"one MOST LIKELY for THIS specific property using these "
+        f"signals (in priority order):\n"
+        f"     a) Title or lot No. the will explicitly mentions (rare).\n"
+        f"     b) Owner name matches a known family/testator name.\n"
+        f"     c) Mukim/Daerah agrees with property's resolved Mukim.\n"
+        f"     d) Address keywords (LEAST reliable — addresses on SPA/"
+        f"Charge are PARTY residences not subject property; "
+        f"see §10x.156).\n"
+        f"  Step 4 — if doc's address has a DIFFERENT unit identifier "
+        f"than the will (e.g. 'A18 & A19' vs 'B-05-11', or 'No.9' vs "
+        f"'No.10'), REJECT it — different physical units in the same "
+        f"neighbourhood (§10x.156 unit-mismatch).\n"
+        f"  Step 5 — if doc's title is 'Folio N' / 'Vol N' / "
+        f"'(unreadable)' / 'Page N', it's NOT a valid Malaysian NLC "
+        f"title — exclude (§10x.152h).\n\n"
+        f"⭐ marker = doc has a non-bogus identifier; ○ = empty/placeholder.\n\n"
+        f"OUTPUT (JSON only, no preamble):\n"
+        f'{{"reasoning_steps": ["<step 1 finding>", "<step 2 finding>", '
+        f'"<step 3 pick or null>"],\n'
+        f'  "best_doc_index": <int|null>,\n'
+        f'  "confidence": "high"|"medium"|"low",\n'
+        f'  "reason": "<one short sentence on WHY this doc won>",\n'
+        f'  "supporting_docs": [{{"idx": <int>, "level": "master|unknown", '
+        f'"contributes": ["mukim","daerah","co_owners",...]}}],\n'
+        f'  "fields_still_missing_after_pick": '
+        f'["title_number","lot_number","strata_parcel_no",...]}}\n'
+        f"If NO strata/sub_parcel doc plausibly matches, set "
+        f'best_doc_index=null and explain in reasoning_steps.'
     )
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
         resp = client.messages.create(
             model='claude-haiku-4-5',
-            max_tokens=200,
+            # 🔥 §10x.160 — chain-of-thought needs more tokens for the
+            # reasoning_steps + supporting_docs + missing_fields arrays.
+            max_tokens=600,
             temperature=0,
             messages=[{'role': 'user', 'content': prompt}],
         )
@@ -680,6 +687,12 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
         'value': value,
         'source': (f"AI-matched doc (cat={matched['category']}, "
                    f"confidence={confidence}): {reason}"),
+        # 🔥 §10x.160 — pass through CoT outputs for the two-tier UI
+        # (Phase 2). Wizard banner can render reasoning_steps as a
+        # tooltip and supporting_docs as a separate "context only" list.
+        '_reasoning_steps':   result.get('reasoning_steps') or [],
+        '_supporting_docs':   result.get('supporting_docs') or [],
+        '_fields_still_missing': result.get('fields_still_missing_after_pick') or [],
     }
     _LLM_MATCH_CACHE[cache_key] = out
     return out
