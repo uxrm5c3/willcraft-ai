@@ -14938,6 +14938,11 @@ def wizard_step_gifts():
                 'asset_type': request.form.get(f'gift_fin_type_{gi}', '').strip(),
                 'description': request.form.get(f'gift_fin_desc_{gi}', '').strip(),
                 'account_ownership': account_ownership,
+                # 🔥 §10x.142b — country REQUIRED for SG vs MY format in
+                # Phek will template. New form field added per §10x.140
+                # user feedback (missing-fields banner had no editable
+                # field for country).
+                'country': request.form.get(f'gift_fin_country_{gi}', '').strip(),
             }
             if not financial_details['institution'] and not financial_details['description']:
                 continue

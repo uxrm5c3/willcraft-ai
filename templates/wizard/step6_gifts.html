@@ -17,7 +17,7 @@
         {% if not gifts %}{% set gifts = [{'gift_type': 'property', 'description': '', 'property_details': {}, 'financial_details': {}, 'subject_to_trust': false, 'subject_to_guardian_allowance': false, 'allocations': [{}]}] %}{% endif %}
         {% for gift in gifts %}
         {% set gift_idx = loop.index0 %}
-        <div class="gift-entry border border-gray-200 rounded-lg mb-4" data-gift-index="{{ gift_idx }}">
+        <div class="gift-entry border border-gray-200 rounded-lg mb-4" data-gift-index="{{ gift_idx }}" id="gift-{{ loop.index }}">
             <div class="flex justify-between items-center p-5 pb-0 cursor-pointer gift-header" onclick="toggleGiftCollapse({{ gift_idx }})">
                 <div class="flex items-center gap-2">
                     <span class="drag-handle cursor-grab text-gray-300 hover:text-gray-500 select-none text-lg leading-none" title="Drag to reorder" onmousedown="event.stopPropagation()">⠿</span>
@@ -397,7 +397,7 @@
                                placeholder="e.g., 1234-5678-9012">
                     </div>
                 </div>
-                <div class="grid md:grid-cols-2 gap-3 mb-3">
+                <div class="grid md:grid-cols-3 gap-3 mb-3">
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1">Asset Type</label>
                         <select name="gift_fin_type_{{ loop.index0 }}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500">
@@ -405,6 +405,27 @@
                             {% for at in ['Savings Account', 'Current Account', 'Fixed Deposit', 'Investment Account', 'Unit Trust', 'Shares/Stocks', 'Insurance Policy', 'EPF', 'ASB/ASN', 'Tabung Haji', 'Vehicle', 'Jewellery', 'Other'] %}
                             <option value="{{ at }}" {% if fd.get('asset_type', '') == at %}selected{% endif %}>{{ at }}</option>
                             {% endfor %}
+                        </select>
+                    </div>
+                    {# 🔥 §10x.142b — country distinguishes SG vs MY format
+                       in Phek will template (Sample uses "Singapore POSB
+                       bank Account No." for SG, "Public Bank Berhad
+                       Current Account No." for MY). REQUIRED for probate.
+                       Add as a dropdown matching property gift's country
+                       field so user can fill the missing-fields banner
+                       value (per §10x.140 user feedback: "I am getting
+                       prompts on the country where the financial asset
+                       is, but when click in, there is no field to
+                       complete"). #}
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Country <span class="text-red-500">*</span></label>
+                        <select name="gift_fin_country_{{ loop.index0 }}"
+                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500
+                                       {% if not fd.get('country') %}border-amber-400 bg-amber-50{% endif %}">
+                            <option value="" {% if not fd.get('country') %}selected{% endif %}>-- Select --</option>
+                            <option value="Malaysia" {% if fd.get('country') == 'Malaysia' %}selected{% endif %}>Malaysia</option>
+                            <option value="Singapore" {% if fd.get('country') == 'Singapore' %}selected{% endif %}>Singapore</option>
+                            <option value="Other" {% if fd.get('country') and fd.get('country') not in ['Malaysia', 'Singapore', ''] %}selected{% endif %}>Other</option>
                         </select>
                     </div>
                     <div>
@@ -847,6 +868,41 @@ document.addEventListener('DOMContentLoaded', function() {
             collapseGift(i);
         }
     }
+    // 🔥 §10x.140 — deep-link from step10 review banner. URL hash
+    // `#gift-N` → expand that gift + scroll into view + flash-highlight
+    // any field with amber border (the missing one user clicked to fill).
+    const hash = window.location.hash;
+    const m = hash.match(/^#gift-(\d+)$/);
+    if (m) {
+        const giftIdx = parseInt(m[1], 10) - 1;  // 1-indexed in URL, 0-indexed in DOM
+        if (giftIdx >= 0 && giftIdx < giftCount) {
+            const body = document.getElementById('gift-body-' + giftIdx);
+            const summary = document.getElementById('gift-summary-' + giftIdx);
+            const chevron = document.getElementById('gift-chevron-' + giftIdx);
+            if (body) body.classList.remove('hidden');
+            if (summary) summary.classList.add('hidden');
+            if (chevron) chevron.style.transform = 'rotate(180deg)';
+            const target = document.getElementById('gift-' + (giftIdx + 1));
+            if (target) {
+                setTimeout(function() {
+                    target.scrollIntoView({behavior: 'smooth', block: 'start'});
+                    // Flash-highlight any amber-border fields (the missing ones)
+                    const amberFields = target.querySelectorAll(
+                        'select.border-amber-400, input.border-amber-400, ' +
+                        'select.bg-amber-50, input.bg-amber-50');
+                    amberFields.forEach(function(el, i) {
+                        setTimeout(function() {
+                            el.classList.add('ring-4', 'ring-amber-300');
+                            setTimeout(function() {
+                                el.classList.remove('ring-4', 'ring-amber-300');
+                            }, 2000);
+                            if (i === 0) try { el.focus(); } catch (e) {}
+                        }, 300 + i * 200);
+                    });
+                }, 200);
+            }
+        }
+    }
 });
 
 // Camera viewfinder helpers for Step 6
@@ -1244,8 +1300,9 @@ function buildFinancialPanelHtml(idx) {
             <div><label class="block text-xs font-medium text-gray-600 mb-1">Institution / Bank</label><input type="text" name="gift_fin_institution_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., Maybank, CIMB"></div>
             <div><label class="block text-xs font-medium text-gray-600 mb-1">Account Number</label><input type="text" name="gift_fin_account_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="e.g., 1234-5678-9012"></div>
         </div>
-        <div class="grid md:grid-cols-2 gap-3">
+        <div class="grid md:grid-cols-3 gap-3">
             <div><label class="block text-xs font-medium text-gray-600 mb-1">Asset Type</label><select name="gift_fin_type_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg"><option value="">-- Select --</option>${typeOptions}</select></div>
+            <div><label class="block text-xs font-medium text-gray-600 mb-1">Country <span class="text-red-500">*</span></label><select name="gift_fin_country_${idx}" class="w-full px-3 py-2 text-sm border border-amber-400 bg-amber-50 rounded-lg"><option value="" selected>-- Select --</option><option value="Malaysia">Malaysia</option><option value="Singapore">Singapore</option><option value="Other">Other</option></select></div>
             <div><label class="block text-xs font-medium text-gray-600 mb-1">Description</label><input type="text" name="gift_fin_desc_${idx}" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg" placeholder="Additional details"></div>
         </div>
     </div>`;
