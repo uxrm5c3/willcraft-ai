@@ -404,9 +404,16 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
                     family_set_pre.add(p.full_name.strip().upper())
         try:
             from ai.chat_planner import _GEO_BRIDGE
-            for k, v in (_GEO_BRIDGE or {}).items():
-                if k.lower() in (gift_addr or '').lower():
-                    if isinstance(v, dict):
+            # _GEO_BRIDGE values are tuples (mukim, daerah, negeri).
+            # Longest key first so 'bandar seri alam' beats 'seri alam'.
+            ga_lc = (gift_addr or '').lower()
+            for k in sorted((_GEO_BRIDGE or {}).keys(),
+                            key=len, reverse=True):
+                if k.lower() in ga_lc:
+                    v = _GEO_BRIDGE[k]
+                    if isinstance(v, tuple) and v:
+                        will_mukim_pre = (v[0] or '').lower()
+                    elif isinstance(v, dict):
                         will_mukim_pre = (v.get('mukim') or '').lower()
                     if will_mukim_pre:
                         break
@@ -414,6 +421,9 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
             pass
     except Exception:
         pass
+
+    # Same lookup for the in-prompt context block below.
+    will_mukim = will_mukim_pre.title() if will_mukim_pre else ''
     if will_mukim_pre and family_set_pre:
         det_hits = []
         for c in candidates:
@@ -457,32 +467,8 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
         f"requested {field}; addresses may be a party residence not the "
         "subject property):\n"
     )
-    # Pull testator + family names + property's resolved mukim for context
-    family_blob = ''
-    will_mukim = ''
-    try:
-        from database import Person, Will as _W
-        ws = _W.query.filter_by(client_id=client_id).filter(
-            _W.deleted_at.is_(None)).order_by(_W.updated_at.desc()).first()
-        if ws:
-            s1 = _json.loads(ws.step1_data or '{}')
-            tn = (s1.get('full_name') or '').strip()
-            family_blob = tn
-            for p in Person.query.filter_by(client_id=client_id).all():
-                if p.full_name:
-                    family_blob += ', ' + p.full_name
-        # Resolve will's mukim via §10ha bridge if available
-        try:
-            from ai.chat_planner import _GEO_BRIDGE
-            for k, v in (_GEO_BRIDGE or {}).items():
-                if k.lower() in (gift_addr or '').lower():
-                    will_mukim = (v or {}).get('mukim', '') if isinstance(v, dict) else ''
-                    if will_mukim:
-                        break
-        except Exception:
-            pass
-    except Exception:
-        pass
+    # Reuse the lookups already done in the deterministic pre-LLM block
+    family_blob = ', '.join(sorted(family_set_pre)) if family_set_pre else ''
 
     for i, c in enumerate(candidates):
         # Highlight title/lot non-emptiness — the LLM should prefer docs
