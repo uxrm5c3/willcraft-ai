@@ -113,6 +113,18 @@ _BLANK_RESULT: dict = {
     # unknown. Populated by services.property_granularity classifier
     # if sub-schemas don't declare granularity explicitly.
     '_doc_level':  'unknown',
+    # 🔥 §10x.165 — title-conversion history. List of previous titles
+    # that have been SUPERSEDED by the current title_number/lot_number.
+    # Populated when vision sees "now known as" / "formerly known as" /
+    # "kepada Hakmilik Tetap" / "yang dahulunya" / "presently registered
+    # as" / "converted to" notation. Each entry:
+    #   {type: 'HS(D)'|'HS(M)'|'PTD'|'GRN', no: str, pt_no: str,
+    #    status: 'superseded'}
+    # Matcher uses these for cross-conversion grouping: two docs at
+    # different stages of conversion (one shows HS(D) 431161, other
+    # shows Geran 337203 with historical entry [HS(D) 431161]) merge
+    # into ONE physical property.
+    '_historical_titles': [],
     'bank_name': '', 'account_number': '', 'currency': '',
     'account_type': '',
     'insurer': '', 'policy_number': '', 'policyholder_name': '',
@@ -175,6 +187,39 @@ string. Do not invent or guess. Use the exact RULES per category.
     address: back of MyKad only; lines separated by \\n
     gender: NRIC last digit odd=Male even=Female; passport: read M/F field
     nationality: usually Malaysian; for passports read the cover
+
+  🔥 §10x.165 — TITLE-CONVERSION HISTORY (Malaysian NLC).
+  Malaysian land titles routinely go through conversions:
+    • HS(D) — Hakmilik Sementara Daftaran (Temporary Title, Registered)
+              issued during development with a PTD lot number
+    • HS(M) — Hakmilik Sementara Mukim (Temporary Title at Mukim level)
+    • Geran — Final Title (post-conversion). Different title No.
+              AND different lot No. issued by Pejabat Tanah.
+
+  A single doc drafted DURING conversion can carry BOTH old and new
+  identifiers in the same schedule. Typical phrasings:
+    • "now known as Geran <X>, Lot <Y> (formerly HS(D) <A>, PTD <B>)"
+    • "presently registered as Geran <X> ... formerly known as ..."
+    • "kepada Hakmilik Tetap No. <X>" (BM: "to Final Title No. X")
+    • "yang dahulunya HS(D) <A>" (BM: "formerly HS(D) A")
+    • "previously HS(D) <A> PTD <B>"
+    • "converted to Geran <X>"
+
+  When you see ANY of these phrasings, extract BOTH sets of identifiers:
+
+    title_number, lot_number, title_type    → the CURRENT identifiers
+                                              (Geran, post-conversion)
+    _historical_titles: [{                   → ALL previous identifiers
+        type: "HS(D)" | "HS(M)" | "PTD",
+        no:   "<old title number>",
+        pt_no: "<old PT/PTD lot if separate>",
+        status: "superseded"                 → optional clarifier
+    }, ...]
+
+  If the doc carries ONLY the old identifiers (drafted pre-conversion)
+  and NO "now known as" phrase, leave _historical_titles=[] and put
+  the old identifiers into the regular title_number/lot_number fields
+  (the matcher will merge cross-conversion via grouping).
 
   🔥 §10x.161 — DOC-TYPE-SPECIFIC SUB-SCHEMAS (typed extraction).
   When `kind` falls into one of the property categories below, also

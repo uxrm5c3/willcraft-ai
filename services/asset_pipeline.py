@@ -618,6 +618,23 @@ def group_documents(client_id: str) -> List[DocGroup]:
             ex = json.loads(d.extracted_data or '{}') or {}
         except Exception:
             ex = {}
+        # 🔥 §10x.165 — collect ALL identifier numbers the doc carries,
+        # including historical_titles from title-conversion notation
+        # ("now known as Geran X ... formerly HS(D) Y PTD Z"). Two docs
+        # at different conversion stages share an identifier in their
+        # union and should merge into one group.
+        hist_titles = ex.get('_historical_titles') or []
+        hist_title_digits = set()
+        hist_pt_digits = set()
+        for h in hist_titles:
+            if not isinstance(h, dict):
+                continue
+            nn = digits(h.get('no') or '')
+            if nn and len(nn) >= 4:
+                hist_title_digits.add(nn)
+            pp = digits(h.get('pt_no') or '')
+            if pp and len(pp) >= 4:
+                hist_pt_digits.add(pp)
         parsed.append({
             'id': d.id,
             'category': d.category,
@@ -625,6 +642,10 @@ def group_documents(client_id: str) -> List[DocGroup]:
             'content_hash': getattr(d, 'content_hash', None),
             'lot': digits(ex.get('lot_number') or ''),
             'title': digits(ex.get('title_number') or ''),
+            # §10x.165 — union of current + historical identifiers.
+            # Used for cross-conversion grouping ONLY (not displayed).
+            'title_union': {digits(ex.get('title_number') or '')} | hist_title_digits,
+            'lot_union':   {digits(ex.get('lot_number') or '')} | hist_pt_digits,
             'addr': (ex.get('property_address') or '').strip().lower(),
             'acct': digits(ex.get('account_number') or ''),
             'policy': digits(ex.get('policy_number') or ''),
@@ -705,6 +726,37 @@ def group_documents(client_id: str) -> List[DocGroup]:
                 )
                 if not conflict and a['category'] == b['category']:
                     union(a['id'], b['id'])
+                    continue
+            # 🔥 §10x.165 — cross-conversion title-history merge.
+            # When two docs share ANY identifier in their union (current
+            # OR historical title No., current OR historical PTD/lot),
+            # they describe the SAME physical property at different
+            # NLC conversion stages (HS(D) ↔ Geran). Merge into one group.
+            #
+            # Example: SPA drafted while title was HS(D) 431161 (lot
+            # 135402) vs Charge drafted with same HS(D) 431161 but
+            # converted lot 337203 — both have title_union containing
+            # 431161 → merge into ONE Sri Laguna property.
+            a_tu = a.get('title_union', set()) - {''}
+            b_tu = b.get('title_union', set()) - {''}
+            a_lu = a.get('lot_union', set()) - {''}
+            b_lu = b.get('lot_union', set()) - {''}
+            shared_title = a_tu & b_tu
+            shared_lot   = a_lu & b_lu
+            # Require ≥4-digit overlap to avoid generic 5-digit postcodes
+            shared_title = {t for t in shared_title if len(t) >= 4}
+            shared_lot   = {l for l in shared_lot   if len(l) >= 4}
+            if (shared_title or shared_lot) and a['category'] in (
+                    'property_title', 'property_spa', 'property_tax',
+                    'loan_agreement', 'property_transfer'):
+                # Apply strata exception: same lot but different titles on
+                # strata docs → still different units. Keep that rule.
+                if a['is_strata'] or b['is_strata']:
+                    if (a['title'] and b['title']
+                            and a['title'] != b['title']
+                            and not shared_title):
+                        continue
+                union(a['id'], b['id'])
 
     # Build DocGroup objects from union-find
     groups: Dict[str, List[Dict[str, Any]]] = {}
@@ -714,8 +766,26 @@ def group_documents(client_id: str) -> List[DocGroup]:
 
     out: List[DocGroup] = []
     for root, members in groups.items():
+        # 🔥 §10x.165 — merge historical_titles across all members of
+        # the group. If member A has historical [HS(D) 431161] and
+        # member B's current title IS 431161, the group's view is:
+        # current = Geran (post-conversion) + historical = [HS(D) 431161].
+        # Dedup by (type, no).
+        merged_hist = []
+        seen_hist_keys = set()
+        for m in members:
+            for h in (m['extracted'].get('_historical_titles') or []):
+                if not isinstance(h, dict):
+                    continue
+                k = (str(h.get('type', '')).upper(), str(h.get('no', '')).strip())
+                if k in seen_hist_keys:
+                    continue
+                seen_hist_keys.add(k)
+                merged_hist.append(h)
         # Merge extracted fields, preferring non-empty, flagging conflicts
         merged: Dict[str, Any] = {}
+        if merged_hist:
+            merged['_historical_titles'] = merged_hist
         for key in ('lot_number', 'title_number', 'mukim', 'daerah', 'negeri',
                     'property_address', 'account_number', 'policy_number',
                     'institution', 'insurer', 'title_type', 'description',
