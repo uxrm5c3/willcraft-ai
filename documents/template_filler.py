@@ -944,7 +944,17 @@ def fill_will(will_data) -> str:
     parts.append('')
 
     # ── Signing page ────────────────────────────────────────────────────
-    parts.append('********************the remaining page is intentionally left blank*********************')
+    # 🔥 §10x.207 — Match KOID/PHEK template asterisk count EXACTLY
+    # (18 left + 21 right) and use NON-BREAKING spaces between
+    # asterisks and text so word-wrap renderers cannot split this
+    # line. Template's Word renderer keeps it on one line; markdown
+    # / HTML viewers will too because U+00A0 is not a break point.
+    _NBSP = '\u00A0'
+    _SIGN_LINE = ('******************' + _NBSP +
+                  _NBSP.join(['the', 'remaining', 'page', 'is',
+                              'intentionally', 'left', 'blank']) +
+                  _NBSP + '*********************')
+    parts.append(_SIGN_LINE)
     parts.append('')
     parts.append('Signature of the Testator: _______________________________________________')
     parts.append('')
