@@ -501,7 +501,7 @@ def plan_turn(
             reply_parts.append(_step2_question(
                 testator_info,
                 identities=current_will_data.get('identities') or [],
-                client_id=client_id,
+                client_id=_cid_t2,
             ))
             return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
