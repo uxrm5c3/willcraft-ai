@@ -336,13 +336,30 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
         # Skip docs with no useful identifier
         if not (t or l):
             continue
+        # 🔥 §10x.156 — pre-filter docs whose ONLY identifier is a
+        # placeholder per §10x.152h. Without this filter, the LLM keeps
+        # picking docs like 'title=Folio 5' because their address matches
+        # the will exactly — even though Folio 5 isn't a real Malaysian
+        # title. Pre-rejecting at candidate-build time keeps the LLM
+        # honest: it can only choose docs whose values would survive
+        # the regex check downstream.
+        t_low = t.lower().strip()
+        l_low = l.lower().strip()
+        bogus_re = re.compile(
+            r'^(folio|vol\.?|page|title\s*no\.?\s*\(.*\)|\(.*\))\s*\d*$'
+        )
+        t_bogus = (not t) or bool(bogus_re.match(t_low)) or 'unreadable' in t_low
+        l_bogus = (not l) or bool(bogus_re.match(l_low)) or 'unreadable' in l_low
+        if t_bogus and l_bogus:
+            # Both fields are unusable — skip this candidate entirely
+            continue
         # 🔥 §10x.156 — surface mukim/daerah so LLM can use them as primary
         # signals when address is a party-residence (chargor/purchaser/lawyer).
         candidates.append({
             'doc_id': d.id,
             'category': d.category,
-            'title_number': t,
-            'lot_number': l,
+            'title_number': '' if t_bogus else t,
+            'lot_number': '' if l_bogus else l,
             'address': a[:160],
             'owners': str(own)[:80],
             'mukim': (ex.get('mukim') or '').strip()[:40],
