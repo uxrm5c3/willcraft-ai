@@ -788,8 +788,14 @@
             <a href="/wizard/step/8" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
+            {# 🔥 §10x.175 — Trust legacy schema fallback. Chat-side saves
+               wrote {wants_trust, distribution_age, trustee_name}; canonical
+               wizard saves {trust_beneficiaries[], purposes[], payment_mode...}.
+               Surface BOTH so the summary doesn't show "No trust" when
+               the chat already configured one. #}
             {% set trust = will_data.get('trust', {}) %}
             {% set trust_bens = trust.get('trust_beneficiaries', []) %}
+            {% set has_legacy_trust = trust.get('wants_trust') and (trust.get('distribution_age') or trust.get('trustee_name')) %}
             {% if trust_bens %}
             <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Trust Beneficiaries</h4>
             <div class="space-y-1 mb-3">
@@ -813,6 +819,20 @@
             {% if trust.get('separate_trustee') %}
             <p class="text-sm text-gray-600 mt-2"><strong>Separate Trustee:</strong> {{ trust.get('trustee_name', '-') }} ({{ trust.get('trustee_nric', '-') }})</p>
             {% endif %}
+            {% elif has_legacy_trust %}
+            <h4 class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Trust configured</h4>
+            <div class="space-y-1 mb-3 text-sm">
+                {% if trust.get('distribution_age') %}
+                <div>📅 <strong>Distribution age:</strong> {{ trust.get('distribution_age') }} years old</div>
+                {% endif %}
+                {% if trust.get('trustee_name') %}
+                <div>👤 <strong>Trustee:</strong> {{ trust.get('trustee_name') }}{% if trust.get('trustee_nric') %} ({{ trust.get('trustee_nric') }}){% endif %}</div>
+                {% endif %}
+                {% if trust.get('purposes') %}
+                <div>🎯 <strong>Purposes:</strong> {{ trust.get('purposes', [])|join(', ') }}</div>
+                {% endif %}
+            </div>
+            <p class="text-xs text-gray-500 italic">_(Beneficiaries inherit at the distribution age above. Minor children's shares held in trust until then.)_</p>
             {% else %}
             <p class="text-sm text-gray-400 italic">No testamentary trust (optional).</p>
             {% endif %}
