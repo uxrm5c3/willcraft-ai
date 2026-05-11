@@ -755,14 +755,53 @@ def fill_will(will_data) -> str:
 
         gift_clause_starts: dict = {}   # ID(gift) → its clause number
 
-        # ── Bank-like financial first (Phek order), then property, then other
+        # 🔥 §10x.205 — Template order (KOID gold-standard, verified by
+        # python-docx extraction of the Alan & Tan template):
+        #   Banks → Bank-Substitute → Properties → Insurance-Fallback → Residuary
+        # Previously banks→insurance→properties→other→bank-sub which left
+        # the insurance clause at #8 and bank substitute at #13. Now insurance
+        # sits AFTER properties (just before residuary) to match the Phek-format
+        # legal-asset-liquidity ordering.
+
+        # ── (1) Bank-like financial first
         for g in bank_like_gifts:
             clause_num += 1
             gift_clause_starts[id(g)] = clause_num
             parts.append(_render_financial_clause(clause_num, g, bidx))
             parts.append('')
 
-        # ── Insurance fallback wrapper (one clause for ALL insurance) ────
+        # ── (2) Bank-substitute clause (consolidated when possible) — emit
+        # immediately after the bank gifts so clause numbering reads
+        # "Banks 4-7 / Bank-Sub 8 / Properties 9-13 / Insurance 14".
+        if bank_like_gifts:
+            bank_starts = {id(g): gift_clause_starts[id(g)] for g in bank_like_gifts}
+            consol_text, next_cn, used = _consolidate_financial_substitute(
+                bank_like_gifts, bank_starts, bidx, clause_num + 1)
+            if consol_text:
+                parts.append(consol_text)
+                parts.append('')
+                clause_num = next_cn - 1   # next iteration adds +1
+                for g in bank_like_gifts:
+                    consolidated_idxs.add(id(g))
+
+        # ── (3) Property clauses
+        for g in property_gifts:
+            clause_num += 1
+            gift_clause_starts[id(g)] = clause_num
+            parts.append(_render_property_clause(clause_num, g, bidx))
+            if _inline_property_substitute_phrase(g, bidx):
+                inline_subbed_gifts.add(id(g))
+            parts.append('')
+
+        # ── (4) Other gifts
+        for g in other_gifts:
+            clause_num += 1
+            gift_clause_starts[id(g)] = clause_num
+            parts.append(_render_other_clause(clause_num, g, bidx))
+            parts.append('')
+
+        # ── (5) Insurance fallback wrapper (one clause for ALL insurance)
+        # Per Insurance Act 1996 s.130 — sits just before residuary.
         if insurance_gifts:
             clause_num += 1
             ins_text = _render_insurance_fallback_clause(
@@ -776,40 +815,9 @@ def fill_will(will_data) -> str:
             else:
                 clause_num -= 1
 
-        # ── Property clauses ─────────────────────────────────────────────
-        for g in property_gifts:
-            clause_num += 1
-            gift_clause_starts[id(g)] = clause_num
-            parts.append(_render_property_clause(clause_num, g, bidx))
-            # Inline substitute may already be in the property clause text;
-            # check if the renderer would have inlined.
-            if _inline_property_substitute_phrase(g, bidx):
-                inline_subbed_gifts.add(id(g))
-            parts.append('')
-
-        # ── Other gifts ───────────────────────────────────────────────────
-        for g in other_gifts:
-            clause_num += 1
-            gift_clause_starts[id(g)] = clause_num
-            parts.append(_render_other_clause(clause_num, g, bidx))
-            parts.append('')
-
-        # ── Substitute clauses ────────────────────────────────────────────
-        # 🔥 §10x.198 (T-27/T-44) — try CONSOLIDATING bank-like substitutes
-        # first. If all bank-like gifts share (mb, sub) → emit ONE clause.
-        if bank_like_gifts:
-            bank_starts = {id(g): gift_clause_starts[id(g)] for g in bank_like_gifts}
-            consol_text, next_cn, used = _consolidate_financial_substitute(
-                bank_like_gifts, bank_starts, bidx, clause_num + 1)
-            if consol_text:
-                parts.append(consol_text)
-                parts.append('')
-                clause_num = next_cn - 1   # next iteration adds +1
-                for g in bank_like_gifts:
-                    consolidated_idxs.add(id(g))
-
-        # Per-gift substitute for everything else (skipping consolidated +
-        # inline-subbed gifts)
+        # ── (6) Per-gift substitute for everything not yet covered
+        # (banks consolidated above, insurance inlined, properties inlined
+        # when matching surviving-siblings pattern).
         for g in (bank_like_gifts + property_gifts + other_gifts + insurance_gifts):
             if id(g) in inline_subbed_gifts:
                 continue

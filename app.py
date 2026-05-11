@@ -1002,14 +1002,17 @@ def build_will_data():
             # Allocations: prefer pre-built, else build from beneficiaries
             # + substitute_specific so the Phek substitute clause renders.
             allocs_raw = gd.get('allocations') or []
-            if not allocs_raw and (gd.get('beneficiaries')
-                                   or gd.get('substitute_specific')):
-                # Build allocations from main beneficiaries
-                subs_list = gd.get('substitute_specific') or []
-                # Normalise substitute share to a fraction string
-                sub_alloc = [{'beneficiary_name': s.get('name', ''),
-                              'share': s.get('share', '1/1')}
-                             for s in subs_list if s.get('name')]
+            # 🔥 §10x.205 — normalise substitute_specific into a usable
+            # list of dicts; used both as a fallback to build allocations
+            # AND to back-fill existing allocations that have empty
+            # `substitutes` (the C-05-01 case — single allocation saved
+            # without inlining the substitute).
+            subs_list = gd.get('substitute_specific') or []
+            sub_alloc = [{'beneficiary_name': s.get('name', '') or s.get('beneficiary_name', ''),
+                          'share': s.get('share', '1/1')}
+                         for s in subs_list
+                         if (s.get('name') or s.get('beneficiary_name'))]
+            if not allocs_raw and (gd.get('beneficiaries') or subs_list):
                 for b in (gd.get('beneficiaries') or []):
                     nm = b.get('name') or ''
                     if not nm:
@@ -1020,6 +1023,18 @@ def build_will_data():
                         'role': 'MB',
                         'substitutes': sub_alloc or None,
                     })
+            # 🔥 §10x.205 — back-fill `substitutes` on existing allocations
+            # that have NO per-allocation substitutes but the gift has a
+            # gift-level `substitute_specific` list. Without this, sole-
+            # beneficiary properties (e.g. C-05-01 Esther 100% → Joshua)
+            # rendered without the inline "If my daughter does not survive
+            # me..." Pattern-B phrase.
+            if sub_alloc:
+                for a in allocs_raw:
+                    if not isinstance(a, dict):
+                        continue
+                    if not a.get('substitutes'):
+                        a['substitutes'] = sub_alloc
             allocations = [GiftAllocation(**a) for a in allocs_raw]
 
             prop_details = None
@@ -1086,6 +1101,15 @@ def build_will_data():
                         # PTD Y)" parenthetical per KOID gold-standard clause 12.
                         'historical_titles':  (pd.get('historical_titles') or
                                                 gd.get('_historical_titles') or None),
+                        # 🔥 §10x.205 (T-46) — building-type descriptor for
+                        # shop/factory/bungalow etc. Replaces "the property"
+                        # in the clause body. KOID clause 13: "all my shares
+                        # in the Single Storey Medium Low Cost Shop known as ...".
+                        'description_prefix': (pd.get('description_prefix') or
+                                                pd.get('building_type') or
+                                                pd.get('property_type') or
+                                                gd.get('description_prefix') or
+                                                gd.get('building_type') or None),
                     }
                     if any(pd_norm.values()):
                         try:
@@ -1156,6 +1180,26 @@ def build_will_data():
                              or 'clean')
             _debt_source = (gd.get('debt_source')
                              or _pd_fallback.get('debt_source'))
+            # 🔥 §10x.205 — normalise substitute_mode. Chat-side savers use
+            # 'survivors' as a friendly token but the WillData model literal
+            # is 'survivorship'. Without this normalisation the pydantic
+            # validator silently dropped the Shop gift (the only one saved
+            # as 'survivors') from the generated will. Same fail-class as
+            # any literal-mismatch — coerce known synonyms to canonical.
+            _sub_mode_raw = (gd.get('substitute_mode') or 'equal').strip().lower()
+            _SUB_MODE_MAP = {
+                'survivors': 'survivorship',
+                'survivor': 'survivorship',
+                'survival': 'survivorship',
+                'pro-rata': 'prorata',
+                'pro rata': 'prorata',
+                'individuals': 'individual',
+                '': 'equal',
+                'none': 'equal',
+            }
+            _sub_mode = _SUB_MODE_MAP.get(_sub_mode_raw, _sub_mode_raw)
+            if _sub_mode not in ('equal', 'prorata', 'specific', 'survivorship', 'individual'):
+                _sub_mode = 'equal'
             try:
                 gifts.append(Gift(
                     gift_type=gift_type,
@@ -1166,7 +1210,7 @@ def build_will_data():
                     subject_to_trust=gd.get('subject_to_trust', False),
                     subject_to_guardian_allowance=gd.get('subject_to_guardian_allowance', False),
                     sell_property=gd.get('sell_property', False),
-                    substitute_mode=gd.get('substitute_mode', 'equal'),
+                    substitute_mode=_sub_mode,
                     ownership_type=_ownership_type,
                     testator_share=_testator_share,
                     joint_owners=_joint_owners,
@@ -1174,7 +1218,16 @@ def build_will_data():
                     debt_source=_debt_source,
                     account_ownership=gd.get('account_ownership', 'individual'),
                 ))
-            except Exception:
+            except Exception as _gift_err:
+                # 🔥 §10x.205 — surface gift-build failures to logs instead
+                # of silently dropping. The Shop went missing for 2 sessions
+                # because this except was bare and silent.
+                try:
+                    app.logger.warning(
+                        f"§10x.205 gift build failed for gift_type={gift_type} "
+                        f"addr={(gd.get('property_details') or {}).get('property_address') or gd.get('institution') or ''!r}: {_gift_err}")
+                except Exception:
+                    pass
                 continue   # skip malformed gift rather than abort whole will
 
     # -- Section F: Residuary Estate ------------------------------------------

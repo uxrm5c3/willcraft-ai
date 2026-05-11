@@ -18,6 +18,14 @@ class PropertyDetails(BaseModel):
     # PTD Y" parenthetical after current "Lot No. X" per §10x.165 + Alan
     # & Tan KOID gold-standard clause format.
     historical_titles: Optional[List[Any]] = None
+    # 🔥 §10x.205 — building-type descriptor (T-46). When set, replaces
+    # "the property" in the clause body. Used for shop/factory/condo/etc
+    # asset descriptors per KOID template clause 13:
+    #   "all my shares in the Single Storey Medium Low Cost Shop known as
+    #    NO.3, JALAN GUNUNG 4..."
+    # Field-name `description_prefix` mirrors the chat-saved key; treated
+    # case-insensitively in to_formatted_description.
+    description_prefix: Optional[str] = None
 
     def _clean_address(self) -> str:
         """Remove duplicate postcode/city/state from property address."""
@@ -81,6 +89,17 @@ class PropertyDetails(BaseModel):
         # (e.g. "NO.10, JALAN SRI LAGUNA 1/7, TAMAN LAGUNA, 81200 JOHOR
         # BAHRU, JOHOR"). Mukim/District/Negeri suffix keeps mixed case.
         addr = addr.upper()
+        # 🔥 §10x.205 (T-46) — substitute "the property" with the asset's
+        # building-type descriptor when present (e.g. "Single Storey Medium
+        # Low Cost Shop", "Two Storey Bungalow", "Pangsapuri"). The chat /
+        # AI Summary saves this on `description_prefix` per Phek template
+        # clause 13.
+        bt = (self.description_prefix or '').strip()
+        if bt:
+            # Replace "the property" with "the <building_type>" in prefix.
+            # Match case-insensitively to handle "the property" / "the Property".
+            prefix = re.sub(r'\bthe\s+property\b', f'the {bt}', prefix,
+                            flags=re.IGNORECASE)
         parts = [f"{prefix} known as {addr}"]
         title_parts = []
         # 🔥 §10x.193 + §10x.39 — Phek format demands a "held under [TYPE] No. N"
