@@ -653,29 +653,33 @@ def extract_address_for_person_from_text(text: str, name: str = '',
         return ''
 
     # Search a generous window around each anchor for `of <ADDRESS>`.
-    # The clause ends at `.`, newline, or `;`. Limit length to 250 chars.
+    # The clause terminator is a SENTENCE-ENDING boundary: `. ` (period
+    # followed by whitespace), `\n`, or `;`. A bare `.` is allowed
+    # because Malaysian addresses contain `NO.600`, `H.S.(D)`, etc.
+    # Greedy match capped at 250 chars; we then trim at the terminator.
+    addr_inner = r'(?P<addr>(?:[^.\n;]|\.(?!\s))+)'
     for anchor in anchors:
         # Pattern A: anchor ... of <ADDR>
         pat = re.compile(
-            anchor + r'[\s\S]{0,200}?\bof\s+(?P<addr>[^.\n;]{8,250})',
+            anchor + r'[\s\S]{0,200}?\bof\s+' + addr_inner,
             re.IGNORECASE)
         m = pat.search(text)
         if m:
             raw = (m.group('addr') or '').strip()
             cleaned = _clean_address_clause(raw)
             if _looks_like_address(cleaned):
-                return cleaned
+                return cleaned[:250]
         # Pattern B (reverse): <ADDR> ... anchor
         # Less common but covers "of <ADDR>, my name is <NAME>".
         pat_rev = re.compile(
-            r'\bof\s+(?P<addr>[^.\n;]{8,250}?)[,\.\s\n]{1,4}[\s\S]{0,80}?' + anchor,
+            r'\bof\s+(?P<addr>(?:[^.\n;]|\.(?!\s))+?)[,\.\s\n]{1,4}[\s\S]{0,80}?' + anchor,
             re.IGNORECASE)
         m = pat_rev.search(text)
         if m:
             raw = (m.group('addr') or '').strip()
             cleaned = _clean_address_clause(raw)
             if _looks_like_address(cleaned):
-                return cleaned
+                return cleaned[:250]
     return ''
 
 
@@ -690,8 +694,8 @@ def _clean_address_clause(raw: str) -> str:
     s = re.sub(
         r'(?i)\s+(?:hereby|and|who|whose|that|has|holding|appoint(?:s|ed)?|wishes?|do(?:es)?)\b.*$',
         '', s)
-    # Drop trailing comma/punctuation noise
-    s = s.rstrip(',;: ')
+    # Drop trailing comma/period/punctuation noise
+    s = s.rstrip(',;:. ')
     return s
 
 
