@@ -8068,18 +8068,19 @@ def _is_confirmed(will_data: Dict[str, Any], section: str) -> bool:
     Will.completed_steps in the future; for now treat as un-confirmed
     once and re-ask if user provides corrections — keeps the flow simple.
     """
-    # 🔥 §10x.124 — testator confirmed when name + NRIC + address are
-    # set. DOB/gender are auto-derived from NRIC at confirm time;
-    # marital is inferred from family. Address is the only typed-
-    # compulsory field per Phek Yi Ting template.
-    s1 = will_data.get('step1') or {}
+    # 🔥 §10x.124 + §10x.224 — testator confirmed ONLY when user has
+    # explicitly clicked ✓ Confirm (stamping `testator_confirmed` on
+    # completed_steps). DOB/gender are auto-derived from NRIC at
+    # confirm time; marital is inferred from family. Address AND
+    # occupation are typed-required (occupation can be explicitly
+    # skipped via `_occupation_skipped`). Without the explicit-confirm
+    # gate, the planner used to skip Step 2 the moment address was
+    # saved — bypassing the occupation prompt entirely. (§10x.224)
     if section == 'testator':
         completed = will_data.get('completed_steps') or []
         if isinstance(completed, list) and 'testator_confirmed' in completed:
             return True
-        return all((s1.get(k) or '').strip() for k in (
-            'full_name', 'nric_passport', 'residential_address',
-        ))
+        return False
     return False
 
 
