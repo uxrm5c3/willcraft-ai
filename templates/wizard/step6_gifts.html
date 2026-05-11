@@ -139,14 +139,77 @@
                'TBD' / 'N/A' which were previously treated as populated. #}
             {% set _missing = pd_missing.get(loop.index0, []) %}
             {% if gt == 'property' and _missing %}
-            <div class="mb-3 p-3 bg-amber-50 border-l-4 border-amber-400 rounded">
+            {# 🔥 §10x.171 — inline-edit per-gift banner (parity with Step
+               10 §10x.143). User types directly into the banner inputs
+               and clicks ✓ Save to AJAX-persist via gift-quick-fix
+               endpoint — no need to scroll to the form below. Same
+               _LABEL_TO_FIELD map as Step 10. #}
+            {% set _LABEL_TO_FIELD = {
+                'title No.': 'title_number',
+                'lot No. / PT / PTD': 'lot_number',
+                'title type (Geran/HSD/Hakmilik)': 'title_type',
+                'mukim': 'mukim',
+                'daerah (district)': 'daerah',
+                'negeri': 'negeri',
+                'ownership type (sole/joint)': 'ownership_type',
+                "testator's share": 'testator_share',
+                'encumbrance status': 'encumbrance_status',
+            } %}
+            {# Capture outer gift loop index for use inside nested for-label loop below #}
+            {% set _gift_idx_1based = loop.index %}
+            <div class="mb-3 p-3 bg-amber-50 border-l-4 border-amber-400 rounded gift-banner-inline" data-gift-idx="{{ _gift_idx_1based }}">
                 <div class="flex items-start gap-2">
                     <span class="text-amber-600 text-lg">⚠️</span>
                     <div class="flex-1">
                         <p class="text-sm font-semibold text-amber-900">Missing field{{ 's' if _missing|length > 1 else '' }} for this property</p>
-                        <p class="text-xs text-amber-800 mt-0.5">
-                            <strong>{{ _missing|join(' · ') }}</strong> — please fill in below before generating the will. The will draft will omit these and the lawyer/firm will need to ask the client.
+                        <p class="text-xs text-amber-800 mt-0.5 mb-2">
+                            Fill below to clear the banner. The lawyer/firm will need to ask the client otherwise.
                         </p>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {% for label in _missing %}
+                                {% set field = _LABEL_TO_FIELD.get(label, '') %}
+                                {% set _sug = suggest_gift_field(gift, field) if field else None %}
+                                {% set _sv = (_sug.value if _sug else '') %}
+                                {% if field %}
+                                <div class="quick-fix-field-inline flex items-center gap-1.5" data-field="{{ field }}">
+                                    <label class="text-xs text-amber-800 font-medium min-w-[100px]">{{ label }}:</label>
+                                    {% if field == 'title_type' %}
+                                    <select class="qf-inline-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">-- Select --</option>
+                                        {% for opt in ['Geran', 'Hakmilik', 'HSD', 'HSM', 'Strata Title Geran'] %}
+                                        <option value="{{ opt }}" {% if _sv == opt %}selected{% endif %}>{{ opt }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% elif field == 'ownership_type' %}
+                                    <select class="qf-inline-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">-- Select --</option>
+                                        <option value="sole" {% if _sv == 'sole' %}selected{% endif %}>Sole</option>
+                                        <option value="joint" {% if _sv == 'joint' %}selected{% endif %}>Joint</option>
+                                    </select>
+                                    {% elif field == 'testator_share' %}
+                                    <select class="qf-inline-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">--</option>
+                                        {% for opt in ['1/1', '1/2', '1/3', '2/3', '1/4', '3/4'] %}
+                                        <option value="{{ opt }}" {% if _sv == opt %}selected{% endif %}>{{ opt }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% elif field == 'encumbrance_status' %}
+                                    <select class="qf-inline-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">--</option>
+                                        <option value="clean" {% if _sv == 'clean' %}selected{% endif %}>Clean</option>
+                                        <option value="encumbered" {% if _sv == 'encumbered' %}selected{% endif %}>Has Loan</option>
+                                    </select>
+                                    {% else %}
+                                    <input type="text" class="qf-inline-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}" value="{{ _sv }}" placeholder="{{ label }}">
+                                    {% endif %}
+                                    <button type="button" class="qf-inline-save text-xs px-2 py-1 {% if _sv %}bg-green-600 hover:bg-green-700{% else %}bg-amber-600 hover:bg-amber-700{% endif %} text-white font-semibold rounded transition disabled:opacity-50" data-gift-idx="{{ _gift_idx_1based }}" data-field="{{ field }}">{% if _sv %}✓ Save{% else %}Save{% endif %}</button>
+                                </div>
+                                {% if _sug and _sug.source %}
+                                <div class="text-[10px] text-gray-500 ml-[110px] pl-2 italic">✨ {{ _sug.source[:120] }}</div>
+                                {% endif %}
+                                {% endif %}
+                            {% endfor %}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -736,6 +799,53 @@
 }
 </style>
 <script>
+// 🔥 §10x.171 — inline-save handler for per-gift missing-field banners.
+// Mirrors the Step 10 §10x.143 handler. AJAX POST to gift-quick-fix
+// endpoint, on 200 disable the input + show ✓ saved + repaint button
+// green. Banner re-renders on next page reload.
+(function(){
+  const CLIENT_ID = '{{ session.get("client_id", "") }}';
+  document.addEventListener('click', async function(ev) {
+    const btn = ev.target.closest('.qf-inline-save');
+    if (!btn) return;
+    const giftIdx = parseInt(btn.getAttribute('data-gift-idx'));
+    const field = btn.getAttribute('data-field');
+    const container = btn.closest('.quick-fix-field-inline');
+    const inp = container ? container.querySelector('.qf-inline-input') : null;
+    const value = (inp && inp.value || '').trim();
+    if (!value) {
+      btn.style.outline = '2px solid red';
+      setTimeout(() => btn.style.outline = '', 1500);
+      return;
+    }
+    btn.disabled = true; btn.textContent = '…';
+    try {
+      const r = await fetch('/api/wizard/gift-quick-fix', {
+        method: 'POST', credentials: 'include',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({client_id: CLIENT_ID, gift_idx: giftIdx, field, value}),
+      });
+      const j = await r.json();
+      if (r.ok && j.ok) {
+        btn.textContent = '✓ saved';
+        btn.className = btn.className.replace(/bg-amber-\d+/g, 'bg-green-600').replace(/hover:bg-amber-\d+/g, 'hover:bg-green-700');
+        if (inp) {
+          inp.disabled = true;
+          inp.className = inp.className.replace(/border-amber-\d+/g, 'border-green-400').replace(/bg-amber-\d+/g, 'bg-green-50');
+        }
+      } else {
+        btn.disabled = false;
+        btn.textContent = 'Save';
+        btn.style.outline = '2px solid red';
+      }
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Save';
+      btn.style.outline = '2px solid red';
+    }
+  });
+})();
+
 let _reorderMode = false;
 const _giftBeneficiaries = {{ beneficiaries | tojson }};
 const _personAddresses = {{ (persons | default([])) | tojson }};
