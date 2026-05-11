@@ -336,6 +336,8 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
         # Skip docs with no useful identifier
         if not (t or l):
             continue
+        # 🔥 §10x.156 — surface mukim/daerah so LLM can use them as primary
+        # signals when address is a party-residence (chargor/purchaser/lawyer).
         candidates.append({
             'doc_id': d.id,
             'category': d.category,
@@ -343,6 +345,8 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
             'lot_number': l,
             'address': a[:160],
             'owners': str(own)[:80],
+            'mukim': (ex.get('mukim') or '').strip()[:40],
+            'daerah': (ex.get('daerah') or '').strip()[:40],
         })
     if not candidates:
         return None
@@ -354,13 +358,64 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
         f"PROPERTY (from will): {gift_addr}\n\n"
         "UPLOADED PROPERTY DOCS (each may have OCR-garbled address):\n"
     )
+    # Pull testator + family names + property's resolved mukim for context
+    family_blob = ''
+    will_mukim = ''
+    try:
+        from database import Person, Will as _W
+        ws = _W.query.filter_by(client_id=client_id).filter(
+            _W.deleted_at.is_(None)).order_by(_W.updated_at.desc()).first()
+        if ws:
+            s1 = _json.loads(ws.step1_data or '{}')
+            tn = (s1.get('full_name') or '').strip()
+            family_blob = tn
+            for p in Person.query.filter_by(client_id=client_id).all():
+                if p.full_name:
+                    family_blob += ', ' + p.full_name
+        # Resolve will's mukim via §10ha bridge if available
+        try:
+            from ai.chat_planner import _GEO_BRIDGE
+            for k, v in (_GEO_BRIDGE or {}).items():
+                if k.lower() in (gift_addr or '').lower():
+                    will_mukim = (v or {}).get('mukim', '') if isinstance(v, dict) else ''
+                    if will_mukim:
+                        break
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     for i, c in enumerate(candidates):
-        prompt += (f"  [{i}] cat={c['category']} addr={c['address']!r} "
-                   f"title={c['title_number']!r} lot={c['lot_number']!r} "
-                   f"owners={c['owners']!r}\n")
+        # Highlight title/lot non-emptiness — the LLM should prefer docs
+        # with REAL identifiers over docs with just an address match
+        # (the wizard banner needs the Geran/lot, not just confirmation
+        # that a doc exists for the address).
+        has_real_id = bool(c['title_number'] and c['title_number'].lower()
+                            not in ('folio', 'vol', 'unreadable'))
+        marker = '⭐ has-id' if has_real_id else '○ no-id'
+        prompt += (f"  [{i}] {marker} cat={c['category']} "
+                   f"addr={c['address']!r} title={c['title_number']!r} "
+                   f"lot={c['lot_number']!r} mukim={c['mukim']!r} "
+                   f"daerah={c['daerah']!r} owners={c['owners']!r}\n")
+    if family_blob:
+        prompt += f"\nKnown family/testator names: {family_blob[:200]}\n"
+    if will_mukim:
+        prompt += f"Property's resolved Mukim (from address geo bridge): {will_mukim}\n"
     prompt += (
         f"\nWhich doc index is MOST LIKELY the official title document "
-        f"for this property?\n\n"
+        f"for this property AND has a USABLE title No. or lot No. "
+        f"(non-empty, not 'Folio N', not '(unreadable)')?\n\n"
+        f"⭐ marker = doc has a real identifier; ○ = doc has only an "
+        f"empty / placeholder value. Prefer ⭐ docs unless ○ is "
+        f"obviously the subject (e.g. exact address + owner match).\n\n"
+        f"PRIORITY ORDER OF SIGNALS (strongest first):\n"
+        f"  1. Title No. or Lot No. that the will already mentions "
+        f"(direct identifier match — rare but decisive)\n"
+        f"  2. Owner name matches a known family/testator name\n"
+        f"  3. Mukim/Daerah agreement with the property's resolved Mukim\n"
+        f"  4. Address keywords (LEAST reliable on SPA/Charge/Loan because "
+        f"those forms typically print the PARTY's residence, not the "
+        f"subject property)\n\n"
         f"🔥 §10x.156 CRITICAL — addresses on legal forms are OFTEN a "
         f"PARTY's residence, NOT the subject property:\n"
         f"  • SPA: 'address' shown is usually the PURCHASER's residence "
