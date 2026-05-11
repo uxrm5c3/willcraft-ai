@@ -122,10 +122,15 @@ class PropertyDetails(BaseModel):
             or 'unreadable' in _tn_low or 'cannot read' in _tn_low):
             tn = ''
         # Auto-detect title type from title_number pattern
-        if tn and not tt_raw:
-            if '/' in tn:
-                tt_raw = 'Strata Title Geran'
-            elif tn.upper().startswith(('HSD', 'HS(D)', 'H.S.(D)')):
+        # 🔥 §10x.219 — title_number containing '/' (e.g. 564662/M1C/30/710)
+        # ALWAYS means strata sub-parcel encoding (Strata Title Geran),
+        # regardless of what tt_raw was set to. Vision OCR sometimes reads
+        # the title type as 'hakmilik' for strata docs — the slash pattern
+        # is the source of truth.
+        if tn and '/' in tn:
+            tt_raw = 'Strata Title Geran'
+        elif tn and not tt_raw:
+            if tn.upper().startswith(('HSD', 'HS(D)', 'H.S.(D)')):
                 tt_raw = 'HSD'
             elif tn.upper().startswith(('HSM', 'HS(M)', 'H.S.(M)')):
                 tt_raw = 'HSM'
