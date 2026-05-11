@@ -252,6 +252,166 @@ def suggest_financial_field(fd: Dict[str, Any], field: str,
     return None
 
 
+# 🔥 §10x.147 — process-level cache for LLM cross-ref. Keyed by
+# (client_id, gift_address_hash, field). Lives for the gunicorn worker's
+# lifetime; redeploy wipes. Acceptable tradeoff vs DB-roundtrip per
+# render. Each KOID page render costs ~$0.005 first time, $0 on
+# subsequent renders within same worker.
+_LLM_MATCH_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _llm_cache_key(client_id: str, gift: Dict[str, Any], field: str) -> str:
+    pi = gift.get('property_info') or gift.get('property_details') or {}
+    addr = (pi.get('property_address') or gift.get('address') or '').strip()
+    import hashlib
+    h = hashlib.sha256(addr.encode('utf-8')).hexdigest()[:12]
+    return f'{client_id}:{h}:{field}'
+
+
+def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
+                                    client_id: str) -> Optional[Dict[str, Any]]:
+    """🔥 §10x.147 — LLM fallback when token-cross-ref fails.
+
+    OCR sometimes garbles property doc addresses (e.g. Sri Laguna SPA
+    OCR'd as 'Marsiling Lane Singapore'). Token-match can't find such
+    docs. This helper sends ALL the user's property docs + the gift's
+    address to Claude Haiku and asks it to pick the most likely match.
+
+    Cost: ~$0.0008/call. Result is cached process-level by
+    (client_id, addr-hash, field).
+    """
+    if not client_id or field not in ('title_number', 'lot_number'):
+        return None
+    cache_key = _llm_cache_key(client_id, gift, field)
+    if cache_key in _LLM_MATCH_CACHE:
+        c = _LLM_MATCH_CACHE[cache_key]
+        return c if (c and c.get('value')) else None
+
+    try:
+        from app import db
+        from database import Document, Will
+        import json as _json
+        import os
+        import anthropic
+    except Exception:
+        return None
+
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        return None
+
+    pi = gift.get('property_info') or gift.get('property_details') or {}
+    gift_addr = (pi.get('property_address') or
+                 gift.get('address') or '').strip()
+    if not gift_addr:
+        return None
+
+    # Collect all property-related docs with at least one of title/lot
+    docs = Document.query.filter_by(client_id=client_id).filter(
+        Document.category.in_(['property_title', 'property_spa',
+                                'property_tax', 'property_transfer',
+                                'loan_agreement'])).all()
+    candidates = []
+    for d in docs:
+        try:
+            ex = _json.loads(d.extracted_data or '{}')
+        except Exception:
+            continue
+        if not isinstance(ex, dict):
+            continue
+        t = (ex.get('title_number') or '').strip()
+        l = (ex.get('lot_number') or '').strip()
+        a = (ex.get('property_address') or '').strip()
+        own = (ex.get('owner_name') or ex.get('owner_names') or '')
+        # Skip docs with no useful identifier
+        if not (t or l):
+            continue
+        candidates.append({
+            'doc_id': d.id,
+            'category': d.category,
+            'title_number': t,
+            'lot_number': l,
+            'address': a[:160],
+            'owners': str(own)[:80],
+        })
+    if not candidates:
+        return None
+
+    # Build prompt for Claude
+    prompt = (
+        "You are matching uploaded Malaysian property documents to a "
+        "specific property mentioned in a will.\n\n"
+        f"PROPERTY (from will): {gift_addr}\n\n"
+        "UPLOADED PROPERTY DOCS (each may have OCR-garbled address):\n"
+    )
+    for i, c in enumerate(candidates):
+        prompt += (f"  [{i}] cat={c['category']} addr={c['address']!r} "
+                   f"title={c['title_number']!r} lot={c['lot_number']!r} "
+                   f"owners={c['owners']!r}\n")
+    prompt += (
+        f"\nWhich doc index is MOST LIKELY the official title document "
+        f"for this property? Consider: address keywords (even if OCR is "
+        f"wrong), owner names, building name, area. Even if address "
+        f"looks completely wrong, the OWNER name or BUILDING NAME tokens "
+        f"can give it away.\n\n"
+        f"Respond with ONLY a JSON object: "
+        f'{{"best_doc_index": <int>, "confidence": "high"|"medium"|"low", '
+        f'"reason": "<one short sentence>"}}\n'
+        f"If NO doc plausibly matches, respond "
+        f'{{"best_doc_index": null, "confidence": "low", '
+        f'"reason": "no match"}}.\n'
+        f"Output ONLY the JSON, no other text."
+    )
+
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model='claude-haiku-4-5',
+            max_tokens=200,
+            temperature=0,
+            messages=[{'role': 'user', 'content': prompt}],
+        )
+        text = resp.content[0].text.strip()
+        # Strip markdown fences if any
+        text = re.sub(r'^```(?:json)?\s*|\s*```$', '', text).strip()
+        result = _json.loads(text)
+    except Exception as e:
+        return None
+
+    idx = result.get('best_doc_index')
+    if idx is None or not isinstance(idx, int) or idx < 0 or idx >= len(candidates):
+        _LLM_MATCH_CACHE[cache_key] = {'value': '', 'source': 'no LLM match'}
+        return None
+
+    matched = candidates[idx]
+    value = (matched.get('title_number') if field == 'title_number'
+             else matched.get('lot_number') or '')
+    if not value:
+        _LLM_MATCH_CACHE[cache_key] = {
+            'value': '', 'source': 'matched doc has empty ' + field}
+        return None
+    # 🔥 §10x.147 — Reject Folio/Vol/Page/(unreadable) per §10x.152h.
+    # Singapore Land Registry references ('Folio 5') or OCR garbage are
+    # NOT valid Malaysian NLC titles. Don't surface them as suggestions.
+    v_low = value.lower().strip()
+    if (re.match(r'^\s*(folio|vol\.?|page|title\s*no\.?\s*\(.*\)|\(.*\))\s*\d*\s*$',
+                  v_low)
+        or 'unreadable' in v_low or 'cannot read' in v_low):
+        _LLM_MATCH_CACHE[cache_key] = {
+            'value': '', 'source': f'rejected non-NLC value {value!r}'}
+        return None
+
+    confidence = result.get('confidence', 'low')
+    reason = result.get('reason', '')[:120]
+    out = {
+        'value': value,
+        'source': (f"AI-matched doc (cat={matched['category']}, "
+                   f"confidence={confidence}): {reason}"),
+    }
+    _LLM_MATCH_CACHE[cache_key] = out
+    return out
+
+
 def suggest_title_or_lot_from_docs(gift: Dict[str, Any], field: str,
                                      client_id: str) -> Optional[Dict[str, Any]]:
     """🔥 §10x.145 — Cross-reference uploaded Documents for title/lot.
@@ -433,9 +593,15 @@ def suggest_for_gift(gift: Dict[str, Any], field: str,
         s = suggest_property_field(pi, field)
         if s:
             return s
-        # Fallback: cross-reference uploaded docs for title/lot
+        # Fallback 1: cross-reference uploaded docs for title/lot via tokens
         if field in ('title_number', 'lot_number') and client_id:
-            return suggest_title_or_lot_from_docs(gift, field, client_id)
+            s = suggest_title_or_lot_from_docs(gift, field, client_id)
+            if s and s.get('value'):
+                return s
+            # Fallback 2 (§10x.147): LLM cross-ref when token-match fails
+            # OR returned a doc with empty value for this field. Costs
+            # ~$0.0008/call but result is cached on the gift.
+            return suggest_title_or_lot_via_llm(gift, field, client_id)
         return None
     fd = gift.get('financial_details') or {}
     # 🔥 §10x.145 — Heuristic: account_number starting with a letter or
