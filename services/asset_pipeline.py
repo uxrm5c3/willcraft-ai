@@ -1556,17 +1556,54 @@ def build_gift(asset_item: AssetItem,
     af = asset_item.fields or {}
     de = (doc_group.merged_extracted if doc_group else {}) or {}
 
+    # 🔥 §10x.159 — classify the bound doc's GRANULARITY. The matcher
+    # may have bound a master-level doc (Cukai for parent parcel) to a
+    # strata unit gift — that doc's mukim/daerah/co_owner ARE
+    # authoritative for the unit (parent parcel sits in the same mukim,
+    # registered with the same co-owners), but its master_lot is NOT
+    # the unit's strata sub-parcel lot. Pull only level-compatible fields.
+    doc_level = 'unknown'
+    cat_for_lvl = ''
+    try:
+        if doc_group and doc_group.document_ids:
+            from database import db as _db, Document as _Doc
+            _d = _db.session.get(_Doc, doc_group.document_ids[0])
+            if _d:
+                cat_for_lvl = _d.category or ''
+        if de:
+            from services.property_granularity import classify_doc_level
+            doc_level = classify_doc_level(de, category=cat_for_lvl)
+    except Exception:
+        doc_level = 'unknown'
+    # Per-level field whitelist — empty doc fields override stays the same;
+    # disallowed fields just don't pull from OCR (fallback chain still runs)
+    try:
+        from services.property_granularity import PROBATE_FIELDS_BY_LEVEL
+        _ok = PROBATE_FIELDS_BY_LEVEL.get(doc_level, set())
+    except Exception:
+        _ok = {'title_number', 'lot_number', 'mukim', 'daerah', 'negeri',
+               'owner_name', 'co_owners'}
+
     # Address: message > AI Summary > DocGroup OCR
     address = (af.get('address') or '').strip() or (de.get('property_address') or '').strip()
 
-    # Lot/title: message > OCR > AI Summary
-    lot = (af.get('lot') or '').strip() or clean_id(de.get('lot_number') or '')
-    title = (af.get('title') or '').strip() or clean_id(de.get('title_number') or '')
+    # Lot/title: message > OCR (only if level-allowed) > AI Summary.
+    # Master-level Cukai cannot fill a strata unit's lot/title because
+    # those are at the sub-parcel granularity (different identifiers).
+    de_lot = clean_id(de.get('lot_number') or '') if 'lot_number' in _ok else ''
+    de_title = clean_id(de.get('title_number') or '') if 'title_number' in _ok else ''
+    lot = (af.get('lot') or '').strip() or de_lot
+    title = (af.get('title') or '').strip() or de_title
 
-    # Mukim/daerah/negeri: OCR > geo bridge > (Stage 0 already did the bridge)
-    mukim = (de.get('mukim') or '').strip() or (af.get('mukim') or '').strip()
-    daerah = (de.get('daerah') or '').strip() or (af.get('daerah') or '').strip()
-    negeri = (de.get('negeri') or '').strip() or (af.get('negeri') or '').strip()
+    # Mukim/daerah/negeri ARE authoritative at any level (parent parcel
+    # sits in the same mukim as the units carved from it). Pull from OCR
+    # if the level allows (master and strata both allow).
+    de_mukim  = (de.get('mukim') or '').strip()  if 'mukim'  in _ok else ''
+    de_daerah = (de.get('daerah') or '').strip() if 'daerah' in _ok else ''
+    de_negeri = (de.get('negeri') or '').strip() if 'negeri' in _ok else ''
+    mukim  = de_mukim  or (af.get('mukim')  or '').strip()
+    daerah = de_daerah or (af.get('daerah') or '').strip()
+    negeri = de_negeri or (af.get('negeri') or '').strip()
     if not mukim:
         bridged = resolve_mukim_from_address(address)
         if bridged:
@@ -1594,6 +1631,13 @@ def build_gift(asset_item: AssetItem,
             '_match_via': binding.match_via,
             '_match_tier': binding.tier,
             '_match_evidence': binding.evidence,
+            # 🔥 §10x.159 — granularity tag. Wizard uses this to show
+            # "authoritative" vs "supporting evidence" labels and to
+            # know which fields the bound doc filled vs which need
+            # the user to upload another doc / type manually.
+            '_doc_level': doc_level,
+            '_master_lot_from_doc': clean_id(de.get('lot_number') or '')
+                                     if doc_level == 'master' else '',
             'variant': variant,
             'property_info': {
                 'property_address': address,

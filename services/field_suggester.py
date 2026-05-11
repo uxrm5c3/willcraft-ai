@@ -353,6 +353,21 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
         if t_bogus and l_bogus:
             # Both fields are unusable — skip this candidate entirely
             continue
+        # 🔥 §10x.159 — classify the doc's GRANULARITY (strata / master /
+        # sub_parcel / unknown). The matcher uses this to decide which
+        # fields are AUTHORITATIVE: a master-level Cukai can fill
+        # mukim/daerah/negeri but NOT a strata unit's title/lot number.
+        try:
+            from services.property_granularity import (classify_doc_level,
+                                                       PROBATE_FIELDS_BY_LEVEL)
+            doc_level = classify_doc_level(ex, category=d.category)
+        except Exception:
+            doc_level = 'unknown'
+            PROBATE_FIELDS_BY_LEVEL = {
+                'strata': set(), 'sub_parcel': set(), 'master': set(),
+                'unknown': set()
+            }
+
         # 🔥 §10x.156 — surface mukim/daerah so LLM can use them as primary
         # signals when address is a party-residence (chargor/purchaser/lawyer).
         candidates.append({
@@ -364,8 +379,48 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
             'owners': str(own)[:80],
             'mukim': (ex.get('mukim') or '').strip()[:40],
             'daerah': (ex.get('daerah') or '').strip()[:40],
+            'doc_level': doc_level,
         })
     if not candidates:
+        return None
+
+    # 🔥 §10x.159 — granularity gate per requested field. The matcher
+    # does NOT reject docs at the wrong level outright — it lets them
+    # contribute to their authoritative fields. For example, a master-
+    # level Cukai CAN fill mukim/daerah/negeri for a strata unit gift,
+    # but CANNOT fill the unit's title_number (that lives on the strata
+    # sub-title, which the Cukai doesn't carry). Pulling master_lot
+    # 00528861 into B-05-11's lot_number would be a level-mismatch
+    # error (it's the MASTER lot, not the unit's parcel).
+    try:
+        from services.property_granularity import PROBATE_FIELDS_BY_LEVEL as _PFL
+    except Exception:
+        _PFL = {}
+    level_compatible = []
+    level_rejected   = []
+    for c in candidates:
+        lvl = c.get('doc_level', 'unknown')
+        if field in _PFL.get(lvl, set()):
+            level_compatible.append(c)
+        else:
+            level_rejected.append(c)
+    if level_compatible:
+        candidates = level_compatible
+    else:
+        # No level-compatible doc for this specific field. Don't fall
+        # back to incompatible ones — that's exactly the level-mismatch
+        # bug §10x.159 prevents. Return None with an honest reason.
+        if level_rejected:
+            other_lvls = sorted({c.get('doc_level','?') for c in level_rejected})
+            _LLM_MATCH_CACHE[cache_key] = {
+                'value': '',
+                'source': (f'no doc at the right granularity for {field}; '
+                           f'have {len(level_rejected)} doc(s) at level(s) '
+                           f'{other_lvls} but they\'re not authoritative '
+                           f'for this field'),
+                '_level_rejected': [(c['doc_id'], c.get('doc_level','?'))
+                                    for c in level_rejected],
+            }
         return None
 
     # 🔥 §10x.156 — per-field filter: when caller asks for title_number,
