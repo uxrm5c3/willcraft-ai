@@ -863,6 +863,16 @@ def build_will_data():
         ex = dict(e)
         if not ex.get('role') or ex['role'] not in ('Primary', 'Joint', 'Substitute'):
             ex['role'] = 'Substitute' if ex.get('is_substitute') else 'Primary'
+        # 🔥 §10x.232d — Executor pydantic model has required str fields;
+        # ensure every key has at least empty-string default so executors
+        # created via mid-flow reconciler (some fields not yet populated)
+        # don't break will generation.
+        for required_key in ('full_name', 'address', 'nric_passport', 'relationship'):
+            if ex.get(required_key) is None:
+                ex[required_key] = ''
+        ex.setdefault('address', '')
+        ex.setdefault('relationship', '')
+        ex.setdefault('nric_passport', '')
         # Strip keys not in Executor model to avoid pydantic errors
         return {k: v for k, v in ex.items() if k in (
             'full_name', 'address', 'nric_passport', 'relationship',
