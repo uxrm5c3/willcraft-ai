@@ -50,6 +50,10 @@ Output schema
   "title_number": str, "mukim": str, "daerah": str, "negeri": str,
   "owner_name": str, "owner_ic": str, "property_description": str,
   "title_type_confidence": "high | medium | low",
+  # §10x.156 — non-subject addresses (chargor / purchaser / lawyer)
+  # captured separately so the matcher doesn't mistake them for the
+  # subject property's location.
+  "_party_addresses": [{"role": str, "address": str}],
 
   # Bank / financial asset
   "bank_name": str, "account_number": str, "currency": str,
@@ -94,6 +98,9 @@ _BLANK_RESULT: dict = {
     'title_number': '', 'mukim': '', 'daerah': '', 'negeri': '',
     'owner_name': '', 'owner_ic': '', 'property_description': '',
     'title_type_confidence': 'low',
+    # 🔥 §10x.156 — party addresses captured separately so the matcher
+    # never confuses a chargor's residence with the subject property.
+    '_party_addresses': [],
     'bank_name': '', 'account_number': '', 'currency': '',
     'account_type': '',
     'insurer': '', 'policy_number': '', 'policyholder_name': '',
@@ -161,6 +168,10 @@ string. Do not invent or guess. Use the exact RULES per category.
     title_type: one of geran|hakmilik|hsd|ptd|gm|other (lowercase)
     title_number: digits + slashes ONLY (no "VALUE:", no "(unreadable)").
                   E.g. "564662", "564662/M1C/30/710". Set "" if unreadable.
+                  Malaysian titles are typically 4-7 digits; strata sub-tokens
+                  follow as "/M1?/<floor>/<parcel>". A "Folio N" or "Vol N"
+                  reference is a folio-location WITHIN a register, NOT a title
+                  number — set title_number="" and put it in property_description.
     lot_number: digits ONLY.
     mukim/daerah/negeri: as printed on the title. Common: Plentong, Pulai,
                          Tebrau, Senai (mukim), Johor Bahru/Kulai (daerah),
@@ -168,12 +179,48 @@ string. Do not invent or guess. Use the exact RULES per category.
     owner_name: the registered owner UPPERCASE. Multiple owners → join
                 with " & ".
     owner_ic: 12-digit NRIC of the owner if printed.
-    property_address: STREET ADDRESS — usually NOT on title docs (§10ha).
-                      Only fill if the doc actually shows street/postcode.
-                      DO NOT hallucinate based on mukim.
-    property_description: any extra description (unit number, level, etc.)
+    property_address: STREET ADDRESS of the SUBJECT PROPERTY only.
+                      🔥 §10x.156 CRITICAL — On SPA / Charge (Borang 16A) /
+                      Loan / Cukai docs, the address printed on the doc is
+                      OFTEN a party's RESIDENCE, NOT the subject property:
+                        • SPA: "Purchaser's address" = where the buyer lives
+                          (often a different city, even Singapore). The
+                          SUBJECT property is in the FIRST SCHEDULE /
+                          DESCRIPTION OF PROPERTY block — read THAT.
+                        • Charge / Loan: "Chargor's address" = where the
+                          borrower lives. The SECURITY / CHARGED LAND /
+                          SCHEDULE block describes the subject property.
+                        • Lawyer attestation page: only the lawyer's office
+                          address is visible — no subject property data.
+                        • Cukai Tanah: bill-to address may be the owner's
+                          mailing address, not the property.
+                      RULE: Only fill property_address from a section that
+                      explicitly identifies the SUBJECT PROPERTY (heading
+                      contains: SCHEDULE / DESCRIPTION / SECURITY / CHARGED
+                      LAND / PROPERTY ADDRESS / PERIHAL TANAH / HARTANAH /
+                      OBJECT OF CHARGE). If you cannot find such a section,
+                      leave property_address EMPTY and route any other
+                      addresses you see into _party_addresses below.
+                      Title docs (Geran/HSD) usually have NO street address
+                      at all — leave empty per §10ha.
+    property_description: any extra description (unit number, level,
+                          building name, "Folio 5 reference", etc.)
     title_type_confidence: high if logo/header explicit; medium if
                            inferred from layout; low if guessed.
+
+  🔥 §10x.156 — Party addresses (NEW field, capture but separate):
+    _party_addresses: list of {role, address} for every non-subject address
+                      visible on the doc. Roles you may see:
+                        • "purchaser_residence" / "vendor_residence" (SPA)
+                        • "chargor_residence" / "chargee_office" (Charge)
+                        • "borrower_residence" / "lender_office" (Loan)
+                        • "lawyer_office" / "attestor" (any legal doc)
+                        • "owner_mailing" (Cukai bill-to address)
+                      Format each entry as {"role": "...", "address": "..."}.
+                      If a role is unclear but the address is clearly NOT
+                      the subject property, use role="party_unknown".
+                      LEAVE EMPTY ([]) if doc is a pure title (Geran/HSD) —
+                      those don't have party addresses.
 
   Bank rules:
     bank_name: standardised bank label e.g. "Maybank", "POSB", "CIMB"

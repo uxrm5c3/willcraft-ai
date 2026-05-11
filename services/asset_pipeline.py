@@ -767,6 +767,13 @@ _WEIGHTS = {
     'temporal_med':       7,   # ≤ 30 min
     'msg_text_ref':      15,   # OCR address fragment appears in raw text
     'web_building_in_ocr': 15,
+    # 🔥 §10x.158 — when AI Summary has NO identifiers (user typed only an
+    # address) but DocGroup has lot+title AND mukim agrees with web-resolved
+    # mukim of the AssetItem, this is a strong candidate signal even
+    # without address-token overlap. Promotes the pair to MEDIUM (CANDIDATE
+    # threshold) so the user is asked "is this the title for property X?"
+    # rather than the doc going to residual unverified-card silently.
+    'identifier_doc_with_mukim_match': 15,
     # Penalties
     'daerah_conflict':  -50,
     'foreign_owner':     -8,   # owner_name has someone NOT in family
@@ -820,6 +827,26 @@ def _score_pair(ai: 'AssetItem',
         evidence.append(f'title {ai_title} matches OCR')
     if lot_hit and title_hit:
         components['lot_AND_title'] = _WEIGHTS['lot_AND_title']
+
+    # 🔥 §10x.157 — OCR field-swap tolerance.
+    # Vision regularly puts the Geran/title number into `lot_number` and
+    # vice versa, especially on Charge / Loan / SPA forms where multiple
+    # numeric identifiers are printed close together (charge account no.,
+    # title no., lot no.). When neither direct match hits but a swap
+    # would, accept it as a (slightly weaker) match. Surfaces title
+    # 337203 in `7a4d55ae.lot_number` against Sri Laguna's expected
+    # Geran 337203, etc.
+    if not lot_hit and not title_hit:
+        swap_lot_hit = bool(ai_lot and g_title and len(ai_lot) >= 3 and ai_lot == g_title)
+        swap_title_hit = bool(ai_title and g_lot and len(ai_title) >= 4 and ai_title == g_lot)
+        if swap_lot_hit:
+            # AI Summary's lot matches the doc's title field — likely
+            # the doc's OCR put the lot into title_number.
+            components['lot_match'] = int(_WEIGHTS['lot_match'] * 0.8)
+            evidence.append(f'lot {ai_lot} matches OCR title field (field-swap)')
+        if swap_title_hit:
+            components['title_match'] = int(_WEIGHTS['title_match'] * 0.8)
+            evidence.append(f'title {ai_title} matches OCR lot field (field-swap)')
     if ai_acct and g_acct and len(ai_acct) >= 6 and ai_acct == g_acct:
         components['account_match'] = _WEIGHTS['account_match']
         evidence.append(f'account {ai_acct} matches OCR')
@@ -835,6 +862,27 @@ def _score_pair(ai: 'AssetItem',
     if ai_mukim and g_mukim and ai_mukim == g_mukim:
         components['mukim_match'] = _WEIGHTS['mukim_match']
         evidence.append(f'Mukim {ai_mukim.title()} agrees')
+
+    # 🔥 §10x.158 — identifier-primary candidate boost.
+    # The AI Summary often lacks lot/title because the user only typed an
+    # address. When the DocGroup HAS lot+title AND its mukim matches the
+    # AssetItem's resolved mukim, this is strong evidence the doc IS for
+    # this property — even without address-token overlap. The matcher
+    # surfaces it as a candidate (≥ CANDIDATE_THRESHOLD = 30) so the
+    # user is asked. Without this, a Charge form whose chargor-residence
+    # address differs from the subject property's street stays silent.
+    ai_has_no_id = not ai_lot and not ai_title and not ai_acct and not ai_pol
+    g_has_id = bool(g_lot or g_title)
+    if (ai_has_no_id and g_has_id and ai_mukim and g_mukim
+            and ai_mukim == g_mukim):
+        components['identifier_doc_with_mukim_match'] = (
+            _WEIGHTS['identifier_doc_with_mukim_match'])
+        ids = []
+        if g_lot: ids.append(f'lot {g_lot}')
+        if g_title: ids.append(f'title {g_title}')
+        evidence.append(
+            f'doc has [{", ".join(ids)}] in matching Mukim {ai_mukim.title()}'
+        )
     if ai_daerah and g_daerah:
         # 'johor bahru' may appear with extra junk like 'johor bahru, johor'
         ai_d = re.sub(r'[,;].*$', '', ai_daerah).strip()
