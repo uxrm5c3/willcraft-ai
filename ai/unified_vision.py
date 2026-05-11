@@ -268,13 +268,27 @@ string. Do not invent or guess. Use the exact RULES per category.
 
   • property_tax (Cukai Tanah / Cukai Pintu / assessment):
       _cukai: {
-        assessment_account_no: str,
+        assessment_account_no: str, # e.g. 'A093003912' (MBIP local Cukai)
+                                     # or '300-00209' (JMB/MC strata bill)
         master_parcel_lot: str,     # the parent NLC lot — NOT strata sub-parcel
+        hakmilik_no: str,           # 🔥 §10x.172 — NO. DHM from Pentadbiran
+                                     # Tanah resit (e.g. 'GRN 00528881' or
+                                     # raw '00528881'). The TITLE/Geran No.,
+                                     # separate from master_parcel_lot.
+        # 🔥 §10x.172 — strata sub-parcel fields. Present ONLY on STRATA
+        # Cukai Tanah resits (Pentadbiran Tanah issues per-unit strata
+        # Cukai resits for buildings whose strata titles have been
+        # issued). When ALL three are present, the doc is at strata-
+        # level (granularity='strata'), NOT master.
+        strata_block: str,          # NO. BANGUNAN, e.g. 'M1B', 'M1C'
+        strata_tingkat: str,        # NO. TINGKAT (floor / level), e.g. '5'
+        strata_petak: str,          # NO. PETAK (parcel No. on title), e.g. '209'
         parcel_postal_address: str, # bill-to address; may be owner mailing
         registered_proprietors: [  # often DEVELOPER + buyers for pre-strata
-          {name, ic}, ...
+          {name, ic, company_no}, ...
         ],
-        granularity: 'master'       # Cukai is master-level by default
+        granularity: 'master' | 'strata'   # 'strata' when block+tingkat+
+                                            # petak present; else 'master'
       }
 
   • property_transfer (Memorandum of Transfer / Borang 14A):
@@ -296,6 +310,50 @@ string. Do not invent or guess. Use the exact RULES per category.
        fields (property_address, title_number, lot_number, mukim,
        daerah, negeri, owner_name) from the sub-schemas' subject
        property — for backward compat with existing consumers.
+
+  🔥 §10x.172 — PENTADBIRAN TANAH CUKAI TANAH RESIT (state-level Cukai).
+  When the doc header reads "KERAJAAN NEGERI <state> DARUL TA'ZIM /
+  PENTADBIRAN TANAH <state>" or "BAYARAN CUKAI TANAH", this is the
+  STATE Land Office's annual Cukai resit (DIFFERENT from local council
+  MBIP/MBJB Cukai Harta).
+
+  Pentadbiran Tanah resits carry MULTIPLE labeled identifiers in a
+  STRUCTURED layout. Read each label individually:
+
+    Label on doc          | Slot in _cukai
+    --------------------- | -------------------------
+    NAMA: 1. / 2. / 3.     | registered_proprietors (each with NRIC or
+                          |  NO. SYARIKAT for companies; preserve order)
+    ALAMAT:               | parcel_postal_address  (the property address
+                          |  printed on the resit)
+    DAERAH: [NN] <name>   | daerah (strip the [NN] code prefix)
+    MUKIM: [NN] <name>    | mukim (strip the [NN] code prefix)
+    NO. DHM: [NN] <num>   | hakmilik_no — THIS IS THE TITLE / GERAN
+                          |  NUMBER (e.g. "GRN 00528881" → "00528881").
+                          |  May also be labeled "NO. HAKMILIK".
+    NO. LOT: [NN] <num>   | master_parcel_lot — THE LOT NUMBER (e.g.
+                          |  "LOT 00194139" → "00194139"). DO NOT
+                          |  confuse with NO. DHM.
+    NO. BANGUNAN: <code>  | strata_block (e.g. "M1B"). Present only
+                          |  on STRATA Cukai resits.
+    NO. TINGKAT: <num>    | strata_tingkat (e.g. "5"). Strata only.
+    NO. PETAK: <num>      | strata_petak (e.g. "209"). Strata only.
+
+  When ALL of NO. BANGUNAN + NO. TINGKAT + NO. PETAK are present:
+    • granularity = 'strata'
+    • Construct title_number as: <hakmilik_no>/<block>/<tingkat>/<petak>
+      e.g. "00528881/M1B/5/209" — this is the FULL strata sub-parcel
+      title that goes in the Borang 14A clause.
+    • lot_number = master_parcel_lot (all units share the parent lot)
+
+  When NO. BANGUNAN/TINGKAT/PETAK are ABSENT:
+    • granularity = 'master'
+    • title_number = hakmilik_no (the master title)
+    • lot_number = master_parcel_lot
+
+  CRITICAL: never smash NO. DHM and NO. LOT into one field. They are
+  TWO DISTINCT identifiers labelled on the same line; both go in their
+  respective slots.
 
   Property rules:
     title_type: one of geran|hakmilik|hsd|ptd|gm|other (lowercase)
@@ -480,13 +538,36 @@ def _extract_inner(file_path: str, *, call_site: Optional[str] = None) -> dict:
     try:
         from services.property_granularity import classify_doc_level
         # Sub-schema explicit declaration wins
+        cukai = out.get('_cukai', {}) or {}
+        # 🔥 §10x.172 — strata Cukai detection: if all 3 strata fields
+        # present, granularity is 'strata' even if model didn't say so.
+        strata_complete = bool(
+            cukai.get('strata_block')
+            and cukai.get('strata_tingkat')
+            and cukai.get('strata_petak')
+        )
         explicit = (out.get('_title_doc', {}) or {}).get('granularity') \
-                   or (out.get('_cukai',    {}) or {}).get('granularity') \
+                   or cukai.get('granularity') \
                    or ''
-        if explicit in ('strata', 'sub_parcel', 'master', 'unknown'):
+        if strata_complete and explicit not in ('master',):
+            out['_doc_level'] = 'strata'
+        elif explicit in ('strata', 'sub_parcel', 'master', 'unknown'):
             out['_doc_level'] = explicit
         else:
             out['_doc_level'] = classify_doc_level(out, category=out.get('kind', ''))
+        # 🔥 §10x.172 — if strata-complete Cukai, also fill the flat
+        # title_number / lot_number fields from sub-schema so downstream
+        # consumers see them without needing to dig into _cukai.
+        if strata_complete:
+            hak = (cukai.get('hakmilik_no') or '').strip()
+            blk = (cukai.get('strata_block') or '').strip()
+            tk  = (cukai.get('strata_tingkat') or '').strip()
+            pk  = (cukai.get('strata_petak') or '').strip()
+            mlot = (cukai.get('master_parcel_lot') or '').strip()
+            if hak and not out.get('title_number'):
+                out['title_number'] = f"{hak}/{blk}/{tk}/{pk}"
+            if mlot and not out.get('lot_number'):
+                out['lot_number'] = mlot
     except Exception:
         out['_doc_level'] = 'unknown'
 
