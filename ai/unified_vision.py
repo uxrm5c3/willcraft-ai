@@ -101,6 +101,18 @@ _BLANK_RESULT: dict = {
     # 🔥 §10x.156 — party addresses captured separately so the matcher
     # never confuses a chargor's residence with the subject property.
     '_party_addresses': [],
+    # 🔥 §10x.161 — doc-type-specific sub-schemas. Empty dict when the
+    # doc isn't of that kind. Matcher trusts these over flat fields.
+    '_title_doc':  {},   # filled when kind == 'property_title'
+    '_spa':        {},   # filled when kind == 'property_spa'
+    '_charge':     {},   # filled when kind == 'loan_agreement'
+    '_cukai':      {},   # filled when kind == 'property_tax'
+    '_transfer':   {},   # filled when kind == 'property_transfer'
+    # 🔥 §10x.161 — granularity stamped at extraction time so matcher
+    # never has to re-derive it. One of: strata | sub_parcel | master |
+    # unknown. Populated by services.property_granularity classifier
+    # if sub-schemas don't declare granularity explicitly.
+    '_doc_level':  'unknown',
     'bank_name': '', 'account_number': '', 'currency': '',
     'account_type': '',
     'insurer': '', 'policy_number': '', 'policyholder_name': '',
@@ -163,6 +175,82 @@ string. Do not invent or guess. Use the exact RULES per category.
     address: back of MyKad only; lines separated by \\n
     gender: NRIC last digit odd=Male even=Female; passport: read M/F field
     nationality: usually Malaysian; for passports read the cover
+
+  🔥 §10x.161 — DOC-TYPE-SPECIFIC SUB-SCHEMAS (typed extraction).
+  When `kind` falls into one of the property categories below, also
+  emit the matching sub-schema. These sub-schemas force you to put
+  fields in their CORRECT slot (subject property vs party residence)
+  and to label granularity at extraction time. The matcher downstream
+  trusts these sub-schemas — they're the source of truth.
+
+  • property_title (Geran / Hakmilik Strata / HSD / PTD):
+      _title_doc: {
+        is_strata: bool,           # has /M1?/N/MMM parcel sub-token
+        master_title_no: str,      # parent Geran No. (always present)
+        master_lot: str,           # parent NLC lot No.
+        strata_block: str,         # e.g. "A", "B", "M1C" (strata only)
+        strata_parcel_no: str,     # e.g. "B-05-11" (strata only)
+        full_title: str,           # raw printed string e.g. "564662/M1C/30/710"
+        mukim, daerah, negeri: str,
+        registered_proprietors: [
+          {name, ic, share_fraction}, ...
+        ],
+        granularity: 'strata' | 'sub_parcel'
+      }
+
+  • property_spa (Sale & Purchase Agreement):
+      _spa: {
+        subject_property: {       # from FIRST SCHEDULE / DESCRIPTION
+          building_name, unit, parcel_no, master_lot,
+          mukim, daerah, negeri, address_in_schedule
+        },
+        vendor: {name, ic, residence_address},
+        purchaser: {name, ic, residence_address},  # ← NOT subject property
+        sale_price, completion_date
+      }
+
+  • loan_agreement (Charge / Borang 16A / facility agreement):
+      _charge: {
+        borang_no: str,            # 16A / 16D / etc
+        secured_property: {        # from SCHEDULE / SECURITY block
+          strata_title_no, parcel_no, master_lot,
+          mukim, daerah, negeri, address_in_schedule
+        },
+        chargor: {name, ic, residence_address},   # ← NOT subject property
+        chargee_bank: str,
+        loan_amount
+      }
+
+  • property_tax (Cukai Tanah / Cukai Pintu / assessment):
+      _cukai: {
+        assessment_account_no: str,
+        master_parcel_lot: str,     # the parent NLC lot — NOT strata sub-parcel
+        parcel_postal_address: str, # bill-to address; may be owner mailing
+        registered_proprietors: [  # often DEVELOPER + buyers for pre-strata
+          {name, ic}, ...
+        ],
+        granularity: 'master'       # Cukai is master-level by default
+      }
+
+  • property_transfer (Memorandum of Transfer / Borang 14A):
+      _transfer: {
+        property: {strata_title_no, parcel_no, master_lot, mukim, ...},
+        transferor: {...},
+        transferee: {...}
+      }
+
+  RULES for filling sub-schemas:
+    1. Use the AUTHORITATIVE section of the doc for the property:
+       SCHEDULE / SECURITY / CHARGED LAND / OBJECT OF CHARGE /
+       DESCRIPTION OF PROPERTY / PERIHAL TANAH / HARTANAH.
+    2. Party addresses go in their typed slots (vendor/purchaser/
+       chargor residence). NEVER copy a party address into
+       subject_property.address_in_schedule.
+    3. If a field is not visible in the doc, set "" — do not invent.
+    4. After filling sub-schemas, ALSO fill the top-level flat
+       fields (property_address, title_number, lot_number, mukim,
+       daerah, negeri, owner_name) from the sub-schemas' subject
+       property — for backward compat with existing consumers.
 
   Property rules:
     title_type: one of geran|hakmilik|hsd|ptd|gm|other (lowercase)
@@ -337,6 +425,26 @@ def _extract_inner(file_path: str, *, call_site: Optional[str] = None) -> dict:
         else:
             # extra keys preserved with underscore prefix for debugging
             out[f'_extra_{k}'] = v
+
+    # 🔥 §10x.161 — Phase 3: run the canonical granularity classifier
+    # right at extraction time and persist `_doc_level` on the result.
+    # The matcher downstream reads this tag without re-classifying.
+    # Sub-schemas may already declare granularity explicitly (e.g.
+    # _cukai.granularity = 'master'); honour that, else fall back to
+    # the classifier.
+    try:
+        from services.property_granularity import classify_doc_level
+        # Sub-schema explicit declaration wins
+        explicit = (out.get('_title_doc', {}) or {}).get('granularity') \
+                   or (out.get('_cukai',    {}) or {}).get('granularity') \
+                   or ''
+        if explicit in ('strata', 'sub_parcel', 'master', 'unknown'):
+            out['_doc_level'] = explicit
+        else:
+            out['_doc_level'] = classify_doc_level(out, category=out.get('kind', ''))
+    except Exception:
+        out['_doc_level'] = 'unknown'
+
     return out
 
 
