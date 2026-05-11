@@ -1080,6 +1080,14 @@ _WEIGHTS = {
     # threshold) so the user is asked "is this the title for property X?"
     # rather than the doc going to residual unverified-card silently.
     'identifier_doc_with_mukim_match': 15,
+    # 🔥 §10x.166 — DocGroup with BOTH valid title AND valid lot AND
+    # matching mukim is exceptionally strong evidence: real probate-grade
+    # identifiers AND geographic agreement, even when AI Summary has no
+    # identifiers to direct-match against. Promotes such a binding past
+    # AUTO_BIND_THRESHOLD so it wins over Tier-C semantic guesses that
+    # might pick a wrong-unit doc by address alone (e.g. KOID's 87b4c688
+    # with Folio 5 title — matches address but title is bogus).
+    'full_identifiers_with_mukim': 20,
     # Penalties
     'daerah_conflict':  -50,
     'foreign_owner':     -8,   # owner_name has someone NOT in family
@@ -1328,6 +1336,24 @@ def _score_pair(ai: 'AssetItem',
         if g_title: ids.append(f'title {g_title}')
         evidence.append(
             f'doc has [{", ".join(ids)}] in matching Mukim {ai_mukim.title()}'
+        )
+
+    # 🔥 §10x.166 — full-identifier authoritative boost. When the
+    # DocGroup carries BOTH a valid lot AND a valid title (cleaned, not
+    # bogus per §10x.152h) AND mukim agrees with the AssetItem, this
+    # is exceptionally strong evidence — far stronger than address-only
+    # semantic match. Boost past AUTO_BIND_THRESHOLD so the matcher
+    # picks the full-identifier doc over a wrong-unit doc that happens
+    # to have a matching address. Combined with mukim_match (20) and
+    # identifier_doc_with_mukim_match (15), score reaches ~55 — over
+    # AUTO_BIND_THRESHOLD (50).
+    if (g_lot and g_title and len(g_lot) >= 3 and len(g_title) >= 4
+            and ai_mukim and g_mukim and ai_mukim == g_mukim):
+        components['full_identifiers_with_mukim'] = (
+            _WEIGHTS['full_identifiers_with_mukim'])
+        evidence.append(
+            f'full identifiers (lot {g_lot} + title {g_title}) '
+            f'+ Mukim {ai_mukim.title()} agreement'
         )
 
     score = sum(components.values())
