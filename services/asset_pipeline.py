@@ -244,10 +244,14 @@ class PropertyHierarchy:
     postcode: str = ''
     building_evidence_doc_ids: List[str] = field(default_factory=list)
 
-    # Ownership context (from message text + master Cukai)
+    # Ownership context (co_owners from message ONLY per §10x.19)
     owners_from_message: List[str] = field(default_factory=list)
     co_owners: List[str] = field(default_factory=list)
     testator_share: str = ''        # "1/2" / "1/1"
+    # Doc-owner evidence — names printed on the master Cukai or other
+    # supporting doc, stored as audit trail. NOT used as co_owners
+    # on the gift clause (§10x.19 keeps co_owners message-only).
+    doc_evidence_owners: List[str] = field(default_factory=list)
 
     # Probate-required fields still missing — for the wizard banner
     missing_for_probate: List[str] = field(default_factory=list)
@@ -285,7 +289,8 @@ def compute_missing_for_probate(h: 'PropertyHierarchy') -> List[str]:
 def build_property_hierarchy(asset_item: 'AssetItem',
                               authoritative_dg: Optional['DocGroup'],
                               supporting_dgs: Optional[List['DocGroup']] = None,
-                              authoritative_level: str = 'unknown'
+                              authoritative_level: str = 'unknown',
+                              testator_name: str = ''
                               ) -> 'PropertyHierarchy':
     """Phase 4 — assemble a PropertyHierarchy for one AssetItem.
 
@@ -367,20 +372,30 @@ def build_property_hierarchy(asset_item: 'AssetItem',
             h.daerah = (de.get('daerah') or '').strip() or h.daerah
             h.negeri = (de.get('negeri') or '').strip() or h.negeri
             h.master_evidence_doc_ids = list(authoritative_dg.document_ids)
-            # Master Cukai's owners often reveal co-owners
+            # §10x.19 — co_owners come from the MESSAGE (ownership_struct
+            # already loaded above), NOT derived from doc owners. Doc
+            # owners are stored separately as evidence so the wizard
+            # can render "this Cukai shows: ISKANDAR INVESTMENT BERHAD,
+            # CHAI MEI FUN, KOID BENG SUN" without polluting co_owners.
             owner_str = (de.get('owner_name') or '')
             if isinstance(owner_str, list):
                 owner_str = ' & '.join(owner_str)
             owner_str = str(owner_str)
+            tn_up = (testator_name or '').upper().strip()
+            evidence_owners: List[str] = []
             for nm in re.split(r'\s*&\s*|,\s*', owner_str):
                 nm = nm.strip()
-                if not nm: continue
-                # Skip corporate entities
-                if re.search(r'\b(?:berhad|bhd|sdn|investments?|holdings?)\b', nm, re.IGNORECASE):
-                    continue
-                # Skip the testator's own name (caller can pass in if needed)
-                if nm not in h.co_owners and nm.upper() not in [c.upper() for c in h.co_owners]:
-                    h.co_owners.append(nm)
+                if nm:
+                    evidence_owners.append(nm)
+            # Stamp as supplementary data (not co_owners)
+            if not hasattr(h, 'doc_evidence_owners'):
+                # dataclass field added below; if missing in older
+                # instances, attribute set dynamically still serialises
+                pass
+            try:
+                h.doc_evidence_owners = evidence_owners
+            except Exception:
+                pass
 
     # Supporting docs at master level (Cukai) — add their evidence
     for sdg in (supporting_dgs or []):
@@ -1846,9 +1861,24 @@ def build_gift(asset_item: AssetItem,
         # levels and computes `missing_for_probate` based on what each
         # bound/supporting doc contributed.
         try:
+            # Pull testator name so co_owners doesn't list him
+            from database import Will as _W
+            _client_id = None
+            try:
+                from services.asset_pipeline import _gather_match_context
+                # context not available here; pass empty — caller may set
+            except Exception:
+                pass
+            _tn = ''
+            try:
+                from flask import g as _flask_g
+                _tn = getattr(_flask_g, '_testator_name_cache', '') or ''
+            except Exception:
+                pass
             hierarchy = build_property_hierarchy(
                 asset_item, doc_group, supporting_dgs=None,
-                authoritative_level=doc_level
+                authoritative_level=doc_level,
+                testator_name=_tn,
             )
             hierarchy_dict = hierarchy.to_dict()
         except Exception:

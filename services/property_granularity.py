@@ -218,8 +218,109 @@ def evidence_summary(doc_level: str,
     }
 
 
+# ── §10x.163 Phase 5 — Owner-pattern recognition table ─────────────────────
+#
+# Owner-name combinations on Malaysian property docs reveal the doc's
+# granularity. Encoding these patterns explicitly makes the matcher's
+# reasoning auditable AND lets the LLM/heuristics agree on the answer.
+#
+# Each entry: (regex matchers, granularity_hint, label, notes_for_ui).
+
+# Bank / chargee patterns — for encumbrance docs
+_BANK_RE = re.compile(
+    r'\b(?:maybank|cimb|public\s*bank|hong\s*leong|rhb|ambank|bank\s*'
+    r'rakyat|bank\s*islam|alliance\s*bank|hsbc|standard\s*chartered|'
+    r'ocbc|uob|posb|dbs|citibank|al-rajhi|kuwait\s*finance|affin|'
+    r'mbsb|agrobank|bank\s*muamalat)\b',
+    re.IGNORECASE,
+)
+
+
+def classify_owner_pattern(owner_text: str,
+                            family_names: Optional[Set[str]] = None
+                            ) -> Dict[str, Any]:
+    """§10x.163 Phase 5 — classify the doc's owner field into one of
+    the canonical patterns. Returns a dict:
+      {pattern, implied_level, individuals, developer, bank,
+       family_in_owners}
+
+    Patterns:
+      'developer_plus_individuals'  → likely 'master' parcel (pre-strata
+                                       or master title still co-held)
+      'developer_alone'              → master, wholly developer-held
+      'individuals_only'             → likely 'sub_parcel'/'strata'
+                                       (strata title issued or landed)
+      'bank_plus_chargor'            → encumbrance doc (Charge form)
+      'empty_or_unclear'             → no useful owner signal
+    """
+    family_names = family_names or set()
+    s = (owner_text or '').strip()
+    if not s:
+        return {'pattern': 'empty_or_unclear', 'implied_level': 'unknown',
+                'individuals': [], 'developer': '', 'bank': '',
+                'family_in_owners': []}
+
+    # Find developer corporate suffix and bank issuer
+    devs = _DEV_SUFFIX_RE.findall(s)
+    has_dev = bool(devs)
+    bank_match = _BANK_RE.search(s)
+    has_bank = bool(bank_match)
+
+    # Extract corporate-entity strings (text matching corporate suffix)
+    dev_entities = []
+    for m in re.finditer(
+        r'\b[A-Z][A-Z\s&\-]+'
+        r'(?:BERHAD|BHD|SDN(?:\s*BHD)?|INVESTMENTS?|HOLDINGS?|'
+        r'DEVELOPMENTS?|PROPERTIES|REALTY|ESTATES?|LIMITED|LTD|CORP|'
+        r'CORPORATION)\b',
+        s.upper()
+    ):
+        dev_entities.append(m.group(0).strip())
+
+    # Extract likely individual names (Title Case multi-word)
+    individuals = [n.strip() for n in _INDIVIDUAL_NAME_RE.findall(s)]
+    # Filter out corporate entities
+    individuals = [n for n in individuals
+                    if not _DEV_SUFFIX_RE.search(n)]
+
+    # Family-name match
+    family_up = {(fn or '').upper().strip() for fn in family_names}
+    family_in_owners = [n for n in individuals if any(
+        fam_tok in n.upper() for fam_tok in family_up if fam_tok
+        and len(fam_tok) >= 4
+    )]
+
+    # Decide pattern
+    if has_bank and individuals:
+        pattern = 'bank_plus_chargor'
+        implied = 'sub_parcel'   # charge docs describe specific units
+    elif has_dev and individuals:
+        pattern = 'developer_plus_individuals'
+        implied = 'master'
+    elif has_dev:
+        pattern = 'developer_alone'
+        implied = 'master'
+    elif individuals:
+        pattern = 'individuals_only'
+        implied = 'sub_parcel'   # also could be strata; matcher decides
+                                  # further with title shape
+    else:
+        pattern = 'empty_or_unclear'
+        implied = 'unknown'
+
+    return {
+        'pattern': pattern,
+        'implied_level': implied,
+        'individuals': individuals,
+        'developer': dev_entities[0] if dev_entities else '',
+        'bank': bank_match.group(0) if bank_match else '',
+        'family_in_owners': family_in_owners,
+    }
+
+
 __all__ = [
     'classify_doc_level',
+    'classify_owner_pattern',
     'level_compatible_fields',
     'evidence_summary',
     'PROBATE_FIELDS_BY_LEVEL',
