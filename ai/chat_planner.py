@@ -498,10 +498,11 @@ def plan_turn(
                 except Exception:
                     pass
         if testator_info.get('full_name'):
+            _cid_for_step2 = (current_will_data or {}).get('client_id') or ''
             reply_parts.append(_step2_question(
                 testator_info,
                 identities=current_will_data.get('identities') or [],
-                client_id=_cid_t2,
+                client_id=_cid_for_step2,
             ))
             return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
