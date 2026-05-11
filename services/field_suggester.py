@@ -368,12 +368,30 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
     if not candidates:
         return None
 
+    # 🔥 §10x.156 — per-field filter: when caller asks for title_number,
+    # only include docs whose title_number is non-empty (and similarly
+    # for lot_number). Without this, the LLM picks the doc whose address
+    # best matches the will, then we discover its requested field is
+    # empty → return None. By pre-filtering, the LLM is forced to choose
+    # among docs that actually CAN provide the requested value.
+    field_key = 'title_number' if field == 'title_number' else 'lot_number'
+    candidates = [c for c in candidates if c.get(field_key)]
+    if not candidates:
+        _LLM_MATCH_CACHE[cache_key] = {
+            'value': '',
+            'source': f'no doc has a usable {field}',
+        }
+        return None
+
     # Build prompt for Claude
     prompt = (
         "You are matching uploaded Malaysian property documents to a "
         "specific property mentioned in a will.\n\n"
         f"PROPERTY (from will): {gift_addr}\n\n"
-        "UPLOADED PROPERTY DOCS (each may have OCR-garbled address):\n"
+        f"FIELD REQUESTED: {field}\n\n"
+        "UPLOADED PROPERTY DOCS (each has a non-empty value for the "
+        f"requested {field}; addresses may be a party residence not the "
+        "subject property):\n"
     )
     # Pull testator + family names + property's resolved mukim for context
     family_blob = ''
