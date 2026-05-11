@@ -267,19 +267,28 @@ class PropertyHierarchy:
 def compute_missing_for_probate(h: 'PropertyHierarchy') -> List[str]:
     """Return the list of fields still missing for a probate-grade
     will clause. Strata units need their own sub-parcel title;
-    landed parcels can use master_title_no directly."""
+    landed parcels can use master_title_no directly.
+
+    🔥 §10x.170 — for strata units, master_lot IS the unit's lot in
+    the clause (e.g. C-30-08 / B-05-11 sit on the same parent NLC
+    parcel as every other unit in the building). So when master_lot
+    is filled, lot_number is satisfied for strata."""
     missing = []
-    has_strata = bool(h.strata_title_no or h.strata_parcel_no)
+    has_strata = bool(h.strata_title_no or h.strata_parcel_no
+                       or '/' in (h.master_title_no or ''))
     if has_strata:
-        # Strata unit — need its own strata title
-        if not h.strata_title_no:
+        # Strata unit — need its own strata title; lot is the master lot
+        if not h.strata_title_no and '/' not in (h.master_title_no or ''):
             missing.append('strata_title_no')
+        # lot is OK if we have master_lot (shared parent parcel)
+        if not h.master_lot:
+            missing.append('lot_number')
     else:
         # Either truly landed OR strata title not yet uploaded
         if not h.master_title_no:
             missing.append('title_number')
-    if not h.master_lot:
-        missing.append('lot_number')
+        if not h.master_lot:
+            missing.append('lot_number')
     if not h.mukim:   missing.append('mukim')
     if not h.daerah:  missing.append('daerah')
     if not h.negeri:  missing.append('negeri')
@@ -1989,11 +1998,39 @@ def build_gift(asset_item: AssetItem,
     # Address: message > AI Summary > DocGroup OCR
     address = (af.get('address') or '').strip() or (de.get('property_address') or '').strip()
 
+    # 🔥 §10x.170 — STRATA detection: a strata unit's lot in the probate
+    # clause IS the master parcel lot (all units in the building share
+    # the same lot; the strata title No. with sub-tokens distinguishes
+    # units). So when AssetItem is strata AND only master-level evidence
+    # exists, promote master_lot → unit's lot_number. Title No. still
+    # requires strata-level evidence (sub-parcel sub-tokens).
+    #
+    # Detect strata via: web_type='apartment_condo' (§10x.107 web clues),
+    # OR title carries slash sub-token, OR address contains a strata
+    # keyword (unit / condo / apartment / pangsapuri / strata).
+    af_title = (af.get('title') or '').strip()
+    af_name  = (af.get('name')  or '').strip().lower()
+    af_addr  = (af.get('address') or '').strip().lower()
+    is_strata_unit = (
+        af.get('_web_type') == 'apartment_condo' or
+        ('/' in af_title) or
+        bool(re.search(
+            r'\b(unit|condo(?:minium)?|apartment|pangsapuri|kondominium|strata|menara|tower\s+[a-z]|block\s+[a-z])\b',
+            af_name + ' ' + af_addr))
+    )
+
     # Lot/title: message > OCR (only if level-allowed) > AI Summary.
-    # Master-level Cukai cannot fill a strata unit's lot/title because
-    # those are at the sub-parcel granularity (different identifiers).
-    de_lot = clean_id(de.get('lot_number') or '') if 'lot_number' in _ok else ''
-    de_title = clean_id(de.get('title_number') or '') if 'title_number' in _ok else ''
+    # Master-level Cukai cannot fill a strata unit's title_number (still
+    # needs strata sub-parcel evidence), but FOR STRATA UNITS its
+    # lot_number IS the unit's lot (shared parent parcel).
+    de_lot_raw = clean_id(de.get('lot_number') or '')
+    de_title_raw = clean_id(de.get('title_number') or '')
+    if doc_level == 'master' and is_strata_unit:
+        # Strata exception: master parcel lot is the unit's lot
+        de_lot = de_lot_raw
+    else:
+        de_lot = de_lot_raw if 'lot_number' in _ok else ''
+    de_title = de_title_raw if 'title_number' in _ok else ''
     lot = (af.get('lot') or '').strip() or de_lot
     title = (af.get('title') or '').strip() or de_title
 
