@@ -4205,11 +4205,49 @@ def _step2_question(s1: Dict[str, Any],
                 from services.identity_walker import (
                     extract_address_for_person_from_text as _ex_addr,
                 )
-                # Need to import here to avoid circular deps; gather text
-                # via the lightweight helper that planner already uses.
-                from app import _gather_recent_chat_text as _gather
-                _rec = _gather(client_id) or ''
-                text_addr = _ex_addr(_rec, name, nric)
+                # Gather text from MULTIPLE sources to maximise hit rate.
+                # The _gather_recent_chat_text helper truncates at 20k
+                # chars (recent messages preferred), but the forward-text
+                # with the address may be older. So we ALSO scan the
+                # latest AI Summary card + step6_data._raw_forward_text.
+                _sources: list = []
+                try:
+                    from app import _gather_recent_chat_text as _gather
+                    _sources.append(_gather(client_id) or '')
+                except Exception:
+                    pass
+                _sources.append(_gather_summary_source_text(client_id) or '')
+                # Also pull the LONGEST user ChatMessage directly — the
+                # initial WhatsApp forward is the most likely carrier of
+                # the testator's address line.
+                try:
+                    from database import ChatMessage as _CM, ChatSession as _CS
+                    _sess = (_CS.query.filter_by(client_id=client_id)
+                             .order_by(_CS.created_at.desc()).first())
+                    if _sess:
+                        _user_msgs = (_CM.query
+                                      .filter_by(session_id=_sess.id, role='user')
+                                      .all())
+                        if _user_msgs:
+                            _longest = max(_user_msgs,
+                                            key=lambda m: len(m.content or ''))
+                            if _longest and _longest.content:
+                                _sources.append(_longest.content)
+                            # also scan any user message that explicitly
+                            # mentions the testator's name or NRIC
+                            for _um in _user_msgs:
+                                _c = _um.content or ''
+                                if (name and name in _c) or (nric and nric in _c):
+                                    _sources.append(_c)
+                except Exception:
+                    pass
+                for _src in _sources:
+                    if not _src:
+                        continue
+                    _cand = _ex_addr(_src, name, nric)
+                    if _cand:
+                        text_addr = _cand
+                        break
             except Exception:
                 text_addr = ''
         if text_addr:
