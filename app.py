@@ -12661,8 +12661,19 @@ def _try_confirm_testator(client_id: str, user_text: str):
         s1 = json.loads(will.step1_data or '{}') or {}
     except (json.JSONDecodeError, TypeError):
         s1 = {}
-    # Already confirmed? Skip — let the next handler claim the click.
-    if s1.get('full_name') and s1.get('person_id'):
+    # 🔥 §10x.224 — was: "if full_name and person_id, return None" so
+    # subsequent handlers could claim the click. But after the user
+    # types `address: ...` the field-saver populates s1.full_name +
+    # s1.person_id before Confirm is even available — so this early
+    # return swallowed every Confirm click and the card looped forever.
+    # The right check is "did the user already STAMP testator_confirmed".
+    try:
+        _completed = json.loads(will.completed_steps or '[]')
+        if not isinstance(_completed, list):
+            _completed = []
+    except Exception:
+        _completed = []
+    if 'testator_confirmed' in _completed:
         return None
     # Pull Testator Person row
     testator = Person.query.filter_by(client_id=client_id, relationship='Testator').first()
