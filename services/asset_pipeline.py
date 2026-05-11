@@ -1091,6 +1091,14 @@ _WEIGHTS = {
     # Penalties
     'daerah_conflict':  -50,
     'foreign_owner':     -8,   # owner_name has someone NOT in family
+    # 🔥 §10x.168 — locality-token conflict. When AssetItem address has
+    # distinctive street/locality tokens AND DocGroup address has
+    # distinctive street/locality tokens AND ZERO overlap, the two
+    # describe DIFFERENT physical neighbourhoods. Apply a strong
+    # penalty so e.g. Sri Laguna's merged group doesn't auto-bind to
+    # B-05-11 just because both are Mukim Pulai (locality tokens
+    # 'laguna'/'taman' vs 'paradiso'/'medini' don't overlap).
+    'locality_conflict': -25,
 }
 
 # Decision thresholds
@@ -1303,6 +1311,39 @@ def _score_pair(ai: 'AssetItem',
                     components['msg_text_ref'] = _WEIGHTS['msg_text_ref']
                     evidence.append(f'OCR fragment "{f[:30]}" near message line')
                     break
+
+    # 🔥 §10x.168 — LOCALITY-TOKEN CONFLICT penalty.
+    # When BOTH addresses have distinctive street/locality tokens AND
+    # ZERO overlap, the two docs describe DIFFERENT neighbourhoods —
+    # NOT the same property. Apply -25 penalty so cross-property
+    # mis-bindings get pushed below CANDIDATE_THRESHOLD.
+    #
+    # Real failure this prevents (KOID): Sri Laguna's merged group
+    # (lot 135402, title 337203, mukim Pulai, address 'No. 10 Jalan
+    # Sri Laguna 1/7, Taman Laguna') was scoring 52 against B-05-11
+    # (address 'Unit B-05-11 Condominium Paradisonuava, Paradiso Nuova,
+    # Bandar Medini Iskandar') because both are Mukim Pulai. They share
+    # mukim but ZERO distinctive locality tokens ('laguna','taman'
+    # vs 'paradiso','medini','iskandar'). The penalty drops the
+    # cross-bind score from 52 → 27 (below CANDIDATE), so B-05-11
+    # correctly falls through to 159de260 (which DOES share
+    # 'medini'/'iskandar'/'bandar' tokens, no penalty).
+    #
+    # Computed AFTER token_overlap (positive) is set so we don't penalise
+    # docs that DO overlap. Skip when either side has too few tokens
+    # to make a meaningful comparison (< 2 tokens each).
+    if (components.get('token_overlap', 0) == 0
+            and components.get('web_building_in_ocr', 0) == 0
+            and components.get('msg_text_ref', 0) == 0
+            and len(ai_tokens) >= 2
+            and len(g_tokens) >= 2
+            and ai_tokens.isdisjoint(g_tokens)):
+        components['locality_conflict'] = _WEIGHTS['locality_conflict']
+        evidence.append(
+            f'⚠ locality conflict (zero shared tokens between '
+            f'AssetItem [{", ".join(list(ai_tokens)[:3])}...] and '
+            f'DocGroup [{", ".join(list(g_tokens)[:3])}...])'
+        )
 
     # 🔥 §10x.158 — identifier-primary candidate boost (NEVER auto-binds).
     # The AI Summary often lacks lot/title because the user only typed an
