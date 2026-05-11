@@ -12,6 +12,12 @@ class PropertyDetails(BaseModel):
     bandar_pekan: str = ""      # Bandar/Pekan (township)
     daerah: str = ""            # District
     negeri: str = ""            # State
+    # 🔥 §10x.165 — historical titles superseded by the current
+    # title_number/lot_number via NLC conversion (HS(D)/PTD → Geran/Lot).
+    # When non-empty, drafter renders "Formerly known as <type> No. X
+    # PTD Y" parenthetical after current "Lot No. X" per §10x.165 + Alan
+    # & Tan KOID gold-standard clause format.
+    historical_titles: Optional[List[Any]] = None
 
     def _clean_address(self) -> str:
         """Remove duplicate postcode/city/state from property address."""
@@ -122,6 +128,43 @@ class PropertyDetails(BaseModel):
                 title_parts.append(f"PT {ln}")
             else:
                 title_parts.append(f"Lot No. {ln}")
+
+        # 🔥 §10x.165 — "Formerly known as" parenthetical for properties
+        # that went through NLC title-conversion (HS(D)/PTD → Geran/Lot).
+        # Inserted AFTER the Lot No. and BEFORE Mukim. Format per KOID
+        # gold-standard clause:
+        #   "...Lot No. 135402 (Formerly known as HS(D) 431161 PTD 143086),
+        #    Mukim Pulai..."
+        hist = getattr(self, 'historical_titles', None) or []
+        if hist and title_parts:
+            hist_parts = []
+            for h in hist:
+                if not isinstance(h, dict):
+                    continue
+                h_type = str(h.get('type', '')).strip()
+                h_no   = str(h.get('no', '')).strip()
+                h_pt   = str(h.get('pt_no', '')).strip()
+                if not h_type or not h_no:
+                    continue
+                # Normalise type for display: HS(D) → HS(D), HSD → HS(D)
+                if h_type.upper() in ('HSD', 'HS(D)', 'H.S.(D)'):
+                    h_type_display = 'HS(D)'
+                elif h_type.upper() in ('HSM', 'HS(M)', 'H.S.(M)'):
+                    h_type_display = 'HS(M)'
+                else:
+                    h_type_display = h_type
+                if h_pt:
+                    hist_parts.append(f"{h_type_display} {h_no} PTD {h_pt}")
+                else:
+                    hist_parts.append(f"{h_type_display} {h_no}")
+            if hist_parts:
+                # Append parenthetical to the LAST title_part (the Lot No.)
+                # so it reads "...Lot No. 135402 (Formerly known as HS(D)
+                # 431161 PTD 143086), Mukim..."
+                last = title_parts[-1]
+                title_parts[-1] = (
+                    f"{last} (Formerly known as " + ' '.join(hist_parts) + ")"
+                )
         if self.bandar_pekan:
             mukim_val = self.bandar_pekan.strip()
             for pfx in ['MUKIM ', 'Mukim ', 'BANDAR ', 'Bandar ']:
