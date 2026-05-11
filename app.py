@@ -10359,11 +10359,17 @@ def _try_save_insurance_layered_gift(client_id, user_text):
             '_layer1_confirmed': action == 'confirm',
             'insurer':       target.get('insurer'),
             'policy_number': target.get('policy_number'),
+            # 🔥 §10x.212 — preserve country at top level too (for parity
+            # with bank L1 saver at line 10159). Without this, drafter's
+            # insurance roman-bullet renderer outputs "(i) Policy No. X
+            # NTUC Income" instead of "(i) ... NTUC Income Singapore".
+            'country':       target.get('country') or '',
             'gift_type': 'financial',
             'financial_details': {
                 'asset_type':     'insurance',
                 'institution':    target.get('insurer') or '',
                 'account_number': target.get('policy_number') or '',
+                'country':        target.get('country') or '',
             },
             'allocations':         [],
             'beneficiaries':       [],
@@ -11217,8 +11223,14 @@ def _try_save_residuary_substitute(client_id: str, user_text: str):
             sub_list = [{'name': match.full_name, 'share': '1/1'}]
     else:
         # Free-text: 'Joshua 50%, Esther 50%' or 'wife 100%'
+        # 🔥 §10x.213 — also accept quickreply-style:
+        # 'residuary substitute Joshua 50%, Esther 50%'
+        # (emitted by §10x.213 AI-Summary suggestion button).
         sub_mode = 'specific'
-        parts = [p.strip() for p in re.split(r',|\band\b', t) if p.strip()]
+        t_body = t
+        if low.startswith('residuary substitute '):
+            t_body = t[len('residuary substitute '):].strip()
+        parts = [p.strip() for p in re.split(r',|\band\b', t_body) if p.strip()]
         for part in parts:
             share_m = re.search(
                 r'\s+(\d{1,3})\s*%|\s+(equal|equally)\b|\s+(\d+/\d+)\s*$',
@@ -12950,6 +12962,37 @@ def _try_assign_pending_identity(client_id: str, user_text: str):
                     h3_address = h3_address or (d_ex.get('address') or '').strip()
                     h3_doc_id = h3_doc_id or d.id
                     break
+        except Exception:
+            pass
+
+    # 🔥 §10x.211 — Backfill NRIC from MESSAGE TEXT when no matching
+    # IC doc exists. The WhatsApp forward routinely states NRICs verbatim:
+    #   "my daughter Esther Koid En Hui NRIC 010522-01-1110"
+    #   "My Sister in law LIM LAY CHENG NRIC 650629-04-5308"
+    # H3 placeholders for these family members would otherwise save with
+    # empty Person.nric_passport → will clauses render
+    # "(MALAYSIA NRIC No. )" blanks (template wants the NRIC).
+    if not h3_nric:
+        try:
+            recent_text = _gather_recent_chat_text(client_id) or ''
+            if recent_text and name:
+                _NRIC_RE = re.compile(r'(\d{6}[-\s]?\d{2}[-\s]?\d{4})')
+                # case-insensitive name match; allow up to 40 chars of slack
+                # between name and NRIC (e.g. "Esther Koid En Hui NRIC ...")
+                # Escape the name for regex safety
+                name_esc = re.escape(name.strip())
+                # Two-pass: (a) exact full-name + NRIC within 40 chars,
+                # (b) any surname token + NRIC within 30 chars (looser).
+                pat_a = re.compile(
+                    r'(?i)' + name_esc + r'[^\n]{0,40}NRIC\s*(?:No\.?\s*)?'
+                    + r'(\d{6}[-\s]?\d{2}[-\s]?\d{4})')
+                m_a = pat_a.search(recent_text)
+                if m_a:
+                    cand = re.sub(r'\s+', '-', m_a.group(1).strip())
+                    # Canonicalise to NNNNNN-NN-NNNN
+                    digits = re.sub(r'\D', '', cand)
+                    if len(digits) == 12:
+                        h3_nric = f'{digits[:6]}-{digits[6:8]}-{digits[8:]}'
         except Exception:
             pass
 

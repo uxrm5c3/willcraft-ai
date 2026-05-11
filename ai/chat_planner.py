@@ -687,16 +687,24 @@ def plan_turn(
     if not s6 or not (s6.get('beneficiaries') or s6.get('residuary_beneficiary_name')):
         # Layer 2: ask MAIN residuary beneficiary
         s4_list = current_will_data.get('step4') or []
-        reply_parts.append(_step7_residuary_question(s4_list))
+        # 🔥 §10x.213 — pass AI Summary residuary suggestion (if any)
+        # so the default button reflects the user's stated intent rather
+        # than a generic "equal-among-all" guess.
+        _ai_res = _extract_ai_summary_residuary(client_id)
+        reply_parts.append(_step7_residuary_question(s4_list, ai_residuary=_ai_res))
         return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
     if (s6.get('substitute_specific') is None
         and s6.get('substitute_mode') in (None, '')
         and not s6.get('skipped')):
         # Layer 3: ask SUBSTITUTE residuary
         s4_list = current_will_data.get('step4') or []
+        # 🔥 §10x.213 — feed AI Summary's contingent_beneficiaries (if any)
+        # as the suggested substitute default.
+        _ai_res = _extract_ai_summary_residuary(client_id)
         reply_parts.append(
             _step7_residuary_substitute_question(
-                s6.get('beneficiaries') or [], s4_list
+                s6.get('beneficiaries') or [], s4_list,
+                ai_substitute=(_ai_res.get('substitute') if isinstance(_ai_res, dict) else None),
             )
         )
         return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
@@ -1425,7 +1433,14 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
                     for b in banks_raw:
                         if not isinstance(b, dict):
                             continue
+                        # 🔥 §10x.212 — accept BOTH `beneficiaries[]` and
+                        # `primary_beneficiary` + `contingent_beneficiaries`
+                        # shapes (Claude prompt drift).
                         bens = b.get('beneficiaries') or []
+                        if not bens:
+                            pri = b.get('primary_beneficiary')
+                            if isinstance(pri, dict) and pri.get('name'):
+                                bens = [pri]
                         first_ben = ''
                         first_share = ''
                         if isinstance(bens, list) and bens and isinstance(bens[0], dict):
@@ -1561,7 +1576,17 @@ def _extract_ai_summary_insurance(client_id: str) -> List[Dict[str, Any]]:
                     for i in ins_raw:
                         if not isinstance(i, dict):
                             continue
+                        # 🔥 §10x.212 — accept BOTH legacy
+                        # `beneficiaries[]` shape AND newer Claude-natural
+                        # `primary_beneficiary` + `contingent_beneficiaries`
+                        # shape. Without this, insurance L1 saved with
+                        # empty beneficiaries → will clauses had no
+                        # country + no main beneficiary populated.
                         bens = i.get('beneficiaries') or []
+                        if not bens:
+                            pri = i.get('primary_beneficiary')
+                            if isinstance(pri, dict) and pri.get('name'):
+                                bens = [pri]
                         first_ben = ''
                         first_share = ''
                         if isinstance(bens, list) and bens and isinstance(bens[0], dict):
@@ -1574,6 +1599,8 @@ def _extract_ai_summary_insurance(client_id: str) -> List[Dict[str, Any]]:
                         out.append({
                             'insurer':       ((i.get('insurer') or i.get('insurance_company') or i.get('company') or '').strip())[:80] or 'Insurance Policy',
                             'policy_number': ((i.get('policy_number') or i.get('policy') or i.get('account') or '').strip())[:60],
+                            # 🔥 §10x.212 — country from JSON footer (was missing → empty in will clauses)
+                            'country':       (i.get('country') or '').strip()[:40],
                             'beneficiary':       first_ben,
                             'beneficiary_share': first_share,
                             'beneficiaries':   [
@@ -1639,6 +1666,86 @@ def _extract_ai_summary_insurance(client_id: str) -> List[Dict[str, Any]]:
             ins['beneficiary'] = 'wife'
             ins['beneficiary_share'] = '100%'
     return out
+
+
+def _extract_ai_summary_residuary(client_id: str) -> Dict[str, Any]:
+    """🔥 §10x.213 — Read the residuary distribution from the AI Summary
+    JSON footer's `residuary_estate` block. Returns:
+      {
+        'main':       [{'name', 'share'}, ...],
+        'substitute': [{'name', 'share'}, ...],
+      }
+    Both lists may be empty if the AI Summary didn't surface residuary.
+
+    Shape accepted (Claude prompt may emit either):
+      {primary_beneficiary: {name, share}, contingent_beneficiaries:[{name,share,condition}]}
+      OR
+      {main:[{name,share}], substitute:[{name,share}]}
+
+    Without this, the residuary card defaulted to "all step4 beneficiaries
+    equal" which over-distributed when the user clearly stated a single
+    main + substitutes (e.g. wife 100% / kids 50-50 fallback).
+    """
+    if not client_id:
+        return {'main': [], 'substitute': []}
+    try:
+        from database import db, ChatMessage, ChatSession
+        from sqlalchemy import select as _sa_select
+        sess_ids_subq = (_sa_select(ChatSession.id)
+                         .filter(ChatSession.client_id == client_id))
+        msg = (ChatMessage.query
+               .filter(ChatMessage.session_id.in_(sess_ids_subq))
+               .filter(ChatMessage.role == 'assistant')
+               .filter(ChatMessage.content.ilike('### 📨 AI Summary%'))
+               .order_by(ChatMessage.created_at.desc())
+               .first())
+        if not (msg and msg.content and '<!--AI_SUMMARY_JSON:' in msg.content):
+            return {'main': [], 'substitute': []}
+        jm = re.search(r'<!--AI_SUMMARY_JSON:\s*(\{.*?\})\s*-->',
+                       msg.content, re.DOTALL)
+        if not jm:
+            return {'main': [], 'substitute': []}
+        payload = _json.loads(jm.group(1))
+        res = payload.get('residuary_estate') or payload.get('residuary') or {}
+        if not isinstance(res, dict):
+            return {'main': [], 'substitute': []}
+        def _norm_share(s: Any) -> str:
+            s = str(s or '').strip()
+            pct = re.match(r'(\d+)\s*%\s*$', s)
+            if pct:
+                n = int(pct.group(1))
+                if n == 100: return '1/1'
+                if n == 50: return '1/2'
+                if n == 33 or n == 34: return '1/3'
+                if n == 25: return '1/4'
+            return s or '1/1'
+        main: List[Dict[str, str]] = []
+        sub: List[Dict[str, str]] = []
+        # Shape A — primary_beneficiary + contingent_beneficiaries
+        pri = res.get('primary_beneficiary')
+        if isinstance(pri, dict) and pri.get('name'):
+            main.append({'name': pri['name'].strip(),
+                         'share': _norm_share(pri.get('share'))})
+        for c in (res.get('contingent_beneficiaries') or []):
+            if isinstance(c, dict) and c.get('name'):
+                sub.append({'name': c['name'].strip(),
+                            'share': _norm_share(c.get('share'))})
+        # Shape B — explicit main/substitute lists
+        for k_src, k_dst in (('main', main), ('substitute', sub),
+                              ('main_beneficiaries', main),
+                              ('substitute_beneficiaries', sub)):
+            lst = res.get(k_src) or []
+            if not isinstance(lst, list):
+                continue
+            if k_dst:  # already populated by Shape A
+                continue
+            for b in lst:
+                if isinstance(b, dict) and b.get('name'):
+                    k_dst.append({'name': b['name'].strip(),
+                                  'share': _norm_share(b.get('share'))})
+        return {'main': main, 'substitute': sub}
+    except Exception:
+        return {'main': [], 'substitute': []}
 
 
 def _gather_summary_source_text(client_id: str) -> str:
@@ -7914,38 +8021,90 @@ def _step4_guardian_question(s3: dict, minors: list, recent_text: str = '') -> d
     return {'text': '\n\n'.join(parts) + _qr_marker(quick)}
 
 
-def _step7_residuary_question(beneficiaries: list) -> str:
+def _step7_residuary_question(beneficiaries: list,
+                               ai_residuary: Optional[Dict[str, Any]] = None) -> str:
     """Layer 2 — ask who is the MAIN residuary beneficiary. The
     substitute is asked separately as Layer 3 in
     `_step7_residuary_substitute_question`.
+
+    🔥 §10x.213 — When `ai_residuary` is provided (from the AI Summary
+    JSON footer's `residuary_estate` block) AND its `main` list is
+    non-empty, that distribution becomes the suggested default
+    instead of "all step4 beneficiaries equal". This preserves the
+    testator's explicit intent ("Residuary all to wife. If wife
+    predeceases → kids 50/50") through the walker.
     """
-    # Build default: all beneficiaries equally
-    names = [b.get('full_name', '') for b in beneficiaries if isinstance(b, dict) and b.get('full_name')]
-    if names:
-        if len(names) == 1:
-            default_val = f"{names[0]} 100%"
-        else:
-            default_val = ', '.join(f"{n} equal" for n in names)
-        default_label = f"Equal — {', '.join(names[:3])}" + (f" + {len(names)-3} more" if len(names) > 3 else '')
-        quick_default = [{'label': f'✅ {default_label}', 'value': default_val}]
-    else:
-        quick_default = []
+    quick_default: List[Dict[str, str]] = []
+    ai_main = []
+    if isinstance(ai_residuary, dict):
+        ai_main = ai_residuary.get('main') or []
+    if ai_main:
+        # Build value string in walker-friendly format
+        parts: List[str] = []
+        for b in ai_main:
+            nm = b.get('name') or ''
+            sh = b.get('share') or '1/1'
+            if not nm:
+                continue
+            # Convert fractional → percent for `Wife 100%` style value
+            if sh == '1/1':
+                parts.append(f"{nm} 100%")
+            elif sh == '1/2':
+                parts.append(f"{nm} 50%")
+            elif sh == '1/3':
+                parts.append(f"{nm} 33%")
+            elif sh == '1/4':
+                parts.append(f"{nm} 25%")
+            else:
+                parts.append(f"{nm} {sh}")
+        if parts:
+            default_val = ', '.join(parts)
+            default_names = [p.split(' ')[0:-1] for p in parts]
+            short = ', '.join(
+                (b.get('name') or '').split()[0] for b in ai_main if b.get('name')
+            )
+            quick_default = [{
+                'label': f'✅ From your message — {short}',
+                'value': default_val,
+            }]
+    if not quick_default:
+        # Fallback: all step4 beneficiaries equally (legacy default)
+        names = [b.get('full_name', '') for b in beneficiaries
+                 if isinstance(b, dict) and b.get('full_name')]
+        if names:
+            if len(names) == 1:
+                default_val = f"{names[0]} 100%"
+            else:
+                default_val = ', '.join(f"{n} equal" for n in names)
+            default_label = f"Equal — {', '.join(names[:3])}" + (
+                f" + {len(names)-3} more" if len(names) > 3 else '')
+            quick_default = [{'label': f'✅ {default_label}', 'value': default_val}]
 
     quick = quick_default + [
         {'label': '⏭ Skip residuary clause', 'value': 'residuary skip'},
     ]
+    # Optional evidence snippet (per §10x.36) when AI suggestion exists
+    evidence = ''
+    if ai_main:
+        names_pretty = ', '.join(b.get('name') or '' for b in ai_main if b.get('name'))
+        evidence = (
+            f"\n\n📨 _From your message:_ you indicated the residuary "
+            f"estate goes to **{names_pretty}**. Confirm or override below."
+        )
     text = (
         "✅ Specific gifts done. Moving to **Step 7: Residuary Estate**.\n\n"
         "**Layer 1 — MAIN residuary beneficiary**\n\n"
         "After the specific gifts above, who is the **MAIN** person to inherit "
-        "**everything else** (any property or money not specifically given away)?\n\n"
+        "**everything else** (any property or money not specifically given away)?"
+        + evidence + "\n\n"
         "_(Substitute / fallback will be asked next, after you confirm the main.)_\n\n"
         "Reply with name + share, e.g. `Wife 100%` or `Joshua 50%, Esther 50%`."
     )
     return text + _qr_marker(quick)
 
 
-def _step7_residuary_substitute_question(main_bens: list, all_bens: list) -> str:
+def _step7_residuary_substitute_question(main_bens: list, all_bens: list,
+                                          ai_substitute: Optional[List[Dict[str, Any]]] = None) -> str:
     """Layer 3 — ask the SUBSTITUTE residuary beneficiary, mirroring
     the per-asset Layer 3 substitute pattern (§10x.14).
 
@@ -7972,6 +8131,35 @@ def _step7_residuary_substitute_question(main_bens: list, all_bens: list) -> str
              'mother', 'brother', 'sister')
     ]
     quick: List[Dict[str, str]] = []
+    # 🔥 §10x.213 — first-priority suggestion from AI Summary's
+    # contingent_beneficiaries (testator's stated intent).
+    if ai_substitute:
+        ai_parts: List[str] = []
+        ai_names: List[str] = []
+        for b in ai_substitute:
+            if not isinstance(b, dict):
+                continue
+            nm = (b.get('name') or '').strip()
+            if not nm:
+                continue
+            sh = b.get('share') or '1/1'
+            ai_names.append(nm)
+            if sh == '1/1':
+                ai_parts.append(f"{nm} 100%")
+            elif sh == '1/2':
+                ai_parts.append(f"{nm} 50%")
+            elif sh == '1/3':
+                ai_parts.append(f"{nm} 33%")
+            elif sh == '1/4':
+                ai_parts.append(f"{nm} 25%")
+            else:
+                ai_parts.append(f"{nm} {sh}")
+        if ai_parts:
+            short = ', '.join(n.split()[0] for n in ai_names[:3])
+            quick.append({
+                'label': f'✅ From your message — {short}',
+                'value': 'residuary substitute ' + ', '.join(ai_parts),
+            })
     if main_names and len(main_names) >= 2:
         # Multi-bene main: substitute = surviving (same names equal)
         survivor_val = ', '.join(f'{n} equal' for n in main_names)
