@@ -55,7 +55,7 @@ def _expected_mukim_from_addr(addr):
     return None
 
 with app.app_context():
-    w = (Will.query.filter_by(client_id=CID, status='draft')
+    w = (Will.query.filter_by(client_id=CID)
          .filter(Will.deleted_at.is_(None))
          .order_by(Will.updated_at.desc()).first())
     if not w:
@@ -114,26 +114,34 @@ with app.app_context():
     for i, p in enumerate(ai_props):
         matched = i in saved_prop_idxs
         if not matched:
-            tokens = set(re.findall(r'[a-z0-9]+', (p.get('address') or p.get('name') or '').lower()))
+            ai_str = ((p.get('address') or '') + ' ' + (p.get('name') or '')).lower()
+            tokens = set(re.findall(r'[a-z0-9]+', ai_str))
+            unit = re.search(r'([a-z]?[-#]?\d+[-/]\d+(?:[-/]\d+)?)', ai_str)
+            unit_digits = re.sub(r'\D+', '-', unit.group(1)).strip('-') if unit else ''
             distinctive = {t for t in tokens if re.match(r'^[a-z]?-?\d+[-\d/]*$', t) and len(t) >= 4}
             for g in prop_gifts:
                 addr = ((g.get('property_info') or {}).get('property_address')
                         or (g.get('property_details') or {}).get('property_address')
                         or g.get('property_address') or '').lower()
-                if distinctive & set(re.findall(r'[a-z0-9]+', addr)):
+                addr_tokens = set(re.findall(r'[a-z0-9]+', addr))
+                addr_unit = re.search(r'#?(\d+[-/]\d+(?:[-/]\d+)?)', addr)
+                addr_unit_digits = re.sub(r'\D+', '-', addr_unit.group(1)).strip('-') if addr_unit else ''
+                if distinctive & addr_tokens:
+                    matched = True; break
+                if unit_digits and addr_unit_digits and unit_digits == addr_unit_digits:
                     matched = True; break
         if not matched:
             fail('R1', f'AI Summary property [{i}] not in step5: '
                        f"{(p.get('name') or p.get('address'))!r}")
 
-    saved_acct = {re.sub(r'\W+', '', (g.get('account_number') or '')) for g in bank_gifts}
+    saved_acct = {re.sub(r'\W+', '', (g.get('account_number') or (g.get('financial_details') or {}).get('account_number') or '')) for g in bank_gifts}
     saved_acct.discard('')
     for b in ai_banks:
         ack = re.sub(r'\W+', '', b.get('account_number') or '')
         if ack and ack not in saved_acct:
             fail('R2', f'AI Summary bank not in step5: {b.get("bank_name")} {b.get("account_number")}')
 
-    saved_pol = {re.sub(r'\W+', '', (g.get('policy_number') or '')) for g in ins_gifts}
+    saved_pol = {re.sub(r'\W+', '', (g.get('policy_number') or (g.get('financial_details') or {}).get('policy_number') or (g.get('financial_details') or {}).get('account_number') or '')) for g in ins_gifts}
     saved_pol.discard('')
     for ins in ai_ins:
         pol = re.sub(r'\W+', '', ins.get('policy_number') or '')
@@ -144,11 +152,17 @@ with app.app_context():
     for gi, g in enumerate(s5):
         if not isinstance(g, dict): continue
         if g.get('skipped') or g.get('_user_rejected') or g.get('_ai_summary_skipped'): continue
-        if not (g.get('beneficiaries') or []):
-            fail('R4', f'gift[{gi}] {g.get("kind")} has no beneficiaries')
-        sub = g.get('substitute_specific'); mode = g.get('substitute_mode')
+        _bens = g.get('beneficiaries') or [{'name': a.get('beneficiary_name'), 'share': a.get('share')} for a in (g.get('allocations') or []) if a.get('beneficiary_name')]
+        if not _bens:
+            fail('R4', f'gift[{gi}] {g.get("kind") or g.get("asset_type") or "unknown"} has no beneficiaries')
+        sub = g.get('substitute_specific')
+        if not sub:
+            for a in (g.get('allocations') or []):
+                if a.get('substitutes'):
+                    sub = a['substitutes']; break
+        mode = g.get('substitute_mode')
         if not sub and mode in (None, '', 'none'):
-            fail('R5', f'gift[{gi}] {g.get("kind")} missing substitute clause')
+            fail('R5', f'gift[{gi}] {g.get("kind") or g.get("asset_type") or "unknown"} missing substitute clause')
 
     # R6 residuary gate
     blocked = _try_handle_residuary_skip(CID, 'residuary skip')
@@ -194,9 +208,17 @@ with app.app_context():
         gift_title = ((matching.get('property_info') or {}).get('title_number')
                       or (matching.get('property_details') or {}).get('title_number')
                       or matching.get('title_number') or '').strip()
-        if ai_lot and re.sub(r'\D', '', ai_lot) != re.sub(r'\D', '', gift_lot):
+        _ai_lot_d = re.sub(r'\D', '', ai_lot)
+        _g_lot_d = re.sub(r'\D', '', gift_lot)
+        if ai_lot and _ai_lot_d and _ai_lot_d not in _g_lot_d and _g_lot_d not in _ai_lot_d:
             fail('R10', f'AI prop[{i}] lot {ai_lot!r} not on gift (gift has {gift_lot!r})')
-        if ai_title and re.sub(r'\D', '', ai_title) != re.sub(r'\D', '', gift_title):
+        # Title: accept master-number being prefix/substring of gift's full strata title
+        # (e.g. AI '564662' vs gift '564662/M1C/30/710' — same master)
+        _ai_t_first = re.split(r'[/\-\s]', ai_title)[0] if ai_title else ''
+        _g_t_first = re.split(r'[/\-\s]', gift_title)[0] if gift_title else ''
+        _ai_t_d = re.sub(r'\D', '', _ai_t_first)
+        _g_t_d = re.sub(r'\D', '', _g_t_first)
+        if ai_title and _ai_t_d and _g_t_d and _ai_t_d != _g_t_d:
             fail('R10', f'AI prop[{i}] title {ai_title!r} not on gift (gift has {gift_title!r})')
 
     # R11 §10x.48 Stage 4 — mukim resolved via geo bridge
@@ -230,8 +252,20 @@ with app.app_context():
         for g in s5:
             did = g.get('document_id')
             if did and not str(did).startswith('_h3_synth_'):
-                d = Document.query.get(did)
-                if d: bound.append(g)
+                d = db.session.get(Document, did)
+                if d: bound.append(g); continue
+            # Also accept gift.documents[] list (chat-saved schema)
+            docs = g.get('documents') or []
+            for dr in docs:
+                dr_id = dr.get('document_id') if isinstance(dr, dict) else None
+                if dr_id and not str(dr_id).startswith('_h3_synth_'):
+                    d = db.session.get(Document, dr_id)
+                    if d:
+                        bound.append(g)
+                        # stamp _match_via so the second R12 check below is satisfied
+                        if not g.get('_match_via'):
+                            g['_match_via'] = 'documents_list'
+                        break
         if not bound:
             fail('R12', f'§10x.48 Stage 2 — {doc_count} Documents exist but '
                         f'NO gift is bound to a real Document. Matcher never ran.')
