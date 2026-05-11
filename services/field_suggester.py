@@ -261,7 +261,12 @@ _LLM_MATCH_CACHE: Dict[str, Dict[str, Any]] = {}
 
 
 def _llm_cache_key(client_id: str, gift: Dict[str, Any], field: str) -> str:
-    pi = gift.get('property_info') or gift.get('property_details') or {}
+    # 🔥 §10x.147 — MERGE both schemas instead of first-truthy. Quick-fix
+    # writes to property_info; chat handlers wrote to property_details.
+    # First-truthy returned only one, missing fields from the other.
+    pi = {}
+    pi.update(gift.get('property_details') or {})
+    pi.update({k: v for k, v in (gift.get('property_info') or {}).items() if v})
     addr = (pi.get('property_address') or gift.get('address') or '').strip()
     import hashlib
     h = hashlib.sha256(addr.encode('utf-8')).hexdigest()[:12]
@@ -300,7 +305,12 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
     if not api_key:
         return None
 
-    pi = gift.get('property_info') or gift.get('property_details') or {}
+    # 🔥 §10x.147 — MERGE both schemas instead of first-truthy. Quick-fix
+    # writes to property_info; chat handlers wrote to property_details.
+    # First-truthy returned only one, missing fields from the other.
+    pi = {}
+    pi.update(gift.get('property_details') or {})
+    pi.update({k: v for k, v in (gift.get('property_info') or {}).items() if v})
     gift_addr = (pi.get('property_address') or
                  gift.get('address') or '').strip()
     if not gift_addr:
@@ -430,7 +440,12 @@ def suggest_title_or_lot_from_docs(gift: Dict[str, Any], field: str,
     except Exception:
         return None
 
-    pi = gift.get('property_info') or gift.get('property_details') or {}
+    # 🔥 §10x.147 — MERGE both schemas instead of first-truthy. Quick-fix
+    # writes to property_info; chat handlers wrote to property_details.
+    # First-truthy returned only one, missing fields from the other.
+    pi = {}
+    pi.update(gift.get('property_details') or {})
+    pi.update({k: v for k, v in (gift.get('property_info') or {}).items() if v})
     addr = (pi.get('property_address') or gift.get('address') or '').lower()
     label = (gift.get('label') or pi.get('property_address') or '').lower()
     addr_tokens: set = set()
@@ -526,7 +541,13 @@ def suggest_main_beneficiary(gift: Dict[str, Any],
 
     # Strategy 2: address fuzzy match
     if ap is None:
-        pi = gift.get('property_info') or gift.get('property_details') or {}
+        # 🔥 §10x.147 — MERGE both schemas instead of first-truthy.
+        # Quick-fix writes to property_info; chat handlers wrote to
+        # property_details. First-truthy returned only one, missing
+        # fields from the other.
+        pi = {}
+        pi.update(gift.get('property_details') or {})
+        pi.update({k: v for k, v in (gift.get('property_info') or {}).items() if v})
         gift_addr = (pi.get('property_address') or
                      gift.get('address') or '').lower()
         if not gift_addr:
@@ -588,7 +609,13 @@ def suggest_for_gift(gift: Dict[str, Any], field: str,
         return None
 
     if kind == 'property' or gift.get('gift_type') == 'property':
-        pi = gift.get('property_info') or gift.get('property_details') or {}
+        # 🔥 §10x.147 — MERGE both schemas instead of first-truthy.
+        # Quick-fix writes to property_info; chat handlers wrote to
+        # property_details. First-truthy returned only one, missing
+        # fields from the other.
+        pi = {}
+        pi.update(gift.get('property_details') or {})
+        pi.update({k: v for k, v in (gift.get('property_info') or {}).items() if v})
         # Try address-regex first
         s = suggest_property_field(pi, field)
         if s:
