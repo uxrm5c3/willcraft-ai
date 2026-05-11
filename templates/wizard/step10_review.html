@@ -278,15 +278,64 @@
                 btn.classList.add('hidden');
                 status.classList.remove('hidden');
                 status.textContent = '✓ saved';
-                // If this gift now has 0 missing, fade the row
+                // 🔥 §10x.173 — robust live banner update.
+                // After each save, recount remaining UNFINISHED gift rows
+                // (rows that still have ≥1 visible ✓ Save button) and
+                // update the banner header + hide finished gift rows +
+                // auto-dismiss the whole banner when count = 0.
                 const giftBox = btn.closest('.quick-fix-gift');
                 const remainingFields = giftBox.querySelectorAll('.qf-save:not(.hidden)');
                 if (remainingFields.length === 0) {
+                    // This gift is now fully complete
                     giftBox.classList.add('bg-green-50', 'border-green-300');
                     const hdr = giftBox.querySelector('strong');
                     if (hdr) hdr.classList.add('text-green-700');
-                    setTimeout(()=>giftBox.style.transition='opacity 0.5s', 100);
-                    setTimeout(()=>{giftBox.style.opacity='0.4';}, 1500);
+                    // Mark this gift as "done" — DON'T fade to 0.4 (that
+                    // hides progress); instead collapse with success.
+                    giftBox.style.transition = 'opacity 0.4s, max-height 0.4s, padding 0.4s, margin 0.4s';
+                    setTimeout(() => {
+                        giftBox.style.maxHeight = '0';
+                        giftBox.style.padding = '0';
+                        giftBox.style.margin = '0';
+                        giftBox.style.opacity = '0';
+                        giftBox.style.overflow = 'hidden';
+                    }, 800);
+                    setTimeout(() => { giftBox.style.display = 'none'; }, 1300);
+                }
+                // Re-tally remaining INCOMPLETE gift rows
+                const allGiftBoxes = banner.querySelectorAll('.quick-fix-gift');
+                let stillMissingCount = 0;
+                allGiftBoxes.forEach(gb => {
+                    const visibleSaves = gb.querySelectorAll('.qf-save:not(.hidden)');
+                    if (visibleSaves.length > 0 && gb.style.display !== 'none') {
+                        stillMissingCount++;
+                    }
+                });
+                // Update the header live
+                const hdr = document.getElementById('quick-fix-header');
+                if (hdr) {
+                    if (stillMissingCount === 0) {
+                        hdr.innerHTML = '<span class="text-green-700">✅ All required fields filled — ready to generate the will.</span>';
+                        // Update banner colour to success
+                        banner.classList.remove('bg-amber-50', 'border-amber-300');
+                        banner.classList.add('bg-green-50', 'border-green-300');
+                        const icon = banner.querySelector('svg');
+                        if (icon) icon.classList.add('text-green-600');
+                        if (icon) icon.classList.remove('text-amber-600');
+                        // Auto-dismiss the entire banner after a moment
+                        setTimeout(() => {
+                            banner.style.transition = 'opacity 0.6s, max-height 0.6s';
+                            banner.style.maxHeight = '0';
+                            banner.style.opacity = '0';
+                            banner.style.overflow = 'hidden';
+                            banner.style.padding = '0';
+                            banner.style.margin = '0';
+                        }, 2200);
+                        setTimeout(() => { banner.style.display = 'none'; }, 3000);
+                    } else {
+                        const word = stillMissingCount === 1 ? 'gift has' : 'gifts have';
+                        hdr.innerHTML = '⚠️ ' + stillMissingCount + ' ' + word + ' missing required fields';
+                    }
                 }
             } else {
                 btn.disabled = false; btn.textContent = 'Save';

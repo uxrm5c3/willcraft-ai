@@ -833,6 +833,78 @@
           inp.disabled = true;
           inp.className = inp.className.replace(/border-amber-\d+/g, 'border-green-400').replace(/bg-amber-\d+/g, 'bg-green-50');
         }
+        // 🔥 §10x.173 — robust live banner update on Step 6.
+        // After each save, re-tally the per-gift inline banner AND
+        // the upfront aggregate banner. When all fields on a gift are
+        // saved, collapse that gift's inline banner + decrement the
+        // aggregate header. When count reaches 0, auto-dismiss the
+        // upfront banner with success.
+        const giftCard = btn.closest('.gift-entry');
+        if (giftCard) {
+          const stillVisible = giftCard.querySelectorAll('.qf-inline-save:not([disabled])');
+          if (stillVisible.length === 0) {
+            // Collapse this gift's per-gift inline missing-fields banner
+            const inlineBanner = giftCard.querySelector('.bg-amber-50.border-l-4.border-amber-400');
+            if (inlineBanner) {
+              inlineBanner.style.transition = 'opacity 0.4s, max-height 0.5s, padding 0.4s, margin 0.4s';
+              setTimeout(() => {
+                inlineBanner.style.maxHeight = '0';
+                inlineBanner.style.padding = '0';
+                inlineBanner.style.margin = '0';
+                inlineBanner.style.opacity = '0';
+                inlineBanner.style.overflow = 'hidden';
+              }, 600);
+              setTimeout(() => { inlineBanner.style.display = 'none'; }, 1100);
+            }
+          }
+        }
+        // Update the UPFRONT aggregate banner header + entries
+        const upfront = document.querySelector('.bg-amber-50.border-l-4.border-amber-500');
+        if (upfront) {
+          // Find this gift's row in the aggregate banner and remove it
+          // if all its fields are now saved
+          const giftCard2 = btn.closest('.gift-entry');
+          const giftAnchor = giftCard2 ? giftCard2.id : '';
+          if (giftCard2 && giftCard2.querySelectorAll('.qf-inline-save:not([disabled])').length === 0) {
+            const aggRow = upfront.querySelector('a[href="#' + giftAnchor + '"]');
+            if (aggRow) {
+              const li = aggRow.closest('li');
+              if (li) {
+                li.style.transition = 'opacity 0.4s, max-height 0.4s';
+                setTimeout(() => { li.style.maxHeight = '0'; li.style.opacity = '0'; }, 200);
+                setTimeout(() => { li.style.display = 'none'; }, 700);
+              }
+            }
+          }
+          // Re-count remaining gifts with missing fields
+          setTimeout(() => {
+            const visibleRows = upfront.querySelectorAll('li:not([style*="display: none"])');
+            let n = 0;
+            visibleRows.forEach(li => {
+              if (li.style.display !== 'none' && li.style.opacity !== '0') n++;
+            });
+            const aggHeader = upfront.querySelector('h3');
+            if (aggHeader) {
+              if (n === 0) {
+                aggHeader.innerHTML = '<span class="text-green-700">✅ All required fields filled — ready to generate the will.</span>';
+                upfront.classList.remove('bg-amber-50', 'border-amber-500');
+                upfront.classList.add('bg-green-50', 'border-green-500');
+                setTimeout(() => {
+                  upfront.style.transition = 'opacity 0.6s, max-height 0.6s';
+                  upfront.style.maxHeight = '0';
+                  upfront.style.opacity = '0';
+                  upfront.style.padding = '0';
+                  upfront.style.margin = '0';
+                  upfront.style.overflow = 'hidden';
+                }, 1800);
+                setTimeout(() => { upfront.style.display = 'none'; }, 2600);
+              } else {
+                const word = n === 1 ? 'gift has' : 'gifts have';
+                aggHeader.textContent = n + ' ' + word + ' missing required fields';
+              }
+            }
+          }, 800);
+        }
       } else {
         btn.disabled = false;
         btn.textContent = 'Save';
