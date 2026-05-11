@@ -863,26 +863,6 @@ def _score_pair(ai: 'AssetItem',
         components['mukim_match'] = _WEIGHTS['mukim_match']
         evidence.append(f'Mukim {ai_mukim.title()} agrees')
 
-    # 🔥 §10x.158 — identifier-primary candidate boost.
-    # The AI Summary often lacks lot/title because the user only typed an
-    # address. When the DocGroup HAS lot+title AND its mukim matches the
-    # AssetItem's resolved mukim, this is strong evidence the doc IS for
-    # this property — even without address-token overlap. The matcher
-    # surfaces it as a candidate (≥ CANDIDATE_THRESHOLD = 30) so the
-    # user is asked. Without this, a Charge form whose chargor-residence
-    # address differs from the subject property's street stays silent.
-    ai_has_no_id = not ai_lot and not ai_title and not ai_acct and not ai_pol
-    g_has_id = bool(g_lot or g_title)
-    if (ai_has_no_id and g_has_id and ai_mukim and g_mukim
-            and ai_mukim == g_mukim):
-        components['identifier_doc_with_mukim_match'] = (
-            _WEIGHTS['identifier_doc_with_mukim_match'])
-        ids = []
-        if g_lot: ids.append(f'lot {g_lot}')
-        if g_title: ids.append(f'title {g_title}')
-        evidence.append(
-            f'doc has [{", ".join(ids)}] in matching Mukim {ai_mukim.title()}'
-        )
     if ai_daerah and g_daerah:
         # 'johor bahru' may appear with extra junk like 'johor bahru, johor'
         ai_d = re.sub(r'[,;].*$', '', ai_daerah).strip()
@@ -1009,6 +989,40 @@ def _score_pair(ai: 'AssetItem',
                     components['msg_text_ref'] = _WEIGHTS['msg_text_ref']
                     evidence.append(f'OCR fragment "{f[:30]}" near message line')
                     break
+
+    # 🔥 §10x.158 — identifier-primary candidate boost (NEVER auto-binds).
+    # The AI Summary often lacks lot/title because the user only typed an
+    # address. When the DocGroup HAS lot+title AND its mukim matches the
+    # AssetItem's resolved mukim, surface as MEDIUM candidate so the user
+    # is asked "is this the title for property X?". Without this, a Charge
+    # form whose chargor-residence address differs from the subject
+    # property's street stays silent (no token overlap = no candidate).
+    #
+    # Placed at END of scoring so we can SKIP the boost when stronger
+    # signals (token_overlap, web_building_in_ocr, msg_text_ref, owner)
+    # already fire. Those alone get the doc into candidate range, and
+    # adding +15 would push the score over AUTO_BIND_THRESHOLD (50) and
+    # silently bind a possibly-wrong neighbouring unit (e.g. A18/A19
+    # Cukai bound to B-05-11 because both are in Bandar Medini Iskandar
+    # with shared locality tokens). §10he Step 5: NEVER guess.
+    ai_has_no_id = not ai_lot and not ai_title and not ai_acct and not ai_pol
+    g_has_id = bool(g_lot or g_title)
+    has_stronger_signal = (
+        components.get('token_overlap', 0) > 0
+        or components.get('web_building_in_ocr', 0) > 0
+        or components.get('msg_text_ref', 0) > 0
+        or components.get('owner_testator', 0) > 0
+    )
+    if (ai_has_no_id and g_has_id and ai_mukim and g_mukim
+            and ai_mukim == g_mukim and not has_stronger_signal):
+        components['identifier_doc_with_mukim_match'] = (
+            _WEIGHTS['identifier_doc_with_mukim_match'])
+        ids = []
+        if g_lot: ids.append(f'lot {g_lot}')
+        if g_title: ids.append(f'title {g_title}')
+        evidence.append(
+            f'doc has [{", ".join(ids)}] in matching Mukim {ai_mukim.title()}'
+        )
 
     score = sum(components.values())
     return {
