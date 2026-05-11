@@ -383,6 +383,70 @@ def suggest_title_or_lot_via_llm(gift: Dict[str, Any], field: str,
         }
         return None
 
+    # 🔥 §10x.156 DETERMINISTIC PRE-LLM PATH: if exactly ONE candidate
+    # has mukim agreement with the will's resolved mukim AND its owner
+    # matches a known family/testator name, that's a HIGH-confidence
+    # match — no need to ask the LLM. (The LLM keeps over-weighting
+    # address similarity even with explicit prompt instructions.)
+    will_mukim_pre = ''
+    family_set_pre: set = set()
+    try:
+        from database import Person, Will as _W
+        ws = _W.query.filter_by(client_id=client_id).filter(
+            _W.deleted_at.is_(None)).order_by(_W.updated_at.desc()).first()
+        if ws:
+            s1 = _json.loads(ws.step1_data or '{}')
+            tn = (s1.get('full_name') or '').strip().upper()
+            if tn:
+                family_set_pre.add(tn)
+            for p in Person.query.filter_by(client_id=client_id).all():
+                if p.full_name:
+                    family_set_pre.add(p.full_name.strip().upper())
+        try:
+            from ai.chat_planner import _GEO_BRIDGE
+            for k, v in (_GEO_BRIDGE or {}).items():
+                if k.lower() in (gift_addr or '').lower():
+                    if isinstance(v, dict):
+                        will_mukim_pre = (v.get('mukim') or '').lower()
+                    if will_mukim_pre:
+                        break
+        except Exception:
+            pass
+    except Exception:
+        pass
+    if will_mukim_pre and family_set_pre:
+        det_hits = []
+        for c in candidates:
+            cm = (c.get('mukim') or '').lower().strip()
+            cm = re.sub(r'^mukim\s+', '', cm)
+            if cm != will_mukim_pre:
+                continue
+            owners_up = (c.get('owners') or '').upper()
+            owner_hit = False
+            for fam_name in family_set_pre:
+                # Match if any 4+ char family-name token appears in owners
+                for tok in re.findall(r'[A-Z]{4,}', fam_name):
+                    if tok in owners_up:
+                        owner_hit = True
+                        break
+                if owner_hit:
+                    break
+            if owner_hit:
+                det_hits.append(c)
+        if len(det_hits) == 1:
+            # Single deterministic match — use it without paying for LLM
+            matched = det_hits[0]
+            value = (matched.get('title_number') if field == 'title_number'
+                     else matched.get('lot_number') or '')
+            if value:
+                out = {
+                    'value': value,
+                    'source': (f"deterministic match (mukim={will_mukim_pre} "
+                               f"+ family-owner): {matched['category']} doc"),
+                }
+                _LLM_MATCH_CACHE[cache_key] = out
+                return out
+
     # Build prompt for Claude
     prompt = (
         "You are matching uploaded Malaysian property documents to a "
