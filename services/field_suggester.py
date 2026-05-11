@@ -237,16 +237,156 @@ def suggest_financial_field(fd: Dict[str, Any], field: str,
     return None
 
 
+def suggest_title_or_lot_from_docs(gift: Dict[str, Any], field: str,
+                                     client_id: str) -> Optional[Dict[str, Any]]:
+    """🔥 §10x.145 — Cross-reference uploaded Documents for title/lot.
+
+    When a gift has NO direct doc binding (e.g. B-05-11 H3) but the user
+    uploaded property docs that mention the same building/street, scan
+    them and return candidate title/lot values. Catches OCR-misaddressed
+    docs that the binding pipeline missed.
+    """
+    if not client_id or field not in ('title_number', 'lot_number'):
+        return None
+    try:
+        from app import db
+        from database import Document
+        import json as _json
+    except Exception:
+        return None
+
+    pi = gift.get('property_info') or gift.get('property_details') or {}
+    addr = (pi.get('property_address') or gift.get('address') or '').lower()
+    label = (gift.get('label') or pi.get('property_address') or '').lower()
+    addr_tokens: set = set()
+    # Extract distinctive multi-char tokens from the address (skip common words)
+    SKIP = {'jalan', 'taman', 'bandar', 'condominium', 'unit', 'no',
+            'malaysia', 'singapore', 'johor', 'bahru', 'persiaran',
+            'mukim', 'daerah', 'negeri', 'state', 'block'}
+    for t in re.findall(r'[a-z]{4,}', addr + ' ' + label):
+        if t in SKIP:
+            continue
+        addr_tokens.add(t)
+
+    if not addr_tokens:
+        return None
+
+    own_doc_id = gift.get('document_id') or ''
+    candidates = []
+    try:
+        docs = Document.query.filter_by(client_id=client_id).filter(
+            Document.category.in_(['property_title', 'property_spa',
+                                    'property_tax', 'property_transfer',
+                                    'loan_agreement'])).all()
+    except Exception:
+        return None
+    for d in docs:
+        if d.id == own_doc_id:
+            continue
+        try:
+            ex = _json.loads(d.extracted_data or '{}')
+        except Exception:
+            continue
+        if not isinstance(ex, dict):
+            continue
+        v = (ex.get(field) or '').strip()
+        if not v or v.upper() in ('UNREADABLE', 'CANNOT READ', 'NONE'):
+            continue
+        if re.match(r'^\s*(folio|vol\.?|page)\s*\d*\s*$', v.lower()):
+            continue
+        # Score: count overlapping distinctive tokens between gift addr
+        # and this doc's addr
+        d_addr = (ex.get('property_address') or '').lower()
+        d_tokens = set(re.findall(r'[a-z]{4,}', d_addr))
+        d_tokens -= SKIP
+        overlap = addr_tokens & d_tokens
+        if not overlap:
+            continue
+        candidates.append({
+            'value': v,
+            'score': len(overlap),
+            'doc_addr': (ex.get('property_address') or '')[:50],
+            'doc_id': d.id,
+        })
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: -c['score'])
+    top = candidates[0]
+    others = [c['value'] for c in candidates[1:4] if c['value'] != top['value']]
+    src = (f"matched doc with address {top['doc_addr']!r} "
+           f"(shared {top['score']} address tokens)")
+    out = {'value': top['value'], 'source': src}
+    if others:
+        out['options'] = [top['value']] + others
+    return out
+
+
+def suggest_main_beneficiary(gift: Dict[str, Any],
+                               client_id: str) -> Optional[Dict[str, Any]]:
+    """🔥 §10x.145 — Pull beneficiary suggestion from AI Summary structured
+    JSON for property gifts. Each AI Summary property has its own
+    `beneficiaries[]` array — return as a comma-joined "Name share%,
+    Name share%" suggestion.
+    """
+    if not client_id:
+        return None
+    ai_idx = gift.get('_ai_summary_idx')
+    if ai_idx is None:
+        return None
+    try:
+        from ai.chat_planner import _extract_ai_summary_properties
+        ai_props = _extract_ai_summary_properties(client_id) or []
+    except Exception:
+        return None
+    if not (0 <= int(ai_idx) < len(ai_props)):
+        return None
+    ap = ai_props[int(ai_idx)]
+    bens = ap.get('beneficiaries') or []
+    if not bens:
+        return None
+    parts = []
+    for b in bens:
+        if not isinstance(b, dict):
+            continue
+        nm = (b.get('name') or '').strip()
+        sh = str(b.get('share_of_testator') or b.get('share') or '').strip()
+        if nm:
+            parts.append(f"{nm} {sh}".strip())
+    if not parts:
+        return None
+    return {
+        'value': ', '.join(parts),
+        'source': 'from your message: "' +
+                  (ap.get('beneficiary') or ', '.join(parts))[:80] + '"',
+    }
+
+
 # Convenience wrapper for both kinds — used by the wizard banner.
-def suggest_for_gift(gift: Dict[str, Any], field: str) -> Optional[Dict[str, Any]]:
+def suggest_for_gift(gift: Dict[str, Any], field: str,
+                       client_id: str = '') -> Optional[Dict[str, Any]]:
     """Returns suggestion for a gift's missing field, branching on kind."""
     if not isinstance(gift, dict):
         return None
     kind = (gift.get('kind') or gift.get('asset_type') or
             ('property' if gift.get('gift_type') == 'property' else '')).lower()
+
+    # 🔥 §10x.145 — Beneficiary suggestion via AI Summary lookup
+    if field == 'main_beneficiary' or field == 'main beneficiary':
+        if client_id:
+            return suggest_main_beneficiary(gift, client_id)
+        return None
+
     if kind == 'property' or gift.get('gift_type') == 'property':
         pi = gift.get('property_info') or gift.get('property_details') or {}
-        return suggest_property_field(pi, field)
+        # Try address-regex first
+        s = suggest_property_field(pi, field)
+        if s:
+            return s
+        # Fallback: cross-reference uploaded docs for title/lot
+        if field in ('title_number', 'lot_number') and client_id:
+            return suggest_title_or_lot_from_docs(gift, field, client_id)
+        return None
     fd = gift.get('financial_details') or {}
     if 'insurance' in kind or 'policy' in kind:
         return suggest_financial_field(fd, field, kind='insurance')

@@ -290,14 +290,17 @@ def _probate_missing_property_safe(pd):
 
 
 def _suggest_gift_field_safe(gift, field):
-    """🔥 §10x.144 — exposed to Jinja so the missing-fields banner can
-    pre-fill each input with an AI-suggested value (from
-    financial_institutions registry for bank/insurance country, or
-    address-regex/postcode-lookup for property fields).
+    """🔥 §10x.144 + §10x.145 — exposed to Jinja so the missing-fields
+    banner can pre-fill each input with an AI-suggested value:
+      - financial_institutions registry → bank/insurance country
+      - address-regex / postcode-lookup → property postcode/city/state
+      - cross-reference uploaded Documents → title/lot for unmapped gifts
+      - AI Summary structured beneficiaries → main beneficiary
     Returns None on miss; {value, source, options?} on hit."""
     try:
         from services.field_suggester import suggest_for_gift
-        return suggest_for_gift(gift or {}, field)
+        cid = session.get('client_id') or ''
+        return suggest_for_gift(gift or {}, field, client_id=cid)
     except Exception:
         return None
 
@@ -1921,7 +1924,9 @@ def api_wizard_gift_quick_fix():
     FINANCIAL_FIELDS = {'country', 'institution', 'account_number',
                         'asset_type', 'description', 'insurer',
                         'policy_number', 'bank_name'}
-    if field not in PROPERTY_FIELDS and field not in FINANCIAL_FIELDS:
+    SPECIAL_FIELDS = {'main_beneficiary'}  # parsed into allocations
+    if (field not in PROPERTY_FIELDS and field not in FINANCIAL_FIELDS
+            and field not in SPECIAL_FIELDS):
         return jsonify({'ok': False, 'error': f'field "{field}" not allowed'}), 400
 
     will = (Will.query.filter_by(client_id=client_id)
@@ -1943,7 +1948,63 @@ def api_wizard_gift_quick_fix():
         return jsonify({'ok': False, 'error': 'gift not a dict'}), 400
 
     kind = (g.get('kind') or g.get('asset_type') or '').lower()
-    if kind == 'property' or g.get('gift_type') == 'property':
+
+    # 🔥 §10x.145 — main_beneficiary special-case: parse "Name 50%,
+    # Name 50%" into allocations[] + beneficiaries[]. Same shape as
+    # the chat-side _try_save_property_gift Phase B saver.
+    if field == 'main_beneficiary':
+        # Parse comma-separated "Name share[%/fraction]" pairs
+        parts = [p.strip() for p in re.split(r',|\band\b', value) if p.strip()]
+        parsed = []
+        for p in parts:
+            # Try "Name 50%" / "Name 1/2" / "Name equal"
+            sm = re.search(
+                r'\s+(\d{1,3})\s*%\s*$|\s+(\d+/\d+)\s*$|\s+(equal|equally)\s*$',
+                p, flags=re.IGNORECASE)
+            if sm:
+                name = p[:sm.start()].strip().rstrip(',')
+                if sm.group(1):
+                    pct = int(sm.group(1))
+                    share = '1/1' if pct == 100 else (
+                        '1/2' if pct == 50 else (
+                        '1/3' if pct == 33 else (
+                        '2/3' if pct == 66 else (
+                        '1/4' if pct == 25 else f'{pct}/100'))))
+                elif sm.group(2):
+                    share = sm.group(2)
+                else:
+                    share = 'equal'
+            else:
+                name = p
+                share = 'equal'
+            if name:
+                parsed.append({'name': name, 'share': share})
+        if not parsed:
+            return jsonify({'ok': False, 'error': 'no beneficiary names parsed'}), 400
+        # Normalise 'equal' shares to 1/N
+        if any(b['share'] == 'equal' for b in parsed):
+            n = len(parsed)
+            for b in parsed:
+                b['share'] = '1/1' if n == 1 else f'1/{n}'
+        g['beneficiaries'] = parsed
+        g['allocations'] = [
+            {'beneficiary_name': b['name'], 'share': b['share'], 'role': 'MB'}
+            for b in parsed
+        ]
+        # Best-effort default substitute clause per §10x.14
+        try:
+            subs = _default_substitute_for_main(client_id, parsed)
+            if subs:
+                g['substitute_mode'] = 'specific'
+                g['substitute_specific'] = subs
+                for a in g['allocations']:
+                    a['substitutes'] = [
+                        {'beneficiary_name': s['name'], 'share': s['share']}
+                        for s in subs
+                    ]
+        except Exception:
+            pass
+    elif kind == 'property' or g.get('gift_type') == 'property':
         if field not in PROPERTY_FIELDS:
             return jsonify({'ok': False, 'error': f'field {field} not valid for property gift'}), 400
         pi = g.setdefault('property_info', {})
