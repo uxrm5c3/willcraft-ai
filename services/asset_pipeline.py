@@ -1069,8 +1069,15 @@ _WEIGHTS = {
     'generic_token':      3,   # per generic distinctive token
     'token_max':         20,
     'owner_testator':    10,
-    'temporal_close':    15,   # ≤ 5 min
-    'temporal_med':       7,   # ≤ 30 min
+    'temporal_close':    15,   # ≤ 5 min  → reward
+    'temporal_med':       7,   # ≤ 30 min → reward
+    # 🔥 §10x.169 — temporal-DISTANCE penalty (symmetric to reward).
+    # When the doc was uploaded FAR in time from the message line that
+    # names this AssetItem, the doc is probably for a DIFFERENT property
+    # or upload session. Penalty rises with the gap. Neutral zone
+    # (30 min - 2h) leaves no signal.
+    'temporal_far':      -8,   # 2h – 1 day  → likely different chat segment
+    'temporal_distant': -15,   # > 1 day      → different upload batch
     'msg_text_ref':      15,   # OCR address fragment appears in raw text
     'web_building_in_ocr': 15,
     # 🔥 §10x.158 — when AI Summary has NO identifiers (user typed only an
@@ -1241,7 +1248,19 @@ def _score_pair(ai: 'AssetItem',
         ):
             components['foreign_owner'] = _WEIGHTS['foreign_owner']
 
-    # ── Temporal proximity ──
+    # ── Temporal proximity + §10x.169 distance penalty ──
+    # Graduated time-gap signal between when the user mentioned this
+    # AssetItem in chat and when the doc was uploaded:
+    #   ≤ 5 min          → +15 (reward — very likely same context)
+    #   ≤ 30 min         → +7  (reward — same conversation segment)
+    #   30 min – 2 hours → 0   (neutral — no signal either way)
+    #   2 hours – 1 day  → -8  (penalty — likely different chat segment)
+    #   > 1 day          → -15 (penalty — different upload batch / session)
+    # Per §10i, temporal proximity is a tie-breaker for content match,
+    # not a primary signal. With the addition of distance penalties,
+    # the matcher correctly discounts docs uploaded far from the relevant
+    # message — a doc uploaded days after the property was mentioned is
+    # less likely to be FOR that property.
     if ai_msg_ts and g.created_at_min:
         try:
             from datetime import datetime
@@ -1251,12 +1270,22 @@ def _score_pair(ai: 'AssetItem',
                     if isinstance(g.created_at_min, str) else g.created_at_min
             if t_msg and t_grp:
                 gap = abs((t_msg - t_grp).total_seconds())
-                if gap <= 300:
+                if gap <= 300:                # ≤ 5 min
                     components['temporal_close'] = _WEIGHTS['temporal_close']
                     evidence.append(f'image within 5 min of message')
-                elif gap <= 1800:
+                elif gap <= 1800:             # ≤ 30 min
                     components['temporal_med'] = _WEIGHTS['temporal_med']
                     evidence.append(f'image within 30 min of message')
+                elif gap <= 7200:             # 30 min – 2 hours → neutral
+                    pass
+                elif gap <= 86400:            # 2 hours – 1 day → far
+                    components['temporal_far'] = _WEIGHTS['temporal_far']
+                    hrs = int(gap / 3600)
+                    evidence.append(f'⚠ image uploaded {hrs}h from message')
+                else:                          # > 1 day → distant
+                    components['temporal_distant'] = _WEIGHTS['temporal_distant']
+                    days = int(gap / 86400)
+                    evidence.append(f'⚠ image uploaded {days}d from message')
         except Exception:
             pass
 
