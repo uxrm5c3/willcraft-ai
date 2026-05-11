@@ -22,6 +22,7 @@ Clause numbering is sequential through the document. Substitute clauses use
 "With reference to Clause N above..." format (Phek-style).
 """
 from __future__ import annotations
+import re
 from typing import Optional, List
 
 from ai.prompts.clause_templates import (
