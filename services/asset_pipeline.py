@@ -181,9 +181,230 @@ class Binding:
     match_via: str     # 'lot_match' | 'title_match' | 'mukim_token' | 'temporal' | 'h3'
     confidence: str    # 'high' | 'medium-high' | 'medium' | 'h3'
     evidence: str = '' # human-readable for the card
+    # 🔥 §10x.162 Phase 4 — granularity of the bound doc. Stamped at
+    # bind time so downstream consumers (build_gift, wizard) know which
+    # property-hierarchy level this evidence sits at.
+    doc_level: str = 'unknown'  # 'strata' | 'sub_parcel' | 'master' | 'unknown'
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 🔥 §10x.162 Phase 4 — Property-hierarchy model
+#
+# A property identity has FOUR levels of granularity that must be
+# tracked separately. The will gift assembles by drawing the right
+# field from the right level:
+#
+#   PropertyHierarchy {
+#     unit_identity:      what the user calls it (B-05-11, "the shop")
+#     strata_sub_parcel:  strata title + parcel No. — PROBATE CRITICAL
+#     master_parcel:      parent NLC parcel (lot + master_title + mukim)
+#     building_evidence:  building name + locality + postal
+#   }
+#
+# Each level can have ZERO, ONE or MULTIPLE supporting docs at that
+# level. Build_gift pulls the AUTHORITATIVE field from the highest-
+# granularity available source; surfaces "missing for probate" when
+# strata_sub_parcel is empty for a unit gift.
+# ─────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class PropertyHierarchy:
+    """Per-property tracked identifiers at each granularity level.
+    Populated by build_gift_with_hierarchy() (Phase 4) from the
+    AssetItem + all bound docs (including supporting evidence)."""
+
+    # Unit identity (from AI Summary / user's message)
+    unit_name: str = ''             # "B-05-11"
+    unit_postal_address: str = ''   # what user typed in WhatsApp
+
+    # Strata sub-parcel level (Hakmilik Strata) — REQUIRED for probate
+    # of a strata unit
+    strata_title_no: str = ''       # "564662/M1C/30/710"
+    strata_parcel_no: str = ''      # "B-05-11" formal parcel notation
+    strata_block: str = ''          # "M1C" / "A" / "C"
+    strata_sub_evidence_doc_ids: List[str] = field(default_factory=list)
+
+    # Master parcel level (Hakmilik Induk) — contains the strata
+    # building. Useful for confirming mukim/daerah/negeri, NOT for
+    # the unit's strata sub-title.
+    master_title_no: str = ''       # "564662" or just the master Geran
+    master_lot: str = ''            # parent NLC lot
+    mukim: str = ''
+    daerah: str = ''
+    negeri: str = ''
+    master_evidence_doc_ids: List[str] = field(default_factory=list)
+
+    # Building / locality evidence (marketing name, web-resolved)
+    building_name: str = ''         # "Paradiso Nuova"
+    locality: str = ''              # "Bandar Medini Iskandar"
+    postcode: str = ''
+    building_evidence_doc_ids: List[str] = field(default_factory=list)
+
+    # Ownership context (from message text + master Cukai)
+    owners_from_message: List[str] = field(default_factory=list)
+    co_owners: List[str] = field(default_factory=list)
+    testator_share: str = ''        # "1/2" / "1/1"
+
+    # Probate-required fields still missing — for the wizard banner
+    missing_for_probate: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    def probate_complete(self) -> bool:
+        """True iff every NLC-required field for Borang 14A is filled."""
+        return not self.missing_for_probate
+
+
+def compute_missing_for_probate(h: 'PropertyHierarchy') -> List[str]:
+    """Return the list of fields still missing for a probate-grade
+    will clause. Strata units need their own sub-parcel title;
+    landed parcels can use master_title_no directly."""
+    missing = []
+    has_strata = bool(h.strata_title_no or h.strata_parcel_no)
+    if has_strata:
+        # Strata unit — need its own strata title
+        if not h.strata_title_no:
+            missing.append('strata_title_no')
+    else:
+        # Either truly landed OR strata title not yet uploaded
+        if not h.master_title_no:
+            missing.append('title_number')
+    if not h.master_lot:
+        missing.append('lot_number')
+    if not h.mukim:   missing.append('mukim')
+    if not h.daerah:  missing.append('daerah')
+    if not h.negeri:  missing.append('negeri')
+    return missing
+
+
+def build_property_hierarchy(asset_item: 'AssetItem',
+                              authoritative_dg: Optional['DocGroup'],
+                              supporting_dgs: Optional[List['DocGroup']] = None,
+                              authoritative_level: str = 'unknown'
+                              ) -> 'PropertyHierarchy':
+    """Phase 4 — assemble a PropertyHierarchy for one AssetItem.
+
+    Reads:
+      • AssetItem.fields  → unit identity, web-resolved building,
+                             ownership clause, mukim from geo bridge
+      • authoritative_dg   → the strata/sub_parcel doc the matcher
+                             bound (fills strata_title_no, master_lot)
+      • supporting_dgs     → master/unknown docs that contribute
+                             mukim/daerah/co_owner_context
+      • authoritative_level → 'strata' | 'sub_parcel' | 'master' | 'unknown'
+
+    Returns a populated PropertyHierarchy with missing_for_probate
+    computed.
+    """
+    af = (asset_item.fields if asset_item else {}) or {}
+    h = PropertyHierarchy()
+
+    # Unit identity from AssetItem
+    h.unit_name           = (af.get('name') or '').strip()
+    h.unit_postal_address = (af.get('address') or '').strip()
+    h.building_name       = (af.get('_web_building') or '').strip()
+    h.locality            = (af.get('_web_locality') or '').strip()
+    h.postcode            = (af.get('_web_postcode') or '').strip()
+
+    # Geo from message / geo bridge
+    h.mukim  = (af.get('mukim') or '').strip()
+    h.daerah = (af.get('daerah') or '').strip()
+    h.negeri = (af.get('negeri') or '').strip()
+
+    # Ownership
+    ownership_str = (af.get('ownership') or '').strip()
+    h.owners_from_message = [n.strip() for n in re.findall(
+        r'\b[A-Z][a-zA-Z\']+(?:\s+[A-Z][a-zA-Z\']+){1,}\b', ownership_str
+    )]
+    # Use AssetItem's ownership_struct if present
+    ostruct = af.get('ownership_struct') or {}
+    if isinstance(ostruct, dict):
+        co = ostruct.get('co_owner')
+        if co:
+            if isinstance(co, list):
+                h.co_owners = [str(c).strip() for c in co]
+            else:
+                h.co_owners = [str(co).strip()]
+        h.testator_share = (ostruct.get('testator_share') or '').strip()
+
+    # Pull from authoritative doc by level
+    if authoritative_dg and authoritative_dg.merged_extracted:
+        de = authoritative_dg.merged_extracted
+        if authoritative_level in ('strata', 'sub_parcel'):
+            # Strata sub-parcel level — fill strata fields
+            title_raw = clean_id(de.get('title_number') or '')
+            lot_raw   = clean_id(de.get('lot_number') or '')
+            # Strata title with sub-token → split master vs sub
+            if title_raw and '/' in title_raw:
+                # e.g. "564662/M1C/30/710" → master 564662, block M1C, parcel ...30/710
+                parts = title_raw.split('/')
+                h.master_title_no   = parts[0]
+                h.strata_title_no   = title_raw
+                h.strata_block      = parts[1] if len(parts) > 1 else ''
+                h.strata_parcel_no  = '/'.join(parts[2:]) if len(parts) > 2 else ''
+            else:
+                # Landed sub_parcel — single title
+                h.master_title_no = title_raw
+            h.master_lot = lot_raw
+            # Mukim/daerah/negeri prefer doc over message-only
+            h.mukim  = (de.get('mukim') or '').strip() or h.mukim
+            h.daerah = (de.get('daerah') or '').strip() or h.daerah
+            h.negeri = (de.get('negeri') or '').strip() or h.negeri
+            h.strata_sub_evidence_doc_ids = list(authoritative_dg.document_ids)
+        elif authoritative_level == 'master':
+            # Master parcel — fill master_lot + geo, NOT strata title
+            h.master_lot = clean_id(de.get('lot_number') or '') or h.master_lot
+            master_title = clean_id(de.get('title_number') or '')
+            if master_title and '/' not in master_title:
+                # Master title is the parent Geran No.
+                h.master_title_no = master_title
+            h.mukim  = (de.get('mukim') or '').strip() or h.mukim
+            h.daerah = (de.get('daerah') or '').strip() or h.daerah
+            h.negeri = (de.get('negeri') or '').strip() or h.negeri
+            h.master_evidence_doc_ids = list(authoritative_dg.document_ids)
+            # Master Cukai's owners often reveal co-owners
+            owner_str = (de.get('owner_name') or '')
+            if isinstance(owner_str, list):
+                owner_str = ' & '.join(owner_str)
+            owner_str = str(owner_str)
+            for nm in re.split(r'\s*&\s*|,\s*', owner_str):
+                nm = nm.strip()
+                if not nm: continue
+                # Skip corporate entities
+                if re.search(r'\b(?:berhad|bhd|sdn|investments?|holdings?)\b', nm, re.IGNORECASE):
+                    continue
+                # Skip the testator's own name (caller can pass in if needed)
+                if nm not in h.co_owners and nm.upper() not in [c.upper() for c in h.co_owners]:
+                    h.co_owners.append(nm)
+
+    # Supporting docs at master level (Cukai) — add their evidence
+    for sdg in (supporting_dgs or []):
+        sde = sdg.merged_extracted or {}
+        sd_level = sde.get('_doc_level') or 'unknown'
+        if sd_level == 'master':
+            if not h.master_evidence_doc_ids:
+                h.master_evidence_doc_ids = list(sdg.document_ids)
+            if not h.mukim:  h.mukim  = (sde.get('mukim') or '').strip()
+            if not h.daerah: h.daerah = (sde.get('daerah') or '').strip()
+            if not h.negeri: h.negeri = (sde.get('negeri') or '').strip()
+        elif sd_level == 'unknown':
+            h.building_evidence_doc_ids.append(sdg.document_ids[0]
+                                                if sdg.document_ids else '')
+
+    h.missing_for_probate = compute_missing_for_probate(h)
+    return h
+
+
+__all_phase4__ = [
+    'PropertyHierarchy',
+    'build_property_hierarchy',
+    'compute_missing_for_probate',
+]
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -1620,6 +1841,18 @@ def build_gift(asset_item: AssetItem,
         variant = 'h2'
 
     if asset_item.kind == 'property':
+        # 🔥 §10x.162 Phase 4 — build typed PropertyHierarchy for this
+        # gift. Distinguishes unit vs master_parcel vs strata sub-parcel
+        # levels and computes `missing_for_probate` based on what each
+        # bound/supporting doc contributed.
+        try:
+            hierarchy = build_property_hierarchy(
+                asset_item, doc_group, supporting_dgs=None,
+                authoritative_level=doc_level
+            )
+            hierarchy_dict = hierarchy.to_dict()
+        except Exception:
+            hierarchy_dict = {}
         return {
             'kind': 'property',
             'asset_type': 'property',
@@ -1632,12 +1865,16 @@ def build_gift(asset_item: AssetItem,
             '_match_tier': binding.tier,
             '_match_evidence': binding.evidence,
             # 🔥 §10x.159 — granularity tag. Wizard uses this to show
-            # "authoritative" vs "supporting evidence" labels and to
-            # know which fields the bound doc filled vs which need
-            # the user to upload another doc / type manually.
+            # "authoritative" vs "supporting evidence" labels.
             '_doc_level': doc_level,
             '_master_lot_from_doc': clean_id(de.get('lot_number') or '')
                                      if doc_level == 'master' else '',
+            # 🔥 §10x.162 Phase 4 — typed property-hierarchy record.
+            # Wizard renders the missing_for_probate list as the
+            # banner's "still needed" tags. Chat planner can render
+            # strata_sub_evidence_doc_ids vs master_evidence_doc_ids
+            # as the two-tier evidence display.
+            '_property_hierarchy': hierarchy_dict,
             'variant': variant,
             'property_info': {
                 'property_address': address,
