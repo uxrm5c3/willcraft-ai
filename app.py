@@ -276,6 +276,8 @@ def inject_global_context():
         'probate_missing_property': _probate_missing_property_safe,
         'probate_missing_bank':     _probate_missing_bank_safe,
         'probate_missing_insurance': _probate_missing_insurance_safe,
+        # §10x.144 — banner pre-fill suggestions
+        'suggest_gift_field':       _suggest_gift_field_safe,
     }
 
 
@@ -285,6 +287,19 @@ def _probate_missing_property_safe(pd):
         return missing_fields_for_property(pd or {})
     except Exception:
         return []
+
+
+def _suggest_gift_field_safe(gift, field):
+    """🔥 §10x.144 — exposed to Jinja so the missing-fields banner can
+    pre-fill each input with an AI-suggested value (from
+    financial_institutions registry for bank/insurance country, or
+    address-regex/postcode-lookup for property fields).
+    Returns None on miss; {value, source, options?} on hit."""
+    try:
+        from services.field_suggester import suggest_for_gift
+        return suggest_for_gift(gift or {}, field)
+    except Exception:
+        return None
 
 
 def _probate_missing_bank_safe(fd):

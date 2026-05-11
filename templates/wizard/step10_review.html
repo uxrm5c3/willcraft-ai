@@ -43,7 +43,14 @@
         {% set _gm = _gm + ['main beneficiary'] %}
     {% endif %}
     {% if _gm %}
-        {% set _ = _all_missing_summary.append({'idx': loop.index, 'label': _label, 'missing': _gm}) %}
+        {# 🔥 §10x.144 — pre-resolve suggestions for each missing field
+           so the banner can pre-fill dropdowns. Done here in the
+           context block so the per-gift loop below can read them. #}
+        {% set _suggestions = {} %}
+        {% for label in _gm %}
+            {% set field = _LABEL_TO_FIELD.get(label, '') if _LABEL_TO_FIELD is defined else '' %}
+        {% endfor %}
+        {% set _ = _all_missing_summary.append({'idx': loop.index, 'gift': gift, 'label': _label, 'missing': _gm}) %}
     {% endif %}
 {% endfor %}
 {# 🔥 §10x.143 — Inline edit-in-banner. User: "improve the UI in
@@ -81,7 +88,9 @@
                 ⚠️ {{ _all_missing_summary|length }} gift{% if _all_missing_summary|length != 1 %}s have{% else %} has{% endif %} missing required fields
             </h3>
             <p class="text-sm text-amber-800 mt-1">
-                Fill them inline below — your answer saves immediately. No need to navigate away.
+                <strong>✨ AI has pre-suggested</strong> values where possible (green-tinted dropdowns).
+                Just click <strong class="text-green-700">✓ Save</strong> to accept, or change the value first.
+                Your answer saves immediately — no navigation needed.
             </p>
             <div id="quick-fix-rows" class="mt-3 space-y-3">
                 {% for entry in _all_missing_summary %}
@@ -97,58 +106,70 @@
                         {% for label in entry.missing %}
                             {% set field = _LABEL_TO_FIELD.get(label, '') %}
                             {% if field %}
-                            <div class="quick-fix-field flex items-center gap-2" data-field="{{ field }}">
-                                <label class="text-xs text-amber-800 font-medium min-w-[110px]">{{ label }}:</label>
-                                {% if field == 'country' %}
-                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
-                                    <option value="">-- Select --</option>
-                                    <option value="Malaysia">Malaysia</option>
-                                    <option value="Singapore">Singapore</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                                {% elif field == 'ownership_type' %}
-                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
-                                    <option value="">-- Select --</option>
-                                    <option value="sole">Sole</option>
-                                    <option value="joint">Joint</option>
-                                </select>
-                                {% elif field == 'encumbrance_status' %}
-                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
-                                    <option value="">-- Select --</option>
-                                    <option value="clean">Clean (No Loan)</option>
-                                    <option value="encumbered">Has Loan / Encumbered</option>
-                                </select>
-                                {% elif field == 'title_type' %}
-                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
-                                    <option value="">-- Select --</option>
-                                    <option value="Geran">Geran</option>
-                                    <option value="Hakmilik">Hakmilik</option>
-                                    <option value="HSD">H.S.(D)</option>
-                                    <option value="HSM">H.S.(M)</option>
-                                    <option value="Strata Title Geran">Strata Title Geran</option>
-                                </select>
-                                {% elif field == 'state' or field == 'negeri' %}
-                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
-                                    <option value="">-- Select --</option>
-                                    {% for st in ['Johor', 'Kedah', 'Kelantan', 'Melaka', 'Negeri Sembilan', 'Pahang', 'Perak', 'Perlis', 'Pulau Pinang', 'Sabah', 'Sarawak', 'Selangor', 'Terengganu', 'Kuala Lumpur', 'Labuan', 'Putrajaya'] %}
-                                    <option value="{{ st }}">{{ st }}</option>
-                                    {% endfor %}
-                                </select>
-                                {% elif field == 'testator_share' %}
-                                <select class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}">
-                                    <option value="">-- Select --</option>
-                                    <option value="1/1">1/1 (sole owner)</option>
-                                    <option value="1/2">1/2</option>
-                                    <option value="1/3">1/3</option>
-                                    <option value="2/3">2/3</option>
-                                    <option value="1/4">1/4</option>
-                                    <option value="3/4">3/4</option>
-                                </select>
-                                {% else %}
-                                <input type="text" class="qf-input text-xs px-2 py-1 border border-amber-400 rounded bg-amber-50 flex-1" data-field="{{ field }}" placeholder="{{ label }}">
+                                {# 🔥 §10x.144 — call AI suggester per field. Returns
+                                   {value, source, options?} or None. We pre-select
+                                   the suggested value and show the source as a small
+                                   hint so user knows WHY that's the default. #}
+                                {% set _sug = suggest_gift_field(entry.gift, field) %}
+                                {% set _sv = (_sug.value if _sug else '') %}
+                            <div class="quick-fix-field flex flex-col gap-1" data-field="{{ field }}">
+                                <div class="flex items-center gap-2">
+                                    <label class="text-xs text-amber-800 font-medium min-w-[110px]">{{ label }}:</label>
+                                    {% if field == 'country' %}
+                                    <select class="qf-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">-- Select --</option>
+                                        <option value="Malaysia" {% if _sv == 'Malaysia' %}selected{% endif %}>Malaysia</option>
+                                        <option value="Singapore" {% if _sv == 'Singapore' %}selected{% endif %}>Singapore</option>
+                                        <option value="Other" {% if _sv == 'Other' %}selected{% endif %}>Other</option>
+                                    </select>
+                                    {% elif field == 'ownership_type' %}
+                                    <select class="qf-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">-- Select --</option>
+                                        <option value="sole" {% if _sv == 'sole' %}selected{% endif %}>Sole</option>
+                                        <option value="joint" {% if _sv == 'joint' %}selected{% endif %}>Joint</option>
+                                    </select>
+                                    {% elif field == 'encumbrance_status' %}
+                                    <select class="qf-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">-- Select --</option>
+                                        <option value="clean" {% if _sv == 'clean' %}selected{% endif %}>Clean (No Loan)</option>
+                                        <option value="encumbered" {% if _sv == 'encumbered' %}selected{% endif %}>Has Loan / Encumbered</option>
+                                    </select>
+                                    {% elif field == 'title_type' %}
+                                    <select class="qf-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">-- Select --</option>
+                                        {% for opt in ['Geran', 'Hakmilik', 'HSD', 'HSM', 'Strata Title Geran'] %}
+                                        <option value="{{ opt }}" {% if _sv == opt %}selected{% endif %}>{{ opt }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% elif field == 'state' or field == 'negeri' %}
+                                    <select class="qf-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">-- Select --</option>
+                                        {% for st in ['Johor', 'Kedah', 'Kelantan', 'Melaka', 'Negeri Sembilan', 'Pahang', 'Perak', 'Perlis', 'Pulau Pinang', 'Sabah', 'Sarawak', 'Selangor', 'Terengganu', 'Kuala Lumpur', 'Labuan', 'Putrajaya'] %}
+                                        <option value="{{ st }}" {% if _sv == st %}selected{% endif %}>{{ st }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% elif field == 'testator_share' %}
+                                    <select class="qf-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}">
+                                        <option value="">-- Select --</option>
+                                        {% for opt in ['1/1', '1/2', '1/3', '2/3', '1/4', '3/4'] %}
+                                        <option value="{{ opt }}" {% if _sv == opt %}selected{% endif %}>{{ opt }}{% if opt == '1/1' %} (sole owner){% endif %}</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% else %}
+                                    <input type="text" class="qf-input text-xs px-2 py-1 border {% if _sv %}border-green-400 bg-green-50{% else %}border-amber-400 bg-amber-50{% endif %} rounded flex-1" data-field="{{ field }}" value="{{ _sv }}" placeholder="{{ label }}">
+                                    {% endif %}
+                                    <button type="button" class="qf-save text-xs px-3 py-1 {% if _sv %}bg-green-600 hover:bg-green-700{% else %}bg-amber-600 hover:bg-amber-700{% endif %} text-white font-semibold rounded transition disabled:opacity-50" data-gift-idx="{{ entry.idx }}" data-field="{{ field }}">{% if _sv %}✓ Save{% else %}Save{% endif %}</button>
+                                    <span class="qf-status text-xs text-green-700 hidden">✓</span>
+                                </div>
+                                {% if _sug and _sug.source %}
+                                <div class="text-xs text-gray-500 ml-[110px] pl-2">
+                                    ✨ <span class="text-green-700">AI suggested</span>:
+                                    <span class="italic">{{ _sug.source }}</span>
+                                    {% if _sug.options and _sug.options|length > 1 %}
+                                    — also possible: {{ _sug.options|reject('equalto', _sv)|join(', ') }}
+                                    {% endif %}
+                                </div>
                                 {% endif %}
-                                <button type="button" class="qf-save text-xs px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded transition disabled:opacity-50" data-gift-idx="{{ entry.idx }}" data-field="{{ field }}">Save</button>
-                                <span class="qf-status text-xs text-green-700 hidden">✓</span>
                             </div>
                             {% else %}
                             <div class="text-xs text-amber-700 italic flex-1">
