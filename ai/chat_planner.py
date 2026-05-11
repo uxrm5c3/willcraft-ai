@@ -390,14 +390,19 @@ def plan_turn(
 
     # ── 3. STEP 2: confirm Testator details ─────────────────────────────
     # 🔥 §7 — must run BEFORE Step 6 (Specific Gifts) walkthrough.
-    # Source the testator details from EITHER:
-    #   (a) Will.step1_data.full_name (already populated by an earlier
-    #       wizard write), OR
-    #   (b) The Person row with relationship='Testator' (created during
-    #       Step 1 IC walk)
-    # Without (b) the chat skipped Step 2 whenever step1_data was empty
-    # — even though a Testator Person clearly existed — and jumped
-    # straight to Step 6 asset walkthrough.
+    # 🔥 §10x.223 — when Step 1 identity walk completes WITHOUT producing
+    # a Testator Person row (KOID test case — his own IC was never
+    # extracted as a 'nric' document, only the family ICs), the planner
+    # used to silently skip Step 2 because both gates below failed:
+    #   (a) step1_data.full_name was empty
+    #   (b) no Person.relationship='Testator' existed
+    # Result: chat jumped from IC walk → Step 5 Beneficiaries, never asked
+    # the user for the testator's address or occupation. step1_data
+    # remained empty and will-generation crashed with ValidationError.
+    # FIX — fall back to the Client table (which always has full_name +
+    # nric_passport) AND to the testator's IC Document (by NRIC match
+    # against Client.nric_passport) so the Step 2 card surfaces even
+    # when no Testator Person row exists yet.
     if not _is_confirmed(current_will_data, 'testator'):
         testator_info = dict(s1) if s1.get('full_name') else {}
         if not testator_info.get('full_name'):
@@ -411,6 +416,87 @@ def plan_turn(
                         'nationality': ident.get('nationality', 'Malaysian'),
                     }
                     break
+        # 🔥 §10x.223 — Client/Document fallback. The Client row has
+        # full_name + nric_passport (set when the inbox was provisioned).
+        # The testator's own IC Document (if uploaded) may have extracted
+        # an address that we can pre-suggest. AUTO-CREATE the Testator
+        # Person row here so the downstream handlers
+        # (_try_save_testator_address, _try_confirm_testator) — which
+        # both require Person.relationship='Testator' — work normally.
+        if not testator_info.get('full_name'):
+            _cid_t2 = (current_will_data or {}).get('client_id') or ''
+            if _cid_t2:
+                try:
+                    from database import Client as _Client, Document as _Doc, Person as _Person, db as _db_t2
+                    _client_row = _Client.query.filter_by(id=_cid_t2).first()
+                    if _client_row and (_client_row.full_name or '').strip():
+                        testator_info = {
+                            'full_name':           (_client_row.full_name or '').strip().upper(),
+                            'nric_passport':       (_client_row.nric_passport or '').strip(),
+                            'date_of_birth':       '',
+                            'residential_address': '',
+                            'nationality':         'Malaysian',
+                        }
+                        # Try to find the testator's own IC Document (by
+                        # NRIC match) and harvest extracted address / DOB.
+                        if testator_info['nric_passport']:
+                            try:
+                                import re as _re_nr, json as _json_t2
+                                _t_nric_d = _re_nr.sub(r'\D', '',
+                                                       testator_info['nric_passport'])
+                                if _t_nric_d:
+                                    _ic_docs = _Doc.query.filter_by(
+                                        client_id=_cid_t2).filter(
+                                        _Doc.category.in_(['nric', 'duplicate']))\
+                                        .all()
+                                    for _d in _ic_docs:
+                                        try:
+                                            _ex = _json_t2.loads(_d.extracted_data
+                                                                  or '{}')
+                                        except Exception:
+                                            _ex = {}
+                                        _d_nric = _re_nr.sub(r'\D', '',
+                                                              str(_ex.get('nric_number')
+                                                                  or ''))
+                                        if _d_nric and _d_nric == _t_nric_d:
+                                            _addr = (_ex.get('address') or '').strip()
+                                            if _addr and not testator_info.get('residential_address'):
+                                                testator_info['residential_address'] = _addr
+                                            _dob = (_ex.get('date_of_birth') or '').strip()
+                                            if _dob and not testator_info.get('date_of_birth'):
+                                                testator_info['date_of_birth'] = _dob
+                                            break
+                            except Exception:
+                                pass
+
+                        # Auto-create the Testator Person row idempotently
+                        # so _try_save_testator_address /
+                        # _try_confirm_testator can attribute their
+                        # writes. Without this row, those handlers
+                        # return None silently and the card loops.
+                        try:
+                            _t_existing = _Person.query.filter_by(
+                                client_id=_cid_t2,
+                                relationship='Testator').first()
+                            if not _t_existing:
+                                _new_t = _Person(
+                                    client_id=_cid_t2,
+                                    full_name=testator_info['full_name'],
+                                    nric_passport=testator_info['nric_passport'] or '',
+                                    relationship='Testator',
+                                    address=testator_info.get('residential_address') or '',
+                                    date_of_birth=testator_info.get('date_of_birth') or '',
+                                    nationality='Malaysian',
+                                )
+                                _db_t2.session.add(_new_t)
+                                _db_t2.session.commit()
+                        except Exception:
+                            try:
+                                _db_t2.session.rollback()
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
         if testator_info.get('full_name'):
             reply_parts.append(_step2_question(
                 testator_info,
@@ -4033,23 +4119,28 @@ _STEP2_REQUIRED_FIELDS = [
 
 def _step2_question(s1: Dict[str, Any],
                     identities: Optional[List[Dict[str, Any]]] = None) -> str:
-    """🔥 §10x.124 — testator info card with auto-derived non-address fields.
+    """🔥 §10x.124 + §10x.224 — testator info card with auto-derived non-
+    address fields AND explicit occupation prompt.
 
-    Per Phek Yi Ting template (CLAUDE.md §10x.24), the only typed-by-user
-    compulsory field is the **residential address**. DOB / gender /
-    marital can be auto-derived from the NRIC and family identities;
-    occupation is genuinely optional.
+    Per Phek Yi Ting template (CLAUDE.md §10x.24), DOB / gender / marital
+    auto-derive from NRIC + family. **Address** and **occupation** are
+    user-typed fields the WhatsApp message rarely contains, so the chat
+    MUST prompt for them explicitly.
 
-    Card layout:
-      - Name, NRIC: from Person row (already known)
-      - DOB: auto-extracted from NRIC YYMMDD prefix (with source note)
-      - Gender: auto-inferred from NRIC last digit (odd=Male, even=Female)
-      - Marital: auto-inferred from family (wife/husband present → Married)
-      - Occupation: optional, default omitted
-      - Address: ⚠️ REQUIRED — typed/clicked
+    User instruction (May 2026): "you need to fill in some missing fields
+    not in the whatsapp message like testator address, occupation".
 
-    User clicks ✓ Confirm once address is set; auto-derived values
-    are saved at confirmation time.
+    Walk order:
+      1. Address — required (will opens with "I [NAME] of [ADDRESS]"),
+         offer "Same as <family>" quick options + free-type.
+      2. Occupation — required for Phek-template "occupation" line,
+         offer common options (Retired / Engineer / Director / ... /
+         Other) or "occupation skip" to omit.
+      3. ✓ Confirm — only enabled when both above are resolved.
+
+    User clicks ✓ Confirm once both address AND occupation are set
+    (or occupation explicitly skipped). Auto-derived values are saved
+    at confirmation time.
     """
     name = (s1.get('full_name') or '').strip()
     nric = (s1.get('nric_passport') or '').strip()
@@ -4058,6 +4149,9 @@ def _step2_question(s1: Dict[str, Any],
     gender_saved = (s1.get('gender') or '').strip()
     marital_saved = (s1.get('marital_status') or '').strip()
     occupation = (s1.get('occupation') or '').strip()
+    # 🔥 §10x.224 — explicit skip marker so the planner doesn't keep
+    # re-prompting for occupation after the user chose to omit it.
+    occupation_skipped = bool(s1.get('_occupation_skipped'))
 
     # Auto-derive missing fields
     dob_derived = dob_saved or _parse_nric_to_dob(nric)
@@ -4079,13 +4173,16 @@ def _step2_question(s1: Dict[str, Any],
         + (f"{marital_derived} _(auto-inferred from your family list)_"
            if marital_derived and not marital_saved
            else (marital_derived if marital_derived else '_(default: Single)_')) + "\n"
-        f"- **Occupation:** {occupation or '_(optional — omitted)_'}\n"
+        f"- **Occupation:** "
+        + (occupation if occupation
+           else ('_(omitted by you)_' if occupation_skipped
+                 else '⚠️ _**please provide or skip.**_')) + "\n"
         f"- **Address:** "
         + (addr if addr else '⚠️ _**REQUIRED — please provide.**_')
     )
 
     if not addr:
-        # Address is the ONLY typed-required field. Walk it.
+        # Address first — it's the only LEGALLY required typed field.
         parts.append(
             "⚠️ **Your residential address is required** to draft the will. "
             "The will document opens with _\"I [NAME] of [ADDRESS]\"_ — "
@@ -4125,12 +4222,35 @@ def _step2_question(s1: Dict[str, Any],
         })
         return '\n\n'.join(parts) + _qr_marker(quick)
 
-    # Address is set — show Confirm. Auto-derived fields are saved
-    # by the Confirm handler.
+    # Address is set. 🔥 §10x.224 — now prompt for occupation if missing
+    # AND not explicitly skipped. The WhatsApp message rarely contains
+    # the testator's occupation; the chat MUST ask before allowing
+    # Confirm.
+    if not occupation and not occupation_skipped:
+        parts.append(
+            "**What is your occupation?** This goes in the testator block of "
+            "the will. Pick a common option below or type your own — or skip "
+            "if you'd rather omit it."
+        )
+        quick = [
+            {'label': '👴 Retired',                   'value': 'occupation: Retired'},
+            {'label': '👷 Engineer / Professional',    'value': 'occupation: Professional'},
+            {'label': '💼 Director / Business owner', 'value': 'occupation: Director'},
+            {'label': '🧰 Self-employed',              'value': 'occupation: Self-employed'},
+            {'label': '🏢 Employee',                   'value': 'occupation: Employee'},
+            {'label': '🏠 Homemaker',                  'value': 'occupation: Homemaker'},
+            {'label': '✏️ Other (type)',              'value': 'occupation: '},
+            {'label': '⏭ Skip occupation',           'value': 'occupation skip'},
+        ]
+        return '\n\n'.join(parts) + _qr_marker(quick)
+
+    # Both address AND (occupation OR skipped) — show Confirm.
+    # Auto-derived fields are saved by the Confirm handler.
     parts.append("**All correct? Auto-derived values will be saved.**")
     quick = [
         {'label': '✓ Confirm', 'value': 'confirm'},
         {'label': '✏️ Change address', 'value': 'address: '},
+        {'label': '✏️ Change occupation', 'value': 'occupation: '},
     ]
     return '\n\n'.join(parts) + _qr_marker(quick)
 

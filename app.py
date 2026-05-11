@@ -12441,6 +12441,44 @@ def _try_save_testator_address(client_id: str, user_text: str):
     t = user_text.strip()
     low = t.lower()
 
+    # 🔥 §10x.224 — explicit "skip occupation" quickreply. Sets the
+    # `_occupation_skipped` marker on step1_data so the Step 2 card
+    # stops re-prompting and shows ✓ Confirm next.
+    if low == 'occupation skip':
+        will_os = (Will.query.filter_by(client_id=client_id, status='draft')
+                   .filter(Will.deleted_at.is_(None))
+                   .order_by(Will.updated_at.desc()).first())
+        if not will_os:
+            return None
+        try:
+            s1_os = json.loads(will_os.step1_data or '{}') or {}
+        except Exception:
+            s1_os = {}
+        s1_os['_occupation_skipped'] = True
+        # Backfill name/nric from Testator Person if we can — keeps the
+        # confirm path happy even when only the Client row had identity.
+        try:
+            t_pers = (Person.query.filter_by(client_id=client_id,
+                                              relationship='Testator').first())
+            if t_pers:
+                s1_os['full_name'] = s1_os.get('full_name') or t_pers.full_name or ''
+                s1_os['nric_passport'] = (s1_os.get('nric_passport')
+                                           or t_pers.nric_passport or '')
+                s1_os['person_id'] = s1_os.get('person_id') or t_pers.id
+        except Exception:
+            pass
+        will_os.step1_data = json.dumps(s1_os)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            return None
+        return {
+            'kind': 'testator_field_saved',
+            'name': s1_os.get('full_name') or 'testator',
+            'role': 'Occupation: (skipped)',
+        }
+
     # Map prefix → (s1_key, person_attr, label)
     _FIELD_MAP = {
         'address:':    ('residential_address', 'address',          'Address'),
@@ -12643,6 +12681,18 @@ def _try_confirm_testator(client_id: str, user_text: str):
             'name': testator.full_name or 'testator',
             'role': 'blocked — address missing',
         }
+    # 🔥 §10x.224 — block confirm when occupation is missing AND not
+    # explicitly skipped. The Step 2 card prompts for occupation right
+    # after address; if the user clicks Confirm prematurely (e.g. via
+    # an old card), bounce back so they pick occupation or Skip.
+    occ_now = (s1.get('occupation') or '').strip()
+    occ_skip = bool(s1.get('_occupation_skipped'))
+    if not occ_now and not occ_skip:
+        return {
+            'kind': 'testator_occupation_required',
+            'name': testator.full_name or 'testator',
+            'role': 'blocked — occupation missing',
+        }
     nric = testator.nric_passport or s1.get('nric_passport', '')
     # DOB from NRIC
     dob = (testator.date_of_birth or '').strip() or (s1.get('date_of_birth') or '').strip()
@@ -12678,15 +12728,22 @@ def _try_confirm_testator(client_id: str, user_text: str):
                 break
         if not marital:
             marital = 'Single'  # safe default
+    # 🔥 §10x.225 — preserve occupation (and skipped marker) on confirm.
+    # The occupation was set via _try_save_testator_address("occupation: X")
+    # or marked skipped via "occupation skip". Without preserving it here
+    # the Step 2 confirm card would re-prompt on the next walkthrough turn.
+    occupation_v = (s1.get('occupation') or '').strip()
+    occupation_skip = bool(s1.get('_occupation_skipped'))
     s1.update({
         'full_name':           testator.full_name or '',
         'nric_passport':       testator.nric_passport or '',
         'date_of_birth':       dob,
-        'gender':              gender,
+        'gender':              gender or (testator.gender or ''),
         'marital_status':      marital,
         'residential_address': testator.address or s1.get('residential_address', ''),
         'nationality':         testator.nationality or 'Malaysian',
-        'gender':              testator.gender or '',
+        'occupation':          occupation_v,
+        '_occupation_skipped': occupation_skip,
         'email':               testator.email or '',
         'phone':               testator.phone or '',
         'person_id':           testator.id,
