@@ -16870,6 +16870,30 @@ def wizard_new():
         if pid:
             session['step1']['person_id'] = pid
         db.session.commit()
+        # 🔥 §10x.229 — refresh session.person_registry NOW so the Step 1
+        # (Testator) form's dropdown can pre-select the just-created
+        # Testator Person. Without this, the dropdown shows "-- Select --"
+        # blank because session was cleared above and we never repopulated
+        # person_registry. _refresh_wizard_session_from_db only runs after
+        # session.will_id is set — but we don't create a Will until later
+        # (save_will_to_db on first wizard-step POST), so the registry
+        # would otherwise stay empty until the user saves Step 1.
+        _refresh_session_person_registry(client_id)
+        # Also create the Will draft immediately + set session.will_id so
+        # _refresh_wizard_session_from_db on subsequent step loads can
+        # rebind to this client without falling back to a stale will.
+        try:
+            new_will = Will(
+                client_id=client_id,
+                status='draft',
+                title=f'Will of {full_name.upper()}',
+                step1_data=json.dumps(session['step1']),
+            )
+            db.session.add(new_will)
+            db.session.commit()
+            session['will_id'] = new_will.id
+        except Exception:
+            db.session.rollback()
         # §10x.227 — Testator is now Step 1. After New Will modal POST,
         # redirect to the Testator step (so user can optionally fill DOB,
         # occupation, religion, etc. or proceed to Step 2 Family Identities).
