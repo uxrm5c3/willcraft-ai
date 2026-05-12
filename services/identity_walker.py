@@ -241,8 +241,13 @@ def get_pending_ic_documents(client_id: str) -> List[Dict[str, Any]]:
             .filter_by(client_id=client_id, category='nric')
             .order_by(Document.created_at.asc())
             .all())
-    if not docs:
-        return []
+    # 🔥 §10x.210 — REMOVED early-return on `not docs`. When the user
+    # describes a family member in text only (no IC uploaded), §10x.34
+    # H3 placeholders MUST still surface. The old `if not docs: return []`
+    # short-circuited the H3 synthesis block at the bottom of this
+    # function, leaving text-only clients with zero pending identities.
+    # Now we fall through with `docs=[]` and the H3 block at line ~352
+    # picks up the family-name pairs from AI Summary text.
 
     # All Persons for this client — used to dedupe by name AND nric.
     # NRICs are normalised to canonical 12-digit form so embedded/garbage
@@ -422,8 +427,14 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
         # Title-case each component
         parts = s.split('-')
         return '-'.join(p.capitalize() if i == 0 else p for i, p in enumerate(parts))
-    name_pat = (r"[A-Z][A-Za-z\-\']{1,}"
-                r"(?:\s+[A-Z][A-Za-z\-\']{1,}){1,4}")
+    # 🔥 §10x.210 — Use `(?-i:...)` inline modifier so [A-Z] is
+    # case-sensitive even when re.IGNORECASE is enabled on the whole
+    # pattern. Without this, "children Joshua Koid Teck Seng" matches
+    # as a 5-token "name" (because IGNORECASE turns [A-Z] into [A-Za-z])
+    # and the JUNK filter then rejects the whole capture, losing Joshua
+    # entirely. The role part still matches case-insensitively.
+    name_pat = (r"(?-i:[A-Z])[A-Za-z\-\']{1,}"
+                r"(?:\s+(?-i:[A-Z])[A-Za-z\-\']{1,}){1,4}")
 
     # Pattern 1: "(my|his|her) <role> (<NAME>)" / "<role> (<NAME>)" /
     # ", <role> (<NAME>)" / "and <role> (<NAME>)"
