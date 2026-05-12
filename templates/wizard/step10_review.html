@@ -416,11 +416,31 @@
 <!-- Summary Cards -->
 <div class="space-y-6 mb-8">
 
-    <!-- Step 1: Identities -->
+    <!-- Step 1: Testator (was Step 2 — §10x.227 swap) -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 1: Identities</h3>
+            <h3 class="font-semibold text-gray-800">Step 1: Testator's Personal Data</h3>
             <a href="/wizard/step/1" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+        </div>
+        <div class="px-5 py-4">
+            {% set testator_top = will_data.get('testator', {}) %}
+            {% if testator_top %}
+            <dl class="grid md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+                <div><dt class="text-gray-500">Full Name</dt><dd class="font-medium text-gray-900">{{ testator_top.get('full_name', '-') }}</dd></div>
+                <div><dt class="text-gray-500">NRIC / Passport</dt><dd class="font-medium text-gray-900">{{ testator_top.get('nric_passport', '-') }}</dd></div>
+                <div class="md:col-span-2"><dt class="text-gray-500">Address</dt><dd class="font-medium text-gray-900">{{ testator_top.get('residential_address', '-') }}</dd></div>
+            </dl>
+            {% else %}
+            <p class="text-sm text-gray-400 italic">Testator not yet created.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Step 2: Family Identities (was Step 1 — §10x.227 swap) -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
+            <h3 class="font-semibold text-gray-800">Step 2: Family Identities</h3>
+            <a href="/wizard/step/2" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set identities = will_data.get('identities', []) %}
@@ -434,16 +454,16 @@
                 {% endfor %}
             </div>
             {% else %}
-            <p class="text-sm text-gray-400 italic">No identities created yet.</p>
+            <p class="text-sm text-gray-400 italic">No family identities added yet.</p>
             {% endif %}
         </div>
     </div>
 
-    <!-- Step 2: Testator Information -->
+    <!-- Detailed Testator Optional Fields (DOB, occupation, etc.) -->
     <div class="border border-gray-200 rounded-lg overflow-hidden">
         <div class="bg-gray-50 px-5 py-3 flex justify-between items-center border-b border-gray-200">
-            <h3 class="font-semibold text-gray-800">Step 2: Testator's Personal Data</h3>
-            <a href="/wizard/step/2" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
+            <h3 class="font-semibold text-gray-800">Testator — Optional Details</h3>
+            <a href="/wizard/step/1" class="text-sm text-primary-600 hover:text-primary-800 font-medium">Edit</a>
         </div>
         <div class="px-5 py-4">
             {% set testator = will_data.get('testator', {}) %}

@@ -4171,7 +4171,7 @@ def _step2_request_testator_card() -> str:
     AND no testator identity was confirmed in Step 1 walkthrough.
     """
     body = (
-        "### 👔 Step 2: Confirm Testator (the will-maker)\n\n"
+        "### 👔 Step 1: Confirm Testator (the will-maker)\n\n"
         "I don't have the testator's details yet. To create the will, "
         "I need:\n\n"
         "- **Full name** (as on IC)\n"
@@ -4243,7 +4243,7 @@ def _step2_question(s1: Dict[str, Any],
     gender_derived = gender_saved or _parse_nric_to_gender(nric)
     marital_derived = marital_saved or _infer_marital_from_family(identities or [])
 
-    parts = ["### 👔 Step 2: Confirm Testator"]
+    parts = ["### 👔 Step 1: Confirm Testator"]
     parts.append(
         f"- **Name:** {name or '_(missing)_'}\n"
         f"- **NRIC:** {nric or '_(missing)_'}\n"
@@ -8067,17 +8067,18 @@ def _compute_next_step_label(will_data: Dict[str, Any]) -> str:
     step the planner will land on. MUST match what plan_turn actually
     shows, otherwise the "moving to Step X" message lies to the user.
     """
+    # 🔥 §10x.227 — Testator is now Step 1 (was Step 2).
     if not will_data:
-        return 'Step 2: Testator Info'
+        return 'Step 1: Testator Info'
     s1 = will_data.get('step1') or {}
     s2 = will_data.get('step2') or {}
     s4 = will_data.get('step4') or []
     completed = will_data.get('completed_steps') or []
     client_id = will_data.get('client_id') or ''
 
-    # Step 2 — testator confirm (skip if already confirmed)
+    # Step 1 — testator confirm (skip if already confirmed)
     if not _is_confirmed(will_data, 'testator'):
-        return 'Step 2: Confirm Testator'
+        return 'Step 1: Confirm Testator'
 
     # 🔥 §10x.38 / §10x.55 — pending gifts run BEFORE executor in the
     # planner because the asset walkthrough fires first whenever

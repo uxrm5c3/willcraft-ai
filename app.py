@@ -14752,9 +14752,17 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                 pass
 
 
-# -- Step 1: Identity Management ---------------------------------------------
+# -- 🔥 §10x.227 — Steps 1 + 2 SWAPPED.
+#   Step 1 (was 2): Testator Info — required fields collected at modal time
+#   Step 2 (was 1): Family Identity Management — beneficiaries, executors, etc.
+# Per user instruction: "Move testator to step 1. When user create a new will,
+# need to key in testator name, IC and address during creation."
+# Function names retained for git-history clarity; only @app.route decorators
+# swapped + sidebar labels updated.
 
-@app.route('/wizard/step/1', methods=['GET', 'POST'])
+# -- Step 2 (was 1): Identity Management -------------------------------------
+
+@app.route('/wizard/step/2', methods=['GET', 'POST'])
 @login_required
 def wizard_step_identities():
     if request.method == 'GET':
@@ -14764,7 +14772,7 @@ def wizard_step_identities():
             _refresh_session_person_registry(client_id)
         return render_template(
             'wizard/step1_identities.html',
-            current_step=1,
+            current_step=2,
             completed_steps=get_completed_steps(),
             persons=session.get('person_registry', []),
         )
@@ -14774,23 +14782,23 @@ def wizard_step_identities():
     if not persons:
         flash('Please add at least one identity before proceeding.', 'error')
         return redirect(url_for('wizard_step_identities'))
-    mark_step_complete(1)
+    mark_step_complete(2)
     save_will_to_db()
     if request.form.get('_save_draft'):
-        return jsonify({'ok': True, 'step': 1})
-    return redirect(url_for('wizard_step_testator'))
+        return jsonify({'ok': True, 'step': 2})
+    return redirect(url_for('wizard_step_executors'))
 
 
-# -- Step 2: Testator Info (simplified - select identity) --------------------
+# -- Step 1 (was 2): Testator Info — required fields captured at modal --------
 
-@app.route('/wizard/step/2', methods=['GET', 'POST'])
+@app.route('/wizard/step/1', methods=['GET', 'POST'])
 @login_required
 def wizard_step_testator():
     if request.method == 'GET':
         _refresh_wizard_session_from_db()   # §10x.17
         return render_template(
             'wizard/step2_testator.html',
-            current_step=2,
+            current_step=1,  # §10x.227 — Testator is now Step 1
             completed_steps=get_completed_steps(),
             data=session.get('step1', {}),
             persons=session.get('person_registry', []),
@@ -14835,11 +14843,12 @@ def wizard_step_testator():
         'translator_language': request.form.get('translator_language', '').strip() or None,
     }
     session.modified = True
-    mark_step_complete(2)
+    # §10x.227 — Testator is now Step 1
+    mark_step_complete(1)
     save_will_to_db()
     if request.form.get('_save_draft'):
-        return jsonify({'ok': True, 'step': 2})
-    return redirect(url_for('wizard_step_executors'))
+        return jsonify({'ok': True, 'step': 1})
+    return redirect(url_for('wizard_step_identities'))
 
 
 # -- Step 3: Executors (select from identities) -----------------------------
@@ -16771,29 +16780,55 @@ def wizard_new():
                  ('user_id', 'user_role', 'user_name', 'user_email')}
 
     if request.method == 'POST':
+        # 🔥 §10x.227 — Testator's full_name + NRIC + address ALL required
+        # at New Will creation. Other fields (DOB, gender, marital,
+        # occupation, religion) are optional and collected later in the
+        # wizard / chat.
         full_name = (request.form.get('full_name') or '').strip()
         nric = (request.form.get('nric_passport') or '').strip()
+        address = (request.form.get('residential_address') or '').strip()
         if not full_name:
             flash('Please enter the testator\'s full name to start a new will.', 'error')
             return redirect(url_for('will_list'))
+        if not nric:
+            flash('Please enter the testator\'s NRIC (or passport number).', 'error')
+            return redirect(url_for('will_list'))
+        if not address:
+            flash('Please enter the testator\'s residential address.', 'error')
+            return redirect(url_for('will_list'))
+        # Canonicalise NRIC to NNNNNN-NN-NNNN format if Malaysian shape
+        import re as _re_nric
+        nric_clean = nric
+        m_nric = _re_nric.match(r'^\d{6}[-\s]?\d{2}[-\s]?\d{4}$', nric)
+        if m_nric:
+            digits = _re_nric.sub(r'\D', '', nric)
+            if len(digits) == 12:
+                nric_clean = f'{digits[:6]}-{digits[6:8]}-{digits[8:]}'
 
         session.clear()
         for k, v in auth_keys.items():
             if v: session[k] = v
         session['step1'] = {
-            'full_name': full_name,
-            'nric_passport': nric,
+            'full_name': full_name.upper(),
+            'nric_passport': nric_clean,
+            'residential_address': address,
             'nationality': 'Malaysian',
         }
         # Create Client + Person immediately so Wills list / Client folder UI
         # show the right name from the very first page load.
         client_id = ensure_client()
         from services.person_registry import ensure_person
-        pid = ensure_person(client_id, full_name, nric=nric, relationship='Testator')
+        pid = ensure_person(client_id, full_name.upper(),
+                             nric=nric_clean,
+                             address=address,
+                             relationship='Testator')
         if pid:
             session['step1']['person_id'] = pid
         db.session.commit()
-        return redirect(url_for('wizard_step_identities'))
+        # §10x.227 — Testator is now Step 1. After New Will modal POST,
+        # redirect to the Testator step (so user can optionally fill DOB,
+        # occupation, religion, etc. or proceed to Step 2 Family Identities).
+        return redirect(url_for('wizard_step_testator'))
 
     # GET — was the entry point for "+ New Will" before; now require the modal.
     flash('Please use the "+ New Will" button so we can capture the testator\'s name.', 'warning')

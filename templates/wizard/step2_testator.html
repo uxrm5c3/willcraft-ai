@@ -1,14 +1,14 @@
 {% extends "wizard/layout.html" %}
 
-{% block title %}Step 2: Testator Information - WillCraft AI{% endblock %}
+{% block title %}Step 1: Testator Information - WillCraft AI{% endblock %}
 
 {% block wizard_content %}
 <div class="mb-6">
-    <h2 class="text-2xl font-bold text-gray-900">Step 2: Testator's Personal Data</h2>
-    <p class="text-gray-600 mt-1">Select the testator's identity and complete additional details required for the will.</p>
+    <h2 class="text-2xl font-bold text-gray-900">Step 1: Testator's Personal Data</h2>
+    <p class="text-gray-600 mt-1">Review the testator's required fields (already captured at New Will creation: name, NRIC, address) and fill in any optional fields (DOB, occupation, marital status, religion).</p>
 </div>
 
-<form method="POST" action="/wizard/step/2" class="space-y-6">
+<form method="POST" action="/wizard/step/1" class="space-y-6">
     <!-- Identity Selector -->
     <div class="border border-primary-200 rounded-lg p-4 bg-primary-50/30">
         <label class="block text-sm font-semibold text-primary-700 mb-2">Select Testator Identity <span class="text-red-500">*</span></label>
@@ -203,12 +203,9 @@
 
     <!-- Navigation -->
     <div class="flex flex-col-reverse sm:flex-row justify-between gap-3 pt-6 border-t border-gray-200">
-        <a href="/wizard/step/1" class="px-6 py-2.5 text-gray-600 hover:text-gray-800 font-medium text-center">
-            <svg class="inline mr-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
-            Back
-        </a>
+        <a href="/" class="px-6 py-2.5 text-gray-600 hover:text-gray-800 font-medium text-center">Cancel</a>
         <button type="submit" class="px-8 py-2.5 bg-primary-600 text-white font-semibold rounded-lg hover:bg-primary-700 transition-colors text-center">
-            Save & Next: Executors & Trustees
+            Save & Next: Family Identities
             <svg class="inline ml-1 w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
         </button>
     </div>
