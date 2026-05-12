@@ -20,12 +20,16 @@
 
 set -euo pipefail
 
-# Source .env if present so cron picks up the off-box vars.
-if [ -f /home/ubuntu/willcraft/.env ]; then
-    set -a
-    # shellcheck disable=SC1091
-    . /home/ubuntu/willcraft/.env
-    set +a
+# Load BACKUP_* vars from .env without `source`-ing — values may contain
+# spaces / special chars (e.g. SMTP_PASSWORD) that break naive shell-source.
+# We only need the BACKUP_* prefixed lines.
+ENV_FILE=/home/ubuntu/willcraft/.env
+if [ -f "$ENV_FILE" ]; then
+    while IFS='=' read -r key val; do
+        case "$key" in
+            BACKUP_*) export "$key"="$val" ;;
+        esac
+    done < <(grep -E '^BACKUP_[A-Z_]+=' "$ENV_FILE")
 fi
 
 BACKUP_LOCAL_DIR="${BACKUP_LOCAL_DIR:-/home/ubuntu/willcraft-backups}"
