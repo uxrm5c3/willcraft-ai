@@ -9411,7 +9411,29 @@ def _try_handle_h3_property_action(client_id: str, user_text: str):
         else:
             matched.append(False)
 
-    h3_idx = next((i for i, ap in enumerate(ai_props)
+    # 🔥 §10x.217 — Handler MUST match planner's display order. The
+    # planner sorts pending property cards by HIGH→LOW confidence
+    # (gift_walker._score_property_confidence). Without matching sort,
+    # the handler picks AI[0] (lowest unhandled index) while the planner
+    # displays AI[N] (highest confidence) → cross-property save.
+    # E.g. card shows C-30-08, handler saves to B-05-11.
+    try:
+        from services.gift_walker import _score_property_confidence
+        def _ap_conf(i):
+            ap = ai_props[i]
+            # Score via gift_walker's same fn — treat ap dict as 'extracted'.
+            return _score_property_confidence({
+                'lot_number': ap.get('lot') or '',
+                'title_number': ap.get('title') or '',
+                'title_type_confidence': 'high' if ap.get('title') else '',
+                'property_address': ap.get('address') or '',
+                'mukim': ap.get('mukim') or '',
+                'daerah': ap.get('daerah') or '',
+            })
+        ai_order = sorted(range(len(ai_props)), key=_ap_conf, reverse=True)
+    except Exception:
+        ai_order = list(range(len(ai_props)))
+    h3_idx = next((i for i in ai_order
                    if not handled[i] and not matched[i]), None)
     if h3_idx is None:
         return None
