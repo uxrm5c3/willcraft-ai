@@ -861,7 +861,16 @@ def build_will_data():
     # the "primary empty" branch and the will emitted joint pattern wrongly.
     def _coerce_role(e: dict) -> dict:
         ex = dict(e)
-        if not ex.get('role') or ex['role'] not in ('Primary', 'Joint', 'Substitute'):
+        # 🔥 §10x.207 — case-insensitive role match. Chat-saved executors
+        # often write role='primary'/'substitute' (lowercase). Previously
+        # the check required title-case and silently coerced both to
+        # Primary → joint executors clause emitted instead of primary +
+        # substitute. Title-case the role string FIRST so the canonical
+        # check works, then fall back to is_substitute.
+        _r = (ex.get('role') or '').strip().title()
+        if _r in ('Primary', 'Joint', 'Substitute'):
+            ex['role'] = _r
+        else:
             ex['role'] = 'Substitute' if ex.get('is_substitute') else 'Primary'
         # 🔥 §10x.232d — Executor pydantic model has required str fields;
         # ensure every key has at least empty-string default so executors
