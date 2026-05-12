@@ -1321,6 +1321,56 @@ def build_will_data():
             payment_amount=trust_data.get('payment_amount') or None,
             balance_beneficiaries=balance_bens,
         )
+    elif trust_data and trust_data.get('wants_trust'):
+        # 🔥 §10x.208 — Legacy schema migration. Chat saved
+        # {wants_trust:true, trustee_name, distribution_age} but never
+        # populated canonical `beneficiaries`. Without this branch the
+        # drafter skipped the trust clause entirely while the wizard
+        # showed "TRUST CONFIGURED" — a wizard/will inconsistency.
+        # Derive trust beneficiaries from family children (Son/Daughter
+        # in step4_beneficiaries). Trustee fields come from legacy
+        # step7 keys. Distribution age is preserved as `duration` string
+        # since the canonical model doesn't have a dedicated age field.
+        s4 = session.get('step4_beneficiaries', []) or []
+        child_relations = {'son', 'daughter', 'stepson', 'stepdaughter',
+                            'adopted son', 'adopted daughter',
+                            'grandson', 'granddaughter'}
+        trust_bens = []
+        for b in s4:
+            if not isinstance(b, dict):
+                continue
+            rel = (b.get('relationship') or '').lower().strip()
+            if rel in child_relations:
+                trust_bens.append(TrustBeneficiary(
+                    beneficiary_name=(b.get('full_name') or '').upper(),
+                    share='1/1',
+                ))
+        # Resolve trustee — prefer Person row lookup so address auto-fills
+        t_name = trust_data.get('trustee_name') or ''
+        t_nric = trust_data.get('trustee_nric') or ''
+        t_addr = trust_data.get('trustee_address') or ''
+        t_rel  = trust_data.get('trustee_relationship') or ''
+        if t_name:
+            for pr in session.get('person_registry', []) or []:
+                if (pr.get('full_name') or '').upper() == t_name.upper():
+                    t_nric = t_nric or pr.get('nric_passport') or ''
+                    t_addr = t_addr or pr.get('address') or ''
+                    t_rel  = t_rel  or pr.get('relationship') or ''
+                    break
+        dist_age = trust_data.get('distribution_age')
+        duration_str = str(dist_age) if dist_age else None
+        testamentary_trust = TestamentaryTrust(
+            beneficiaries=trust_bens,
+            purposes=[],
+            duration=duration_str,
+            assets_from_gifts=[],
+            balance_beneficiaries=[],
+            separate_trustee=bool(t_name),
+            trustee_name=t_name or None,
+            trustee_address=t_addr or None,
+            trustee_nric=t_nric or None,
+            trustee_relationship=(t_rel or None),
+        )
 
     # -- Section H/I: Other Matters (optional) --------------------------------
     om_data = session.get('step8_others', {})

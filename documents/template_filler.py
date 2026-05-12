@@ -936,6 +936,64 @@ def fill_will(will_data) -> str:
         parts.append(f"{clause_num}.  [RESIDUARY BENEFICIARY TO BE CONFIRMED]")
     parts.append('')
 
+    # ── Testamentary Trust (§10x.208 — TEMPORARY clause body) ───────────
+    # Emitted between Residuary and Declaration when the will carries a
+    # testamentary_trust block. Trust template body is a placeholder until
+    # the firm provides its standard Alan & Tan trust clause; see
+    # `TESTAMENTARY_TRUST_FULL_TEMPLATE` in clause_templates.py.
+    tt = getattr(will_data, 'testamentary_trust', None)
+    if tt is not None:
+        from ai.prompts.clause_templates import TESTAMENTARY_TRUST_FULL_TEMPLATE
+        # Resolve trustee fields with fallbacks (canonical → first executor)
+        t_name = (tt.trustee_name or '').upper().strip()
+        t_nric = (tt.trustee_nric or '').strip()
+        t_addr = (tt.trustee_address or '').strip()
+        t_rel  = (tt.trustee_relationship or '').lower().strip()
+        if not t_name and execs:
+            e0 = execs[0]
+            t_name = (e0.full_name or '').upper()
+            t_nric = e0.nric_passport or ''
+            t_addr = _exec_addr(e0)
+            t_rel  = (e0.relationship or '').lower()
+        # Render beneficiary list (UPPERCASE names per §10x.24)
+        ben_phrases = []
+        for tb in (tt.beneficiaries or []):
+            nm = (tb.beneficiary_name or '').strip()
+            info = bidx.get(nm.upper(), {}) if nm else {}
+            ben_phrases.append(_ben_phrase(
+                nm,
+                info.get('nric', ''),
+                info.get('nationality', 'Malaysian'),
+                with_relationship=info.get('relationship', '')))
+        if not ben_phrases:
+            ben_phrases = ['[BENEFICIARIES TO BE CONFIRMED]']
+        if len(ben_phrases) == 1:
+            ben_list_text = ben_phrases[0]
+        elif len(ben_phrases) == 2:
+            ben_list_text = ' and '.join(ben_phrases)
+        else:
+            ben_list_text = ', '.join(ben_phrases[:-1]) + ', and ' + ben_phrases[-1]
+        # Resolve distribution_age from duration string (e.g. "25" / "until age 25")
+        dist_age = None
+        if tt.duration:
+            import re as _re_age
+            m_age = _re_age.search(r'(\d{1,3})', str(tt.duration))
+            if m_age:
+                dist_age = m_age.group(1)
+        dist_age = dist_age or '21'   # NLC s.5 / Trustee Act 1949 default
+        clause_num += 1
+        trust_text = TESTAMENTARY_TRUST_FULL_TEMPLATE.format(
+            clause_num=clause_num,
+            trustee_relationship=(t_rel or 'trustee'),
+            trustee_name=t_name or '[TRUSTEE TO BE CONFIRMED]',
+            trustee_nric=t_nric or '[NRIC]',
+            trustee_address=t_addr or '[ADDRESS]',
+            beneficiary_list_text=ben_list_text,
+            distribution_age=dist_age,
+        )
+        parts.append(trust_text)
+        parts.append('')
+
     # ── Declaration (clauses 8, 9 in Phek; numbering carries on here) ───
     parts.append(DECLARATION_HEADING)
     parts.append('')

@@ -171,6 +171,39 @@ TESTAMENTARY_TRUST_TEMPLATE = """I DIRECT my Executor to hold the share of {bene
 
 TESTAMENTARY_TRUST_TRUSTEE_TEMPLATE = """I hereby appoint my {relationship} {trustee_name} MALAYSIA NRIC No. {nric} as the Trustee of the testamentary trust established for {beneficiary_name}."""
 
+# 🔥 §10x.208 — TEMPORARY full testamentary trust clause. The firm has
+# NOT yet provided a standard Alan & Tan testamentary trust template.
+# This placeholder follows generic Malaysian probate convention
+# (Trustee Act 1949 powers, distribution-age trust for minors,
+# accumulation, survivor provision, indemnity). When the firm provides
+# its standard template, replace the body of this constant verbatim —
+# the wiring in template_filler.py + build_will_data() will pick up
+# the new text without changes.
+#
+# Visible PENDING marker is kept in the clause body so the firm
+# Approver spots it on review and replaces before signing.
+TESTAMENTARY_TRUST_FULL_TEMPLATE = """Testamentary Trust
+
+{clause_num}.  I HEREBY ESTABLISH a Testamentary Trust ("the Trust") on the following terms:
+
+    [⚠ DRAFT TRUST CLAUSE — TEMPORARY: this clause is included pending the firm's standard testamentary trust template. The firm should review and replace this clause with the firm-approved version before the Will is signed.]
+
+(a) Trustee. I appoint my {trustee_relationship} {trustee_name} (MALAYSIA NRIC No. {trustee_nric}) of {trustee_address} as the Trustee of the Trust. If my Trustee is unwilling or unable to act for whatsoever reason, my Executor named in Clause 2 above shall act as the Trustee or shall appoint a substitute Trustee on the same terms.
+
+(b) Beneficiaries. The beneficiaries of the Trust are {beneficiary_list_text} (collectively, "the Beneficiaries").
+
+(c) Distribution Age. The Trustee shall hold each Beneficiary's share of the trust property until that Beneficiary attains the age of {distribution_age} years, whereupon the Trustee shall transfer that share to the Beneficiary absolutely. If a Beneficiary has already attained the distribution age at the date of my death, the Trustee shall distribute that Beneficiary's share immediately upon receipt.
+
+(d) Maintenance, Education and Advancement. Until distribution, the Trustee may in the Trustee's absolute discretion apply the whole or any part of the income of any Beneficiary's share, or where reasonable and necessary the capital thereof, for the maintenance, education, advancement or benefit of that Beneficiary.
+
+(e) Accumulation. Any income of a Beneficiary's share not so applied shall be accumulated by the Trustee and added to the capital of that share.
+
+(f) Survivor. If any Beneficiary dies before attaining the distribution age leaving issue surviving, that Beneficiary's share shall be held on the same trusts for that Beneficiary's issue per stirpes. If no issue surviving, the deceased Beneficiary's share shall accrue to the surviving Beneficiaries in equal share.
+
+(g) Trustee Powers. The Trustee shall have all powers conferred by the Trustee Act 1949 and such further powers as may be necessary or convenient for the proper administration of the Trust, including (without limitation) the power to invest, retain, sell, exchange, lease, mortgage, and distribute trust property.
+
+(h) Trustee Indemnity. The Trustee shall not be liable for any loss arising in the proper execution of the Trust, save for actual fraud or wilful default."""
+
 # ============================================================
 # DECLARATION (Commorientes + Testator Declaration)
 # ============================================================
