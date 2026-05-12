@@ -2150,6 +2150,15 @@ def build_gift(asset_item: AssetItem,
                 'negeri': negeri,
                 'co_owners': co_owners,
                 'testator_share': testator_share,
+                # 🔥 §10x.211 — preserve historical_titles + title_type from
+                # AI Summary JSON footer. Without this, Sri Laguna's
+                # "Formerly known as HS(D) 431161 PTD 143086" parenthetical
+                # and strata title_type ("Strata Title Geran" vs generic
+                # "Geran") are lost between AI-Summary and will-clause
+                # render. Caller (chat-planner gift-saver) writes
+                # property_info into step5_data, drafter reads it.
+                'title_type': (af.get('title_type') or '').strip(),
+                'historical_titles': af.get('historical_titles') or [],
             },
             'property_address': address,
             'title_number': title,
@@ -2159,6 +2168,8 @@ def build_gift(asset_item: AssetItem,
             'negeri': negeri,
             'co_owners': co_owners,
             'testator_share': testator_share,
+            'title_type': (af.get('title_type') or '').strip(),
+            'historical_titles': af.get('historical_titles') or [],
             'beneficiary_text': asset_item.beneficiary_text,
         }
 

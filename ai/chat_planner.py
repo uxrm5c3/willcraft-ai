@@ -1069,11 +1069,15 @@ def _summarise_message(raw_text: str, *, doc_fields: list = None) -> str:
             "    {\n"
             "      \"label\": \"Unit C-30-08 Condominium Marina Cove\",\n"
             "      \"address\": \"<address as testator wrote it>\",\n"
-            "      \"title\": \"564662\",\n"
+            "      \"title\": \"564662/M1C/30/710\",\n"
             "      \"lot\": \"207922\",\n"
             "      \"mukim\": \"Plentong\",\n"
             "      \"daerah\": \"Johor Bahru\",\n"
             "      \"negeri\": \"Johor\",\n"
+            "      \"title_type\": \"Strata Title Geran\",\n"
+            "      \"historical_titles\": [\n"
+            "        {\"type\": \"HS(D)\", \"no\": \"431161\", \"pt_no\": \"143086\"}\n"
+            "      ],\n"
             "      \"ownership\": {\n"
             "        \"type\": \"joint\",\n"
             "        \"co_owner\": \"Joshua Koid Teck Seng\",\n"
@@ -1108,6 +1112,30 @@ def _summarise_message(raw_text: str, *, doc_fields: list = None) -> str:
             "}\n"
             "-->\n\n"
             "RULES for the JSON:\n"
+            "  🔥 §10x.211 PRESERVE STRATA SUB-TOKENS:\n"
+            "  • If the testator wrote a strata title with slashes (e.g.\n"
+            "    `564662/M1C/30/710` or `528881/M1B/5/209`), PRESERVE the\n"
+            "    FULL slash-encoded string in the `title` field. NEVER\n"
+            "    strip to just the master `564662`. Two units in the same\n"
+            "    building (C-30-08 vs C-05-01) share the master but have\n"
+            "    DIFFERENT strata sub-tokens — dropping the sub-token\n"
+            "    merges them as one property which is a critical bug.\n"
+            "  🔥 §10x.211 PRESERVE HISTORICAL TITLES:\n"
+            "  • If the testator wrote 'Formerly known as HS(D) <N> PTD <M>'\n"
+            "    or 'previously HS(M) ...' or 'now known as Geran ...', emit\n"
+            "    a `historical_titles` array: [{type, no, pt_no}]. Skip this\n"
+            "    field when no historical reference is given.\n"
+            "  🔥 §10x.211 PRESERVE PTD/PT NUMBER FOR HSD TITLES:\n"
+            "  • For HSD-style titles ('H.S.(D) 251041, PTD 127082'), the\n"
+            "    `title` field is the HSD number (251041) and the `lot`\n"
+            "    field is the PTD number (127082). Both are required for\n"
+            "    probate. NEVER drop the PTD number.\n"
+            "  🔥 §10x.211 TITLE_TYPE EXPLICIT:\n"
+            "  • Always set `title_type` to one of: 'Geran', 'Hakmilik Strata',\n"
+            "    'Strata Title Geran', 'HSD', 'H.S.(D)', 'H.S.(M)', 'PTD',\n"
+            "    or whatever the testator wrote. Slash-encoded sub-tokens\n"
+            "    on a strata title default to 'Strata Title Geran' if the\n"
+            "    testator didn't specify.\n"
             "  • `share_of_testator` is the % the beneficiary gets OF THE\n"
             "    TESTATOR'S SHARE (NOT of the full property). For B-05-11\n"
             "    where testator owns 1/2 and gives 25% (of full) to each\n"
@@ -1969,11 +1997,29 @@ def _extract_ai_summary_json_block(content: str) -> List[Dict[str, Any]]:
         _canonical_addr = _addr
         if _lab and _lab_units and not (_lab_units & _addr_units):
             _canonical_addr = _lab
+        # 🔥 §10x.211 — preserve historical_titles + title_type from JSON
+        # footer so downstream gift-saver can render "Formerly known as
+        # HS(D)..." parenthetical and the correct title_type (e.g.
+        # "Strata Title Geran" vs "Hakmilik Strata"). Without this the
+        # AI Summary parser stripped these fields and the will clause
+        # for Sri Laguna / strata properties came out incomplete.
+        _hist_raw = p.get('historical_titles') or []
+        if not isinstance(_hist_raw, list):
+            _hist_raw = []
+        historical_titles = [
+            {'type': str(h.get('type') or '').strip(),
+             'no':   str(h.get('no')   or '').strip(),
+             'pt_no': str(h.get('pt_no') or h.get('ptd') or '').strip()}
+            for h in _hist_raw if isinstance(h, dict)
+        ]
+        title_type = (p.get('title_type') or '').strip()
         out.append({
             'name':    (_lab or _addr).strip(),
             'address': (_canonical_addr or _lab).strip(),
             'lot':     str(p.get('lot') or '').strip(),
             'title':   str(p.get('title') or '').strip(),
+            'title_type': title_type,           # §10x.211
+            'historical_titles': historical_titles,  # §10x.211
             'mukim':   (p.get('mukim') or '').strip(),
             'daerah':  (p.get('daerah') or '').strip(),
             'negeri':  (p.get('negeri') or '').strip(),
