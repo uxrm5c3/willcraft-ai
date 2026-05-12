@@ -15788,11 +15788,77 @@ def wizard_step_gifts():
 def wizard_step_residuary():
     if request.method == 'GET':
         _refresh_wizard_session_from_db()   # §10x.17
+        # 🔥 §10x.221 — migrate chat-saved legacy schema (residuary_beneficiary_name
+        # + beneficiaries + substitute_specific) → wizard form schema
+        # (main_beneficiaries + substitute_groups) so the form dropdowns
+        # show the saved selection instead of blank '-- Select --'.
+        # See §10x.175 row 162 for the parallel summary-render fix; that
+        # bridged Step 10 review but not the Step 7 FORM.
+        raw = dict(session.get('step6_residuary') or {})
+        if not raw.get('main_beneficiaries'):
+            # Chat-saved legacy shapes — derive main beneficiaries
+            main = []
+            chat_bens = raw.get('beneficiaries') or []
+            if isinstance(chat_bens, list) and chat_bens:
+                for b in chat_bens:
+                    if not isinstance(b, dict):
+                        continue
+                    nm = (b.get('name') or b.get('beneficiary_name') or '').strip()
+                    if not nm:
+                        continue
+                    pid = ''
+                    # Look up person_id by name for the dropdown to pre-select
+                    for p in (session.get('person_registry') or []):
+                        if (p.get('full_name') or '').strip().upper() == nm.upper():
+                            pid = p.get('id') or ''
+                            break
+                    main.append({
+                        'beneficiary_name': nm,
+                        'share': (b.get('share') or '1/1').strip(),
+                        'person_id': pid,
+                        'group': 'main',
+                    })
+            elif raw.get('residuary_beneficiary_name'):
+                nm = raw.get('residuary_beneficiary_name').strip()
+                pid = ''
+                for p in (session.get('person_registry') or []):
+                    if (p.get('full_name') or '').strip().upper() == nm.upper():
+                        pid = p.get('id') or ''
+                        break
+                main.append({
+                    'beneficiary_name': nm, 'share': '1/1',
+                    'person_id': pid, 'group': 'main',
+                })
+            if main:
+                raw['main_beneficiaries'] = main
+        if not raw.get('substitute_groups'):
+            sub_specific = raw.get('substitute_specific') or []
+            if isinstance(sub_specific, list) and sub_specific:
+                grp = []
+                for s in sub_specific:
+                    if not isinstance(s, dict):
+                        continue
+                    nm = (s.get('name') or s.get('beneficiary_name') or '').strip()
+                    if not nm:
+                        continue
+                    pid = ''
+                    for p in (session.get('person_registry') or []):
+                        if (p.get('full_name') or '').strip().upper() == nm.upper():
+                            pid = p.get('id') or ''
+                            break
+                    grp.append({
+                        'beneficiary_name': nm,
+                        'share': (s.get('share') or '1/1').strip(),
+                        'person_id': pid,
+                        'group': 'substitute_1',
+                    })
+                if grp:
+                    raw['substitute_groups'] = [grp]
         return render_template(
             'wizard/step7_residuary.html',
             current_step=7,
             completed_steps=get_completed_steps(),
-            data=session.get('step6_residuary', {}),
+            data=raw,
             beneficiaries=session.get('step4_beneficiaries', []),
             persons=session.get('person_registry', []),
             gifts=session.get('step5_gifts', []),
@@ -15868,11 +15934,51 @@ def wizard_step_residuary():
 def wizard_step_trust():
     if request.method == 'GET':
         _refresh_wizard_session_from_db()   # §10x.17
+        # 🔥 §10x.221 — same legacy-to-canonical migration as Step 7.
+        # Chat saves trust as {wants_trust:true, trustee_name, distribution_age}
+        # (legacy) but wizard form expects {beneficiaries[], duration,
+        # purposes[]} (canonical). Without this migration the form shows
+        # empty fields and the "TRUST CONFIGURED" badge from Step 10
+        # appears inconsistent with the blank form.
+        raw = dict(session.get('step7_trust') or {})
+        if raw.get('wants_trust') and not raw.get('beneficiaries'):
+            # Derive trust beneficiaries from family children in step4
+            child_relations = {'son', 'daughter', 'stepson', 'stepdaughter',
+                                'adopted son', 'adopted daughter',
+                                'grandson', 'granddaughter'}
+            s4 = session.get('step4_beneficiaries') or []
+            trust_bens = []
+            for b in s4:
+                if not isinstance(b, dict):
+                    continue
+                rel = (b.get('relationship') or '').lower().strip()
+                if rel in child_relations:
+                    trust_bens.append({
+                        'beneficiary_name': (b.get('full_name') or '').strip(),
+                        'share': '1/1',
+                        'role': 'MB',
+                    })
+            if trust_bens:
+                raw['beneficiaries'] = trust_bens
+            # Migrate duration from distribution_age
+            if not raw.get('duration') and raw.get('distribution_age'):
+                raw['duration'] = str(raw.get('distribution_age'))
+            # Migrate trustee fields → separate_trustee block
+            if raw.get('trustee_name') and not raw.get('separate_trustee'):
+                raw['separate_trustee'] = True
+                # Resolve trustee person_id + address from registry
+                tn = raw.get('trustee_name', '').strip().upper()
+                for p in (session.get('person_registry') or []):
+                    if (p.get('full_name') or '').strip().upper() == tn:
+                        raw['trustee_address'] = raw.get('trustee_address') or p.get('address', '')
+                        raw['trustee_nric'] = raw.get('trustee_nric') or p.get('nric_passport', '')
+                        raw['trustee_relationship'] = raw.get('trustee_relationship') or p.get('relationship', '')
+                        break
         return render_template(
             'wizard/step8_trust.html',
             current_step=8,
             completed_steps=get_completed_steps(),
-            data=session.get('step7_trust', {}),
+            data=raw,
             beneficiaries=session.get('step4_beneficiaries', []),
             gifts=session.get('step5_gifts', []),
             persons=session.get('person_registry', []),
