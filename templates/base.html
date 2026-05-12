@@ -503,6 +503,13 @@
                               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary-500 focus:border-primary-500 resize-none"></textarea>
                     <p class="text-[11px] text-gray-400 mt-1">Full address as it should appear in the will's opening line.</p>
                 </div>
+                <!-- 🔥 §10x.230 — Hidden DOB + gender carried from IC OCR.
+                     Modal doesn't expose them visually (NRIC already encodes them
+                     for Malaysian citizens and they're derivable server-side),
+                     but if OCR extracted explicit values we propagate them so
+                     the user doesn't have to re-type in Step 1. -->
+                <input type="hidden" name="date_of_birth" id="new-will-dob">
+                <input type="hidden" name="gender" id="new-will-gender">
                 <div class="flex justify-end gap-2 pt-2">
                     <button type="button" onclick="closeNewWillModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 rounded-lg">Cancel</button>
                     <button type="submit" id="new-will-submit" class="px-4 py-2 bg-primary-600 text-white text-sm font-semibold rounded-lg hover:bg-primary-700">Create Draft &rarr;</button>
@@ -558,13 +565,33 @@
                 var nm = (ex.full_name || '').trim();
                 var nric = (ex.nric_number || '').trim();
                 var addr = (ex.address || '').trim();
+                var dob = (ex.date_of_birth || '').trim();
+                var gender = (ex.gender || '').trim();
                 var nameInput = document.getElementById('new-will-name');
                 var nricInput = document.getElementById('new-will-nric');
                 var addrInput = document.getElementById('new-will-address');
+                var dobInput = document.getElementById('new-will-dob');
+                var genderInput = document.getElementById('new-will-gender');
                 if (nm) nameInput.value = nm.toUpperCase();
                 if (nric) nricInput.value = nric;
                 if (addr) addrInput.value = addr;
-                var filled = [nm && 'name', nric && 'NRIC', addr && 'address'].filter(Boolean);
+                // 🔥 §10x.230 — normalise DOB to ISO YYYY-MM-DD for the
+                // hidden form input (the Step 1 form's <input type=date>
+                // requires ISO format). OCR may return DD-MM-YYYY or
+                // YYYY-MM-DD or DD/MM/YYYY. Normalise:
+                if (dob) {
+                    var m1 = dob.match(/^(\d{4})-(\d{2})-(\d{2})$/);   // already ISO
+                    var m2 = dob.match(/^(\d{2})[\/-](\d{2})[\/-](\d{4})$/); // DD-MM-YYYY
+                    if (m1) {
+                        dobInput.value = dob;
+                    } else if (m2) {
+                        dobInput.value = m2[3] + '-' + m2[2] + '-' + m2[1];
+                    } else {
+                        dobInput.value = dob; // pass-through, server will try
+                    }
+                }
+                if (gender) genderInput.value = gender;
+                var filled = [nm && 'name', nric && 'NRIC', addr && 'address', dob && 'DOB', gender && 'gender'].filter(Boolean);
                 if (filled.length) {
                     status.className = 'text-xs text-green-700 mt-1';
                     status.innerHTML = '✓ Read from IC: ' + filled.join(', ') + '. Review and edit if needed, then tap <strong>Create Draft</strong>.';

@@ -16832,6 +16832,11 @@ def wizard_new():
         full_name = (request.form.get('full_name') or '').strip()
         nric = (request.form.get('nric_passport') or '').strip()
         address = (request.form.get('residential_address') or '').strip()
+        # 🔥 §10x.230 — DOB + gender carried from IC OCR (hidden inputs).
+        # If not provided by OCR, derive from Malaysian NRIC (first 6
+        # digits = YYMMDD; last digit odd=male, even=female).
+        dob_from_form = (request.form.get('date_of_birth') or '').strip()
+        gender_from_form = (request.form.get('gender') or '').strip()
         if not full_name:
             flash('Please enter the testator\'s full name to start a new will.', 'error')
             return redirect(url_for('will_list'))
@@ -16845,10 +16850,45 @@ def wizard_new():
         import re as _re_nric
         nric_clean = nric
         m_nric = _re_nric.match(r'^\d{6}[-\s]?\d{2}[-\s]?\d{4}$', nric)
+        nric_digits = ''
         if m_nric:
             digits = _re_nric.sub(r'\D', '', nric)
             if len(digits) == 12:
                 nric_clean = f'{digits[:6]}-{digits[6:8]}-{digits[8:]}'
+                nric_digits = digits
+
+        # 🔥 §10x.230 — derive DOB from Malaysian NRIC (YYMMDD prefix)
+        # if OCR didn't provide one. Use simple century pivot: if YY<=30
+        # treat as 20YY else 19YY (covers anyone born 1931-2030).
+        dob_iso = ''
+        if dob_from_form:
+            # Normalise to ISO YYYY-MM-DD
+            m_iso = _re_nric.match(r'^(\d{4})-(\d{2})-(\d{2})$', dob_from_form)
+            m_dmy = _re_nric.match(r'^(\d{2})[\/-](\d{2})[\/-](\d{4})$', dob_from_form)
+            if m_iso:
+                dob_iso = dob_from_form
+            elif m_dmy:
+                dob_iso = f'{m_dmy.group(3)}-{m_dmy.group(2)}-{m_dmy.group(1)}'
+        if not dob_iso and len(nric_digits) >= 6:
+            yy, mm, dd = nric_digits[:2], nric_digits[2:4], nric_digits[4:6]
+            try:
+                yy_int = int(yy)
+                century = '20' if yy_int <= 30 else '19'
+                yyyy = f'{century}{yy}'
+                # Sanity-check month + day
+                _mm = int(mm); _dd = int(dd)
+                if 1 <= _mm <= 12 and 1 <= _dd <= 31:
+                    dob_iso = f'{yyyy}-{mm}-{dd}'
+            except (ValueError, TypeError):
+                pass
+
+        # 🔥 §10x.230 — derive gender from NRIC last digit (odd=Male, even=Female)
+        gender_clean = gender_from_form.title() if gender_from_form else ''
+        if not gender_clean and len(nric_digits) == 12:
+            try:
+                gender_clean = 'Male' if int(nric_digits[-1]) % 2 == 1 else 'Female'
+            except (ValueError, TypeError):
+                pass
 
         session.clear()
         for k, v in auth_keys.items():
@@ -16858,6 +16898,8 @@ def wizard_new():
             'nric_passport': nric_clean,
             'residential_address': address,
             'nationality': 'Malaysian',
+            'date_of_birth': dob_iso,
+            'gender': gender_clean,
         }
         # Create Client + Person immediately so Wills list / Client folder UI
         # show the right name from the very first page load.
@@ -16866,6 +16908,8 @@ def wizard_new():
         pid = ensure_person(client_id, full_name.upper(),
                              nric=nric_clean,
                              address=address,
+                             date_of_birth=dob_iso,
+                             gender=gender_clean,
                              relationship='Testator')
         if pid:
             session['step1']['person_id'] = pid
