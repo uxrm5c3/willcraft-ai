@@ -4598,6 +4598,19 @@ def _api_chat_message_impl(client_id):
 
     user_id = session.get('user_id')
     cs = _get_or_create_chat_session(client_id, user_id)
+    # 🔥 §10x.233 — DEFENSIVE: capture cs.id + user_msg.id as PLAIN STRINGS
+    # immediately. The dispatch chain below may commit/rollback the SQLAlchemy
+    # session repeatedly via the various `_try_save_*` handlers. After ANY
+    # commit, SQLAlchemy expires every loaded instance; the next attribute
+    # access (e.g. `cs.id` at line ~5246 or 5264) refreshes from the DB.
+    # If a rollback happened — or if another worker / the background processor
+    # touched the row between flush and the late access — SQLAlchemy raises
+    # `ObjectDeletedError: Instance '<ChatSession at 0x...>' has been deleted,
+    # or its row is otherwise not present.` Caching the IDs as plain strings
+    # decouples the late writes from the lifecycle of the instance object.
+    cs_id = cs.id
+    db.session.commit()    # commit the ChatSession itself so its row is
+                           # durable; later rollbacks in handlers won't lose it.
 
     # Establish cost-tracking context for every Anthropic call made in this
     # request: will_id, client_id, user_id auto-attach to ApiCallLog rows.
@@ -4624,11 +4637,12 @@ def _api_chat_message_impl(client_id):
     # existing pattern matches like 'inbox start' / 'yes' / 'skip'
     # continue to fire even though the bubble shows the friendly label.
     user_msg = ChatMessage(
-        session_id=cs.id, role='user', content=user_text,
+        session_id=cs_id, role='user', content=user_text,
         attachments_json='[]',
     )
     db.session.add(user_msg)
     db.session.flush()
+    user_msg_id = user_msg.id   # §10x.233 — plain-string handle
     if user_intent:
         user_text = user_intent
 
@@ -4655,7 +4669,7 @@ def _api_chat_message_impl(client_id):
 
         doc = Document(
             client_id=client_id,
-            chat_message_id=user_msg.id,
+            chat_message_id=user_msg_id,   # §10x.233 cached id
             filename=saved_name, original_filename=f.filename,
             file_path=rel_path, file_type=f.content_type,
             file_size=file_size, category=category_initial,
@@ -4791,8 +4805,8 @@ def _api_chat_message_impl(client_id):
                 if user_text:
                     msg_context_parts.append(user_text)
                 prev_msgs = (ChatMessage.query
-                             .filter_by(session_id=cs.id, role='user')
-                             .filter(ChatMessage.id != user_msg.id)
+                             .filter_by(session_id=cs_id, role='user')
+                             .filter(ChatMessage.id != user_msg_id)
                              .order_by(ChatMessage.created_at.desc())
                              .limit(3).all())
                 for pm in prev_msgs:
@@ -4914,7 +4928,7 @@ def _api_chat_message_impl(client_id):
             if not ans:
                 ans = ("**Answer:** I couldn't generate an answer for that — "
                        "try rephrasing, or check the [Legal Library](/library).")
-            qa_msg = ChatMessage(session_id=cs.id, role='assistant', content=ans,
+            qa_msg = ChatMessage(session_id=cs_id, role='assistant', content=ans,
                                  attachments_json='[]')
             db.session.add(qa_msg)
             db.session.commit()
@@ -4946,9 +4960,14 @@ def _api_chat_message_impl(client_id):
                 or has_share
             )
             if not also_action:
+                # §10x.233 — re-fetch by cached id; qa_msg commit may have expired user_msg.
+                try:
+                    _um = db.session.get(ChatMessage, user_msg_id) or user_msg
+                except Exception:
+                    _um = user_msg
                 return jsonify({
                     'ok': True,
-                    'user_message': _serialise_chat_message(user_msg),
+                    'user_message': _serialise_chat_message(_um),
                     'assistant_message': _serialise_chat_message(qa_msg),
                 })
 
@@ -5122,6 +5141,8 @@ def _api_chat_message_impl(client_id):
                    .filter(Will.deleted_at.is_(None))
                    .order_by(Will.updated_at.desc())
                    .first())
+    # 🔥 §10x.233 — cache id as plain string for the same reason as cs_id.
+    active_will_id = active_will.id if active_will else None
     will_snapshot = _will_data_snapshot(active_will)
     # Treat any save as "just_assigned" so the planner acknowledges + advances
     just = (just_assigned or just_testator or just_executor or just_benef
@@ -5243,11 +5264,11 @@ def _api_chat_message_impl(client_id):
     ack_text = (plan.get('ack_reply') or '').strip()
     if ack_text:
         ack_msg = ChatMessage(
-            session_id=cs.id,
+            session_id=cs_id,   # §10x.233 cached id
             role='assistant',
             content=ack_text,
             attachments_json='[]',
-            target_will_id=active_will.id if active_will else None,
+            target_will_id=active_will_id,
         )
         db.session.add(ack_msg)
         db.session.flush()   # ensure created_at strictly precedes the next card
@@ -5261,14 +5282,14 @@ def _api_chat_message_impl(client_id):
     # insert if the latest assistant message already has identical content.
     _new_content = plan.get('reply', '') or ''
     _new_msg = _post_asst_msg_idempotent(
-        cs.id,
+        cs_id,   # §10x.233 cached id
         content=_new_content,
         plan=plan,
-        active_will_id=active_will.id if active_will else None,
+        active_will_id=active_will_id,
     )
     if _new_msg is None:
         # Skipped duplicate — reuse the existing latest message
-        asst_msg = (ChatMessage.query.filter_by(session_id=cs.id, role='assistant')
+        asst_msg = (ChatMessage.query.filter_by(session_id=cs_id, role='assistant')
                      .order_by(ChatMessage.created_at.desc()).first())
     else:
         asst_msg = _new_msg
@@ -5286,9 +5307,18 @@ def _api_chat_message_impl(client_id):
             _cost_tracker_cm.__exit__(None, None, None)
     except Exception:
         pass
+    # 🔥 §10x.233 — re-fetch by cached id before final serialise. If user_msg
+    # was expired by a mid-flow commit/rollback, attribute access during
+    # _serialise_chat_message would raise ObjectDeletedError — the very bug
+    # the user reported ("⚠️ Server error: Instance '<ChatSession at ...> has
+    # been deleted, or its row is otherwise not present.").
+    try:
+        _um = db.session.get(ChatMessage, user_msg_id) or user_msg
+    except Exception:
+        _um = user_msg
     return jsonify({
         'ok': True,
-        'user_message': _serialise_chat_message(user_msg),
+        'user_message': _serialise_chat_message(_um),
         'assistant_message': _serialise_chat_message(asst_msg),
         **extra,
     })
