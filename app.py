@@ -4990,11 +4990,16 @@ def _api_chat_message_impl(client_id):
             # 🔥 §7 — Step 2 (Testator confirm) runs BEFORE Step 3 (Executor)
             # and BEFORE Step 6 (Specific Gifts). Catch user's confirm
             # click and save Will.step1_data with testator info from Person.
+            # 🔥 §10x.226 — testator cold-start handler MUST run FIRST.
+            # Catches multi-line 'name:/nric:/address:' input before the
+            # single-field address handler tries to interpret it.
+            just_testator = _try_create_testator_from_input(client_id, user_text)
             # 🔥 §10x.122 — testator address save MUST run before
             # _try_confirm_testator (so 'address: 123 Main St' replies
             # save the address) AND before _try_handle_property_fill
             # (so they aren't mistakenly treated as property addresses).
-            just_testator = _try_save_testator_address(client_id, user_text)
+            if not just_testator:
+                just_testator = _try_save_testator_address(client_id, user_text)
             if not just_testator:
                 just_testator = _try_confirm_testator(client_id, user_text)
             if not just_testator:
@@ -12510,6 +12515,90 @@ def _try_save_bank_gift(client_id: str, user_text: str):
         'name': benef_desc,
         'role': f'{saved} bank account{"s" if saved != 1 else ""} → ' + ', '.join(bank_descriptors),
         'kind': 'gift_bank',
+    }
+
+
+def _try_create_testator_from_input(client_id: str, user_text: str):
+    """🔥 §10x.226 — parse a user-typed testator-detail block and create
+    the Testator Person row. Required because the chat NO LONGER
+    auto-falls-back to Client.full_name. The user MUST explicitly type
+    their details OR upload their IC.
+
+    Accepts a multi-line block like::
+
+        name: AHMAD BIN ABDULLAH
+        nric: 600101-08-1234
+        address: NO 12, JALAN MELATI, TAMAN SERI, 47000 SUNGAI BULOH, SELANGOR
+
+    Only fires when:
+      - user_text contains BOTH 'name:' AND 'nric:' (the two minimum-required
+        identifiers)
+      - no Testator Person row exists yet
+
+    Returns dict on save (so dispatcher acks); None to fall through.
+    """
+    if not user_text:
+        return None
+    low = user_text.lower()
+    if 'name:' not in low or 'nric:' not in low:
+        return None
+    # Don't fire if Testator already exists.
+    existing = Person.query.filter_by(client_id=client_id,
+                                       relationship='Testator').first()
+    if existing:
+        return None
+    # Parse line-prefix labels (case-insensitive).
+    import re as _re_te
+    fields = {}
+    for line in user_text.splitlines():
+        m = _re_te.match(r'\s*([a-zA-Z_]+)\s*:\s*(.+?)\s*$', line)
+        if m:
+            fields[m.group(1).lower()] = m.group(2).strip()
+    name = (fields.get('name') or '').strip()
+    nric = (fields.get('nric') or '').strip()
+    address = (fields.get('address') or '').strip()
+    if not name or not nric:
+        return None
+    # Validate NRIC shape
+    m_nric = _re_te.match(r'^\d{6}[-\s]?\d{2}[-\s]?\d{4}$', nric)
+    if not m_nric:
+        return None
+    # Canonicalise NRIC to NNNNNN-NN-NNNN
+    digits = _re_te.sub(r'\D', '', nric)
+    if len(digits) != 12:
+        return None
+    nric_canonical = f'{digits[:6]}-{digits[6:8]}-{digits[8:]}'
+    # Create Testator Person
+    p = Person(
+        client_id=client_id,
+        full_name=name.upper(),
+        nric_passport=nric_canonical,
+        relationship='Testator',
+        address=address,
+        nationality=(fields.get('nationality') or 'Malaysian'),
+    )
+    db.session.add(p)
+    # Stamp step1_data so Step 2 confirm flow can proceed
+    will = (Will.query.filter_by(client_id=client_id, status='draft')
+            .filter(Will.deleted_at.is_(None))
+            .order_by(Will.updated_at.desc()).first())
+    if will:
+        try:
+            s1 = json.loads(will.step1_data or '{}')
+        except Exception:
+            s1 = {}
+        s1.update({
+            'full_name': name.upper(),
+            'nric_passport': nric_canonical,
+            'residential_address': address,
+            'nationality': 'Malaysian',
+        })
+        will.step1_data = json.dumps(s1)
+    db.session.commit()
+    return {
+        'name': name.upper(),
+        'role': 'testator details captured',
+        'kind': 'testator_created',
     }
 
 

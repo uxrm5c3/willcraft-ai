@@ -416,87 +416,15 @@ def plan_turn(
                         'nationality': ident.get('nationality', 'Malaysian'),
                     }
                     break
-        # 🔥 §10x.223 — Client/Document fallback. The Client row has
-        # full_name + nric_passport (set when the inbox was provisioned).
-        # The testator's own IC Document (if uploaded) may have extracted
-        # an address that we can pre-suggest. AUTO-CREATE the Testator
-        # Person row here so the downstream handlers
-        # (_try_save_testator_address, _try_confirm_testator) — which
-        # both require Person.relationship='Testator' — work normally.
-        if not testator_info.get('full_name'):
-            _cid_t2 = (current_will_data or {}).get('client_id') or ''
-            if _cid_t2:
-                try:
-                    from database import Client as _Client, Document as _Doc, Person as _Person, db as _db_t2
-                    _client_row = _Client.query.filter_by(id=_cid_t2).first()
-                    if _client_row and (_client_row.full_name or '').strip():
-                        testator_info = {
-                            'full_name':           (_client_row.full_name or '').strip().upper(),
-                            'nric_passport':       (_client_row.nric_passport or '').strip(),
-                            'date_of_birth':       '',
-                            'residential_address': '',
-                            'nationality':         'Malaysian',
-                        }
-                        # Try to find the testator's own IC Document (by
-                        # NRIC match) and harvest extracted address / DOB.
-                        if testator_info['nric_passport']:
-                            try:
-                                import re as _re_nr, json as _json_t2
-                                _t_nric_d = _re_nr.sub(r'\D', '',
-                                                       testator_info['nric_passport'])
-                                if _t_nric_d:
-                                    _ic_docs = _Doc.query.filter_by(
-                                        client_id=_cid_t2).filter(
-                                        _Doc.category.in_(['nric', 'duplicate']))\
-                                        .all()
-                                    for _d in _ic_docs:
-                                        try:
-                                            _ex = _json_t2.loads(_d.extracted_data
-                                                                  or '{}')
-                                        except Exception:
-                                            _ex = {}
-                                        _d_nric = _re_nr.sub(r'\D', '',
-                                                              str(_ex.get('nric_number')
-                                                                  or ''))
-                                        if _d_nric and _d_nric == _t_nric_d:
-                                            _addr = (_ex.get('address') or '').strip()
-                                            if _addr and not testator_info.get('residential_address'):
-                                                testator_info['residential_address'] = _addr
-                                            _dob = (_ex.get('date_of_birth') or '').strip()
-                                            if _dob and not testator_info.get('date_of_birth'):
-                                                testator_info['date_of_birth'] = _dob
-                                            break
-                            except Exception:
-                                pass
-
-                        # Auto-create the Testator Person row idempotently
-                        # so _try_save_testator_address /
-                        # _try_confirm_testator can attribute their
-                        # writes. Without this row, those handlers
-                        # return None silently and the card loops.
-                        try:
-                            _t_existing = _Person.query.filter_by(
-                                client_id=_cid_t2,
-                                relationship='Testator').first()
-                            if not _t_existing:
-                                _new_t = _Person(
-                                    client_id=_cid_t2,
-                                    full_name=testator_info['full_name'],
-                                    nric_passport=testator_info['nric_passport'] or '',
-                                    relationship='Testator',
-                                    address=testator_info.get('residential_address') or '',
-                                    date_of_birth=testator_info.get('date_of_birth') or '',
-                                    nationality='Malaysian',
-                                )
-                                _db_t2.session.add(_new_t)
-                                _db_t2.session.commit()
-                        except Exception:
-                            try:
-                                _db_t2.session.rollback()
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
+        # 🔥 §10x.226 — REMOVED Client/Document auto-fallback.
+        # Per user instruction: "When creating testator, user need to key
+        # in testator name, IC and address or upload IC". The chat must
+        # NOT auto-populate the testator from Client table memory or any
+        # other source. If no Testator Person row exists AND step1_data
+        # is empty, the chat surfaces an EXPLICIT card asking the user to
+        # either type the testator's full details OR upload the testator's
+        # IC photo. Only after a real user input or vision-extracted IC
+        # does the Testator Person row get created.
         if testator_info.get('full_name'):
             _cid_for_step2 = (current_will_data or {}).get('client_id') or ''
             reply_parts.append(_step2_question(
@@ -505,6 +433,11 @@ def plan_turn(
                 client_id=_cid_for_step2,
             ))
             return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
+        # 🔥 §10x.226 — No testator info from ANY source (no Person row,
+        # no step1, no identity walk produced one). Show the explicit
+        # "provide testator details OR upload IC" card and STOP.
+        reply_parts.append(_step2_request_testator_card())
+        return _wrap(reply_parts, questions, patch, advice, ack_parts=ack_parts)
 
     # 🔥 §10x.130 — STEP 3 EXECUTOR CONFIRM (must run BEFORE the asset
     # walkthrough at line 439, otherwise pending gifts would pre-empt
@@ -4225,6 +4158,47 @@ _STEP2_REQUIRED_FIELDS = [
     ('residential_address', 'Residential address', 'address: ',
      '10 Jalan Sri Laguna 1/7, Taman Laguna, 81200 Johor Bahru, Johor'),
 ]
+
+
+def _step2_request_testator_card() -> str:
+    """🔥 §10x.226 — Cold-start card asking the user to provide the
+    testator's identity. NO auto-fill from Client table, Person rows,
+    or AI guessing. The user MUST either:
+      (a) Type the full name + NRIC + address in chat, OR
+      (b) Upload the testator's IC photo (vision will extract the fields).
+
+    This card fires when no Testator Person exists, step1_data is empty,
+    AND no testator identity was confirmed in Step 1 walkthrough.
+    """
+    body = (
+        "### 👔 Step 2: Confirm Testator (the will-maker)\n\n"
+        "I don't have the testator's details yet. To create the will, "
+        "I need:\n\n"
+        "- **Full name** (as on IC)\n"
+        "- **NRIC** (12-digit Malaysian NRIC, format `NNNNNN-NN-NNNN`)\n"
+        "- **Residential address** (the address the will opens with)\n\n"
+        "Please **either**:\n\n"
+        "1. **📎 Upload the testator's IC photo** — drag it into this chat "
+        "or email it to the inbox. I'll extract the name + NRIC + address "
+        "from the photo automatically.\n\n"
+        "2. **✏️ Type the details below** in this format:\n\n"
+        "```\n"
+        "name: <FULL NAME>\n"
+        "nric: <NNNNNN-NN-NNNN>\n"
+        "address: <full residential address>\n"
+        "```\n\n"
+        "Example:\n"
+        "```\n"
+        "name: AHMAD BIN ABDULLAH\n"
+        "nric: 600101-08-1234\n"
+        "address: NO 12, JALAN MELATI, TAMAN SERI, 47000 SUNGAI BULOH, SELANGOR\n"
+        "```\n"
+    )
+    body += _qr_marker([
+        {'label': '📎 Upload IC photo', 'value': 'testator upload-ic'},
+        {'label': '✏️ Type my own', 'value': 'other'},
+    ], suppress_fallback=True)
+    return body
 
 
 def _step2_question(s1: Dict[str, Any],
