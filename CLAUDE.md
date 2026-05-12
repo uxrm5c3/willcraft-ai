@@ -849,7 +849,7 @@ For each AI-Summary property P (which has BOTH address and any lot/title hint):
   2. If no lot/title hint in P, match by GEOGRAPHIC bridge:
        - Image's Mukim + Daerah  ↔  P's address (street → mukim mapping)
        - e.g. "Seri Alam Masai" → Mukim Plentong, Daerah JB
-              "Taman Laguna"    → Mukim Plentong, Daerah JB
+              "Taman Laguna"    → Mukim Pulai,    Daerah JB  (§10x.85 — corrected from Plentong per Geran 337203)
               "Medini Iskandar" → Mukim Pulai,    Daerah JB
               "Iskandar Puteri" → Mukim Pulai,    Daerah JB
               "Marina Cove"     → Mukim Plentong, Daerah JB
@@ -866,7 +866,7 @@ AI-Summary address need to be reconciled. Cache results per session.
 | Street / Township in address      | Mukim          | Daerah        | Negeri |
 |-----------------------------------|----------------|---------------|--------|
 | Seri Alam Masai / Bandar Seri Alam| **Plentong**   | Johor Bahru   | Johor  |
-| Taman Laguna                       | **Plentong**   | Johor Bahru   | Johor  |
+| Taman Laguna / Sri Laguna          | **Pulai**      | Johor Bahru   | Johor  | _(§10x.85 — corrected from Plentong per Geran 337203, Lot 135402 title doc)_
 | Marina Cove / Pangsapuri Tepian Bayu | **Plentong** | Johor Bahru   | Johor  |
 | Permas Jaya                        | **Plentong**   | Johor Bahru   | Johor  |
 | Medini Iskandar / Iskandar Puteri  | **Pulai**      | Johor Bahru   | Johor  |
