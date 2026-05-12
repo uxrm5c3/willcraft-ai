@@ -1389,16 +1389,33 @@ def _extract_ai_summary_properties(client_id: str) -> List[Dict[str, Any]]:
     except Exception:
         return []
     try:
-        # Find the latest assistant message starting with the AI Summary header
+        # 🔥 §10x.216 — iterate AI Summary cards LATEST-FIRST and return
+        # the first one that yields a non-empty asset list. A second
+        # inbound email (e.g. wife IC attachment) generates its own AI
+        # Summary card whose JSON footer is empty ('properties': [],
+        # 'banks': [], 'insurance': []). Without this iteration the
+        # function would pick the latest (empty) and report 0 props,
+        # then fall back to narrative parser which mis-parses the
+        # testator's residential address as a 6th property.
         from sqlalchemy import select as _sa_select
         sess_ids_subq = (_sa_select(ChatSession.id)
                           .filter(ChatSession.client_id == client_id))
-        msg = (ChatMessage.query
+        all_summary_msgs = list(ChatMessage.query
                .filter(ChatMessage.session_id.in_(sess_ids_subq))
                .filter(ChatMessage.role == 'assistant')
                .filter(ChatMessage.content.ilike('%📨 AI Summary of your message%'))
                .order_by(ChatMessage.created_at.desc())
-               .first())
+               .all())
+        msg = all_summary_msgs[0] if all_summary_msgs else None
+        # Pick the FIRST (latest-by-time) summary that has a non-empty
+        # JSON footer with at least one asset. Falls back to the most
+        # recent if all are empty (preserves old behaviour for clients
+        # with only one summary).
+        for candidate in all_summary_msgs:
+            jb = _extract_ai_summary_json_block(candidate.content or '')
+            if jb:
+                msg = candidate
+                break
         if msg and msg.content:
             # 🔥 §10x.142 — PREFER STRUCTURED JSON FOOTER if present.
             # AI Summary now emits <!--AI_SUMMARY_JSON:{...}--> as part
@@ -1534,12 +1551,32 @@ def _extract_ai_summary_banks(client_id: str) -> List[Dict[str, Any]]:
         from sqlalchemy import select as _sa_select
         sess_ids_subq = (_sa_select(ChatSession.id)
                          .filter(ChatSession.client_id == client_id))
-        msg = (ChatMessage.query
+        # 🔥 §10x.216 — iterate AI Summary cards LATEST-FIRST and pick
+        # the first one with a non-empty bank list. See §10x.216 in
+        # _extract_ai_summary_properties for full rationale.
+        all_summary_msgs = list(ChatMessage.query
                .filter(ChatMessage.session_id.in_(sess_ids_subq))
                .filter(ChatMessage.role == 'assistant')
                .filter(ChatMessage.content.ilike('### 📨 AI Summary%'))
                .order_by(ChatMessage.created_at.desc())
-               .first())
+               .all())
+        msg = None
+        for candidate in all_summary_msgs:
+            if not (candidate.content and '<!--AI_SUMMARY_JSON:' in candidate.content):
+                continue
+            _jm = re.search(r'<!--AI_SUMMARY_JSON:\s*(\{.*?\})\s*-->',
+                            candidate.content, re.DOTALL)
+            if not _jm:
+                continue
+            try:
+                _p = _json.loads(_jm.group(1))
+            except Exception:
+                continue
+            if (_p.get('banks') or []):
+                msg = candidate
+                break
+        if msg is None and all_summary_msgs:
+            msg = all_summary_msgs[0]
         if msg and msg.content and '<!--AI_SUMMARY_JSON:' in msg.content:
             jm = re.search(r'<!--AI_SUMMARY_JSON:\s*(\{.*?\})\s*-->',
                            msg.content, re.DOTALL)
@@ -1677,12 +1714,31 @@ def _extract_ai_summary_insurance(client_id: str) -> List[Dict[str, Any]]:
         from sqlalchemy import select as _sa_select
         sess_ids_subq = (_sa_select(ChatSession.id)
                          .filter(ChatSession.client_id == client_id))
-        msg = (ChatMessage.query
+        # 🔥 §10x.216 — iterate AI Summary cards LATEST-FIRST + pick
+        # the first one with non-empty insurance list.
+        all_summary_msgs = list(ChatMessage.query
                .filter(ChatMessage.session_id.in_(sess_ids_subq))
                .filter(ChatMessage.role == 'assistant')
                .filter(ChatMessage.content.ilike('### 📨 AI Summary%'))
                .order_by(ChatMessage.created_at.desc())
-               .first())
+               .all())
+        msg = None
+        for candidate in all_summary_msgs:
+            if not (candidate.content and '<!--AI_SUMMARY_JSON:' in candidate.content):
+                continue
+            _jm = re.search(r'<!--AI_SUMMARY_JSON:\s*(\{.*?\})\s*-->',
+                            candidate.content, re.DOTALL)
+            if not _jm:
+                continue
+            try:
+                _p = _json.loads(_jm.group(1))
+            except Exception:
+                continue
+            if (_p.get('insurance') or []):
+                msg = candidate
+                break
+        if msg is None and all_summary_msgs:
+            msg = all_summary_msgs[0]
         if msg and msg.content and '<!--AI_SUMMARY_JSON:' in msg.content:
             jm = re.search(r'<!--AI_SUMMARY_JSON:\s*(\{.*?\})\s*-->',
                            msg.content, re.DOTALL)
@@ -2696,6 +2752,12 @@ def _detect_message_conflicts(ai_props: List[Dict[str, Any]]
             r"\bher\s+\d+\s*(?:percent|%)\s+to",   # "Her 50% to be split"
             r"\bshare\s+of\s+\d+\s*(?:percent|%)", # "share of 50%"
             r"\bjointly\s+with[^,]*",              # "jointly with X" (without "owned")
+            # 🔥 §10x.215 — common AI Summary phrasing for testator's share
+            # leading a beneficiary allocation: "50% share to my daughter
+            # Esther Koid En Hui 100%." — strip the leading "50% share to"
+            # so only the beneficiary's "100%" remains for sum check.
+            r"\b\d+\s*(?:percent|%)\s+share\s+(?:to|of)",  # "50% share to/of"
+            r"\b\d+\s*(?:percent|%)\s+to\s+be\s+(?:given|split|divided)",  # "50% to be given"
         ):
             b_clean = re.sub(pat, '', b_clean)
         # Pull all "NN percent" / "NN%" tokens and sum them
