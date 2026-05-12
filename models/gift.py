@@ -123,12 +123,19 @@ class PropertyDetails(BaseModel):
             tn = ''
         # Auto-detect title type from title_number pattern
         # 🔥 §10x.219 — title_number containing '/' (e.g. 564662/M1C/30/710)
-        # ALWAYS means strata sub-parcel encoding (Strata Title Geran),
-        # regardless of what tt_raw was set to. Vision OCR sometimes reads
-        # the title type as 'hakmilik' for strata docs — the slash pattern
-        # is the source of truth.
+        # means strata sub-parcel encoding. Default to 'Strata Title Geran'
+        # only when title_type is empty or a generic 'Geran'. Preserve
+        # explicit 'Hakmilik Strata' when the actual title doc says so
+        # (§10x.172 — B-05-11's Pentadbiran Tanah resit names it
+        # "HAKMILIK STRATA"). Both forms are valid per §10x.24.
         if tn and '/' in tn:
-            tt_raw = 'Strata Title Geran'
+            tt_upper_check = (tt_raw or '').upper()
+            if tt_upper_check in ('', 'GERAN', 'GRN', 'GM'):
+                tt_raw = 'Strata Title Geran'
+            elif 'HAKMILIK STRATA' in tt_upper_check or tt_upper_check == 'HAKMILIK':
+                tt_raw = 'Hakmilik Strata'
+            elif 'STRATA' in tt_upper_check:
+                tt_raw = 'Strata Title Geran'
         elif tn and not tt_raw:
             if tn.upper().startswith(('HSD', 'HS(D)', 'H.S.(D)')):
                 tt_raw = 'HSD'
@@ -141,7 +148,8 @@ class PropertyDetails(BaseModel):
                    'PAJAKAN NEGERI': 'Pajakan Negeri',
                    'HSD': 'H.S.(D)', 'HSM': 'H.S.(M)', 'HS(D)': 'H.S.(D)',
                    'HS(M)': 'H.S.(M)', 'PTD': 'PTD', 'PTM': 'PTM',
-                   'STRATA TITLE GERAN': 'Strata Title Geran'}
+                   'STRATA TITLE GERAN': 'Strata Title Geran',
+                   'HAKMILIK STRATA': 'Hakmilik Strata'}
         tt = tt_map.get(tt_raw.upper(), tt_raw) if tt_raw else ''
 
         # 🔥 §10x.201 — Strip leading zeros from title_number and
@@ -196,7 +204,11 @@ class PropertyDetails(BaseModel):
                 else:
                     h_type_display = h_type
                 if h_pt:
-                    hist_parts.append(f"{h_type_display} {h_no} PTD {h_pt}")
+                    # 🔥 §10x.207b — strip leading "PTD"/"PT" from pt_no
+                    # so we don't render "PTD PTD 143086" when the saved
+                    # data already includes the prefix.
+                    h_pt_clean = re.sub(r'^(?:PTD|PT)\s+', '', h_pt, flags=re.I)
+                    hist_parts.append(f"{h_type_display} {h_no} PTD {h_pt_clean}")
                 else:
                     hist_parts.append(f"{h_type_display} {h_no}")
             if hist_parts:

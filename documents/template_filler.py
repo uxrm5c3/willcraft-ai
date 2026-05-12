@@ -432,7 +432,10 @@ def _render_insurance_fallback_clause(clause_num: int, insurance_gifts: list,
         # for KOID since other assets (POSB, Maybank) are SG. Real fix: read
         # from gift.country field.
         line = f"({roman[i]}) Policy No. {policy_no} {insurer}"
-        if country:
+        # 🔥 §10x.207c — don't append country if the institution name already
+        # ends with it (e.g. canonicalised "AIA Singapore" + country='Singapore'
+        # produced "AIA Singapore Singapore"). Compare case-insensitive.
+        if country and not insurer.lower().endswith(country.lower()):
             line += f" {country}"
         policy_lines.append(line)
     return (f"{clause_num}.  If any nomination under my insurance policies "
