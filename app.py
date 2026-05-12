@@ -13330,8 +13330,11 @@ def _reconcile_downstream_for_new_identity(client_id: str, name: str,
                 text_l):
                 return True
             # <kw>(s)? — X     /  <kw>: X  / <kw> = X
+            # Allow up to 30 chars of small filler words ("my son", "the
+            # appointed", "(substitute)") between the kw and the name.
             if re.search(
-                rf'\b{kw_rx}s?\b[\s\—\-\:\=]+\s*{name_rx}\b',
+                rf'\b(?:substitute\s+|sub\s+|alternate\s+|primary\s+)?{kw_rx}s?\b'
+                rf'[\s\—\-\:\=]+(?:\(?(?:my|his|her|the|an?|appointed|son|daughter|wife|husband|spouse|sister|brother|mother|father|sister[\s\-]+in[\s\-]+law|brother[\s\-]+in[\s\-]+law)\s+){{0,3}}{name_rx}\b',
                 text_l):
                 return True
         # Pattern B: "my <kw> my <family-role>" — KOID-style
@@ -13460,7 +13463,8 @@ def _step2_add_executor(will, person, name, role):
             text_l_local):
             is_explicit = True
         elif re.search(
-            rf'\bexecutor\b[\s\—\-\:\=]+\s*{name_rx_local}\b',
+            rf'\b(?:substitute\s+|sub\s+|alternate\s+|primary\s+)?executor\b'
+            rf'[\s\—\-\:\=]+(?:\(?(?:my|his|her|the|an?|appointed|son|daughter|wife|husband|spouse|sister|brother|mother|father|sister[\s\-]+in[\s\-]+law|brother[\s\-]+in[\s\-]+law)\s+){{0,3}}{name_rx_local}\b',
             text_l_local):
             is_explicit = True
 
