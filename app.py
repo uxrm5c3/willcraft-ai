@@ -2853,6 +2853,16 @@ def will_list():
     q = request.args.get('q', '').strip()
     user_role = session.get('user_role', '')
     user_id = session.get('user_id', '')
+    # 🔥 §10x.234 — opportunistic stuck-inbox sweep. The chat-history
+    # watchdog (§10x.5/§10x.29) only fires while the user is sitting on
+    # /chat/<cid>. If they navigate away mid-classification, docs stay
+    # in `chat_inbox` indefinitely. Hooking the sweep into /wills means
+    # any time the user returns to their will list, stuck state recovers
+    # on its own. Best-effort — never blocks the page render.
+    try:
+        _sweep_stuck_inbound(user_id=user_id, user_role=user_role)
+    except Exception:
+        app.logger.exception('§10x.234 stuck-inbound sweep on /wills failed')
     # 🔥 Multi-tenant isolation — Client list is now filtered by created_by
     # for non-approver users. Approvers see all clients across the firm.
     base_q = Client.query_for_user(user_id, user_role)
@@ -14179,6 +14189,71 @@ def _api_inbound_email_impl():
 import threading as _proc_threading
 _PROCESSING_LOCK = _proc_threading.Lock()
 _PROCESSING_INFLIGHT: set = set()   # user_msg_ids currently being processed
+
+
+def _sweep_stuck_inbound(user_id=None, user_role=''):
+    """🔥 §10x.234 — periodically re-fire `_process_inbound_message_async`
+    for any user message that still has `chat_inbox` documents waiting
+    > 60 s old. The chat-history watchdog only runs while a user is sitting
+    on the /chat/<cid> page; this sweep covers the case where the user
+    sent the email then navigated to /wills or the wizard before
+    classification finished.
+
+    Best-effort. Bounded to the requesting user's clients (so it can't
+    leak work between tenants). Returns the number of user_msgs re-fired.
+    """
+    if not user_id:
+        return 0
+    # Pull active clients owned by this user
+    clients_q = Client.query.filter(Client.deleted_at.is_(None))
+    if user_role != 'approver':
+        clients_q = clients_q.filter(db.or_(Client.created_by == user_id,
+                                             Client.created_by.is_(None)))
+    fired = 0
+    now = datetime.utcnow()
+    for c in clients_q.all():
+        # Any chat_inbox docs for this client?
+        stuck = (Document.query
+                 .filter_by(client_id=c.id, category='chat_inbox')
+                 .count())
+        if stuck == 0:
+            continue
+        # Find the user_msg that owns these stuck docs
+        cs = (ChatSession.query.filter_by(client_id=c.id)
+              .order_by(ChatSession.created_at.desc()).first())
+        if not cs:
+            continue
+        for m in (ChatMessage.query
+                  .filter_by(session_id=cs.id, role='user')
+                  .order_by(ChatMessage.created_at.desc())
+                  .limit(5).all()):
+            age = (now - m.created_at).total_seconds() if m.created_at else 0
+            if age < 60:
+                continue
+            with _PROCESSING_LOCK:
+                if m.id in _PROCESSING_INFLIGHT:
+                    continue
+            try:
+                attach_ids = json.loads(m.attachments_json or '[]')
+            except Exception:
+                attach_ids = []
+            if not attach_ids:
+                continue
+            still_stuck = (Document.query
+                           .filter(Document.id.in_(attach_ids))
+                           .filter(Document.category == 'chat_inbox')
+                           .count())
+            if still_stuck == 0:
+                continue
+            # Re-fire in a background thread so the page render isn't blocked
+            t = _proc_threading.Thread(
+                target=_process_inbound_message_async,
+                args=(app, m.id),
+                daemon=True,
+            )
+            t.start()
+            fired += 1
+    return fired
 
 
 def _process_inbound_message_async(app_obj, user_msg_id):
