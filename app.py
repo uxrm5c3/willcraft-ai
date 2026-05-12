@@ -13450,10 +13450,10 @@ def _step2_add_executor(will, person, name, role):
             text_l_local):
             is_explicit = True
     # Pattern A (strict — §10x.214): require syntactic linkage between
-    # name and "executor", not just proximity. AI Summary narrative
-    # mentions multiple family members in same paragraph as "executor"
-    # word, so plain 120-char proximity wrongly demotes the real
-    # message-named executor when subsequent identity-adds fire.
+    # name and "executor", not just proximity.
+    # §10x.214c — also detect SUBSTITUTE-prefix so we don't wrongly
+    # promote a substitute-named person to Primary.
+    is_substitute_named = False
     if not is_explicit and name and name.lower() in text_l_local:
         name_rx_local = re.escape(name.lower())
         if re.search(
@@ -13462,11 +13462,16 @@ def _step2_add_executor(will, person, name, role):
             rf'\s+is\s+(?:the\s+|my\s+|his\s+|her\s+)?executor)',
             text_l_local):
             is_explicit = True
-        elif re.search(
-            rf'\b(?:substitute\s+|sub\s+|alternate\s+|primary\s+)?executor\b'
-            rf'[\s\—\-\:\=]+(?:\(?(?:my|his|her|the|an?|appointed|son|daughter|wife|husband|spouse|sister|brother|mother|father|sister[\s\-]+in[\s\-]+law|brother[\s\-]+in[\s\-]+law)\s+){{0,3}}{name_rx_local}\b',
-            text_l_local):
-            is_explicit = True
+        else:
+            m_sub = re.search(
+                rf'\b(substitute\s+|sub\s+|alternate\s+|primary\s+)?executor\b'
+                rf'[\s\—\-\:\=]+(?:\(?(?:my|his|her|the|an?|appointed|son|daughter|wife|husband|spouse|sister|brother|mother|father|sister[\s\-]+in[\s\-]+law|brother[\s\-]+in[\s\-]+law)\s+){{0,3}}{name_rx_local}\b',
+                text_l_local)
+            if m_sub:
+                is_explicit = True
+                prefix = (m_sub.group(1) or '').strip().lower()
+                if prefix in ('substitute', 'sub', 'alternate'):
+                    is_substitute_named = True
 
     new_entry = {
         'full_name':     name,
@@ -13478,15 +13483,19 @@ def _step2_add_executor(will, person, name, role):
         '_added_by':     '§10x.44 reconcile (Step 3: Executor)',
     }
 
-    if is_explicit:
-        # Promote to PRIMARY; demote any existing Primary to Substitute
+    if is_explicit and not is_substitute_named:
+        # §10x.232 — explicit PRIMARY named: promote + demote existing.
         for e in execs:
             if (e.get('role') or '').lower() == 'primary':
                 e['role'] = 'Substitute'
                 e['_added_by'] = (e.get('_added_by') or '') + ' + §10x.232 demoted'
         new_entry['role'] = 'Primary'
-        # Place at index 0 so wizard renders Primary first
         execs.insert(0, new_entry)
+    elif is_substitute_named:
+        # §10x.214c — explicit SUBSTITUTE named ("Substitute Executor: X"):
+        # add as Substitute, do NOT demote the existing Primary.
+        new_entry['role'] = 'Substitute'
+        execs.append(new_entry)
     else:
         new_entry['role'] = 'Primary' if len(execs) == 0 else 'Substitute'
         execs.append(new_entry)
