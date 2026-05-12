@@ -3393,6 +3393,51 @@ def api_document_translate(doc_id):
 
 # -- OCR Extraction API -------------------------------------------------------
 
+@app.route('/api/ocr/preview-nric', methods=['POST'])
+@login_required
+def api_ocr_preview_nric():
+    """🔥 §10x.228 — Preview-only NRIC OCR for the New Will modal.
+
+    Accepts an uploaded IC image, runs Claude Vision extraction, returns
+    the extracted fields (full_name, nric_number, address, date_of_birth,
+    gender, nationality) as JSON. Does NOT create a Client or save a
+    persistent Document — the user reviews the extracted values in the
+    modal, edits if needed, and submits via /wizard/new which then
+    creates everything.
+
+    Returns: {ok, extracted: {full_name, nric_number, address, ...}}
+    or {ok: False, error: '...'}.
+    """
+    if 'file' not in request.files:
+        return jsonify({'ok': False, 'error': 'No file uploaded'}), 400
+    file = request.files['file']
+    fmt_err = _validate_ocr_file(file)
+    if fmt_err:
+        return jsonify({'ok': False, 'error': fmt_err}), 400
+    # Save to a temp location so vision can read it; clean up after.
+    import tempfile
+    fd, tmp_path = tempfile.mkstemp(suffix=os.path.splitext(file.filename or '.jpg')[1] or '.jpg')
+    try:
+        with os.fdopen(fd, 'wb') as f:
+            file.save(f)
+        try:
+            from ai.ocr import extract_nric_data
+            extracted = extract_nric_data(tmp_path)
+        except Exception as e:
+            app.logger.error(f'OCR preview-nric error: {e}')
+            return jsonify({'ok': False, 'error': 'Image unclear — could not extract. Please try a clearer photo or type the details manually.'}), 200
+        if not extracted:
+            return jsonify({'ok': False, 'error': 'Could not read any IC fields from this image.'}), 200
+        # Strip internal-only fields
+        extracted.pop('confidence', None)
+        return jsonify({'ok': True, 'extracted': extracted})
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+
 @app.route('/api/ocr/nric', methods=['POST'])
 @login_required
 def api_ocr_nric():
