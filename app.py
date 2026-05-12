@@ -15941,7 +15941,10 @@ def wizard_step_trust():
         # empty fields and the "TRUST CONFIGURED" badge from Step 10
         # appears inconsistent with the blank form.
         raw = dict(session.get('step7_trust') or {})
-        if raw.get('wants_trust') and not raw.get('beneficiaries'):
+        # 🔥 §10x.221b — Step 8 template binds to trust_beneficiaries +
+        # trust_duration (NOT plain beneficiaries + duration). Use the
+        # exact field names the template expects.
+        if raw.get('wants_trust') and not raw.get('trust_beneficiaries'):
             # Derive trust beneficiaries from family children in step4
             child_relations = {'son', 'daughter', 'stepson', 'stepdaughter',
                                 'adopted son', 'adopted daughter',
@@ -15959,20 +15962,24 @@ def wizard_step_trust():
                         'role': 'MB',
                     })
             if trust_bens:
-                raw['beneficiaries'] = trust_bens
-            # Migrate duration from distribution_age
-            if not raw.get('duration') and raw.get('distribution_age'):
-                raw['duration'] = str(raw.get('distribution_age'))
+                raw['trust_beneficiaries'] = trust_bens
+            # Migrate duration from distribution_age (or build phrase)
+            if not raw.get('trust_duration'):
+                age = raw.get('distribution_age')
+                if age:
+                    raw['trust_duration'] = (
+                        f"Until each beneficiary attains the age of {age} years"
+                    )
             # Migrate trustee fields → separate_trustee block
             if raw.get('trustee_name') and not raw.get('separate_trustee'):
                 raw['separate_trustee'] = True
-                # Resolve trustee person_id + address from registry
                 tn = raw.get('trustee_name', '').strip().upper()
                 for p in (session.get('person_registry') or []):
                     if (p.get('full_name') or '').strip().upper() == tn:
                         raw['trustee_address'] = raw.get('trustee_address') or p.get('address', '')
                         raw['trustee_nric'] = raw.get('trustee_nric') or p.get('nric_passport', '')
                         raw['trustee_relationship'] = raw.get('trustee_relationship') or p.get('relationship', '')
+                        raw['trustee_person_id'] = raw.get('trustee_person_id') or p.get('id', '')
                         break
         return render_template(
             'wizard/step8_trust.html',
