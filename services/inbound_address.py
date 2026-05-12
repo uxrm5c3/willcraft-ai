@@ -113,11 +113,18 @@ def find_client_by_address(addr: str, hint_subject: str = '') -> 'Client | None'
     addr_lower = addr.strip().lower()
     local = addr_lower.split('@')[0] if '@' in addr_lower else addr_lower
 
+    # 🔥 §10x.234 — soft-deleted (archived) clients no longer receive mail.
+    # Prevents the bug where an inbound forward routes to an archived row
+    # whose UI is hidden — the user thinks the email "went missing" because
+    # the chat tab can't see it.
+    from database import db as _db
+    active_q = Client.query.filter(Client.deleted_at.is_(None))
+
     # ── Legacy UUID-based routing (only if EXACTLY one matches the prefix) ──
     m = LEGACY_RE.search(addr_lower)
     if m:
         short = m.group(1).lower()
-        candidates = Client.query.filter(Client.id.ilike(short + '%')).all()
+        candidates = active_q.filter(Client.id.ilike(short + '%')).all()
         if len(candidates) == 1:
             # Verify the candidate's computed local_part matches the
             # incoming address — defends against UUID-prefix collisions.
@@ -132,7 +139,7 @@ def find_client_by_address(addr: str, hint_subject: str = '') -> 'Client | None'
         # Find clients whose computed local_part matches exactly.
         # No fuzzy fallback: if no client has this exact (name+ic_suffix)
         # combination, the email is rejected.
-        all_clients = Client.query.all()
+        all_clients = active_q.all()
         for c in all_clients:
             if _local_part(c) == local:
                 return c

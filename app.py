@@ -397,6 +397,8 @@ with app.app_context():
         ("will_edit_logs", "details", "TEXT"),
         # Multi-tenant isolation — every Client owned by a User
         ("clients", "created_by", "VARCHAR(36)"),
+        # 🔥 §10x.234 — soft-delete column on clients (archive instead of nuke)
+        ("clients", "deleted_at", "DATETIME"),
     ]:
         try:
             with db.engine.connect() as conn:
@@ -525,6 +527,28 @@ def ensure_client():
             "The inbox address routing (<name><ic4>@...) requires it, and "
             "every Malaysian probate document requires the testator's IC."
         )
+    # 🔥 §10x.234 — dedup by NRIC owned by this user (including archived).
+    # Rapid /wizard/new POSTs used to create N parallel clients with the
+    # same NRIC; the orphans then collected uploaded files but nobody
+    # could see them in the UI. Now: same-NRIC same-owner → REUSE the
+    # existing row (un-archive if archived) instead of creating a parallel.
+    user_id_for_dedup = session.get('user_id')
+    existing = (Client.query
+                .filter(Client.nric_passport == nric)
+                .filter(db.or_(Client.created_by == user_id_for_dedup,
+                                Client.created_by.is_(None)))
+                .order_by(Client.created_at.desc())
+                .first())
+    if existing:
+        if existing.deleted_at is not None:
+            existing.deleted_at = None   # restore from archive
+        # Refresh display name in case the user re-typed it
+        if full_name and existing.full_name != full_name:
+            existing.full_name = full_name
+        db.session.commit()
+        session['client_id'] = existing.id
+        return existing.id
+
     client = Client(
         full_name=full_name,
         nric_passport=nric,
@@ -535,7 +559,7 @@ def ensure_client():
         # tenant-scoped query treats NULL as "legacy / globally visible"
         # so background imports still work, but every chat/UI session
         # populates this field.
-        created_by=session.get('user_id'),
+        created_by=user_id_for_dedup,
     )
     db.session.add(client)
     db.session.commit()
@@ -2979,29 +3003,33 @@ def trash_list():
 @app.route('/clients/<client_id>/delete', methods=['POST'])
 @login_required
 def client_delete(client_id):
-    """Delete a client and ALL associated data (wills, persons, documents, disk files)."""
-    import shutil
+    """🔥 §10x.234 — SOFT-DELETE the client. Disk files, Document rows,
+    Will rows, Person rows and ChatSession/ChatMessage rows are ALL
+    preserved. Sets `Client.deleted_at` so list/lookup queries can hide
+    it. Recoverable via `Client.deleted_at = None`.
+
+    The previous behaviour hard-deleted everything — even the disk
+    folder — which made testing destructive ("Delete + re-create" lost
+    every uploaded IC/property doc forever, even though Postmark had
+    already delivered them). Per the user-reported file-loss bug class,
+    NO data leaves disk or DB on a UI delete click; recovery is a
+    simple flag flip.
+    """
     client = db.session.get(Client, client_id)
     if not client:
         flash('Client not found.', 'error')
         return redirect(url_for('will_list'))
 
-    # Delete associated documents from disk
-    folder_path = os.path.join(UPLOAD_DIR, client.folder_name)
-    if os.path.isdir(folder_path):
-        shutil.rmtree(folder_path, ignore_errors=True)
-
-    # Delete DB records (cascade: documents, wills, persons)
-    Document.query.filter_by(client_id=client_id).delete()
-    Will.query.filter_by(client_id=client_id).delete()
-    Person.query.filter_by(client_id=client_id).delete()
-    db.session.delete(client)
+    # 🔥 §10x.234 — soft-delete. Everything stays; only the visibility flag
+    # changes. To purge permanently, an admin uses a separate maintenance
+    # endpoint (TBD) that requires explicit "yes I want to lose this data".
+    client.deleted_at = datetime.utcnow()
     db.session.commit()
 
     # Clear loaded-client / loaded-will references — but NEVER the whole
     # session. session.clear() also wipes user_id, which kicks the user
     # back to the login page mid-task. Only pop the keys that point to
-    # the now-deleted client.
+    # the now-archived client.
     if session.get('client_id') == client_id:
         for _k in ('client_id', 'will_id', 'completed_steps',
                    'identities', 'step1', 'step2', 'step3', 'step4',
@@ -3009,7 +3037,8 @@ def client_delete(client_id):
                    'step8_others', 'step9_witnesses', 'witnesses'):
             session.pop(_k, None)
 
-    flash(f'Client "{client.full_name}" and all associated data deleted.', 'info')
+    flash(f'Client "{client.full_name}" archived. Files and documents are '
+          f'preserved and can be restored.', 'info')
     return redirect(url_for('will_list'))
 
 
@@ -13794,6 +13823,61 @@ def _strip_reply_quotes(text: str) -> str:
     return '\n'.join(line for line in cleaned.splitlines() if line.strip()).strip()
 
 
+def _quarantine_inbound_email(payload: dict, matched_to: str, reason: str):
+    """🔥 §10x.234 — save an inbound email payload + attachments to disk
+    so unmatched/unrouteable emails can be recovered later instead of
+    being silently dropped.
+
+    Folder layout:
+        /app/data/quarantine/<YYYY-MM-DD>/<timestamp>_<reason>/
+            payload.json   ← full Postmark webhook body (minus attachment Content)
+            <attachment1.jpg>
+            <attachment2.pdf>
+            ...
+    """
+    import base64
+    from datetime import datetime as _dt
+    quarantine_root = os.path.join(DATA_DIR, 'quarantine')
+    today = _dt.utcnow().strftime('%Y-%m-%d')
+    stamp = _dt.utcnow().strftime('%H%M%S_%f')
+    folder = os.path.join(quarantine_root, today, f'{stamp}_{reason}')
+    os.makedirs(folder, exist_ok=True)
+
+    # Write the payload metadata first (without attachment bytes — those go to
+    # separate files so the JSON stays small)
+    meta = {k: v for k, v in payload.items() if k != 'Attachments'}
+    meta['_quarantined_at'] = _dt.utcnow().isoformat()
+    meta['_matched_to'] = matched_to
+    meta['_reason'] = reason
+    meta['_attachment_count'] = len(payload.get('Attachments') or [])
+    try:
+        with open(os.path.join(folder, 'payload.json'), 'w') as f:
+            json.dump(meta, f, indent=2)
+    except Exception:
+        current_app.logger.exception('quarantine payload.json write failed')
+
+    # Decode + save each attachment
+    for i, att in enumerate(payload.get('Attachments') or []):
+        try:
+            name = (att.get('Name') or f'attachment_{i:02d}').replace('/', '_')
+            content_b64 = att.get('Content') or ''
+            if not content_b64:
+                continue
+            data = base64.b64decode(content_b64)
+            with open(os.path.join(folder, name), 'wb') as f:
+                f.write(data)
+        except Exception:
+            current_app.logger.exception(
+                f'quarantine attachment {i} ({att.get("Name")}) save failed')
+
+    try:
+        current_app.logger.warning(
+            f'§10x.234 QUARANTINED inbound email: to={matched_to} '
+            f'reason={reason} folder={folder}')
+    except Exception:
+        pass
+
+
 def _extract_inbox_to(payload: dict):
     """Find the inbox-formatted recipient in a Postmark inbound payload.
     Accepts both legacy '<slug>-<8hex>@…' and new '<name><ic4>@…' formats.
@@ -13874,7 +13958,18 @@ def _api_inbound_email_impl():
     subject = (payload.get('Subject') or '').strip()
     client = find_client_by_address(matched_to, hint_subject=subject)
     if not client:
-        return jsonify({'ok': True, 'ignored': 'unknown client', 'to': matched_to}), 200
+        # 🔥 §10x.234 — QUARANTINE unmatched inbound emails instead of
+        # silently dropping. Saves payload + attachments to a "quarantine"
+        # folder on disk so they can be recovered (by an admin pointing the
+        # webhook at the right client, or by re-creating the client and
+        # re-routing). Previously these messages vanished with no trace —
+        # the user reported "I sent email but documents are gone".
+        try:
+            _quarantine_inbound_email(payload, matched_to, reason='unknown_client')
+        except Exception:
+            current_app.logger.exception('§10x.234 quarantine save failed')
+        return jsonify({'ok': True, 'ignored': 'unknown client',
+                        'to': matched_to, 'quarantined': True}), 200
 
     from_email = (
         ((payload.get('FromFull') or {}).get('Email')) or payload.get('From') or ''

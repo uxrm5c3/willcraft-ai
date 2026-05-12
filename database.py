@@ -62,6 +62,12 @@ class Client(db.Model):
                            nullable=True, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # 🔥 §10x.234 — soft-delete column. NULL = active; non-NULL = archived.
+    # The client_delete UI sets this instead of hard-deleting; disk files +
+    # Document/Will/Person/ChatSession rows all remain on disk + DB so they
+    # can be restored. Auto-purged by a separate maintenance script after a
+    # grace period (TBD).
+    deleted_at = db.Column(db.DateTime, nullable=True)
 
     wills = db.relationship('Will', backref='client', lazy=True)
     documents = db.relationship('Document', backref='client', lazy=True)
@@ -70,12 +76,17 @@ class Client(db.Model):
                               backref='created_clients')
 
     @classmethod
-    def query_for_user(cls, user_id, user_role=''):
+    def query_for_user(cls, user_id, user_role='', include_archived=False):
         """Tenant-scoped query. Approvers see ALL clients; everyone else
         sees only their own (plus legacy NULL-owner rows for back-compat).
 
+        🔥 §10x.234 — soft-deleted (archived) clients are hidden by default.
+        Set include_archived=True for admin/recovery views.
+
         Use this everywhere Client.query is currently called for display."""
         q = cls.query
+        if not include_archived:
+            q = q.filter(cls.deleted_at.is_(None))
         if user_role != 'approver':
             q = q.filter(db.or_(cls.created_by == user_id,
                                  cls.created_by.is_(None)))
