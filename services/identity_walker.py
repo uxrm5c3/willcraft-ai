@@ -505,7 +505,12 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
             'RESIDUARY', 'TRUST', 'TRUSTEE', 'TRUSTEES', 'EXECUTOR',
             'EXECUTORS', 'BENEFICIARY', 'BENEFICIARIES', 'DOCUMENTS',
             'LIABILITIES', 'DEBTS', 'NOTES', 'ATTACHMENTS',
-            'DISTRIBUTION', 'ESTATE', 'INFORMATION', 'DETAILS'}
+            'DISTRIBUTION', 'ESTATE', 'INFORMATION', 'DETAILS',
+            # §10x.213 — common doc-type abbreviations that leak when an
+            # email subject like 'Wife IC — Lim Bee Yan' or body line
+            # 'Lim Bee Yan IC attached' gets regex-matched.
+            'IC', 'NRIC', 'MYKAD', 'KAD', 'PHOTO', 'IMAGE', 'PIC',
+            'COPY', 'ATTACHED', 'BIRTH', 'CERT', 'CERTIFICATE'}
     cleaned: list = []
     for nm, role in out:
         toks = re.split(r'\s+', nm.strip())
