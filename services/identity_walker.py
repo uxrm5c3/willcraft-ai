@@ -491,10 +491,21 @@ def _extract_family_name_role_pairs(text: str) -> List[tuple]:
             out.append((nm, role))
 
     # Filter junk-name tokens (no stopwords, must be 2-5 capitalised parts)
+    # 🔥 §10x.212 — section-header words leak when regex greedy-matches 4
+    # additional tokens. Common offenders: "Joshua Koid Teck Seng ASSETS",
+    # "Lim Bee Yan PROPERTIES". Extended JUNK to cover section headers
+    # the email body typically contains. Strips trailing junk in the
+    # while-loop below; rejects entries with interior junk.
     JUNK = {'WITH', 'ALL', 'AND', 'OR', 'THE', 'TO', 'GO', 'OF',
             'FROM', 'BY', 'IN', 'ON', 'FOR', 'BANK', 'INSURANCE',
             'POLICY', 'ACCOUNT', 'NRIC', 'PROPERTY', 'SHARE',
-            'JOINT', 'CO', 'CONDOMINIUM', 'HOUSE', 'SHOP'}
+            'JOINT', 'CO', 'CONDOMINIUM', 'HOUSE', 'SHOP',
+            # §10x.212 — section headers (any plural / ALL CAPS form)
+            'ASSETS', 'PROPERTIES', 'BANKS', 'POLICIES', 'ACCOUNTS',
+            'RESIDUARY', 'TRUST', 'TRUSTEE', 'TRUSTEES', 'EXECUTOR',
+            'EXECUTORS', 'BENEFICIARY', 'BENEFICIARIES', 'DOCUMENTS',
+            'LIABILITIES', 'DEBTS', 'NOTES', 'ATTACHMENTS',
+            'DISTRIBUTION', 'ESTATE', 'INFORMATION', 'DETAILS'}
     cleaned: list = []
     for nm, role in out:
         toks = re.split(r'\s+', nm.strip())
