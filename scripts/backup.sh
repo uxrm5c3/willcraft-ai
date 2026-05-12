@@ -9,7 +9,9 @@
 # Snapshots land in $BACKUP_LOCAL_DIR (default /home/ubuntu/willcraft-backups)
 # and rotate after $BACKUP_KEEP_DAYS days (default 14).
 #
-# Off-box copy (PICK ONE — none configured = local-only):
+# Off-box copy (any subset may be set; all that are set will run):
+#   BACKUP_GH_REPO + BACKUP_GH_TOKEN — owner/repo + PAT, uploads to
+#                                      Releases on a private GitHub repo
 #   BACKUP_RSYNC_DEST   e.g. user@backup.example.com:/var/backups/willcraft
 #   BACKUP_S3_BUCKET    e.g. s3://my-bucket/willcraft  (requires `aws` CLI)
 #   BACKUP_B2_BUCKET    e.g. b2://my-bucket            (requires `b2` CLI)
@@ -17,6 +19,14 @@
 # Run via cron daily at 02:30 UTC (set up by deploy-setup.sh).
 
 set -euo pipefail
+
+# Source .env if present so cron picks up the off-box vars.
+if [ -f /home/ubuntu/willcraft/.env ]; then
+    set -a
+    # shellcheck disable=SC1091
+    . /home/ubuntu/willcraft/.env
+    set +a
+fi
 
 BACKUP_LOCAL_DIR="${BACKUP_LOCAL_DIR:-/home/ubuntu/willcraft-backups}"
 BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
@@ -99,6 +109,35 @@ else
 fi
 
 # --- (6) Off-box copy (best-effort) ------------------------------------------
+if [ -n "${BACKUP_GH_REPO:-}" ] && [ -n "${BACKUP_GH_TOKEN:-}" ]; then
+    log "Off-box upload → github.com/$BACKUP_GH_REPO (Releases)"
+    # Create a release for this snapshot. Tag = STAMP; name = same.
+    BNAME=$(basename "$TARBALL")
+    RELEASE_JSON=$(curl -sf -X POST \
+        -H "Authorization: token $BACKUP_GH_TOKEN" \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/$BACKUP_GH_REPO/releases" \
+        -d "{\"tag_name\":\"$STAMP\",\"name\":\"$STAMP\",\"body\":\"Automated daily backup — $(hostname)\",\"draft\":false,\"prerelease\":false}" || true)
+    UPLOAD_URL=$(echo "$RELEASE_JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); u=d.get('upload_url',''); print(u.split('{')[0])" 2>/dev/null || true)
+    if [ -n "$UPLOAD_URL" ]; then
+        # Upload the tarball as a release asset
+        HTTP_CODE=$(curl -s -o /tmp/gh_upload_resp.txt -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: token $BACKUP_GH_TOKEN" \
+            -H "Content-Type: application/gzip" \
+            --data-binary "@$TARBALL" \
+            "$UPLOAD_URL?name=$BNAME")
+        if [ "$HTTP_CODE" = "201" ]; then
+            ASSET_URL=$(python3 -c "import json; d=json.load(open('/tmp/gh_upload_resp.txt')); print(d.get('browser_download_url',''))" 2>/dev/null || true)
+            log "  → GitHub upload OK: $ASSET_URL"
+        else
+            log "  → GitHub upload FAILED (HTTP $HTTP_CODE): $(head -c 200 /tmp/gh_upload_resp.txt)"
+        fi
+        rm -f /tmp/gh_upload_resp.txt
+    else
+        log "  → GitHub release creation FAILED: $(echo "$RELEASE_JSON" | head -c 200)"
+    fi
+fi
 if [ -n "${BACKUP_RSYNC_DEST:-}" ]; then
     log "Off-box rsync → $BACKUP_RSYNC_DEST"
     if rsync -avz --partial "$TARBALL" "$BACKUP_RSYNC_DEST"/; then
@@ -124,9 +163,9 @@ if [ -n "${BACKUP_B2_BUCKET:-}" ]; then
         log "  → B2 upload FAILED"
     fi
 fi
-if [ -z "${BACKUP_RSYNC_DEST:-}${BACKUP_S3_BUCKET:-}${BACKUP_B2_BUCKET:-}" ]; then
-    log "No off-box destination configured (BACKUP_RSYNC_DEST / BACKUP_S3_BUCKET / BACKUP_B2_BUCKET)."
-    log "Snapshot kept locally only — set one of those env vars in ~/willcraft/.env to enable."
+if [ -z "${BACKUP_GH_REPO:-}${BACKUP_RSYNC_DEST:-}${BACKUP_S3_BUCKET:-}${BACKUP_B2_BUCKET:-}" ]; then
+    log "No off-box destination configured. Set BACKUP_GH_REPO+BACKUP_GH_TOKEN,"
+    log "BACKUP_RSYNC_DEST, BACKUP_S3_BUCKET, or BACKUP_B2_BUCKET in ~/willcraft/.env."
 fi
 
 # --- (7) Rotate --------------------------------------------------------------
