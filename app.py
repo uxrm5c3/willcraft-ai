@@ -14762,6 +14762,10 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                 return
 
             # ── §10x.9 idempotency check (AI Summary) ──────────────
+            # 🔥 §10x.236 — scope to THIS user_msg's window (created_at
+            # >= user_msg.created_at). Earlier the check would block
+            # subsequent forwards if ANY summary existed in the session;
+            # now only a summary posted FOR this user_msg blocks re-post.
             _summary_already_posted = False
             try:
                 _existing_sum = (ChatMessage.query
@@ -14876,12 +14880,28 @@ def _process_inbound_message_async_inner(app_obj, user_msg_id):
                         # if any OTHER AI Summary was posted before ours
                         # (lower created_at), we're the duplicate — delete
                         # self before committing.
+                        #
+                        # 🔥 §10x.236 — TIGHT WINDOW. Earlier code matched
+                        # ANY older AI Summary in the session and deleted
+                        # the new one, which broke multi-email flows: an
+                        # old "I cannot summarise" card (from a recovery
+                        # message) suppressed every subsequent fresh
+                        # forward's summary. Now the dedup mirrors the
+                        # §10x.78 intake-card pattern: only match an
+                        # earlier summary AT LEAST as recent as this
+                        # user_msg AND within a 30-second window. That
+                        # catches concurrent-processor races but lets
+                        # genuinely-new forwards through.
                         try:
+                            from datetime import timedelta as _td
                             _earlier = (ChatMessage.query
                                         .filter(ChatMessage.session_id == cs.id,
                                                  ChatMessage.role == 'assistant',
                                                  ChatMessage.id != summary_msg.id,
+                                                 ChatMessage.created_at >= user_msg.created_at,
                                                  ChatMessage.created_at < summary_msg.created_at,
+                                                 ChatMessage.created_at
+                                                     >= summary_msg.created_at - _td(seconds=30),
                                                  ChatMessage.content.ilike('%AI Summary of your message%'))
                                         .first())
                             if _earlier:
