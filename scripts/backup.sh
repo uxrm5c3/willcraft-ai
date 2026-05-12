@@ -39,11 +39,19 @@ log "=== Starting WillCraft backup → $SNAPSHOT ==="
 mkdir -p "$SNAPSHOT"
 
 # --- (1) SQLite hot backup ----------------------------------------------------
-# `.backup` is the SQLite-recommended way to snapshot a live DB without
-# corrupting it. The app keeps serving traffic during the copy.
-log "Snapshotting SQLite DB via .backup …"
-if docker exec "$CONTAINER" \
-    sqlite3 /app/data/willcraft.db ".backup /app/data/willcraft.db.bak"; then
+# Use Python's built-in sqlite3 module (the container has Python, but not
+# the sqlite3 CLI). The Connection.backup() method is the official live-
+# backup API — atomic, no app shutdown, no risk of catching a half-write.
+log "Snapshotting SQLite DB via Connection.backup() …"
+if docker exec "$CONTAINER" python3 -c "
+import sqlite3, sys
+src = sqlite3.connect('file:/app/data/willcraft.db?mode=ro', uri=True)
+dst = sqlite3.connect('/app/data/willcraft.db.bak')
+with dst:
+    src.backup(dst)
+dst.close(); src.close()
+print('OK')
+"; then
     docker cp "$CONTAINER:/app/data/willcraft.db.bak" "$SNAPSHOT/willcraft.db"
     docker exec "$CONTAINER" rm -f /app/data/willcraft.db.bak
     log "  → DB snapshot OK ($(stat -c%s "$SNAPSHOT/willcraft.db") bytes)"
