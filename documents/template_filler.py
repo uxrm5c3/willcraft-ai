@@ -1010,11 +1010,14 @@ def fill_will(will_data) -> str:
     # asterisks and text so word-wrap renderers cannot split this
     # line. Template's Word renderer keeps it on one line; markdown
     # / HTML viewers will too because U+00A0 is not a break point.
-    _NBSP = '\u00A0'
-    _SIGN_LINE = ('******************' + _NBSP +
-                  _NBSP.join(['the', 'remaining', 'page', 'is',
-                              'intentionally', 'left', 'blank']) +
-                  _NBSP + '*********************')
+    # \uD83D\uDD25 \u00A710x.220 \u2014 Match sample_will_koid.py EXACT format: NO SPACES
+    # between asterisks and text. Sample line 164:
+    # `********************the remaining page is intentionally left blank*********************`
+    # (20 asterisks + text-with-regular-spaces + 21 asterisks). Earlier
+    # \u00A710x.207 used NBSP to prevent word-wrap; canonical sample wins.
+    _SIGN_LINE = ('********************' +
+                  'the remaining page is intentionally left blank' +
+                  '*********************')
     parts.append(_SIGN_LINE)
     parts.append('')
     parts.append('Signature of the Testator: _______________________________________________')
