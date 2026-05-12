@@ -13302,24 +13302,48 @@ def _reconcile_downstream_for_new_identity(client_id: str, name: str,
     # ── Helper: does message name this person/role with given will-role keyword?
     def _named_with(will_role_kw: str) -> bool:
         """e.g. will_role_kw='executor' — check if message has
-        'my executor X', 'executor: Y', 'my <role> as executor', etc."""
+        'my executor X', 'executor: Y', 'my <role> as executor', etc.
+
+        🔥 §10x.214 — Pattern A made stricter. AI Summary narrative prose
+        often mentions multiple family members in one paragraph alongside
+        'executor' (e.g. "...as executor. Properties split between son
+        Joshua and daughter Esther."). Old 120-char proximity check fired
+        for Joshua + Esther even though only LIM LAY CHENG was named as
+        executor. Pattern A now requires structural linkage:
+          - 'X (executor)' / 'X — executor' / 'X, executor'
+          - 'executor: X' / 'executor — X'
+          - 'X as (the) executor' / 'X is (the) executor'
+        Plain proximity without these connectors is rejected.
+        """
         kw = will_role_kw.lower()
+        kw_rx = re.escape(kw)
         role_rx = _role_regex(role_l) if role_l else ''
-        # Pattern A: "my <role> X" or "X (my <role>)" — name proximity
+        # Pattern A (strict): explicit syntactic linkage between name + kw.
         if name_l and name_l in text_l:
-            ni = text_l.find(name_l)
-            ki = text_l.find(kw)
-            if ki >= 0 and ni >= 0 and abs(ki - ni) < 120:
+            name_rx = re.escape(name_l)
+            # X as (the/an/my/his/her) <kw>     (within 30 chars after name)
+            # X is (the/my/his/her) <kw>
+            if re.search(
+                rf'\b{name_rx}\s*(?:\([^)]*\b{kw_rx}\b[^)]*\)|'   # X (...executor...)
+                rf'\s+as\s+(?:the\s+|an\s+|my\s+|his\s+|her\s+)?{kw_rx}|'  # X as executor
+                rf'\s+is\s+(?:the\s+|my\s+|his\s+|her\s+)?{kw_rx})',  # X is executor
+                text_l):
+                return True
+            # <kw>(s)? — X     /  <kw>: X  / <kw> = X
+            if re.search(
+                rf'\b{kw_rx}s?\b[\s\—\-\:\=]+\s*{name_rx}\b',
+                text_l):
                 return True
         # Pattern B: "my <kw> my <family-role>" — KOID-style
         # ("My Executor My Sister in law" — space variant tolerated)
         if role_rx and re.search(
-            rf'\bmy\s+{re.escape(kw)}[^\.\n]{{0,40}}my\s+{role_rx}',
+            rf'\bmy\s+{kw_rx}[^\.\n]{{0,40}}my\s+{role_rx}',
             text_l):
             return True
         # Pattern C: "my <family-role> as <kw>" / "<family-role> as my <kw>"
         if role_rx and re.search(
-            rf'\b(?:my\s+)?{role_rx}[^\.\n]{{0,40}}\bas\s+(?:my\s+)?{re.escape(kw)}',
+            rf'\b(?:my\s+|his\s+|her\s+)?{role_rx}[^\.\n]{{0,40}}'
+            rf'\bas\s+(?:my\s+|his\s+|her\s+)?{kw_rx}',
             text_l):
             return True
         return False
@@ -13422,11 +13446,22 @@ def _step2_add_executor(will, person, name, role):
             rf'\bas\s+(?:my\s+|his\s+|her\s+)?executor',
             text_l_local):
             is_explicit = True
-    # Pattern A: name in close proximity to "executor"
+    # Pattern A (strict — §10x.214): require syntactic linkage between
+    # name and "executor", not just proximity. AI Summary narrative
+    # mentions multiple family members in same paragraph as "executor"
+    # word, so plain 120-char proximity wrongly demotes the real
+    # message-named executor when subsequent identity-adds fire.
     if not is_explicit and name and name.lower() in text_l_local:
-        ni = text_l_local.find(name.lower())
-        ki = text_l_local.find('executor')
-        if ki >= 0 and ni >= 0 and abs(ki - ni) < 120:
+        name_rx_local = re.escape(name.lower())
+        if re.search(
+            rf'\b{name_rx_local}\s*(?:\([^)]*\bexecutor\b[^)]*\)|'
+            rf'\s+as\s+(?:the\s+|an\s+|my\s+|his\s+|her\s+)?executor|'
+            rf'\s+is\s+(?:the\s+|my\s+|his\s+|her\s+)?executor)',
+            text_l_local):
+            is_explicit = True
+        elif re.search(
+            rf'\bexecutor\b[\s\—\-\:\=]+\s*{name_rx_local}\b',
+            text_l_local):
             is_explicit = True
 
     new_entry = {
