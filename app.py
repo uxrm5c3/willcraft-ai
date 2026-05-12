@@ -16908,11 +16908,19 @@ def wizard_new():
         pid = ensure_person(client_id, full_name.upper(),
                              nric=nric_clean,
                              address=address,
-                             date_of_birth=dob_iso,
-                             gender=gender_clean,
+                             dob=dob_iso,
                              relationship='Testator')
         if pid:
             session['step1']['person_id'] = pid
+            # 🔥 §10x.230 — ensure_person() doesn't accept gender kwarg,
+            # so set it directly on the row after creation.
+            if gender_clean:
+                try:
+                    _p = db.session.get(Person, pid)
+                    if _p and not _p.gender:
+                        _p.gender = gender_clean
+                except Exception:
+                    pass
         db.session.commit()
         # 🔥 §10x.229 — refresh session.person_registry NOW so the Step 1
         # (Testator) form's dropdown can pre-select the just-created
