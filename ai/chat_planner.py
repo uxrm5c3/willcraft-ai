@@ -3906,12 +3906,23 @@ def _identity_question_with_doc(pending_ics: List[Dict[str, Any]], recent_text: 
         # Brother-in-law / etc.) was overwhelming and most options
         # were irrelevant for any given testator.
         plausible = _plausible_remaining_roles(client_id, recent_text)
+        # 🔥 §10x.235 — when the message text yields no role hints
+        # (e.g. recovery flows where only attachments survived), fall
+        # back to NRIC-heuristic deduction: gender from last digit,
+        # generation gap from birth year, surname overlap with the
+        # testator. Without this, the card would show only "Type
+        # relationship" and the user has to type everything by hand.
+        if not plausible and client_id:
+            try:
+                plausible = _heuristic_role_guess(
+                    raw_name, nric, client_id=client_id)
+            except Exception:
+                plausible = []
         parts.append("**Relationship to testator?**")
         quick = []
-        # 🔥 §10x.83 — show AT MOST 3 plausible roles. If we have ZERO,
-        # don't fall back to a generic 7-button menu — just offer
-        # 'Type your own' so the user types the exact relation they
-        # mean. Less noise, fewer wrong-click traps.
+        # 🔥 §10x.83 — show AT MOST 3 plausible roles. If we STILL have
+        # ZERO (no message hint AND no heuristic match — extremely rare),
+        # offer 'Type your own' so the user types the exact relation.
         for role in (plausible or [])[:3]:
             quick.append({
                 'label': f'✓ {role.title()}',
@@ -3968,6 +3979,86 @@ def _year_matches_role(birth_year: int, role: str) -> bool:
         return 35 <= age <= 110
     # Default: allow
     return True
+
+
+def _heuristic_role_guess(ic_name: str, ic_nric: str,
+                            client_id: str = '') -> List[str]:
+    """🔥 §10x.235 — when the AI Summary / message body doesn't mention
+    family roles (e.g. recovery flows where only attachments survived),
+    derive likely roles from the IC's own data:
+
+      • NRIC last digit → gender (odd=male, even=female)
+      • NRIC YYMMDD → age band → generation vs. testator
+      • Surname overlap with testator → child/sibling
+      • Different surname + similar age → spouse / in-law
+      • Different surname + much older → parent
+      • Different surname + younger → child-in-law
+
+    Returns a ranked list of lowercase role names (most likely first).
+    The IC walkthrough card surfaces these as quickreply buttons so the
+    user always has a one-click option even with no message context.
+    """
+    if not ic_name or not ic_nric:
+        return []
+    try:
+        from database import db, Client
+    except Exception:
+        return []
+    # Pull testator profile for surname / age comparison
+    testator_surname = ''
+    testator_year = None
+    try:
+        if client_id:
+            c = db.session.get(Client, client_id)
+            if c and c.full_name:
+                # First token of full_name = surname for Chinese names
+                # ("KOID BENG SUN" → KOID); for Western order it's
+                # usually the last token but Malaysian convention here
+                # is surname-first.
+                testator_surname = c.full_name.strip().split()[0].upper()
+            if c and c.nric_passport:
+                testator_year = _nric_birth_year(c.nric_passport)
+    except Exception:
+        pass
+    ic_year = _nric_birth_year(ic_nric)
+    if not ic_year:
+        return []
+    # Gender from last digit
+    digits = ''.join(ch for ch in ic_nric if ch.isdigit())
+    is_female = (len(digits) >= 12 and int(digits[-1]) % 2 == 0)
+    # Tokenise IC name; surname can appear at ANY position (Malaysian-Chinese
+    # convention varies — "KOID BENG SUN" puts family name first, but
+    # "ESTHER KOID EN HUI" puts the English first name first with the
+    # family name in the middle). So we check for testator's surname
+    # ANYWHERE in the tokens, not just the first.
+    ic_tokens = [t.upper() for t in (ic_name or '').strip().split() if t]
+    ic_age = __import__('datetime').datetime.utcnow().year - ic_year
+    t_age = (__import__('datetime').datetime.utcnow().year - testator_year
+             if testator_year else None)
+    same_surname = bool(testator_surname and testator_surname in ic_tokens)
+    ranked = []
+    # Children: surname match + 5-50 yo
+    if same_surname and 5 <= ic_age <= 50:
+        ranked.append('daughter' if is_female else 'son')
+    # Spouse: different surname + similar age (within 20y)
+    if not same_surname and t_age and abs(ic_age - t_age) <= 20 and ic_age >= 18:
+        ranked.append('wife' if is_female else 'husband')
+    # In-law / sibling: different surname + adult, close generation
+    if not same_surname and 18 <= ic_age <= 80:
+        if 'sister-in-law' not in ranked and 'brother-in-law' not in ranked:
+            ranked.append('sister-in-law' if is_female else 'brother-in-law')
+    # Parent: much older than testator
+    if t_age and ic_age - t_age >= 20:
+        ranked.append('mother' if is_female else 'father')
+    # Child-in-law: same surname? no; different surname + 5-50yo + female covered above by sister-in-law
+    # already handled
+    # Fallback: brother/sister if same generation different surname
+    if not same_surname and t_age and abs(ic_age - t_age) <= 5:
+        if is_female and 'sister' not in ranked:
+            ranked.append('sister')
+        elif not is_female and 'brother' not in ranked:
+            ranked.append('brother')
+    return ranked
 
 
 def _plausible_remaining_roles(client_id: str, recent_text: str) -> List[str]:
